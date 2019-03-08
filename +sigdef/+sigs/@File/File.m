@@ -2,7 +2,11 @@ classdef File < sigdef.Signal
     % Daniel Stolzberg, PhD (c) 2019
     
     properties (Access = public)
-        fullFilename (1,:) char = '';
+        fullFilename   (1,:) char = '';
+        windowFcn      (1,:) char   {mustBeNonempty} = 'blackmanharris'; % doc window
+        windowOpts     cell = {};
+        windowRFTime   (1,2) double {mustBeNonempty,mustBeNonnegative,mustBeFinite} = 0.001; % seconds
+        
     end
     
     properties (SetAccess = private, GetAccess = public, Hidden = true)
@@ -12,8 +16,9 @@ classdef File < sigdef.Signal
         fileext  = '';
     end
     
-    properties (Constant = true, Hidden = true)
+    properties (Constant = true)
         D_fullFilename = 'Filename';
+        F_fullFilename = @sigdef.sigs.File.selectFiles;
     end
     
     methods
@@ -67,13 +72,54 @@ classdef File < sigdef.Signal
         function ext = get.fileext(obj)
             [~,~,ext] =  fileparts(obj.fullFilename);
         end
+        
+        
+        function set.windowFcn(obj,w)
+            obj.windowFcn = w;
+            obj.processUpdate;
+        end
+        
+        function set.windowOpts(obj,w)
+            obj.windowOpts = w;
+            obj.processUpdate;
+        end
+        
+        function set.windowRFTime(obj,wrf)
+            if numel(wrf) == 1, wrf = [wrf wrf]; end
+            obj.windowRFTime = wrf;
+            obj.processUpdate;
+        end
+        
     end
     
     
     methods (Static)
-        function obj = createDisplay(parent)
-            % setup custom fields in some parent figure or panel
+        function ffn = selectFiles
+            ffn = [];
+            
+            ext = {'*.wav', 'WAVE (*.wav)'; ...
+                   '*.ogg', 'OGG (*.ogg)'; ...
+                   '*.flac','FLAC (*.flac)'; ...
+                   '*.au',  'AU (*.au)'; ...
+                   '*.aiff;*.aif','AIFF (*.aiff,*.ai)'; ...
+                   '*.aifc','AIFC (*.aifc)'};
+            if ispc
+                ext = [ext; ...
+                    {'*.mp3','MP3 (*.mp3)'; ...
+                     '*.m4a;*.mp4','MPEG-4 AAC (*.m4a,*.mp4)'}];
+            end
+            
+            [fn,pn] = uigetfile(ext,'Audio Files','MultiSelect','on');
+            
+            if isequal(fn,0), return; end
+            
+            if iscell(fn)
+                ffn = cellfun(@(a) fullfile(pn,a),fn,'uni',0);
+            else
+                ffn = {fullfile(pn,fn)};
+            end
         end
+        
     end
     
 end

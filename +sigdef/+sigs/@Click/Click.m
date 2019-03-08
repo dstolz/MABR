@@ -1,6 +1,10 @@
 classdef Click < sigdef.Signal
     % Daniel Stolzberg, PhD (c) 2019
     
+    properties (Constant = true)
+        A_polarity      = true;
+    end
+    
     methods
         
         % Constructor
@@ -16,11 +20,5 @@ classdef Click < sigdef.Signal
         end
     end
     
-    
-    methods (Static)
-        function obj = createDisplay(parent)
-            % setup custom fields in some parent figure or panel
-        end
-    end
     
 end

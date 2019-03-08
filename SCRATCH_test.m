@@ -2,11 +2,11 @@
 asiosettings
 %%
 fs = 44100;
-freq = 1000;
+freq = 2000;
 t = 0:1/fs:2/freq-1/fs;
 y = sin(2*pi*freq*t);
 
-audiowrite('TEST.wav',y,fs);
+audiowrite('TEST2.wav',y,fs);
 
 %%
 A = ABR('TEST.wav','ASIO4ALL v2');

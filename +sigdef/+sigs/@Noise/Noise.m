@@ -2,19 +2,28 @@ classdef Noise < sigdef.Signal
     % Daniel Stolzberg, PhD (c) 2019
 
     properties (Access = public)
-        HPfreq      (:,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 400;
-        LPfreq      (:,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 12000;
-        filterOrder (:,1) uint8  {mustBeNonempty,mustBePositive,mustBeInteger} = 20;
+        HPfreq      (1,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 400;
+        LPfreq      (1,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 12000;
+        filterOrder (1,1) double {mustBeNonempty,mustBePositive,mustBeInteger} = 20;
+        seed        (1,:) double {mustBeNonempty,mustBeFinite} = 0;
+        windowFcn      (1,:) char   {mustBeNonempty} = 'blackmanharris'; % doc window
+        windowOpts     cell = {};
+        windowRFTime   (1,1) double {mustBeNonempty,mustBeNonnegative,mustBeFinite} = 0.001; % seconds
+        
     end
     
+    properties (Constant = true)
+        D_HPfreq        = 'High-Pass Fc (Hz)';
+        D_LPfreq        = 'Low-Pass Fc (Hz)';
+        D_filterOrder   = 'Filter order';
+        D_seed          = 'Seed#; 0 = "shuffle"';
+        D_windowFcn     = 'Window Function';
+        D_windowRFTime  = 'Window Rise/Fall Time (ms)';
+        A_polarity      = true;
+    end
+
     properties (Access = private)
         filterDesign
-    end
-    
-    properties (Constant = true, Hidden = true)
-        D_HPfreq = 'High-Pass Fc (Hz)';
-        D_LPfreq = 'Low-Pass Fc (Hz)';
-        D_filterOrder = 'Filter order';
     end
     
     methods
@@ -38,8 +47,12 @@ classdef Noise < sigdef.Signal
                 'CutoffFrequency2',obj.LPfreq, ...
                 'SampleRate',      obj.Fs);      
             
-%             y = rand(1,obj.N);
-%             y = y - mean(y);
+            if obj.seed == 0
+                rng('shuffle');
+            else
+                rng(obj.seed);
+            end
+            
             y = randn(1,obj.N);
             y = y ./ max(abs(y));
             
@@ -57,13 +70,24 @@ classdef Noise < sigdef.Signal
             obj.LPfreq = p;
             obj.processUpdate;
         end
-    end
-    
-    
-    methods (Static)
-        function obj = createDisplay(parent)
-            % setup custom fields in some parent figure or panel
+        
+        function set.windowFcn(obj,w)
+            obj.windowFcn = w;
+            obj.processUpdate;
         end
+        
+        function set.windowOpts(obj,w)
+            obj.windowOpts = w;
+            obj.processUpdate;
+        end
+        
+        function set.windowRFTime(obj,wrf)
+            obj.windowRFTime = wrf;
+            obj.processUpdate;
+        end
+        
     end
+    
+    
     
 end

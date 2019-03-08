@@ -2,13 +2,19 @@ classdef Tone < sigdef.Signal
     % Daniel Stolzberg, PhD (c) 2019
 
     properties (Access = public)
-        frequency   (:,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 1000;
-        startPhase  (:,1) double {mustBeNonempty,mustBeGreaterThanOrEqual(startPhase,-90),mustBeLessThanOrEqual(startPhase,90)} = 0;
+        frequency   (1,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 1000;
+        startPhase  (1,1) double {mustBeNonempty,mustBeGreaterThanOrEqual(startPhase,-90),mustBeLessThanOrEqual(startPhase,90)} = 0;
+        windowFcn      (1,:) char   {mustBeNonempty} = 'blackmanharris'; % doc window
+        windowOpts     cell = {};
+        windowRFTime   (1,1) double {mustBeNonempty,mustBeNonnegative,mustBeFinite} = 0.001; % seconds
     end
     
-    properties (Constant = true,Hidden = true)
-        D_frequency = 'Frequency (Hz)';
-        D_startPhase = 'Start Phase (deg)';
+    properties (Constant = true)
+        D_frequency     = 'Frequency (Hz)';
+        D_startPhase    = 'Start Phase (deg)';
+        D_windowFcn     = 'Window Function';
+        D_windowRFTime  = 'Window Rise/Fall Time (ms)';
+        A_polarity      = true;
     end
     
     methods
@@ -26,7 +32,8 @@ classdef Tone < sigdef.Signal
             f = obj.frequency;
             t = obj.timeVector;
             phi = deg2rad(obj.startPhase);
-            obj.data = obj.polarity*sin(2*pi*f*t+phi);
+            
+            obj.data = double(obj.polarity).*sin(2*pi*f*t+phi)';
             
             obj.applyGate; % superclass function
         end
@@ -40,13 +47,24 @@ classdef Tone < sigdef.Signal
             obj.startPhase = p;
             obj.processUpdate; % superclass function
         end
-    end
-    
-    
-    methods (Static)
-        function obj = createDisplay(parent)
-            % setup custom fields in some parent figure or panel
+        
+        function set.windowFcn(obj,w)
+            obj.windowFcn = w;
+            obj.processUpdate;
         end
+        
+        function set.windowOpts(obj,w)
+            obj.windowOpts = w;
+            obj.processUpdate;
+        end
+        
+        function set.windowRFTime(obj,wrf)
+            obj.windowRFTime = wrf;
+            obj.processUpdate;
+        end
+        
     end
+    
+    
     
 end

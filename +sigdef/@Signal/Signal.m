@@ -7,15 +7,11 @@ classdef Signal < handle % & matlab.mixin.Heterogeneous
     properties (GetAccess = public, SetAccess = public)
         Fs             (1,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 48000; % Hz
         
-        dacChannel     (:,1) uint8  {mustBeNonempty,mustBePositive,mustBeFinite} = 1;
-        soundLevelDB   (:,1) double {mustBeNonempty,mustBeFinite,mustBeNonNan} = 60; % dB
-        duration       (:,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 0.005; % seconds
-        onsetDelay     (:,1) double {mustBeNonempty,mustBeNonnegative,mustBeLessThanOrEqual(onsetDelay,0.5)} = 0; % seconds
-        windowFcn      (1,:) char   {mustBeNonempty} = 'blackmanharris'; % doc window
-        windowOpts     cell = {};
-        windowRiseTime (:,1) double {mustBeNonempty,mustBeNonnegative,mustBeFinite} = 0.001; % seconds
-        windowFallTime (:,1) double {mustBeNonempty,mustBeNonnegative,mustBeFinite} = 0.001; % seconds
-        polarity       (:,1) int8   {mustBeNonempty,mustBeMember(polarity,[-1, 1])} = 1; % -1 or +1
+        dacChannel     (1,1) uint8  {mustBeNonempty,mustBePositive,mustBeFinite} = 1;
+        soundLevelDB   (1,1) double {mustBeNonempty,mustBeFinite,mustBeNonNan} = 60; % dB
+        duration       (1,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 0.005; % seconds
+        onsetDelay     (1,1) double {mustBeNonempty,mustBeNonnegative,mustBeLessThanOrEqual(onsetDelay,0.5)} = 0; % seconds
+        polarity       (1,1) int8   {mustBeNonempty,mustBeMember(polarity,[-1, 1])} = 1; % -1 or +1
         
         name           (1,:) char = '';
         
@@ -25,9 +21,19 @@ classdef Signal < handle % & matlab.mixin.Heterogeneous
         parameterTbl;
     end
     
+    properties (Constant = true)
+        % Note that all time parameters should be specified in second and
+        % converted before updating the property.
+        D_soundLevelDB  = 'Sound Level (dB)';
+        D_duration      = 'Duration (ms)';
+        D_onsetDelay    = 'Onset Delay (ms)';
+        D_polarity      = 'Polarity (+1 | -1)';
+        F_windowFcn     = @sigdef.Signal.selectWindowFcn;
+        M_windowFcn     = 'string'; % str
+    end
     
     properties (GetAccess = public, SetAccess = private, Dependent)
-        timeVector;
+        timeVector    (:,1) double {mustBeFinite};
         N = 0;
     end
     
@@ -61,19 +67,15 @@ classdef Signal < handle % & matlab.mixin.Heterogeneous
         
         function applyGate(obj)
             if isequal(obj.windowFcn,'none'), return; end
-            
                 
-            n1 = round(obj.Fs*obj.windowRiseTime)*2;
-            w1 = window(str2func(obj.windowFcn),n1,obj.windowOpts{:});
+            n = round(obj.Fs*obj.windowRFTime)*2;
+            w = window(str2func(obj.windowFcn),n,obj.windowOpts{:});
             
-            n2 = round(obj.Fs*obj.windowFallTime)*2;
-            w2 = window(str2func(obj.windowFcn),n2,obj.windowOpts{:});
             
-            w = [w1(1:n1/2); ones(obj.N-(n1/2+n2/2)-1,1); w2(n2/2:end)];
+            w = [w(1:n/2); ones(obj.N-n,1); w(n/2+1:end)];
             if length(w) > obj.N, w(round(length(w)/2)) = []; end
             
             obj.data = obj.data.*w;
-            
         end
         
         
@@ -98,25 +100,6 @@ classdef Signal < handle % & matlab.mixin.Heterogeneous
             obj.processUpdate;
         end
         
-        function set.windowFcn(obj,w)
-            obj.windowFcn = w;
-            obj.processUpdate;
-        end
-        
-        function set.windowOpts(obj,w)
-            obj.windowOpts = w;
-            obj.processUpdate;
-        end
-        
-        function set.windowRiseTime(obj,wr)
-            obj.windowRiseTime = wr;
-            obj.processUpdate;
-        end
-        
-        function set.windowFallTime(obj,wf)
-            obj.windowFallTime = wf;
-            obj.processUpdate;
-        end
         
         function set.polarity(obj,p)
             obj.polarity = p;
@@ -141,6 +124,7 @@ classdef Signal < handle % & matlab.mixin.Heterogeneous
             h.ColumnName = {'Parameter','Value'};
             h.ColumnEditable = [false,true];
             h.ColumnWidth = {125,125};
+            h.ColumnFormat = {'char','numeric'};
             
             superclassProps = properties(sigdef.Signal);
             subclassProps   = properties(obj);
@@ -149,11 +133,9 @@ classdef Signal < handle % & matlab.mixin.Heterogeneous
             subclassProps(ind) = [];
             
             h.Data = {[]};
-            k = 1;
             for i = 1:length(subclassProps)
-                h.Data{k,1} = obj.(['D_' subclassProps{i}]);
-                h.Data{k,2} = obj.(subclassProps{i});
-                k = k + 1;
+                h.Data{i,1} = obj.(['D_' subclassProps{i}]);
+                h.Data{i,2} = obj.(subclassProps{i});
             end
             
             h.UserData = subclassProps;
@@ -211,6 +193,25 @@ classdef Signal < handle % & matlab.mixin.Heterogeneous
         end
         
         
+    end
+    
+    
+    methods (Static)
+        function w = selectWindowFcn
+            win = {'bartlett','barthannwin','blackman','blackmanharris', ...
+                'bohmanwin','chebwin','flattopwin','gausswin','hamming', ...
+                'hann','kaiser','nuttallwin','parzenwin','rectwin', ...
+                'taylorwin','tukeywin','triang'};
+                        
+            [idx,ok] = listdlg('PromptString','Select a window:', ...
+                'SelectionMode','single','ListString',win);
+            
+            if ok
+                w = win{idx};
+            else
+                w = [];
+            end
+        end
     end
     
 end
