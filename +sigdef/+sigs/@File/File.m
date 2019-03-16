@@ -2,11 +2,7 @@ classdef File < sigdef.Signal
     % Daniel Stolzberg, PhD (c) 2019
     
     properties (Access = public)
-        fullFilename   (1,:) char = '';
-        windowFcn      (1,:) char   {mustBeNonempty} = 'blackmanharris'; % doc window
-        windowOpts     cell = {};
-        windowRFTime   (1,2) double {mustBeNonempty,mustBeNonnegative,mustBeFinite} = 0.001; % seconds
-        
+        fullFilename    (1,1) sigdef.sigProp
     end
     
     properties (SetAccess = private, GetAccess = public, Hidden = true)
@@ -16,57 +12,82 @@ classdef File < sigdef.Signal
         fileext  = '';
     end
     
-    properties (Constant = true)
-        D_fullFilename = 'Filename';
-        F_fullFilename = @sigdef.sigs.File.selectFiles;
-    end
     
     methods
         
         % Constructor
         function obj = File(fullFilename)
+            obj.Type = 'File';
+            
             if nargin < 1 || isempty(fullFilename), fullFilename = ''; end
-            
-            obj.fullFilename = fullFilename;
+
+            obj.fullFilename = sigdef.sigProp(fullFilename,'Audio Files');
+            obj.fullFilename.Alias    = 'Filename';
+            obj.fullFilename.Type     = 'File';
+            obj.fullFilename.Function = @sigdef.Signal.selectAudioFiles;
             
         end
         
-        function update(~)
-            % update in set.fullFilename to avoid recursive loop when calling
-            % obj.processUpdate
-        end
+        function update(obj)
+            ffn = obj.fullFilename.Value;
         
-        function set.fullFilename(obj,fn)
-            if isempty(fn), return; end
+            fnex = cellfun(@(a) exist(a,'file')==2,ffn);
             
-            obj.fullFilename = fn;
-                        
-            if isempty(obj.fileext)  %#ok<MCSUP>
-                % workspace variable?
-                
-            else % assume audio file
-                obj.info = audioinfo(obj.fullFilename); %#ok<MCSUP>
-                [y,obj.Fs] = audioread(obj.fullFilename);
-                obj.data = y';
-                obj.duration = obj.info.Duration; %#ok<MCSUP>
-                
+            assert(all(fnex==true),sprintf('%d of %d files do not exist!',sum(fnex),numel(fnex)));
+            
+            dur  = ones(size(ffn));
+            data = cell(size(ffn));
+            
+            % assume audio file
+            for i = 1:numel(ffn)
+                ainfo = audioinfo(ffn{i});
+                [y,obj.Fs] = audioread(ffn{i});
+                data{i} = y';
+                dur(i) = ainfo.Duration;
             end
+            
+            obj.fullFilename.Value = ffn;
+            obj.duration.Value     = dur./obj.duration.ScalingFactor;
+            obj.data               = data; 
+        end
+        
+        function obj = set.fullFilename(obj,value)
+            if isa(value,'sigdef.sigProp')
+                obj.fullFilename = value;
+                return
+            end
+                
+            if isempty(value)
+                obj.duration.Value = [];
+                obj.fullFilename.Value = {[]};
+                return
+            end
+            
+            obj.fullFilename.Value = cellstr(value);
             
             obj.processUpdate;
         end
         
+        function info = get.info(obj)
+            if isempty(obj.fullFilename.Value), info = {[]}; return; end
+            
+            info = cell(obj.fullFilename.N,1);
+            for i = 1:length(obj.fullFilename.N)
+                info{i} = audioinfo(obj.fullFilename.Value{i});
+            end
+        end
         
         function pth = get.filepath(obj)
-            [pth,fn,~] = fileparts(obj.fullFilename);
-            if isempty(fn), pth = '';
+            [pth,value,~] = fileparts(obj.fullFilename);
+            if isempty(value), pth = '';
                 return
             elseif isempty(pth)
                 pth = cd; 
             end
         end
         
-        function fn = get.filename(obj)
-            [~,fn,~] =  fileparts(obj.fullFilename);
+        function value = get.filename(obj)
+            [~,value,~] =  fileparts(obj.fullFilename);
         end
         
         function ext = get.fileext(obj)
@@ -74,51 +95,8 @@ classdef File < sigdef.Signal
         end
         
         
-        function set.windowFcn(obj,w)
-            obj.windowFcn = w;
-            obj.processUpdate;
-        end
         
-        function set.windowOpts(obj,w)
-            obj.windowOpts = w;
-            obj.processUpdate;
-        end
-        
-        function set.windowRFTime(obj,wrf)
-            if numel(wrf) == 1, wrf = [wrf wrf]; end
-            obj.windowRFTime = wrf;
-            obj.processUpdate;
-        end
-        
-    end
-    
-    
-    methods (Static)
-        function ffn = selectFiles
-            ffn = [];
-            
-            ext = {'*.wav', 'WAVE (*.wav)'; ...
-                   '*.ogg', 'OGG (*.ogg)'; ...
-                   '*.flac','FLAC (*.flac)'; ...
-                   '*.au',  'AU (*.au)'; ...
-                   '*.aiff;*.aif','AIFF (*.aiff,*.ai)'; ...
-                   '*.aifc','AIFC (*.aifc)'};
-            if ispc
-                ext = [ext; ...
-                    {'*.mp3','MP3 (*.mp3)'; ...
-                     '*.m4a;*.mp4','MPEG-4 AAC (*.m4a,*.mp4)'}];
-            end
-            
-            [fn,pn] = uigetfile(ext,'Audio Files','MultiSelect','on');
-            
-            if isequal(fn,0), return; end
-            
-            if iscell(fn)
-                ffn = cellfun(@(a) fullfile(pn,a),fn,'uni',0);
-            else
-                ffn = {fullfile(pn,fn)};
-            end
-        end
+
         
     end
     

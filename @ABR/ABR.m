@@ -9,7 +9,7 @@ classdef ABR < handle
         dacFile       (1,:) char = '';
         ADCfile       (1,:) char = '';
         
-        audioDevice   (1,1) char = '';
+        audioDevice   (1,:) char = '';
         
         
         sweepRate     (1,1) double {mustBePositive, mustBeFinite} = 21.1; % Hz
@@ -19,7 +19,7 @@ classdef ABR < handle
         adcWindow     (1,2) double {mustBeFinite} = [-0.01 0.01]; % seconds
         
         % properties for filter design that uses filtfilt acausal filter
-        adcFilterOrder (1,1) uint8  {mustBePositive,mustBeInteger} = 10;
+        adcFilterOrder (1,1) double {mustBePositive,mustBeInteger} = 10;
         adcFilterHP    (1,1) double {mustBePositive} = 30; % Hz
         adcFilterLP    (1,1) double {mustBePositive} = 3000; % Hz
     end
