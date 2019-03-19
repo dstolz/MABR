@@ -172,7 +172,7 @@ classdef Schedule < handle
                 else
                     t.(obj.props{i}) = obj.compiled(:,i);
                 end
-                alias{i} = obj.SIG.(obj.props{i}).Alias;
+                alias{i} = obj.SIG.(obj.props{i}).AliasWithUnit;
                 if isempty(alias{i}), alias{i} = obj.props{i}; end
             end
             t.Properties.VariableDescriptions = [{'Use'} alias];
@@ -180,7 +180,8 @@ classdef Schedule < handle
             colWidth = (obj.h.schTbl.Position(3) - 80)./ length(obj.props);
             
             obj.h.schTbl.ColumnName     = t.Properties.VariableDescriptions;
-            obj.h.schTbl.ColumnWidth    = num2cell([20 colWidth*ones(1,n)]);
+%             obj.h.schTbl.ColumnWidth    = num2cell([20 colWidth*ones(1,n)]);
+            obj.h.schTbl.ColumnWidth    = [{20} repmat({'auto'},1,n)];
             obj.h.schTbl.ColumnFormat   = [{'logical'},repmat({'numeric'},1,n)];
             obj.h.schTbl.ColumnEditable = [true, false(1,n)];
             obj.h.schTbl.RowStriping    = 'on';

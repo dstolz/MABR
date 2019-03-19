@@ -1,5 +1,9 @@
-function h = ScheduleDesign()
+function h = ScheduleDesign(schedDesignFile)
+% TO DO: Loading and saving of schedule design file
+%
 % Daniel Stolzberg, PhD (c) 2019
+
+if nargin == 1 && ~isempty(schedDesignFile), h.schedDesignFile = schedDesignFile; end
 
 h.fig = findobj('type','figure','-and','name','Schedule Design');
 if isempty(h.fig)
@@ -324,6 +328,7 @@ SigType_Callback(h.SigType,[]); % init
 
 
     function load_schedule_design(hObj,event)
+        
         disp('Load')
     end
 

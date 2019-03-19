@@ -23,11 +23,13 @@ classdef sigProp
         DescriptionWithUnit char
         realValue % Value * ScalingFactor
         unitValueString char
+        AliasWithUnit (1,:) char
     end
     
     properties (SetAccess = private, GetAccess = public, Dependent, Transient)
         Evaluated % returns eval(obj.Value)
     end
+    
     
     methods
         
@@ -96,8 +98,30 @@ classdef sigProp
                 rethrow(me)
             end
         end
-       
         
+%         function s = get.Alias(obj)
+%             if isempty(obj.Alias)
+%                 s = obj.Description;
+%             else
+%                 s = obj.Alias;
+%             end
+%         end
+       
+        function s = get.AliasWithUnit(obj)
+            if isempty(obj.Unit)
+                s = '';
+            else
+                s = [obj.Alias ' [' obj.Unit ']'];
+            end
+        end
+        
+        function s = get.Unit(obj)
+            if isempty(obj.Unit)
+                s = '';
+            else
+                s = obj.Unit;
+            end
+        end
     end
     
 end
