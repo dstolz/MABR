@@ -1,4 +1,4 @@
-classdef Click < sigdef.Signal
+classdef Click < abr.sigdef.Signal
     % Daniel Stolzberg, PhD (c) 2019
     
     methods

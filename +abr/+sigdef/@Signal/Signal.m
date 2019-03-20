@@ -11,14 +11,14 @@ classdef Signal % < handle
         dacChannel      (1,1) uint8  {mustBeNonempty,mustBePositive,mustBeFinite} = 1;
         
         % COMMON SIGNAL PROPERTIES
-        soundLevel      (1,1) sigdef.sigProp
-        duration        (1,1) sigdef.sigProp
-        onsetDelay      (1,1) sigdef.sigProp
-        polarity        (1,1) sigdef.sigProp
+        soundLevel      (1,1) abr.sigdef.sigProp
+        duration        (1,1) abr.sigdef.sigProp
+        onsetDelay      (1,1) abr.sigdef.sigProp
+        polarity        (1,1) abr.sigdef.sigProp
         
-        windowFcn       (1,1) sigdef.sigProp
-        windowOpts      (1,1) sigdef.sigProp
-        windowRFTime    (1,1) sigdef.sigProp
+        windowFcn       (1,1) abr.sigdef.sigProp
+        windowOpts      (1,1) abr.sigdef.sigProp
+        windowRFTime    (1,1) abr.sigdef.sigProp
                 
         
 %         parameterTbl;
@@ -50,28 +50,28 @@ classdef Signal % < handle
             
             % Note that all time parameters should be specified in second and
             % converted before updating the property.
-            obj.soundLevel  = sigdef.sigProp(60,'Sound Level','dB');
+            obj.soundLevel  = abr.sigdef.sigProp(60,'Sound Level','dB');
             obj.soundLevel.Alias = 'Level';
             
-            obj.duration    = sigdef.sigProp(5,'Duration','ms',0.001);
+            obj.duration    = abr.sigdef.sigProp(5,'Duration','ms',0.001);
             obj.duration.Alias = 'Duration';
             
-            obj.onsetDelay  = sigdef.sigProp(0, 'Onset Delay','ms',0.001);
+            obj.onsetDelay  = abr.sigdef.sigProp(0, 'Onset Delay','ms',0.001);
             obj.onsetDelay.Alias = 'Onset Delay';
             
-            obj.polarity    = sigdef.sigProp([-1 1], 'Polarity (+1|-1)',[],[],true);
+            obj.polarity    = abr.sigdef.sigProp([-1 1], 'Polarity (+1|-1)',[],[],true);
             obj.polarity.Alias = 'Polarity';
             
-            obj.windowFcn   = sigdef.sigProp('blackmanharris','Window Function');
+            obj.windowFcn   = abr.sigdef.sigProp('blackmanharris','Window Function');
             obj.windowFcn.Alias = 'Window Fcn';
             obj.windowFcn.Validation = 'ischar(%g);';
             obj.windowFcn.Type = 'String';
-            obj.windowFcn.Function = @sigdef.Signal.selectWindowFcn;
+            obj.windowFcn.Function = @abr.sigdef.Signal.selectWindowFcn;
            
-            obj.windowOpts = sigdef.sigProp([],'Window Options');
+            obj.windowOpts = abr.sigdef.sigProp([],'Window Options');
             obj.windowOpts.Alias = 'Window Opts';
 
-            obj.windowRFTime = sigdef.sigProp(1,'Window Rise/Fall Time','ms',0.001);
+            obj.windowRFTime = abr.sigdef.sigProp(1,'Window Rise/Fall Time','ms',0.001);
             obj.windowRFTime.Alias = 'Window R/F Time';
             
             % obj = Signal(duration,onsetDelay,soundLevelDB,windowFcn)
@@ -121,7 +121,7 @@ classdef Signal % < handle
         end
         
         function obj = set.duration(obj,value)
-            if isa(value,'sigdef.sigProp')
+            if isa(value,'abr.sigdef.sigProp')
                 obj.duration = value;
             else
                 mustBePositive(value);
@@ -134,7 +134,7 @@ classdef Signal % < handle
         
         
         function obj = set.onsetDelay(obj,value)
-            if isa(value,'sigdef.sigProp')
+            if isa(value,'abr.sigdef.sigProp')
                 obj.onsetDelay = value;
             else
                 mustBeNonnegative(value);
@@ -146,7 +146,7 @@ classdef Signal % < handle
         end
         
         function obj = set.polarity(obj,value)
-            if isa(value,'sigdef.sigProp')
+            if isa(value,'abr.sigdef.sigProp')
                 obj.polarity = value;
             else
                 mustBeNonempty(value);
@@ -157,7 +157,7 @@ classdef Signal % < handle
         end
         
         function obj = set.windowFcn(obj,value)
-            if isa(value,'sigdef.sigProp')
+            if isa(value,'abr.sigdef.sigProp')
                 obj.windowFcn = value;
             else
                 mustBeNonempty(value);
@@ -168,7 +168,7 @@ classdef Signal % < handle
         end
         
         function obj = set.windowOpts(obj,value)
-            if isa(value,'sigdef.sigProp')
+            if isa(value,'abr.sigdef.sigProp')
                 obj.windowOpts = value;
             else
                 obj.windowOpts.Value = value;
@@ -177,7 +177,7 @@ classdef Signal % < handle
         end
         
         function obj = set.windowRFTime(obj,wrf)
-            if isa(wrf,'sigdef.sigProp')
+            if isa(wrf,'abr.sigdef.sigProp')
                 obj.windowRFTime = wrf;
             else
                 mustBePositive(wrf);
@@ -208,7 +208,7 @@ classdef Signal % < handle
 %             h.ColumnWidth    = {125,125};
 %             h.ColumnFormat   = {'char','numeric'};
 %             
-%             superclassProps = properties(sigdef.Signal);
+%             superclassProps = properties(abr.sigdef.Signal);
 %             subclassProps   = properties(obj);
 %             
 %             ind = ismember(subclassProps,superclassProps);
@@ -287,7 +287,7 @@ classdef Signal % < handle
     
     
     methods (Static)
-        % FUNCTIONS MUST ACCEPT ONE INPUT WHICH WILL BE OF THIS CLASS TYPE: sigdef.Signal
+        % FUNCTIONS MUST ACCEPT ONE INPUT WHICH WILL BE OF THIS CLASS TYPE: abr.sigdef.Signal
         % FUNCTIONS SHOULD RETURN 'NOVALUE' INSTEAD OF EMPTY VARIABLE
         
         function w = selectWindowFcn(obj)

@@ -2,7 +2,7 @@ classdef File < sigdef.Signal
     % Daniel Stolzberg, PhD (c) 2019
     
     properties (Access = public)
-        fullFilename    (1,1) sigdef.sigProp
+        fullFilename    (1,1) abr.sigdef.sigProp
     end
     
     properties (SetAccess = private, GetAccess = public, Hidden = true)
@@ -21,7 +21,7 @@ classdef File < sigdef.Signal
             
             if nargin < 1 || isempty(fullFilename), fullFilename = ''; end
 
-            obj.fullFilename = sigdef.sigProp(fullFilename,'Audio Files');
+            obj.fullFilename = abr.sigdef.sigProp(fullFilename,'Audio Files');
             obj.fullFilename.Alias    = 'Filename';
             obj.fullFilename.Type     = 'File';
             obj.fullFilename.Function = @sigdef.Signal.selectAudioFiles;

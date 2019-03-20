@@ -6,22 +6,32 @@ classdef ABR < handle
         frameLength   (1,1) uint16 {mustBeInteger,mustBePositive} = 256;
         adcFs         (1,1) double {mustBePositive,mustBeFinite}  = 11025; % downsampled to this after acquisitino
         
-        dacFile       (1,:) char = '';
-        ADCfile       (1,:) char = '';
+        dacFs          (1,1) double {mustBeFinite,mustBePositive} = 44100;
+        dacBuffer      (:,1) double {mustBeFinite,mustBeGreaterThanOrEqual(dacBuffer,-1),mustBeLessThanOrEqual(dacBuffer,1)};      % playback buffer
         
-        audioDevice   (1,:) char = '';
+        dacFile       (1,:) char
+        ADCfile       (1,:) char
+        
+        audioDevice   (1,:) char
         
         
         sweepRate     (1,1) double {mustBePositive, mustBeFinite} = 21.1; % Hz
         numSweeps     (1,1) uint16 {mustBeInteger, mustBePositive} = 1024;
         eventOnset    (1,1) double {mustBePositive,mustBeFinite} = 0.1; % seconds
+        
+        timingAdjustment (1,1) double {mustBeNonnegative,mustBeFinite} = 1e-5; % seconds
 
         adcWindow     (1,2) double {mustBeFinite} = [-0.01 0.01]; % seconds
         
         % properties for filter design that uses filtfilt acausal filter
         adcFilterOrder (1,1) double {mustBePositive,mustBeInteger} = 10;
-        adcFilterHP    (1,1) double {mustBePositive} = 30; % Hz
-        adcFilterLP    (1,1) double {mustBePositive} = 3000; % Hz
+        adcFilterHP    (1,1) double {mustBePositive,mustBeFinite} = 10; % Hz
+        adcFilterLP    (1,1) double {mustBePositive,mustBeFinite} = 3000; % Hz
+        
+        adcNotchFilterFreq (1,1) double {mustBePositive,mustBeFinite} = 60; % Hz
+        
+        adcUseBPFilter (1,1) logical = true;
+        adcUseNotchFilter (1,1) logical = true;
     end
     
     properties (GetAccess = public, SetAccess = private)
@@ -32,9 +42,8 @@ classdef ABR < handle
         bufferPosition = uint32(0); % where we are in the playback buffer
         
         adcFilterDesign;
-        
+        adcNotchFilterDesign
         adcBuffer;      % recording buffer
-        dacBuffer;      % playback buffer
         
         adcData;        % recorded data organized as samples x sweep
         adcDataFiltered; % obj.adcData filtered
@@ -47,7 +56,6 @@ classdef ABR < handle
     end
     
     properties (GetAccess = public, SetAccess = private, Dependent)
-        dacFs;          % dependent on dacFile
         dacBitDepth;       % dependent on dacFile
         
         programState = 'Idle'; % depends on private property STATE
@@ -89,13 +97,6 @@ classdef ABR < handle
                 obj.selectAudioDevice(audioDevice); 
             end
 
-            % create original filter; properties updated by calls to
-            % individual properties.
-            obj.adcFilterDesign = designfilt('bandpassfir', ...
-                'FilterOrder',     obj.adcFilterOrder, ...
-                'CutoffFrequency1',obj.adcFilterHP, ...
-                'CutoffFrequency2',obj.adcFilterLP, ...
-                'SampleRate',      obj.adcFs);
         end
         
         % Destructor
@@ -148,8 +149,12 @@ classdef ABR < handle
         end
         
         function updateDACbuffer(obj) % only update buffer when file is loaded
-            y = audioread(obj.dacFile);
-                        
+            if isempty(obj.dacFile)
+                y  = obj.dacBuffer;
+            else
+                y = audioread(obj.dacFile);
+            end
+            
             % add in any additional padding for adc window            
             obj.dacPaddingSamples(3) = length(y); % original buffer length
             obj.dacPaddingSamples(1) = round(obj.dacFs*abs(obj.adcWindow(1)));
@@ -178,8 +183,11 @@ classdef ABR < handle
         end
         
         function dacFs = get.dacFs(obj)
-            if isempty(obj.dacFile), dacFs = NaN; return; end
-            dacFs = obj.WAVinfo.SampleRate;
+            if isempty(obj.dacFile)
+                dacFs = obj.dacFs;
+            else
+                dacFs = obj.WAVinfo.SampleRate;
+            end
         end
         
         function dacBitDepth = get.dacBitDepth(obj)
@@ -201,6 +209,39 @@ classdef ABR < handle
         
       
         % ADC -------------------------------------------------------------
+        function createADCfilt(obj)
+            
+            if isa(obj.adcFilterDesign,'digitalFilter')
+                % don't bother replacing filter design if relevant
+                % parameters are unchanged
+                a(1) = obj.adcFilterDesign.FilterOrder == obj.adcFilterOrder;
+                a(2) = obj.adcFilterDesign.CutoffFrequency1 == obj.adcFilterHP;
+                a(3) = obj.adcFilterDesign.CutoffFrequency2 == obj.adcFilterLP;
+                a(4) = obj.adcFilterDesign.SampleRate == obj.adcFs;
+                if all(a), return; end
+            end
+            
+            
+            % create ADC bandpassfilter
+            % NOTE: properties can not be updated dynamically
+            obj.adcFilterDesign = designfilt('bandpassfir', ...
+                'FilterOrder',     obj.adcFilterOrder, ...
+                'CutoffFrequency1',obj.adcFilterHP, ...
+                'CutoffFrequency2',obj.adcFilterLP, ...
+                'SampleRate',      obj.adcFs);
+            
+            % Notch filter
+            N = 8;
+            G = -inf;
+            Q = 1.8;
+            Wo = obj.adcNotchFilterFreq/(obj.adcFs/2);
+            BW = Wo/Q;      % Bandwidth will occur at -3 dB
+            [B,A] = designParamEQ(N,G,Wo,BW);
+            SOS = [B', ones(N/2,1), A'];
+            obj.adcNotchFilterDesign = dsp.BiquadFilter('SOSMatrix',SOS);
+            setup(obj.adcNotchFilterDesign,zeros(obj.frameLength,1));
+        end
+        
         function set.adcWindow(obj,win)
             assert(numel(win) == 2,'adcWindow must have two values');
             
@@ -228,22 +269,19 @@ classdef ABR < handle
         end
         
         function set.adcFilterHP(obj,f)
-            assert(f > obj.adcFilterLP,'adcFilterHP must be lower than adcFilterLP'); %#ok<MCSUP>
+            assert(f < obj.adcFilterLP,'adcFilterHP must be lower than adcFilterLP'); %#ok<MCSUP>
             assert(f < obj.adcFs/2,sprintf('Filter must be below Nyquist rate = %.3f Hz',obj.adcFs/2));  %#ok<MCSUP>
             obj.adcFilterHP = f;
-            obj.adcFilterDesign.CutoffFrequency1 = f; %#ok<MCSUP>
         end
         
         function set.adcFilterLP(obj,f)
-            assert(f < obj.adcFilterHP,'adcFilterLP must be higher than adcFilterHP'); %#ok<MCSUP>
+            assert(f > obj.adcFilterHP,'adcFilterLP must be higher than adcFilterHP'); %#ok<MCSUP>
             assert(f < obj.adcFs/2,sprintf('Filter must be below Nyquist rate = %.3f Hz',obj.adcFs/2));  %#ok<MCSUP>
             obj.adcFilterLP = f;
-            obj.adcFilterDesign.CutoffFrequency2 = f; %#ok<MCSUP>
         end
         
         function set.adcFilterOrder(obj,order)
             obj.adcFilterOrder = order;
-            obj.adcFilterDesign.FilteOrder = order; %#ok<MCSUP>
         end
         
         

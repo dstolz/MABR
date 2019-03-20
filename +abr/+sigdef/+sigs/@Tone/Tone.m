@@ -1,9 +1,9 @@
-classdef Tone < sigdef.Signal
+classdef Tone < abr.sigdef.Signal
     % Daniel Stolzberg, PhD (c) 2019
 
     properties (Access = public)
-        frequency       (1,1) sigdef.sigProp
-        startPhase      (1,1) sigdef.sigProp
+        frequency       (1,1) abr.sigdef.sigProp
+        startPhase      (1,1) abr.sigdef.sigProp
     end
     
     
@@ -19,12 +19,12 @@ classdef Tone < sigdef.Signal
             if nargin < 2 || isempty(soundLevel), soundLevel = '0:10:80'; end
             if nargin < 3 || isempty(startPhase), startPhase = 0;  end
             
-            obj.frequency       = sigdef.sigProp(frequency,'Frequency','kHz',1000);            
+            obj.frequency       = abr.sigdef.sigProp(frequency,'Frequency','kHz',1000);            
             obj.frequency.Alias = 'Frequency';
             
             obj.soundLevel.Value = soundLevel;
             
-            obj.startPhase       = sigdef.sigProp(startPhase,'Start Phase','deg');
+            obj.startPhase       = abr.sigdef.sigProp(startPhase,'Start Phase','deg');
             obj.startPhase.Alias = 'Start Phase';
                         
             obj.ignoreProcessUpdate = false;
@@ -33,6 +33,7 @@ classdef Tone < sigdef.Signal
         function obj = update(obj)
             time = obj.timeVector;
             
+            A    = obj.soundLevel.realValue;
             freq = obj.frequency.realValue;            
             phi  = deg2rad(obj.startPhase.realValue);
             pol  = double(obj.polarity.realValue);
@@ -47,17 +48,28 @@ classdef Tone < sigdef.Signal
                     time{i}(end)-time{i}(1),obj.windowRFTime.realValue);
             end
             
+            
+            % TO DO: ADJUST TO CALIBRATED VALUE (DOUBLE CHECK THIS)
+            CALVOLT = 1; % V @ CALVAL dB SPL
+            CALVAL = 80; % dB SPL
+            
             k = 1;
             for i = 1:numel(time)
                 for j = 1:numel(pol)
                     for m = 1:numel(freq)
                         for n = 1:numel(phi)
-                            obj.data{k,1} = sin(2*pi*freq(m)*time{i}+phi(n))*double(pol(j));
-                            obj.dataParams.frequency(k,1)  = freq(m);
-                            obj.dataParams.startPhase(k,1) = phi(n);
-                            obj.dataParams.polarity(k,1)   = pol(j);
-                            obj.dataParams.duration(k,1)   = obj.duration.realValue(i); % same as timeVector
-                            k = k + 1;
+                            for a = 1:numel(A)
+                                
+                                Adb = CALVOLT.*10.^((A(a)-CALVAL)./20);
+                                
+                                obj.data{k,1} = Adb.*sin(2*pi*freq(m)*time{i}+phi(n))*double(pol(j));
+                                obj.dataParams.frequency(k,1)  = freq(m);
+                                obj.dataParams.soundLevel(k,1) = A(a);
+                                obj.dataParams.startPhase(k,1) = phi(n);
+                                obj.dataParams.polarity(k,1)   = pol(j);
+                                obj.dataParams.duration(k,1)   = obj.duration.realValue(i); % same as timeVector
+                                k = k + 1;
+                            end
                         end
                     end
                 end
@@ -66,7 +78,7 @@ classdef Tone < sigdef.Signal
         end
         
         function obj = set.frequency(obj,value)
-            if isa(value,'sigdef.sigProp')
+            if isa(value,'abr.sigdef.sigProp')
                 obj.frequency = value;
             else
                 mustBeFinite(value);
@@ -79,7 +91,7 @@ classdef Tone < sigdef.Signal
         end
         
         function obj = set.startPhase(obj,value)
-            if isa(value,'sigdef.sigProp')
+            if isa(value,'abr.sigdef.sigProp')
                 obj.startPhase = value;
             else
                 mustBeNonempty(value);

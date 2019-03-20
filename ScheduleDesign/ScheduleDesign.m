@@ -102,11 +102,11 @@ SigType_Callback(h.SigType,[]); % init
     function SigType_Callback(src,event)
         sigType = src.String{src.Value};
         
-        h.SIG = sigdef.sigs.(sigType);
+        h.SIG = abr.sigdef.sigs.(sigType);
         
         props = properties(h.SIG);
         
-        ind = cellfun(@(a) isa(h.SIG.(a),'sigdef.sigProp'),props);
+        ind = cellfun(@(a) isa(h.SIG.(a),'abr.sigdef.sigProp'),props);
         props(~ind) = [];
         
         ind = cellfun(@(a) h.SIG.(a).Active,props);
@@ -116,7 +116,7 @@ SigType_Callback(h.SigType,[]); % init
         h.SigDefTable.Data = {[]};
         for i = 1:length(props)
             
-            if ~isa(h.SIG.(props{i}),'sigdef.sigProp') || ~h.SIG.(props{i}).Active, continue; end
+            if ~isa(h.SIG.(props{i}),'abr.sigdef.sigProp') || ~h.SIG.(props{i}).Active, continue; end
             
             descr = h.SIG.(props{i}).DescriptionWithUnit;
             if isempty(descr), continue; end % only include properties with descriptions
@@ -249,8 +249,12 @@ SigType_Callback(h.SigType,[]); % init
         props = h.SigDefTable.UserData;
         data  = h.SigDefTable.Data;
         
-        if ~isfield(h,'SCH') || ~isa(h.SCH,'sigdef.Schedule')
-            h.SCH = sigdef.Schedule;
+        if ~isfield(h,'SCH') || ~isa(h.SCH,'abr.sigdef.Schedule')
+            h.SCH = abr.sigdef.Schedule;
+        end
+        
+        if isempty(h.SCH.schFig)
+            h.SCH.createGUI;
         end
         
         h.SCH.preprocess(h.SIG,props,data);
@@ -300,7 +304,7 @@ SigType_Callback(h.SigType,[]); % init
 %             h.axSigPlot.YAxis.Limits = [-y y];
             h.axSigPlot.YAxis.Limits = [-1.1 1.1];
             
-            if isa(h.SIG,'sigdef.sigs.File')
+            if isa(h.SIG,'abr.sigdef.sigs.File')
                 fn = h.SIG.fullFilename.Value{k};
                 fn = fn(find(fn==filesep,1,'last')+1:find(fn=='.',1,'last')-1);
                 pstr = sprintf('Filename: "%s"',fn);
@@ -319,7 +323,7 @@ SigType_Callback(h.SigType,[]); % init
             end
             h.axSigPlot.Title.String = pstr;
             
-            pause(0.5)
+            pause(0.2)
         end
         
         set(h.fig,'Pointer','arrow');

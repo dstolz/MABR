@@ -1,10 +1,16 @@
 classdef Schedule < handle
     % Daniel Stolzberg, PhD (c) 2019
     
+    properties (Access = public)
+        filename (1,:) char
+    end
+    
     properties (GetAccess = public, SetAccess = private)
-        SIG
+        SIG      (:,1)
         data
         compiled
+                
+        scheduleDesignFilename (1,:) char
     end
     
     properties (SetAccess = private, GetAccess = public)
@@ -20,22 +26,27 @@ classdef Schedule < handle
     end
     
     methods
+        createGUI(obj);
         
+        % Constructor
         function obj = Schedule(filename)
-            obj.createGUI;
             
             if nargin == 1 && ~isempty(filename)
-                sigdef.Schedule.load_schedule(filename)
-                
+                obj.filename = filename;
             end
         end
         
+        function set.filename(obj,ffn)
+            obj.filename = ffn;
+%             obj.load_schedule;
+        end
+        
         function a = get.sigArray(obj)
-            s = obj.selectedData;
-            a = repmat(sigdef.sigs.(obj.SIG.Type),length(s),1);
-            for i = 1:length(a)
-                for f = fieldnames(s)'
-                    a(i).(char(f)).Value = s(i).(char(f));
+            d = obj.h.schTbl.Data;
+            a = repmat(abr.sigdef.sigs.(obj.SIG.Type),size(d,1),1);
+            for i = 1:length(obj.props)
+                for j = 1:size(d,1)
+                     a(j).(obj.props{i}).Value = d{j,i+1};
                 end
             end
         end
@@ -44,16 +55,7 @@ classdef Schedule < handle
             s = [];
             d = obj.h.schTbl.Data;
             if isempty(d), return; end
-            
-            d(~[d{:,1}],:) = [];
-            d(:,1) = [];
-            
-            for i = 1:length(obj.props)
-                for j = 1:size(d,1)
-                    s(j).(obj.props{i}) = d{j,i};
-                end
-            end
-            
+            s = [d{:,1}];
         end
         
         
@@ -177,7 +179,7 @@ classdef Schedule < handle
             end
             t.Properties.VariableDescriptions = [{'Use'} alias];
 
-            colWidth = (obj.h.schTbl.Position(3) - 80)./ length(obj.props);
+%             colWidth = (obj.h.schTbl.Position(3) - 80)./ length(obj.props);
             
             obj.h.schTbl.ColumnName     = t.Properties.VariableDescriptions;
 %             obj.h.schTbl.ColumnWidth    = num2cell([20 colWidth*ones(1,n)]);
@@ -191,146 +193,19 @@ classdef Schedule < handle
             obj.h.schTbl.UserData.Table = t;
             obj.h.schTbl.UserData.Obj = obj;
             
-        end
-        
-        
-        
-        
-        
-        
-        function createGUI(obj)
-            obj.schFig = findobj('type','figure','-and','Name','Schedule');
             
-            if isempty(obj.schFig)
-                obj.schFig = figure('name','Schedule', 'Position',[600 200 700 500], ...
-                    'MenuBar','none','IntegerHandle','off');
-                
-                
-                % Toolbar
-                obj.h.toolbar = uitoolbar(obj.schFig);
-                
-                iconPath = fullfile(matlabroot,'toolbox','matlab','icons');
-                
-                imgFileLoad = imread(fullfile(iconPath,'file_open.png'));
-                imgFileLoad = im2double(imgFileLoad);
-                imgFileLoad(imgFileLoad == 0) = nan;
-                
-                imgFileSave = imread(fullfile(iconPath,'file_save.png'));
-                imgFileSave = im2double(imgFileSave);
-                imgFileSave(imgFileSave == 0) = nan;
-                
-                obj.h.pthLoad = uipushtool(obj.h.toolbar);
-                obj.h.pthLoad.Tooltip = 'Load Schedule';
-                obj.h.pthLoad.ClickedCallback = {@sigdef.Schedule.load_schedule,obj};
-                obj.h.pthLoad.CData = imgFileLoad;
-                
-                obj.h.pthSave = uipushtool(obj.h.toolbar);
-                obj.h.pthSave.Tooltip = 'Save Schedule';
-                obj.h.pthSave.ClickedCallback = {@sigdef.Schedule.save_schedule,obj};
-                obj.h.pthSave.CData = imgFileSave;
-
-                % Schedule Design Table
-                obj.h.schTitleLbl = uicontrol(obj.schFig,'Style','text');
-                obj.h.schTitleLbl.Position = [180 460 380 30];
-                obj.h.schTitleLbl.String = 'Schedule';
-                obj.h.schTitleLbl.FontSize = 18;
-                obj.h.schTitleLbl.HorizontalAlignment = 'left';
-                
-                
-                obj.h.schTbl = uitable(obj.schFig,'Tag','Schedule');
-                obj.h.schTbl.Position = [180 20 500 440];
-                obj.h.schTbl.FontSize = 12;
-                obj.h.schTbl.ColumnEditable = false;
-                obj.h.schTbl.RearrangeableColumns = 'on';
-                obj.h.schTbl.Tooltip = 'Select one cell in one or more columns and then click "Sort on Column"';
-                obj.h.schTbl.CellSelectionCallback = @sigdef.Schedule.cell_selection;
-                obj.h.schTbl.UserData.ColumnSelected = [];
-                obj.h.schTbl.UserData.RowSelected = [];
-                
-                %                 % Turn the JIDE sorting on
-                %                 jscrollpane = findjobj(obj.h.schTbl);
-                %                 jtable = jscrollpane.getViewport.getView;
-                %
-                %                 jtable.setSortable(true);
-                %                 jtable.setAutoResort(true);
-                %                 jtable.setMultiColumnSortable(true);
-                %                 jtable.setPreserveSelectionsAfterSorting(true);
-                %                 jtable.getTableHeader.setToolTipText('<html>&nbsp;<b>Click</b> to sort;<br />&nbsp;<b>Ctrl-click</b> to sort</html>');
-                %                 jtable.setRowSelectionAllowed(true);
-                %                 jtable.setColumnSelectionAllowed(false);
-                
-                
-                % selection buttons
-                obj.h.buttonPanel = uipanel(obj.schFig,'Units','Pixels', ...
-                    'Position',[10 20 160 440]);
-                    
-                R = obj.h.buttonPanel.Position(4)-50; Rspace = 40;
-                
-                
-                obj.h.btnSortCol = uicontrol(obj.h.buttonPanel,'Style','pushbutton');
-                obj.h.btnSortCol.Position = [10 R 140 40];
-                obj.h.btnSortCol.String = 'Sort on Column';
-                obj.h.btnSortCol.FontSize = 14;
-                obj.h.btnSortCol.Callback = @sigdef.Schedule.selection_processor;
-                
-                R = R - Rspace;
-                obj.h.btnResetSchedule = uicontrol(obj.h.buttonPanel,'Style','pushbutton');
-                obj.h.btnResetSchedule.Position = [10 R 140 40];
-                obj.h.btnResetSchedule.String = 'Reset Schedule';
-                obj.h.btnResetSchedule.FontSize = 14;
-                obj.h.btnResetSchedule.Callback = @sigdef.Schedule.selection_processor;
-                
-                R = R - Rspace*2;
-                
-                
-                obj.h.lblSelect = uicontrol(obj.h.buttonPanel,'Style','text');
-                obj.h.lblSelect.Position = [10 R 140 20];
-                obj.h.lblSelect.String = 'Select ...';
-                obj.h.lblSelect.FontSize = 14;
-                obj.h.lblSelect.HorizontalAlignment = 'left';
-                
-                R = R - Rspace - 10;
-                obj.h.btnAllNone = uicontrol(obj.h.buttonPanel,'Style','pushbutton');
-                obj.h.btnAllNone.Position = [10 R 140 40];
-                obj.h.btnAllNone.String = 'None';
-                obj.h.btnAllNone.FontSize = 14;
-                obj.h.btnAllNone.Callback = @sigdef.Schedule.selection_processor;
-                
-                R = R - Rspace;
-                obj.h.btnEverySecond = uicontrol(obj.h.buttonPanel,'Style','pushbutton');
-                obj.h.btnEverySecond.Position = [10 R 140 40];
-                obj.h.btnEverySecond.String = 'Every Other';
-                obj.h.btnEverySecond.FontSize = 14;
-                obj.h.btnEverySecond.Callback = @sigdef.Schedule.selection_processor;
-                
-                R = R - Rspace;
-                obj.h.btnSelectCustom = uicontrol(obj.h.buttonPanel,'Style','pushbutton');
-                obj.h.btnSelectCustom.Position = [10 R 140 40];
-                obj.h.btnSelectCustom.String = 'Custom';
-                obj.h.btnSelectCustom.FontSize = 14;
-                obj.h.btnSelectCustom.Callback = @sigdef.Schedule.selection_processor;
-                
-                R = R - Rspace;
-                obj.h.btnToggleSel = uicontrol(obj.h.buttonPanel,'Style','pushbutton');
-                obj.h.btnToggleSel.Position = [10 R 140 40];
-                obj.h.btnToggleSel.String = 'Toggle';
-                obj.h.btnToggleSel.FontSize = 14;
-                obj.h.btnToggleSel.Callback = @sigdef.Schedule.selection_processor;
-            end
-            
-            figure(obj.schFig);
+            [~,fn,~] = fileparts(obj.filename);
+            obj.h.schTitleLbl.String  = sprintf('Schedule: %s',fn);
+            obj.h.schTitleLbl.Tooltip = obj.filename;
             
         end
-    end
-    
-    
-    
-    
-    
-    methods (Static)
-        function load_schedule(hObj,~,obj)
-            if ischar(hObj)
-                ffn = hObj;
+        
+        
+        
+        
+        function load_schedule(obj)
+            ffn = obj.filename;
+            if ~isempty(ffn) && ischar(ffn)
                 assert(exist(ffn,'file') == 2,'File does not exist! "%s"',ffn)
             else
                 dfltpth = getpref('Schedule','path',cd);
@@ -340,25 +215,29 @@ classdef Schedule < handle
                 if isequal(fn,0), return; end
                 
                 ffn = fullfile(pn,fn);
+                
+                setpref('Schedule','path',pn);
             end
             
             fprintf('Loading schedule "%s" ...',ffn)
             
-            
             load(ffn,'-mat','compiled','data','SIG','tblData');
             
-            obj.SIG      = SIG;
-            obj.compiled = compiled;
-            obj.data     = data;
+            obj.SIG      = SIG; %#ok<PROP>
+            obj.compiled = compiled; %#ok<PROP>
+            obj.data     = data; %#ok<PROP>
+            
+            obj.filename = ffn;
+            
             obj.update;
             obj.h.schTbl.Data = tblData;
             
             fprintf(' done\n')
             
-            setpref('Schedule','path',pn);
         end
         
-        function save_schedule(~,~,obj)
+        
+        function save_schedule(obj)
             dfltpth = getpref('Schedule','path',cd);
             
             [fn,pn] = uiputfile({'*.sched','Schedule (*.sched)'},'Save schedule',dfltpth);
@@ -366,16 +245,30 @@ classdef Schedule < handle
             if isequal(fn,0), return; end
             
             tblData  = obj.h.schTbl.Data;
-            data     = obj.data;
-            compiled = obj.compiled;
-            SIG      = obj.SIG;
+            data     = obj.data; %#ok<PROP>
+            compiled = obj.compiled; %#ok<PROP>
+            SIG      = obj.SIG; %#ok<PROP>
             
             save(fullfile(pn,fn),'-mat','compiled','data','SIG','tblData');
             
             fprintf('Schedule saved as ... %s\n',fullfile(pn,fn))
             
+            obj.filename = fullfile(pn,fn);
+            [~,fn,~] = fileparts(obj.filename);
+            obj.h.schTitleLbl.String  = sprintf('Schedule: %s',fn);
+            obj.h.schTitleLbl.Tooltip = obj.filename;
+            
             setpref('Scehdule','path',pn);
         end
+        
+       
+    end
+    
+    
+    
+    
+    
+    methods (Static)
         
         function cell_selection(hObj,event)
             if isempty(event.Indices)
@@ -462,8 +355,14 @@ classdef Schedule < handle
             
         end
         
+        function ext_load_schedule(~,~,obj)
+            obj.filename = '';
+            obj.load_schedule;
+        end
         
-        
+        function ext_save_schedule(~,~,obj)
+            obj.save_schedule;
+        end
     end
     
     

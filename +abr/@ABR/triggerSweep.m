@@ -16,7 +16,7 @@ n = obj.dacBufferLength;
 k = obj.frameLength;
 
 % wait until we reach the next sweep time
-while obj.nextSweepTime > hat, end
+while obj.nextSweepTime > hat + obj.timingAdjustment, end
 
 T = hat; % stimulus onset
 
@@ -32,7 +32,13 @@ obj.nextSweepTime = T + 1/obj.sweepRate;
 
 obj.adcData(:,obj.sweepCount) = obj.adcBuffer(1:obj.adcDecimationFactor:end);
 
-obj.adcDataFiltered(:,obj.sweepCount) = filtfilt(obj.adcFilterDesign,obj.adcData(:,obj.sweepCount));
+if obj.adcUseBPFilter
+    obj.adcDataFiltered(:,obj.sweepCount) = filtfilt(obj.adcFilterDesign,obj.adcData(:,obj.sweepCount));
+end
+
+if obj.adcUseNotchFilter
+    
+end
 
 obj.sweepCount = obj.sweepCount + 1;
 

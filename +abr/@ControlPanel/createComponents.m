@@ -5,7 +5,7 @@ function createComponents(app)
 
 % Create ControlPanelUIFigure
 app.ControlPanelUIFigure = uifigure;
-app.ControlPanelUIFigure.Position = [100 100 480 273];
+app.ControlPanelUIFigure.Position = [50 400 480 275];
 app.ControlPanelUIFigure.Name = 'ABR Control Panel';
 
 % Create FileMenu
@@ -15,28 +15,51 @@ app.FileMenu.Text = 'File';
 % Create LoadConfigurationMenu
 app.LoadConfigurationMenu = uimenu(app.FileMenu);
 app.LoadConfigurationMenu.Text = 'Load Configuration ...';
+app.LoadConfigurationMenu.Accelerator = 'l';
+app.LoadConfigurationMenu.Callback = createCallbackFcn(app, @load_config_file, false);
 
 % Create SaveConfigurationMenu
 app.SaveConfigurationMenu = uimenu(app.FileMenu);
 app.SaveConfigurationMenu.Text = 'Save Configuration ...';
+app.SaveConfigurationMenu.Accelerator = 's';
+app.SaveConfigurationMenu.Callback = createCallbackFcn(app, @save_config_file, false);
 
 % Create OptionsMenu
 app.OptionsMenu = uimenu(app.ControlPanelUIFigure);
 app.OptionsMenu.Text = 'Options';
 
+
 % Create StayonTopMenu
 app.StayonTopMenu = uimenu(app.OptionsMenu);
 app.StayonTopMenu.Text = 'Stay on Top';
+app.StayonTopMenu.Separator = 'on';
 
-% Create AcquisitionFilterDesignMenu
-app.AcquisitionFilterDesignMenu = uimenu(app.OptionsMenu);
-app.AcquisitionFilterDesignMenu.Text = 'Acquisition Filter Design';
+% Create OptionShowTimingStats
+app.OptionShowTimingStats = uimenu(app.OptionsMenu);
+app.OptionShowTimingStats.Text = 'Show Timing Stats';
+app.OptionShowTimingStats.Separator = 'on';
+app.OptionShowTimingStats.Checked = 'off';
+app.OptionShowTimingStats.MenuSelectedFcn = createCallbackFcn(app, @menu_option_processor,true);
+
+% Create ASIOSettingsMenu
+app.ASIOSettingsMenu = uimenu(app.OptionsMenu);
+app.ASIOSettingsMenu.Text = 'ASIO Settings';
+app.ASIOSettingsMenu.Tooltip = 'Launches Sound Card ASIO Settings';
+app.ASIOSettingsMenu.Separator = 'on';
+app.ASIOSettingsMenu.MenuSelectedFcn = createCallbackFcn(app, @launch_asiosettings, false);
+
+
+
+
+
 
 % Create TabGroup
 app.TabGroup = uitabgroup(app.ControlPanelUIFigure);
 app.TabGroup.SelectionChangedFcn = createCallbackFcn(app, @TabGroupSelectionChanged, true);
 app.TabGroup.Position = [1 1 480 273];
 
+
+% CONFIG TAB --------------------------------------------------------------
 % Create ConfigTab
 app.ConfigTab = uitab(app.TabGroup);
 app.ConfigTab.Title = 'Config';
@@ -56,12 +79,14 @@ app.ConfigScheduleDropDown.FontSize = 14;
 app.ConfigScheduleDropDown.BackgroundColor = [1 1 1];
 app.ConfigScheduleDropDown.Position = [108 182 287 22];
 app.ConfigScheduleDropDown.Value = '';
+app.ConfigScheduleDropDown.ValueChangedFcn = createCallbackFcn(app, @load_schedule_file,true);
 
-% Create ConfigLocateButton
-app.ConfigLocateButton = uibutton(app.ConfigTab, 'push');
-app.ConfigLocateButton.FontSize = 14;
-app.ConfigLocateButton.Position = [399.5 180 53 24];
-app.ConfigLocateButton.Text = 'locate';
+% Create ConfigLocateSchedButton
+app.ConfigLocateSchedButton = uibutton(app.ConfigTab, 'push');
+app.ConfigLocateSchedButton.FontSize = 14;
+app.ConfigLocateSchedButton.Position = [399.5 180 53 24];
+app.ConfigLocateSchedButton.Text = 'locate';
+app.ConfigLocateSchedButton.ButtonPushedFcn = createCallbackFcn(app, @locate_schedule_file,false);
 
 % Create ConfigNewButton
 app.ConfigNewButton = uibutton(app.ConfigTab, 'push');
@@ -95,6 +120,10 @@ app.ConfigLoadButton = uibutton(app.ConfigTab, 'push');
 app.ConfigLoadButton.Position = [120 67 100 30];
 app.ConfigLoadButton.Text = 'Load';
 
+
+
+
+%% SUBJECT TAB -------------------------------------------------------------
 % Create SubjectInfoTab
 app.SubjectInfoTab = uitab(app.TabGroup);
 app.SubjectInfoTab.Title = 'Subject Info';
@@ -167,8 +196,12 @@ app.SubjectAddaSubjectButton.FontSize = 10;
 app.SubjectAddaSubjectButton.Tooltip = {'Select subject directory'};
 app.SubjectAddaSubjectButton.Position = [20 5 100 22];
 app.SubjectAddaSubjectButton.Text = 'Add a Subject';
-app.SubjectAddaSubjectButton.ButtonPushedFcn = {@add_subject,app};
+app.SubjectAddaSubjectButton.ButtonPushedFcn = createCallbackFcn(app, @add_subject,false);
 
+
+
+
+%% CONTROL TAB ------------------------------------------------------------
 % Create ControlTab
 app.ControlTab = uitab(app.TabGroup);
 app.ControlTab.Title = 'Control';
@@ -176,49 +209,71 @@ app.ControlTab.Title = 'Control';
 % Create ControlSweepCountGauge
 app.ControlSweepCountGauge = uigauge(app.ControlTab, 'linear');
 app.ControlSweepCountGauge.Position = [22 1 436 40];
+app.ControlSweepCountGauge.Limits = [1 128];
 
-% Create Panel
-app.Panel = uipanel(app.ControlTab);
-app.Panel.Position = [14 124 248 111];
+% Create ControlStimInfoLabel
+app.ControlStimInfoLabel = uilabel(app.ControlTab);
+app.ControlStimInfoLabel.Position = [22 41 436 30];
+app.ControlStimInfoLabel.HorizontalAlignment = 'center';
+app.ControlStimInfoLabel.VerticalAlignment = 'bottom';
+app.ControlStimInfoLabel.FontSize = 12;
+app.ControlStimInfoLabel.Text = '';
 
-% Create AdvancementCriteriaDropDownLabel
-app.AdvancementCriteriaDropDownLabel = uilabel(app.Panel);
-app.AdvancementCriteriaDropDownLabel.HorizontalAlignment = 'right';
-app.AdvancementCriteriaDropDownLabel.Position = [13 12 121 22];
-app.AdvancementCriteriaDropDownLabel.Text = 'Advancement Criteria';
+% Create RepetitionsLabel
+app.NumRepetitionsLabel = uilabel(app.ControlTab);
+app.NumRepetitionsLabel.HorizontalAlignment = 'right';
+app.NumRepetitionsLabel.Position = [61 132 76 22];
+app.NumRepetitionsLabel.Text = '# Repetitions';
 
-% Create SweepAdvancementCriteriaDropDown
-app.SweepAdvancementCriteriaDropDown = uidropdown(app.Panel);
-app.SweepAdvancementCriteriaDropDown.Items = {'# Sweeps', 'Correlation Threshold', ''};
-app.SweepAdvancementCriteriaDropDown.Position = [142 12 85 22];
-app.SweepAdvancementCriteriaDropDown.Value = '# Sweeps';
+% Create NumRepetitionsSpinner
+app.NumRepetitionsSpinner = uispinner(app.ControlTab);
+app.NumRepetitionsSpinner.Limits = [1 Inf];
+app.NumRepetitionsSpinner.RoundFractionalValues = 'on';
+app.NumRepetitionsSpinner.ValueDisplayFormat = '%d';
+app.NumRepetitionsSpinner.HorizontalAlignment = 'center';
+app.NumRepetitionsSpinner.Position = [147 132 73 22];
+app.NumRepetitionsSpinner.Value = 1;
+
+% Create ControlAdvCriteriaDropDownLabel
+app.ControlAdvCriteriaDropDownLabel = uilabel(app.ControlTab);
+app.ControlAdvCriteriaDropDownLabel.HorizontalAlignment = 'right';
+app.ControlAdvCriteriaDropDownLabel.Position = [17 101 121 22];
+app.ControlAdvCriteriaDropDownLabel.Text = 'Advancement Criteria';
+
+% Create ControlAdvCriteriaDropDown
+app.ControlAdvCriteriaDropDown = uidropdown(app.ControlTab);
+app.ControlAdvCriteriaDropDown.Items = {'# Sweeps', 'Correlation Threshold', ''};
+app.ControlAdvCriteriaDropDown.Position = [146 101 109 22];
+app.ControlAdvCriteriaDropDown.Value = '# Sweeps';
 
 % Create SweepsSpinnerLabel
-app.SweepsSpinnerLabel = uilabel(app.Panel);
+app.SweepsSpinnerLabel = uilabel(app.ControlTab);
 app.SweepsSpinnerLabel.HorizontalAlignment = 'right';
-app.SweepsSpinnerLabel.Position = [74 80 58 22];
+app.SweepsSpinnerLabel.Position = [79 199 58 22];
 app.SweepsSpinnerLabel.Text = '# Sweeps';
 
 % Create SweepCountSpinner
-app.SweepCountSpinner = uispinner(app.Panel);
-app.SweepCountSpinner.Limits = [1 Inf];
+app.SweepCountSpinner = uispinner(app.ControlTab);
+app.SweepCountSpinner.Limits = [1 inf];
 app.SweepCountSpinner.RoundFractionalValues = 'on';
 app.SweepCountSpinner.ValueDisplayFormat = '%d';
 app.SweepCountSpinner.HorizontalAlignment = 'center';
-app.SweepCountSpinner.Position = [142 80 73 22];
-app.SweepCountSpinner.Value = 1024;
+app.SweepCountSpinner.Position = [147 199 73 22];
+app.SweepCountSpinner.Value = 128;
+app.SweepCountSpinner.ValueChangedFcn = createCallbackFcn(app, @update_sweep_count, true);
+app.SweepCountSpinner.CreateFcn = createCallbackFcn(app, @update_sweep_count, true);
 
 % Create SweepRateHzSpinnerLabel
-app.SweepRateHzSpinnerLabel = uilabel(app.Panel);
+app.SweepRateHzSpinnerLabel = uilabel(app.ControlTab);
 app.SweepRateHzSpinnerLabel.HorizontalAlignment = 'right';
-app.SweepRateHzSpinnerLabel.Position = [35 47 97 22];
+app.SweepRateHzSpinnerLabel.Position = [40 166 97 22];
 app.SweepRateHzSpinnerLabel.Text = 'Sweep Rate (Hz)';
 
 % Create SweepRateHzSpinner
-app.SweepRateHzSpinner = uispinner(app.Panel);
+app.SweepRateHzSpinner = uispinner(app.ControlTab);
 app.SweepRateHzSpinner.Limits = [0.001 100];
 app.SweepRateHzSpinner.HorizontalAlignment = 'center';
-app.SweepRateHzSpinner.Position = [142 47 73 22];
+app.SweepRateHzSpinner.Position = [147 166 73 22];
 app.SweepRateHzSpinner.Value = 21.1;
 
 % Create Panel_2
@@ -227,38 +282,114 @@ app.Panel_2.Position = [270 78 196 157];
 
 % Create ControlAdvanceButton
 app.ControlAdvanceButton = uibutton(app.Panel_2, 'push');
-app.ControlAdvanceButton.Position = [18 60 77 35];
+app.ControlAdvanceButton.Position = [18 60 90 35];
 app.ControlAdvanceButton.Text = 'Advance >';
 
 % Create ControlRepeatButton
 app.ControlRepeatButton = uibutton(app.Panel_2, 'state');
 app.ControlRepeatButton.Text = 'Repeat';
-app.ControlRepeatButton.Position = [18 105 77 35];
+app.ControlRepeatButton.Position = [18 105 90 35];
 
 % Create ControlPauseButton
 app.ControlPauseButton = uibutton(app.Panel_2, 'state');
 app.ControlPauseButton.Text = 'Pause ||';
-app.ControlPauseButton.Position = [18 16 77 35];
+app.ControlPauseButton.Position = [18 16 90 35];
+app.ControlPauseButton.ValueChangedFcn = createCallbackFcn(app, @pause_button,false);
 
-% Create ControlAcquireIdleSwitch
-app.ControlAcquireIdleSwitch = uiswitch(app.Panel_2, 'toggle');
-app.ControlAcquireIdleSwitch.Items = {'Idle', 'Acquire'};
-app.ControlAcquireIdleSwitch.FontSize = 16;
-app.ControlAcquireIdleSwitch.Position = [118 47 31 70];
-app.ControlAcquireIdleSwitch.Value = 'Idle';
+% Create ControlAcquisitionSwitch
+app.ControlAcquisitionSwitch = uiswitch(app.Panel_2, 'toggle');
+app.ControlAcquisitionSwitch.Items = {'Idle', 'Acquire'};
+app.ControlAcquisitionSwitch.FontSize = 16;
+app.ControlAcquisitionSwitch.Position = [135 45 31 70];
+app.ControlAcquisitionSwitch.Value = 'Idle';
+app.ControlAcquisitionSwitch.ValueChangedFcn = createCallbackFcn(app, @control_acq_switch, true);
 
-% Create ControlAcquireLamp
-app.ControlAcquireLamp = uilamp(app.Panel_2);
-app.ControlAcquireLamp.Position = [168 120 20 20];
-app.ControlAcquireLamp.Color = [0.6 0.6 0.6];
 
+
+%% FILTER TAB -------------------------------------------------------------
+app.AcqFilterTab = uitab(app.TabGroup);
+app.AcqFilterTab.Title = 'Acq Filter';
+
+% Create Panel_3
+app.Panel_3 = uipanel(app.AcqFilterTab);
+app.Panel_3.Position = [27 22 422 213];
+
+% Create FilterHPFcEditFieldLabel
+app.FilterHPFcEditFieldLabel = uilabel(app.Panel_3);
+app.FilterHPFcEditFieldLabel.HorizontalAlignment = 'right';
+app.FilterHPFcEditFieldLabel.FontSize = 14;
+app.FilterHPFcEditFieldLabel.Position = [11 163 218 22];
+app.FilterHPFcEditFieldLabel.Text = 'High-Pass Frequency Corner (Hz)';
+
+% Create FilterHPFcEditField
+app.FilterHPFcEditField = uieditfield(app.Panel_3, 'numeric');
+app.FilterHPFcEditField.Limits = [0.5 100];
+app.FilterHPFcEditField.FontSize = 16;
+app.FilterHPFcEditField.Position = [248 163 65 22];
+app.FilterHPFcEditField.Value = 10;
+
+% Create FilterLPFcEditFieldLabel
+app.FilterLPFcEditFieldLabel = uilabel(app.Panel_3);
+app.FilterLPFcEditFieldLabel.HorizontalAlignment = 'right';
+app.FilterLPFcEditFieldLabel.FontSize = 14;
+app.FilterLPFcEditFieldLabel.Position = [14 128 215 22];
+app.FilterLPFcEditFieldLabel.Text = 'Low-Pass Frequency Corner (Hz)';
+
+% Create FilterLPFcEditField
+app.FilterLPFcEditField = uieditfield(app.Panel_3, 'numeric');
+app.FilterLPFcEditField.Limits = [100 20000];
+app.FilterLPFcEditField.FontSize = 16;
+app.FilterLPFcEditField.Position = [248 128 65 22];
+app.FilterLPFcEditField.Value = 3000;
+
+% Create FilterEnableSwitch
+app.FilterEnableSwitch = uiswitch(app.Panel_3, 'rocker');
+app.FilterEnableSwitch.Items = {'Disabled', 'Enabled'};
+app.FilterEnableSwitch.Position = [348 145 16 36];
+app.FilterEnableSwitch.Value = 'Enabled';
+app.FilterEnableSwitch.ValueChangedFcn = createCallbackFcn(app, @filter_enable_switch, true);
+
+% Create FilterEnabledLamp
+app.FilterEnabledLamp = uilamp(app.Panel_3);
+app.FilterEnabledLamp.Position = [171 194 10 10];
+
+% Create FilterNotchFilterKnob
+app.FilterNotchFilterKnob = uiknob(app.Panel_3, 'discrete');
+app.FilterNotchFilterKnob.Items = {'Disabled', '50 Hz', '60 Hz'};
+app.FilterNotchFilterKnob.ItemsData = {0,50,60};
+app.FilterNotchFilterKnob.FontSize = 14;
+app.FilterNotchFilterKnob.Position = [186 21 54 54];
+app.FilterNotchFilterKnob.Value = 60;
+app.FilterNotchFilterKnob.ValueChangedFcn = createCallbackFcn(app, @notch_filter_select, true);
+
+% Create FilterNotchEnabledLamp
+app.FilterNotchEnabledLamp = uilamp(app.Panel_3);
+app.FilterNotchEnabledLamp.Position = [144 80 10 10];
+
+% Create FilterBandpassFilterLabel
+app.FilterBandpassFilterLabel = uilabel(app.Panel_3);
+app.FilterBandpassFilterLabel.FontSize = 14;
+app.FilterBandpassFilterLabel.FontWeight = 'bold';
+app.FilterBandpassFilterLabel.Position = [14 189 157 22];
+app.FilterBandpassFilterLabel.Text = 'Digital Bandpass Filter';
+
+% Create FilterNotchFilterLabel
+app.FilterNotchFilterLabel = uilabel(app.Panel_3);
+app.FilterNotchFilterLabel.FontSize = 14;
+app.FilterNotchFilterLabel.FontWeight = 'bold';
+app.FilterNotchFilterLabel.Position = [14 74 130 22];
+app.FilterNotchFilterLabel.Text = 'Digital Notch Filter';
+
+
+
+%% UTILITIES TAB ----------------------------------------------------------
 % Create UtilitiesTab
 app.UtilitiesTab = uitab(app.TabGroup);
 app.UtilitiesTab.Title = 'Utilities';
 
 % Create UtilityScheduleDesignButton
 app.UtilityScheduleDesignButton = uibutton(app.UtilitiesTab, 'push');
-app.UtilityScheduleDesignButton.ButtonPushedFcn = {@launch_utility,app,'ScheduleDesign'};
+app.UtilityScheduleDesignButton.ButtonPushedFcn = createCallbackFcn(app,@locate_utility,true);
 app.UtilityScheduleDesignButton.Position = [61 131 111 34];
 app.UtilityScheduleDesignButton.Text = 'Schedule Design';
 
@@ -276,3 +407,18 @@ app.UtilityABRDataViewerButton.Text = 'ABR Data Viewer';
 app.UtilityOnlineAnalysisButton = uibutton(app.UtilitiesTab, 'push');
 app.UtilityOnlineAnalysisButton.Position = [61 81 111 34];
 app.UtilityOnlineAnalysisButton.Text = 'Online Analysis';
+
+
+%% NON-TAB COMPONENTS -----------------------------------------------------
+
+% Create AcquisitionStateLamp
+app.AcquisitionStateLamp = uilamp(app.ControlPanelUIFigure);
+app.AcquisitionStateLamp.Position = [457 253 20 20];
+app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
+
+
+% Create AcquisitionStateLabel
+app.AcquisitionStateLabel = uilabel(app.ControlPanelUIFigure);
+app.AcquisitionStateLabel.HorizontalAlignment = 'right';
+app.AcquisitionStateLabel.Position = [370 253 80 22];
+app.AcquisitionStateLabel.Text = 'Ready';
