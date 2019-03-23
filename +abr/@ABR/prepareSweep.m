@@ -27,6 +27,5 @@ obj.sweepOnsets   = nan(obj.numSweeps,1);
 
 obj.adcBuffer = nan(obj.adcBufferLength,1);
 obj.adcData   = nan(obj.adcBufferLength,obj.numSweeps);
-obj.adcDataFiltered = obj.adcData;
 
 obj.STATE = 0;

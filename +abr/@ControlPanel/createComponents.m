@@ -59,7 +59,7 @@ app.TabGroup.SelectionChangedFcn = createCallbackFcn(app, @TabGroupSelectionChan
 app.TabGroup.Position = [1 1 480 273];
 
 
-% CONFIG TAB --------------------------------------------------------------
+%% CONFIG TAB -------------------------------------------------------------
 % Create ConfigTab
 app.ConfigTab = uitab(app.TabGroup);
 app.ConfigTab.Title = 'Config';
@@ -114,11 +114,13 @@ app.ConfigOutputDropDown.Value = 'data_output_file.abr';
 app.ConfigSaveButton = uibutton(app.ConfigTab, 'push');
 app.ConfigSaveButton.Position = [267 67 100 30];
 app.ConfigSaveButton.Text = 'Save';
+app.ConfigSaveButton.ButtonPushedFcn = createCallbackFcn(app, @save_config_file, false);
 
 % Create ConfigLoadButton
 app.ConfigLoadButton = uibutton(app.ConfigTab, 'push');
 app.ConfigLoadButton.Position = [120 67 100 30];
 app.ConfigLoadButton.Text = 'Load';
+app.ConfigLoadButton.ButtonPushedFcn = createCallbackFcn(app, @load_config_file, false);
 
 
 

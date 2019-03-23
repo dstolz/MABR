@@ -24,9 +24,11 @@ if isempty(obj.schFig)
     obj.h.pthLoad.CData = imgFileLoad;
     
     obj.h.pthSave = uipushtool(obj.h.toolbar);
+    obj.h.pthSave.Tag = 'SaveButton';
     obj.h.pthSave.Tooltip = 'Save Schedule';
     obj.h.pthSave.ClickedCallback = {@abr.sigdef.Schedule.ext_save_schedule,obj};
     obj.h.pthSave.CData = imgFileSave;
+    obj.h.pthSave.Enable = 'off';
     
     % Schedule Design Table
     obj.h.schTitleLbl = uicontrol(obj.schFig,'Style','text');
@@ -43,6 +45,7 @@ if isempty(obj.schFig)
     obj.h.schTbl.RearrangeableColumns = 'on';
     obj.h.schTbl.Tooltip = 'Select one cell in one or more columns and then click "Sort on Column"';
     obj.h.schTbl.CellSelectionCallback = @abr.sigdef.Schedule.cell_selection;
+    obj.h.schTbl.CellEditCallback      = @abr.sigdef.Schedule.cell_edit;
     obj.h.schTbl.UserData.ColumnSelected = [];
     obj.h.schTbl.UserData.RowSelected = [];
     

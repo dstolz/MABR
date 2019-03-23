@@ -3,11 +3,11 @@ classdef ABR < handle
 % 
 % Daniel Stolzberg, PhD (c) 2019
     properties
-        frameLength   (1,1) uint16 {mustBeInteger,mustBePositive} = 256;
+        frameLength   (1,1) uint16 {mustBeInteger,mustBePositive} = 2048;
         adcFs         (1,1) double {mustBePositive,mustBeFinite}  = 11025; % downsampled to this after acquisitino
         
-        dacFs          (1,1) double {mustBeFinite,mustBePositive} = 44100;
-        dacBuffer      (:,1) double {mustBeFinite,mustBeGreaterThanOrEqual(dacBuffer,-1),mustBeLessThanOrEqual(dacBuffer,1)};      % playback buffer
+        dacFs         (1,1) double {mustBeFinite,mustBePositive} = 44100;
+        dacBuffer     (:,1) double {mustBeFinite,mustBeGreaterThanOrEqual(dacBuffer,-1),mustBeLessThanOrEqual(dacBuffer,1)};      % playback buffer
         
         dacFile       (1,:) char
         ADCfile       (1,:) char
@@ -16,21 +16,18 @@ classdef ABR < handle
         
         
         sweepRate     (1,1) double {mustBePositive, mustBeFinite} = 21.1; % Hz
-        numSweeps     (1,1) uint16 {mustBeInteger, mustBePositive} = 1024;
+        numSweeps     (1,1) double {mustBeInteger, mustBePositive} = 1024;
         eventOnset    (1,1) double {mustBePositive,mustBeFinite} = 0.1; % seconds
         
-        timingAdjustment (1,1) double {mustBeNonnegative,mustBeFinite} = 1e-5; % seconds
-
-        adcWindow     (1,2) double {mustBeFinite} = [-0.01 0.01]; % seconds
+        adcWindow     (1,2) double {mustBeFinite} = [0 0.015]; % seconds
         
-        % properties for filter design that uses filtfilt acausal filter
         adcFilterOrder (1,1) double {mustBePositive,mustBeInteger} = 10;
-        adcFilterHP    (1,1) double {mustBePositive,mustBeFinite} = 10; % Hz
-        adcFilterLP    (1,1) double {mustBePositive,mustBeFinite} = 3000; % Hz
+        adcFilterHP    (1,1) double {mustBePositive,mustBeFinite}  = 10; % Hz
+        adcFilterLP    (1,1) double {mustBePositive,mustBeFinite}  = 3000; % Hz
         
         adcNotchFilterFreq (1,1) double {mustBePositive,mustBeFinite} = 60; % Hz
         
-        adcUseBPFilter (1,1) logical = true;
+        adcUseBPFilter    (1,1) logical = true;
         adcUseNotchFilter (1,1) logical = true;
     end
     
@@ -46,7 +43,7 @@ classdef ABR < handle
         adcBuffer;      % recording buffer
         
         adcData;        % recorded data organized as samples x sweep
-        adcDataFiltered; % obj.adcData filtered
+        adcSweepData;   % sweep-based data samples x sweeps
         
         sweepCount = 1;
         sweepOnsets;
@@ -79,6 +76,7 @@ classdef ABR < handle
     
     
     methods   
+        playrec(obj,app,ax,varargin); % TESTING
         selectAudioDevice(obj,deviceString);
         triggerSweep(obj);
         prepareSweep(obj);
@@ -129,7 +127,6 @@ classdef ABR < handle
         
         function info = get.WAVinfo(obj)
             if isempty(obj.dacFile) || ~exist(obj.dacFile,'file')
-                warning('No valid WAV file specified')
                 info = [];
             else
                 info = audioinfo(obj.dacFile);
@@ -149,30 +146,30 @@ classdef ABR < handle
         end
         
         function updateDACbuffer(obj) % only update buffer when file is loaded
-            if isempty(obj.dacFile)
-                y  = obj.dacBuffer;
-            else
-                y = audioread(obj.dacFile);
-            end
-            
-            % add in any additional padding for adc window            
-            obj.dacPaddingSamples(3) = length(y); % original buffer length
-            obj.dacPaddingSamples(1) = round(obj.dacFs*abs(obj.adcWindow(1)));
-            obj.dacPaddingSamples(2) = max([0 round(obj.dacFs*(obj.adcWindow(2)))-length(y)]);
-            y = [zeros(obj.dacPaddingSamples(1),1); y; zeros(obj.dacPaddingSamples(2),1)];
-            
-            % make sure buffer is divisible by the frame length
-            n = length(y);
-            if n < obj.frameLength
-                y = [y; zeros(obj.frameLength-n,1,'like',y)];
-                obj.dacPaddingSamples(4) = obj.frameLength-n; % frame padding
-            elseif n > obj.frameLength
-                m = mod(n,obj.frameLength);
-                y = [y; zeros(obj.frameLength-m,1,'like',y)];
-                obj.dacPaddingSamples(4) = obj.frameLength-m; % frame padding
-            end
-            
-            obj.dacBuffer = y;
+%             if isempty(obj.dacFile)
+%                 y  = obj.dacBuffer;
+%             else
+%                 y = audioread(obj.dacFile);
+%             end
+%             
+%             % add in any additional padding for adc window            
+%             obj.dacPaddingSamples(3) = length(y); % original buffer length
+%             obj.dacPaddingSamples(1) = round(obj.dacFs*abs(obj.adcWindow(1)));
+%             obj.dacPaddingSamples(2) = max([0 round(obj.dacFs*(obj.adcWindow(2)))-length(y)]);
+%             y = [zeros(obj.dacPaddingSamples(1),1); y; zeros(obj.dacPaddingSamples(2),1)];
+%             
+%             % make sure buffer is divisible by the frame length
+%             n = length(y);
+%             if n < obj.frameLength
+%                 y = [y; zeros(obj.frameLength-n,1,'like',y)];
+%                 obj.dacPaddingSamples(4) = obj.frameLength-n; % frame padding
+%             elseif n > obj.frameLength
+%                 m = mod(n,obj.frameLength);
+%                 y = [y; zeros(obj.frameLength-m,1,'like',y)];
+%                 obj.dacPaddingSamples(4) = obj.frameLength-m; % frame padding
+%             end
+%             
+%             obj.dacBuffer = y;
             
             obj.adcDecimationFactor = floor(obj.dacFs/obj.adcFs);
         end
@@ -204,7 +201,8 @@ classdef ABR < handle
         end
         
         function t = get.dacBufferTimeVector(obj)
-            t = linspace(-obj.dacPaddingSamples(1),sum(obj.dacPaddingSamples([2 3 4])),obj.dacBufferLength)'/obj.dacFs;
+%             t = linspace(-obj.dacPaddingSamples(1),sum(obj.dacPaddingSamples([2 3 4])),obj.dacBufferLength)'/obj.dacFs;
+            t = 0:1/obj.dacFs:obj.dacBufferDuration-1/obj.dacFs;
         end
         
       
@@ -231,15 +229,11 @@ classdef ABR < handle
                 'SampleRate',      obj.adcFs);
             
             % Notch filter
-            N = 8;
-            G = -inf;
-            Q = 1.8;
-            Wo = obj.adcNotchFilterFreq/(obj.adcFs/2);
-            BW = Wo/Q;      % Bandwidth will occur at -3 dB
-            [B,A] = designParamEQ(N,G,Wo,BW);
-            SOS = [B', ones(N/2,1), A'];
-            obj.adcNotchFilterDesign = dsp.BiquadFilter('SOSMatrix',SOS);
-            setup(obj.adcNotchFilterDesign,zeros(obj.frameLength,1));
+            obj.adcNotchFilterDesign = designfilt('bandstopfir', ...
+                'FilterOrder',10, ...
+                'CutoffFrequency1',obj.adcNotchFilterFreq-1, ...
+                'CutoffFrequency2',obj.adcNotchFilterFreq+1, ...
+                'SampleRate',      obj.adcFs);
         end
         
         function set.adcWindow(obj,win)
@@ -256,16 +250,15 @@ classdef ABR < handle
         end
         
         function d = get.adcBufferDuration(obj)
-            d = obj.adcBufferLength/obj.adcFs;
+            d = obj.adcBufferLength./obj.adcFs;
         end
         
         function t = get.adcBufferTimeVector(obj)            
-            t = linspace(obj.adcWindow(1),obj.adcWindow(2),obj.dacBufferLength/obj.adcDecimationFactor)';
+            t = linspace(obj.adcWindow(1),obj.adcWindow(2),obj.dacBufferLength./obj.adcDecimationFactor)';
         end
         
         function set.adcFs(obj,fs)
             obj.adcFs = fs;
-            obj.adcFilterDesign.SampleRate = fs; %#ok<MCSUP>
         end
         
         function set.adcFilterHP(obj,f)

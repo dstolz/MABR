@@ -14,9 +14,9 @@ classdef ControlPanel < matlab.apps.AppBase
     end
     
     properties (SetAccess = private,GetAccess = public)
-        programState    (1,:) char  = 'STARTUP';
+        programState     (1,:) char  = 'STARTUP';
         
-        SIG         (1,1)
+        SIG              (1,1)
         
         scheduleRunCount (:,1)
         scheduleIdx      (1,1) = 1;
@@ -107,12 +107,12 @@ classdef ControlPanel < matlab.apps.AppBase
                 errordlg(sprintf('Missing schedule file! "%s"', ...
                     ffn),'Schedule File','modal');
             end
-            
         end
+        
         
         function set.programState(app,state)
             app.programState = state;
-            app.Dispatch;
+            app.StateMachine;
         end
         
         
@@ -143,7 +143,6 @@ classdef ControlPanel < matlab.apps.AppBase
         end
         
         function populate_gui(app)
-            
             % Schedule File
             if isempty(app.scheduleFile)
                 c = getpref('ABRControlPanel','schedPath',cd);
@@ -159,10 +158,8 @@ classdef ControlPanel < matlab.apps.AppBase
             else
                 app.ConfigScheduleDropDown.Items     = {f.name};
                 app.ConfigScheduleDropDown.ItemsData = cellfun(@fullfile,{f.folder},{f.name},'uni',0);
-                app.ConfigScheduleDropDown.Value     = fullfile(f(1).folder,f(1).name);
+                app.ConfigScheduleDropDown.Value     = app.scheduleFile;
             end
-            
-            
             
         end
         
@@ -198,23 +195,46 @@ classdef ControlPanel < matlab.apps.AppBase
         
         %% CONFIG ---------------------------------------------------------
         function gather_config_parameters(app)
-            
             app.Config.scheduleFile = app.scheduleFile;
             app.Config.configFile   = app.configFile;
             
             app.Config.Control.advCriteria = app.ControlAdvCriteriaDropDown.Value;
             app.Config.Control.numSweeps   = app.SweepCountSpinner.Value;
             app.Config.Control.sweepRate   = app.SweepRateHzSpinner.Value;
+            app.Config.Control.numReps     = app.NumRepetitionsSpinner.Value;
             
-            app.Config.Control.frameLength = 512;
+            % TO DO: MAKE ADVANCED AUDIO SETTINGS MENU
+            app.Config.Control.frameLength = 2048;
             
-            
+            app.Config.Filter.Enable       = app.FilterEnableSwitch.Value;
             app.Config.Filter.adcFilterHP  = app.FilterHPFcEditField.Value;
             app.Config.Filter.adcFilterLP  = app.FilterLPFcEditField.Value;
-            
+            app.Config.Filter.Notch.Freq   = app.FilterNotchFilterKnob.Value;
         end
         
         function apply_config_parameters(app)
+            
+            app.ControlAdvCriteriaDropDown.Value = app.Config.Control.advCriteria;
+            app.SweepCountSpinner.Value          = app.Config.Control.numSweeps;
+            app.SweepRateHzSpinner.Value         = app.Config.Control.sweepRate;
+            app.NumRepetitionsSpinner.Value      = app.Config.Control.numReps;
+            
+            app.FilterEnableSwitch.Value         = app.Config.Filter.Enable;
+            app.FilterHPFcEditField.Value        = app.Config.Filter.adcFilterHP;
+            app.FilterLPFcEditField.Value        = app.Config.Filter.adcFilterLP;
+            app.FilterNotchFilterKnob.Value      = app.Config.Filter.Notch.Freq;
+            
+            if isequal(app.FilterEnableSwitch.Value,'Enabled')
+                app.FilterEnabledLamp.Color = [0 1 0];
+            else
+                app.FilterEnabledLamp.Color = [0.6 0.6 0.6];
+            end
+            
+            if app.FilterNotchFilterKnob.Value == 0
+                app.FilterNotchEnabledLamp.Color = [0.6 0.6 0.6];
+            else
+                app.FilterNotchEnabledLamp.Color = [0 1 0];
+            end
             
         end
         
@@ -240,6 +260,7 @@ classdef ControlPanel < matlab.apps.AppBase
             
             app.load_schedule_file;
             
+            figure(app.ControlPanelUIFigure);
         end
         
         function load_config_file(app)
@@ -257,12 +278,20 @@ classdef ControlPanel < matlab.apps.AppBase
             % Load configuration file
             load(app.configFile,'abrConfig','-mat');
             
-            app.ABR     = abrConfig.ABR;
-            app.Subject = abrConfig.Subject;
+            app.Config = abrConfig;
+            
+            f = dir(fullfile(fileparts(abrConfig.scheduleFile),'*.sched'));
+            app.ConfigScheduleDropDown.Items     = {f.name};
+            app.ConfigScheduleDropDown.ItemsData = cellfun(@fullfile,{f.folder},{f.name},'uni',0);
+            app.ConfigScheduleDropDown.Value     = abrConfig.scheduleFile;
             
             setpref('ABRControlPanel','configPath',fileparts(app.configFile));
             
             app.populate_gui;
+            
+            app.apply_config_parameters;
+            
+            app.load_schedule_file;
         end
         
         
@@ -275,9 +304,11 @@ classdef ControlPanel < matlab.apps.AppBase
                 'Save ABR Configuration File',dfltPth);
             
             if isequal(fn,0), return; end
+            
+            app.gather_config_parameters;
 
-            abrConfig.ABR     = app.ABR;
-            abrConfig.Subject = app.Subject;
+            abrConfig = app.Config;
+            abrConfig.scheduleFile = app.scheduleFile;
             
             save(fullfile(pn,fn),'abrConfig','-mat');
             
@@ -301,7 +332,7 @@ classdef ControlPanel < matlab.apps.AppBase
         
         
         %% CONTROL --------------------------------------------------------
-        function Dispatch(app)
+        function StateMachine(app)
             global ACQSTATE
             
             try
@@ -347,13 +378,13 @@ classdef ControlPanel < matlab.apps.AppBase
                         if app.scheduleRunCount(app.scheduleIdx) >= nReps
                             ind = app.scheduleRunCount(app.scheduleIdx+1:end) < nReps ...
                                 & app.Schedule.selectedData(app.scheduleIdx+1:end)';
-                            app.scheduleIdx = app.scheduleIdx + find(ind,1,'first');
-                        end
-                        
-                        if isempty(app.scheduleIdx)
-                            % reached end of schedule
-                            app.programState = 'SCHEDCOMPLETED';
-                            return
+                            if any(ind)
+                                app.scheduleIdx = app.scheduleIdx + find(ind,1,'first');
+                            else
+                                % reached end of schedule
+                                app.programState = 'SCHEDCOMPLETED';
+                                return
+                            end
                         end
                         
                         app.SIG = app.Schedule.sigArray(app.scheduleIdx).update;
@@ -378,7 +409,7 @@ classdef ControlPanel < matlab.apps.AppBase
                         end
                         
                         % update ABR info after setting buffer
-                        app.ABR.frameLength = app.Config.Control.frameLength;
+%                         app.ABR.frameLength = app.Config.Control.frameLength;
                         app.ABR.numSweeps   = app.Config.Control.numSweeps;
                         app.ABR.sweepRate   = app.Config.Control.sweepRate;
                         
@@ -404,8 +435,9 @@ classdef ControlPanel < matlab.apps.AppBase
                         try
                             % do it
                             ax = app.live_plot;
-                            app.acquireBatch(ax,'showTimingStats',isequal(app.OptionShowTimingStats.Checked,'on'));
-                            
+%                             app.acquireBatch(ax,'showTimingStats',isequal(app.OptionShowTimingStats.Checked,'on'));
+                            app.ABR.playrec(app,ax,'showTimingStats',isequal(app.OptionShowTimingStats.Checked,'on'));
+
                             app.programState = 'REPCOMPLETE';
                             
                             ACQSTATE = 'IDLE';
@@ -424,26 +456,28 @@ classdef ControlPanel < matlab.apps.AppBase
                         
                         
                     case 'SCHEDCOMPLETED'
+                        app.AcquisitionStateLabel.Text = 'Finished';
+                        app.ControlAcquisitionSwitch.Value = 'Idle';
+                        app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
+                        app.AcquisitionStateLamp.Tooltip = 'Finished';
+                        app.ControlStimInfoLabel.Text = 'Completed';
                         ACQSTATE = 'IDLE';
-                        
+                        drawnow
                         
                     case 'USERIDLE'
                         app.AcquisitionStateLabel.Text = 'Ready';
                         app.ControlAcquisitionSwitch.Value = 'Idle';
                         app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
                         app.AcquisitionStateLamp.Tooltip = 'Idle';
-                        
                         ACQSTATE = 'CANCELLED';
                         drawnow
                         
                         
                     case 'ACQUISITIONEERROR'
                         app.AcquisitionStateLabel.Text = 'ERROR';
-                        
                         app.ControlAcquisitionSwitch.Value = 'Idle';
                         app.AcquisitionStateLamp.Color = [1 0 0];
                         app.AcquisitionStateLamp.Tooltip = 'ERROR';
-                        
                         ACQSTATE = 'CANCELLED';
                         drawnow
                 end
@@ -556,7 +590,6 @@ classdef ControlPanel < matlab.apps.AppBase
         
         %% FILTER ---------------------------------------------------------
         function filter_enable_switch(app,event)
-            app.Config.Filter.Enable = event.Value;
             
             switch event.Value
                 case 'Disabled'
@@ -569,10 +602,9 @@ classdef ControlPanel < matlab.apps.AppBase
         end
         
         function notch_filter_select(app,event)
-            app.Config.Filter.Notch.Enable = event.Value;
             
             switch event.Value
-                case '0'
+                case 0
                     app.FilterNotchEnabledLamp.Color = [0.6 0.6 0.6];
                     
                 otherwise
@@ -592,11 +624,13 @@ classdef ControlPanel < matlab.apps.AppBase
                 return
             end
             f = figure('name','Live Plot','color','w');
-            ax = axes(f,'tag','live_plot');
+            ax = axes(f,'tag','live_plot','color','none');
             grid(ax,'on');
             box(ax,'on');
             ax.XAxis.Label.String = 'time (ms)';
             ax.YAxis.Label.String = 'amplitude (mV)';
+
+            figure(f);
         end
     end
     
@@ -630,6 +664,8 @@ classdef ControlPanel < matlab.apps.AppBase
                     app.load_config_file;
                 end
             end
+            
+            
             
             app.populate_gui;
             

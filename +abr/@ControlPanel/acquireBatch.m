@@ -26,7 +26,7 @@ for i = 1:obj.ABR.numSweeps
     while isequal(ACQSTATE,'PAUSED')
         obj.ControlAcquireLamp.Color = [1 1 .3];
         pause(0.25);
-        obj.ControlAcquireLamp.Color = [.6 .6 .6];
+        obj.ControlAcquireLamp.Color = [.7 .7 0];
         pause(0.25);
     end
     

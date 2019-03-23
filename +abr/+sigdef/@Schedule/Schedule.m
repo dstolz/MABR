@@ -58,11 +58,9 @@ classdef Schedule < handle
             s = [d{:,1}];
         end
         
-        
         function p = get.props(obj)
             p = fieldnames(obj.data);
         end
-        
         
         function preprocess(obj,SIG,props,data)
             
@@ -202,7 +200,6 @@ classdef Schedule < handle
         
         
         
-        
         function load_schedule(obj)
             ffn = obj.filename;
             if ~isempty(ffn) && ischar(ffn)
@@ -231,12 +228,18 @@ classdef Schedule < handle
             
             obj.update;
             obj.h.schTbl.Data = tblData;
+                      
+            
+            obj.h.pthSave.Enable = 'off';
             
             fprintf(' done\n')
             
         end
         
         
+    end
+    
+    methods (Access = private)
         function save_schedule(obj)
             dfltpth = getpref('Schedule','path',cd);
             
@@ -259,6 +262,8 @@ classdef Schedule < handle
             obj.h.schTitleLbl.Tooltip = obj.filename;
             
             setpref('Scehdule','path',pn);
+            
+            obj.h.pthSave.Enable = 'off';
         end
         
        
@@ -280,6 +285,12 @@ classdef Schedule < handle
             col = event.Indices(:,2);
             hObj.UserData.ColumnSelected = col;
             hObj.UserData.RowSelected = row;
+        end
+        
+        function cell_edit(hObj,event)
+            hfig = ancestor(hObj,'figure','toplevel');
+            hsave = findobj(hfig,'Tag','SaveButton');
+            hsave.Enable = 'on';
         end
         
         function selection_processor(hObj,event)
@@ -352,6 +363,9 @@ classdef Schedule < handle
                     htbl.UserData.Obj.update;
             end
             
+            
+            hsave = findobj(ancestor(hObj,'figure','toplevel'),'Tag','SaveButton');
+            hsave.Enable = 'on';
             
         end
         
