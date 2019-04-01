@@ -1,4 +1,4 @@
-classdef Signal % < handle
+classdef (Abstract) Signal
     % Signal
     %
     % Daniel Stolzberg, PhD (c) 2019
@@ -6,7 +6,6 @@ classdef Signal % < handle
     
     properties (GetAccess = public, SetAccess = public)
         Fs              (1,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 48000; % Hz
-        
         
         dacChannel      (1,1) uint8  {mustBeNonempty,mustBePositive,mustBeFinite} = 1;
         
@@ -19,10 +18,6 @@ classdef Signal % < handle
         windowFcn       (1,1) abr.sigdef.sigProp
         windowOpts      (1,1) abr.sigdef.sigProp
         windowRFTime    (1,1) abr.sigdef.sigProp
-                
-        
-%         parameterTbl;
-        
         
     end
     
@@ -199,47 +194,6 @@ classdef Signal % < handle
             end
         end
         
-%         function obj = set.parameterTbl(obj,h)
-%             assert(isa(h,'matlab.ui.control.Table'),'parameterTbl must be handle to a uitable object');
-%             obj.parameterTbl = h;
-%             
-%             h.ColumnName     = {'Parameter','Value'};
-%             h.ColumnEditable = [false,true];
-%             h.ColumnWidth    = {125,125};
-%             h.ColumnFormat   = {'char','numeric'};
-%             
-%             superclassProps = properties(abr.sigdef.Signal);
-%             subclassProps   = properties(obj);
-%             
-%             ind = ismember(subclassProps,superclassProps);
-%             subclassProps(ind) = [];
-%             
-%             h.Data = {[]};
-%             for i = 1:length(subclassProps)
-%                 h.Data{i,1} = obj.getDescription(subclassProps{i});
-%                 h.Data{i,2} = obj.(subclassProps{i});
-%             end
-%             
-%             h.UserData = subclassProps;
-%         end
-        
-%         function gatherParameterTbl(obj)
-%             assert(isa(obj.parameterTbl,'matlab.ui.control.Table'),'parameterTbl must be handle to a uitable object');
-%             
-%             h = obj.parameterTbl;
-%             
-%             subclassProps = h.UserData;
-%             
-%             obj.ignoreProcessUpdate = true;
-%             for i = 1:size(h.Data,1)
-%                 obj.(subclassProps{i}) = h.Data{i,2};
-%             end
-%             obj.ignoreProcessUpdate = false;
-%             obj.processUpdate;
-%         end
-        
-        
-        
         
         
         
@@ -291,13 +245,21 @@ classdef Signal % < handle
         % FUNCTIONS SHOULD RETURN 'NOVALUE' INSTEAD OF EMPTY VARIABLE
         
         function w = selectWindowFcn(obj)
+            dfltwin = 'blackmanharris';
+            if nargin == 1 && ~isempty(obj)
+                if ischar(obj)
+                    dfltwin = obj;
+                else
+                    dfltwin = obj.windowFcn.Value;
+                end
+            end
             
             win = {'bartlett','barthannwin','blackman','blackmanharris', ...
                 'bohmanwin','chebwin','flattopwin','gausswin','hamming', ...
                 'hann','kaiser','nuttallwin','parzenwin','rectwin', ...
                 'taylorwin','tukeywin','triang'};
             
-            iv = find(ismember(win,obj.windowFcn.Value));
+            iv = find(ismember(win,dfltwin));
             
             
             [idx,ok] = listdlg('PromptString','Select a window:', ...
@@ -311,9 +273,10 @@ classdef Signal % < handle
         end
         
         
-        function ffn = selectAudioFiles(obj)
+        function ffn = selectAudioFiles
             
-            ext = {'*.wav', 'WAVE (*.wav)'; ...
+            ext = { ...
+                '*.wav', 'WAVE (*.wav)'; ...
                 '*.ogg', 'OGG (*.ogg)'; ...
                 '*.flac','FLAC (*.flac)'; ...
                 '*.au',  'AU (*.au)'; ...

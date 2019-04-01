@@ -1,4 +1,8 @@
 function createGUI(obj)
+% TO DO: Move all buttons to toolbar to free up horizontal space for the
+% table.
+
+
 obj.schFig = findobj('type','figure','-and','Name','ABR Schedule');
 
 if isempty(obj.schFig)
@@ -40,7 +44,7 @@ if isempty(obj.schFig)
     
     obj.h.schTbl = uitable(obj.schFig,'Tag','Schedule');
     obj.h.schTbl.Position = [180 20 500 440];
-    obj.h.schTbl.FontSize = 12;
+    obj.h.schTbl.FontSize = 10;
     obj.h.schTbl.ColumnEditable = false;
     obj.h.schTbl.RearrangeableColumns = 'on';
     obj.h.schTbl.Tooltip = 'Select one cell in one or more columns and then click "Sort on Column"';
@@ -49,6 +53,8 @@ if isempty(obj.schFig)
     obj.h.schTbl.UserData.ColumnSelected = [];
     obj.h.schTbl.UserData.RowSelected = [];
     
+    
+
     %                 % Turn the JIDE sorting on
     %                 jscrollpane = findjobj(obj.h.schTbl);
     %                 jtable = jscrollpane.getViewport.getView;
@@ -118,6 +124,8 @@ if isempty(obj.schFig)
     obj.h.btnToggleSel.String = 'Toggle';
     obj.h.btnToggleSel.FontSize = 14;
     obj.h.btnToggleSel.Callback = @abr.sigdef.Schedule.selection_processor;
+    
+    drawnow
 end
 
 figure(obj.schFig);

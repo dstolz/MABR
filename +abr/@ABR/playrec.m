@@ -1,4 +1,4 @@
-function playrec(ABR,app,ax,varargin)
+function ABR = playrec(ABR,app,ax,varargin)
 % playrec(ABR,app,ax,'Name','Value')
 %
 % This function handles the acquisition of a batch of sweeps as well as
@@ -9,34 +9,27 @@ function playrec(ABR,app,ax,varargin)
 global ACQSTATE
 
 options.showtimingstats = false;
-options.showstimulusplot = true;
+options.showstimulusplot = false;
 for i = 1:2:length(varargin)
     options.(lower(varargin{i})) = varargin{i+1};
 end
 
+ABR = ABR.prepareSweep;
 
 
-[hl,hs] = setup_plot;
-
-
-ABR.prepareSweep;
 
 
 % PAD dacSweep WITH SILENCE TO GENERATE CORRECT INTER-dacSweep-INTERVAL
-n = ceil(ABR.dacFs ./ ABR.sweepRate - length(ABR.dacBuffer));
-silence = zeros(n,1,'like',ABR.dacBuffer);
-dacSweep = [ABR.dacBuffer; silence];
+frsz = ABR.DAC.FrameSize; % temporarily set FrameSize to 1 so it doesn't get padded
+ABR.DAC.FrameSize = 1;
+n = ceil(ABR.DAC.SampleRate ./ ABR.sweepRate - ABR.DAC.N);
+silence  = zeros(n,1,'like',ABR.DAC.Data);
+dacSweep = [ABR.DAC.Data; silence];
+ABR.DAC.Data = repmat(dacSweep,ABR.numSweeps,1);
+ABR.DAC.FrameSize = frsz;
 
-
-dacBufferFull = repmat(dacSweep,ABR.numSweeps,1);
-dacBufferFullLength = length(dacBufferFull);
-
-% PAD DAC BUFFER LENGTH TO BE DIVISIBLE BY THE FRAME LENGTH; MORE EFFICIENT
-% THAT USING VARIABLE FRAME SIZE
-frameLength = double(ABR.frameLength);
-r = mod(dacBufferFullLength,frameLength);
-dacBufferFull = [dacBufferFull; zeros(frameLength-r,1,'like',dacBufferFull)];
-dacBufferFullLength = length(dacBufferFull);
+ABR.DAC.SweepLength = length(dacSweep);
+ABR.DAC.SweepOnsets = 1:ABR.DAC.SweepLength:ABR.DAC.N;
 
 
 % CREATE INDEXES MATCHING THE DECIMATED ADC BUFFER
@@ -44,75 +37,70 @@ dacSweepIdx = repmat(1:ABR.numSweeps,length(dacSweep),1);
 dacSweepIdx = dacSweepIdx(:);
 
 adcSweepIdx = dacSweepIdx(1:ABR.adcDecimationFactor:end);
-adcSweepStartIdx = [1; find(diff(adcSweepIdx))];
-adcSweepLength = min(arrayfun(@(a) sum(adcSweepIdx==a),unique(adcSweepIdx)));
+ABR.ADC.Data = 0;
+ABR.ADC.SweepOnsets = [1; find(diff(adcSweepIdx))];
+ABR.ADC.SweepLength = min(arrayfun(@(a) sum(adcSweepIdx==a),unique(adcSweepIdx)));
 
-ABR.adcSweepData = nan(adcSweepLength,ABR.numSweeps);
-
-% MAKE SURE WE CAN RESHAPE ADCBUFFER INTO SWEEPS EASILY
-n = length(adcSweepIdx);
-r = mod(n,adcSweepLength);
-a = max([0 adcSweepLength-r]);
-adcBuffer = zeros(n+a,1);
-
+[hl,hs] = setup_plot;
 
 ACQSTATE = 'ACQUIRE';
 
 updateTime = hat+1;
 
-x = 1;
 k = 1;
-m = 1:frameLength:dacBufferFullLength;
+m = 1:ABR.DAC.FrameSize:ABR.DAC.N;
+midx = (0:ABR.DAC.FrameSize-1)'+m;
+
+OUTPUT = ABR.DAC.Data;
 for i = 1:length(m)
         
     % look for change in acquisition state
-    while isequal(ACQSTATE,'PAUSED')
-        app.ControlAcquireLamp.Color = [1 1 .3];
+    while isequal(ACQSTATE,'PAUSED') && ~isempty(app)
+        app.AcquisitionStateLamp.Color = [1 1 .3];
         pause(0.25);
-        app.ControlAcquireLamp.Color = [.7 .7 0];
+        app.AcquisitionStateLamp.Color = [.7 .7 0];
         pause(0.25);
     end
     
-    if ~isequal(ACQSTATE,'ACQUIRE'), break; end
-
-    
-    
-    % index to current frame
-    idx = m(i):m(i)+frameLength-1;
-
+    if ~isequal(ACQSTATE,'ACQUIRE'), break; end    
+   
     
     % playback/record audio data
-    [B,nu,no] = ABR.APR(dacBufferFull(idx));
+    [INPUT,nu,no] = ABR.APR(OUTPUT(midx(:,i)));
     if nu, fprintf('Number of underruns = %d\n',nu); end
     if no, fprintf('Number of overruns  = %d\n',no); end
     
     
     
-    % downsample acquired signal
-    adcIdx = k:k+length(B)/ABR.adcDecimationFactor-1;
-    adcBuffer(adcIdx) = B(1:ABR.adcDecimationFactor:end);
+    % downsample acquired signal 
+    % > NOTE NO EXPLICIT ANTI-ALIASING FILTER FOR ONLINE PERFORMANCE
+    n = length(INPUT);
+    adcIdx = k:k+n/ABR.adcDecimationFactor-1;
     k = adcIdx(end);
     
+    INPUT = INPUT(1:ABR.adcDecimationFactor:end);
+    n = length(INPUT);
+
     
     % optional digital filter of downsampled data
     if ABR.adcUseBPFilter
-        adcBuffer = filtfilt(ABR.adcFilterDesign,adcBuffer);
+        INPUT = filtfilt(ABR.adcFilterDesign,[ones(n,1)*INPUT(1); INPUT; ones(n,1)*INPUT(1)]);
+        INPUT = INPUT(n+1:n*2);
     end
     if ABR.adcUseNotchFilter
-        adcBuffer = filtfilt(ABR.adcNotchFilterDesign,adcBuffer);
+        INPUT = filtfilt(ABR.adcNotchFilterDesign,[ones(n,1)*INPUT(1); INPUT; ones(n,1)*INPUT(1)]);
+        INPUT = INPUT(n+1:n*2);
     end
 
+    ABR.ADC.Data(adcIdx) = INPUT;
     
-    % reshape continuously sampled adc buffer to sweep-based matrix
     if hat >= updateTime + 0.1 % seconds
-        reshape2sweeps;
         update_plot(hl,hs);
         updateTime = hat;
     end
     
 end
 
-reshape2sweeps;
 
 update_plot(hl,hs);
 
@@ -126,53 +114,56 @@ end
 
 
 % local functions -----------------------------------------------------
-    function reshape2sweeps
-        % could improve performance by updating only new data
-        for j = x:dacSweepIdx(m(i))
-            ABR.adcSweepData(:,j) = adcBuffer(adcSweepStartIdx(j):adcSweepStartIdx(j)+adcSweepLength-1);
-        end
-        x = dacSweepIdx(m(i)) + 1;
-    end
-
+    
     function [hl,hs] = setup_plot
+        hs = [];
+        
         cla(ax);
         
-        
         % axis lines
-        line(ax,'xdata',ABR.adcBufferTimeVector([1 end])*1000,'ydata',[0 0], ...
+        line(ax,'xdata',ABR.ADC.TimeVector([1 end])*1000,'ydata',[0 0], ...
             'color',[0.5 0.5 0.5],'linewidth',1);
         line(ax,'xdata',[0 0],'ydata',[-100 100], ...
             'color',[0.5 0.5 0.5],'linewidth',1);
         
         if options.showstimulusplot
             hs = line(ax,'xdata',ABR.dacBufferTimeVector*1000, ...
-                'ydata',ABR.dacBuffer/max(abs(ABR.dacBuffer)),'linewidth',2, ...
+                'ydata',ABR.DAC.Data/max(abs(ABR.DAC.Data)),'linewidth',2, ...
                 'color',[0.2 0.8 0.2 0.5]);
         end
         
-        hl = line(ax,'xdata',ABR.adcBufferTimeVector*1000, ...
-            'ydata',nan(ABR.adcBufferLength,1), ...
+        hl = line(ax,'xdata',ABR.ADC.TimeVector*1000, ...
+            'ydata',nan(ABR.ADC.SweepLength,1), ...
             'linewidth',3,'color',[0.2 0.2 1]);
         
-        ax.XLim = ABR.adcBufferTimeVector([1 end])*1000+[0; -1];
+        ax.XLim = ABR.ADC.TimeVector([1 end])*1000;
         
         drawnow
     end
 
     function update_plot(hl,hs)
-        y = mean(ABR.adcSweepData(1:ABR.adcBufferLength,1:dacSweepIdx(m(i))),2)*1000;
-        hl.YData = y;
-        yl = max(abs(y));
+        y = ABR.ADC.SweepMean * 1000; % V -> mV
         
-        if options.showstimulusplot
-            hs.YData = yl.*ABR.dacBuffer./max(abs(ABR.dacBuffer));
+        hl.YData = y;
+        
+        yl = max(abs(y));
+        yl = ceil(yl.*10);
+        yl = yl-mod(yl,10)+10;
+        yl = yl./10;
+        
+        if ~isempty(hs)
+            hs.YData = yl.*ABR.DAC.SweepData(:,1)./max(abs(ABR.DAC.SweepData(:,1)));
         end
         
-        ax.YAxis.Limits = [-1.1 1.1] * yl;
+        ax.YAxis.Limits = [-1 1] * yl;
         ax.Title.String = sprintf('Sweep %d/%d',dacSweepIdx(m(i)),ABR.numSweeps);
         
+        ax.Toolbar.Visible = 'off'; % disable zoom/pan options
+        ax.HitTest = 'off';
         
-        app.ControlSweepCountGauge.Value = dacSweepIdx(m(i));
+        if ~isempty(app)
+            app.ControlSweepCountGauge.Value = dacSweepIdx(m(i));
+        end
         
         drawnow limitrate
     end

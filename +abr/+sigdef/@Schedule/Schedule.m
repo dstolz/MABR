@@ -198,7 +198,16 @@ classdef Schedule < handle
             
         end
         
-        
+        function update_highlight(obj,row)
+            % FIX BUGS!!!
+%             jUIScrollPane = findjobj(obj.h.schTbl);
+%             jUITable = jUIScrollPane.getViewport.getView;
+%             jUITable.changeSelection(row-1,0, false, false);
+%             jUITable.changeSelection(row-1,size(obj.h.schTbl.Data,2)-1,false,true);
+%             
+%             jUIScrollPane.getVerticalScrollBar.setValue(row-1);
+%             jUIScrollPane.getHorizontalScrollBar.setValue(0);
+        end
         
         function load_schedule(obj)
             ffn = obj.filename;

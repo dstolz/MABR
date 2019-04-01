@@ -1,4 +1,4 @@
-function selectAudioDevice(obj,deviceString)
+function obj = selectAudioDevice(obj,deviceString)
 % obj.audioDevice([deviceString])
 
 devices = getAudioDevices(obj.APR);

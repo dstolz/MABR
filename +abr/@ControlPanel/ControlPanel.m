@@ -3,6 +3,7 @@ classdef ControlPanel < matlab.apps.AppBase
     
     properties (Access = public)
         ABR         (1,1) abr.ABR
+        
         Subject     (1,1) abr.Subject
         Schedule    (1,1) abr.sigdef.Schedule
         
@@ -33,17 +34,20 @@ classdef ControlPanel < matlab.apps.AppBase
         OptionShowTimingStats          matlab.ui.container.Menu
         StayonTopMenu                  matlab.ui.container.Menu
         ASIOSettingsMenu               matlab.ui.container.Menu
+        SelectAudioDeviceMenu          matlab.ui.container.Menu
         TabGroup                       matlab.ui.container.TabGroup
         ConfigTab                      matlab.ui.container.Tab
         AcqFilterTab                   matlab.ui.container.Tab
+        ConfigFileSave                 matlab.ui.control.Button
+        ConfigFileLoad                 matlab.ui.control.Button
+        ConfigFileLabel                matlab.ui.control.Label
+        ConfigFileDropDown             matlab.ui.control.DropDown
         ScheduleDropDownLabel          matlab.ui.control.Label
         ConfigScheduleDropDown         matlab.ui.control.DropDown
-        ConfigLocateSchedButton             matlab.ui.control.Button
-        ConfigNewButton                matlab.ui.control.Button
+        ConfigNewSchedButton           matlab.ui.control.Button
+        ConfigLoadSchedButton          matlab.ui.control.Button
         OutputDropDownLabel            matlab.ui.control.Label
         ConfigOutputDropDown           matlab.ui.control.DropDown
-        ConfigSaveButton               matlab.ui.control.Button
-        ConfigLoadButton               matlab.ui.control.Button
         SubjectInfoTab                 matlab.ui.container.Tab
         DOBDatePickerLabel             matlab.ui.control.Label
         SubjectDOBDatePicker           matlab.ui.control.DatePicker
@@ -100,14 +104,6 @@ classdef ControlPanel < matlab.apps.AppBase
     
     % Set/Get Properties
     methods
-        function ffn = get.scheduleFile(app)
-            ffn = app.ConfigScheduleDropDown.Value;
-            if isempty(ffn) || isequal(ffn,'NO SCHED FILES'), return; end
-            if ~exist(ffn,'file')
-                errordlg(sprintf('Missing schedule file! "%s"', ...
-                    ffn),'Schedule File','modal');
-            end
-        end
         
         
         function set.programState(app,state)
@@ -142,22 +138,51 @@ classdef ControlPanel < matlab.apps.AppBase
             
         end
         
+        
+        
+        
         function populate_gui(app)
-            % Schedule File
-            if isempty(app.scheduleFile)
-                c = getpref('ABRControlPanel','schedPath',cd);
-                f = dir(fullfile(c,'*.sched'));
+            % Config file
+            if isempty(app.configFile)
+                app.ConfigFileDropDown.Items     = {'Load a configuration file -->'};
+                app.ConfigFileDropDown.ItemsData = {'NO CONFIG'};
+                app.ConfigFileDropDown.Value     = 'NO CONFIG';
+                app.configFile = '';
             else
-                f = dir(fullfile(fileparts(app.scheduleFile),'*.sched'));
+                ffn = app.configFile;
+                c = getpref('ABRControlPanel','recentConfigs',[]);
+                ind = ismember(c,ffn);
+                c(ind) = [];
+                c = [{ffn}; c];
+                d = cellfun(@dir,c);
+                fn = cellfun(@(a,b) sprintf('%s\t[%s]', ...
+                    a(find(a==filesep,1,'last')+1:find(a=='.',1,'last')-1), b),...
+                    c,{d.date}','uni',0);
+                app.ConfigFileDropDown.Items     = fn;
+                app.ConfigFileDropDown.ItemsData = c;
+                app.ConfigFileDropDown.Value     = app.configFile;  
+                setpref('ABRControlPanel','recentConfigs',c);
+%            
+%                 f = dir(fullfile(fileparts(app.configFile),'*.cfg'));
+%                 app.ConfigFileDropDown.Items     = {f.name};
+%                 app.ConfigFileDropDown.ItemsData = cellfun(@fullfile,{f.folder},{f.name},'uni',0);
+%                 app.ConfigFileDropDown.Value     = app.configFile;            
             end
             
-            if isempty(f)
+            
+            % Schedule File
+            if isempty(app.scheduleFile)  
                 app.ConfigScheduleDropDown.Items     = {'Load a schedule file -->'};
                 app.ConfigScheduleDropDown.ItemsData = {'NO SCHED FILES'};
                 app.ConfigScheduleDropDown.Value     = 'NO SCHED FILES';
+                app.scheduleFile = '';
             else
-                app.ConfigScheduleDropDown.Items     = {f.name};
-                app.ConfigScheduleDropDown.ItemsData = cellfun(@fullfile,{f.folder},{f.name},'uni',0);
+                d = dir(fullfile(fileparts(app.scheduleFile),'*.sched'));
+                fn = cellfun(@(a,b) sprintf('%s\t[%s]', ...
+                    a(1:find(a=='.',1,'last')-1), b),...
+                    {d.name},{d.date},'uni',0);
+                app.ConfigScheduleDropDown.Items     = fn;
+                app.ConfigScheduleDropDown.ItemsData = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
                 app.ConfigScheduleDropDown.Value     = app.scheduleFile;
             end
             
@@ -236,6 +261,12 @@ classdef ControlPanel < matlab.apps.AppBase
                 app.FilterNotchEnabledLamp.Color = [0 1 0];
             end
             
+            while isempty(app.ABR.audioDevice)
+                h = msgbox('Select Audio Device','ABR','help','modal');
+                uiwait(h);
+                app.select_audiodevice;
+            end
+            
         end
         
         function locate_schedule_file(app)
@@ -249,43 +280,48 @@ classdef ControlPanel < matlab.apps.AppBase
             app.scheduleFile = fullfile(pn,fn);
             
             if isempty(app.scheduleFile), return; end
-            
-            d = dir(fullfile(pn,'*.sched'));
-            
-            app.ConfigScheduleDropDown.Items     = cellfun(@(a) a(1:find(a=='.',1,'last')-1),{d.name},'uni',0);
-            app.ConfigScheduleDropDown.ItemsData = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
-            app.ConfigScheduleDropDown.Value     = fullfile(pn,fn);
-            
+                        
             setpref('ABRControlPanel','schedulePath',pn);
+            
+            app.populate_gui;
             
             app.load_schedule_file;
             
             figure(app.ControlPanelUIFigure);
         end
         
-        function load_config_file(app)
-            dfltPth = getpref('ABRControlPanel','configPath',cd);
-            
-            [fn,pn] = uigetfile({'*.cfg','ABR Config File (*.cfg)'}, ...
-                'Load ABR Configuration File',dfltPth);
-            
-            if isequal(fn,0), return; end
-            
-            app.configFile = fullfile(pn,fn);
-            
-            if isempty(app.configFile), return; end
+        function load_config_file(app,ffn)
+            if nargin < 2 || isempty(ffn)
+                dfltPth = getpref('ABRControlPanel','configPath',cd);
+                
+                [fn,pn] = uigetfile({'*.cfg','ABR Config File (*.cfg)'}, ...
+                    'Load ABR Configuration File',dfltPth);
+                
+                if isequal(fn,0), return; end
+                
+                app.configFile = fullfile(pn,fn);
+                
+                if isempty(app.configFile), return; end
+            else
+                app.configFile = ffn;
+            end
             
             % Load configuration file
-            load(app.configFile,'abrConfig','-mat');
+            try
+                load(app.configFile,'abrConfig','-mat');
+            catch me
+                errordlg(sprintf('Error loading configuration file: %s\n\n%s\n\n%s', ...
+                    ffn,me.identifier,me.message),'ABR Configuration','modal');
+                return
+            end
             
-            app.Config = abrConfig;
+            app.Config = abrConfig.Config;
+            app.ABR    = abrConfig.ABR;
             
-            f = dir(fullfile(fileparts(abrConfig.scheduleFile),'*.sched'));
-            app.ConfigScheduleDropDown.Items     = {f.name};
-            app.ConfigScheduleDropDown.ItemsData = cellfun(@fullfile,{f.folder},{f.name},'uni',0);
-            app.ConfigScheduleDropDown.Value     = abrConfig.scheduleFile;
+            app.scheduleFile = app.Config.scheduleFile;
             
             setpref('ABRControlPanel','configPath',fileparts(app.configFile));
+            setpref('ABRControlPanel','configFile',app.configFile);
             
             app.populate_gui;
             
@@ -295,27 +331,47 @@ classdef ControlPanel < matlab.apps.AppBase
         end
         
         
-        function save_config_file(app)
+        function save_config_file(app,ffn)
             % Save configuration file
             
-            dfltPth = getpref('ABRControlPanel','configPath',cd);
-            
-            [fn,pn] = uiputfile({'*.cfg', 'ABR Configuration (.cfg)'}, ...
-                'Save ABR Configuration File',dfltPth);
-            
-            if isequal(fn,0), return; end
+            if nargin < 2 || isempty(ffn)
+                dfltPth = getpref('ABRControlPanel','configPath',cd);
+                
+                [fn,pn] = uiputfile({'*.cfg', 'ABR Configuration (.cfg)'}, ...
+                    'Save ABR Configuration File',dfltPth);
+                
+                if isequal(fn,0), return; end
+                
+                ffn = fullfile(pn,fn);
+            else
+                [pn,fn] = fileparts(ffn);
+            end
             
             app.gather_config_parameters;
 
-            abrConfig = app.Config;
+            abrConfig.Config       = app.Config;
             abrConfig.scheduleFile = app.scheduleFile;
+            abrConfig.configFile   = ffn;
+            abrConfig.ABR          = app.ABR;
             
-            save(fullfile(pn,fn),'abrConfig','-mat');
+            save(ffn,'abrConfig','-mat');
             
             fprintf('ABR Configuration file saved: %s\n',fn)
             
             setpref('ABRControlPanel','configPath',pn);
+            
+            app.configFile = ffn;
+
+            app.populate_gui;
         end
+        
+        
+        function config_file_changed(app,event)
+            
+            app.load_config_file(event.Source.Value);
+            
+        end
+        
         
         function load_schedule_file(app,event)
             if isempty(app.scheduleFile), return; end
@@ -349,15 +405,13 @@ classdef ControlPanel < matlab.apps.AppBase
                         app.AcquisitionStateLamp.Tooltip = 'Starting ...';
                         
                         app.ControlSweepCountGauge.Value = 0;
-                        
                         app.ControlPauseButton.Value = 0;
-                        app.pause_button;
                         
-                        % TO DO: make user settable option
-                        app.ABR.audioDevice = 'ASIO4ALL v2'; 
+                        app.pause_button;
                         
                         app.Schedule.filename = app.scheduleFile;
                         app.Schedule.createGUI;
+                        app.Schedule.update;
                         
                         app.scheduleIdx  = find(app.Schedule.selectedData,1,'first');
                         app.scheduleRunCount = zeros(size(app.Schedule.selectedData));
@@ -373,39 +427,61 @@ classdef ControlPanel < matlab.apps.AppBase
                         
                         app.gather_config_parameters; % in case user updates guis
                         
-                        % find next trial                        
-                        nReps = app.NumRepetitionsSpinner.Value;
-                        if app.scheduleRunCount(app.scheduleIdx) >= nReps
-                            ind = app.scheduleRunCount(app.scheduleIdx+1:end) < nReps ...
-                                & app.Schedule.selectedData(app.scheduleIdx+1:end)';
-                            if any(ind)
-                                app.scheduleIdx = app.scheduleIdx + find(ind,1,'first');
-                            else
-                                % reached end of schedule
-                                app.programState = 'SCHEDCOMPLETED';
-                                return
+                        if app.ControlRepeatButton.Value % 1 == depressed 
+                            nReps = -1;
+                        else
+                            % find next trial
+                            nReps = app.NumRepetitionsSpinner.Value;
+                            if app.scheduleRunCount(app.scheduleIdx) >= nReps
+                                ind = app.scheduleRunCount(app.scheduleIdx+1:end) < nReps ...
+                                    & app.Schedule.selectedData(app.scheduleIdx+1:end)';
+                                if any(ind)
+                                    app.scheduleIdx = app.scheduleIdx + find(ind,1,'first');
+                                else
+                                    % reached end of schedule
+                                    app.programState = 'SCHEDCOMPLETED';
+                                    return
+                                end
                             end
                         end
                         
+                        % update Schedule table selection
+                        app.Schedule.update_highlight(app.scheduleIdx);
+                        
                         app.SIG = app.Schedule.sigArray(app.scheduleIdx).update;
                         
+                        if nReps == -1
+                            app.ControlStimInfoLabel.Text = sprintf( ...
+                                'Schedule Index %d of %d  |  Repetition %d *REPEATING*', ...
+                                app.scheduleIdx,sum(app.Schedule.selectedData), ...
+                                app.scheduleRunCount(app.scheduleIdx)+1);                            
+                        else
+                            app.ControlStimInfoLabel.Text = sprintf( ...
+                                'Schedule Index %d of %d  |  Repetition %d of %d', ...
+                                app.scheduleIdx,sum(app.Schedule.selectedData), ...
+                                app.scheduleRunCount(app.scheduleIdx)+1,nReps);
+                        end
                         
-                        app.ControlStimInfoLabel.Text = sprintf( ...
-                            'Schedule Index %d of %d  |  Repetition %d of %d', ...
-                            app.scheduleIdx,sum(app.Schedule.selectedData), ...
-                            app.scheduleRunCount(app.scheduleIdx)+1,nReps);
                         
-                        
+                        %%%% MAKE USER OPTION OR READ FROM ASIOSETTINGS????
+                        app.ABR.DAC.FrameSize = 1024;
+                        app.ABR.ADC.FrameSize = 1;
                         
                         % convert to signal
-                        app.ABR.dacFs = app.SIG.Fs;
+                        app.ABR.DAC.SampleRate = app.SIG.Fs;
+                        
+                        % make app.ABR.ADC.SampleRate user settable?
+                        app.ABR.ADC.SampleRate = 10000;
+                        app.ABR.adcDecimationFactor = max([1 floor(app.SIG.Fs ./ app.ABR.ADC.SampleRate)]);
+                        app.ABR.ADC.SampleRate = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;
+
                         if iscell(app.SIG.data)
                             % TO DO: THIS WON'T WORK AS INTENDED!
                             %        This needs to be done on a sweep-by-sweep
                             %        basis.
-                            app.ABR.dacBuffer = app.SIG.data{app.alternateIdx};
+                            app.ABR.DAC.Data = app.SIG.data{app.alternateIdx};
                         else
-                            app.ABR.dacBuffer = app.SIG.data;
+                            app.ABR.DAC.Data = app.SIG.data;
                         end
                         
                         % update ABR info after setting buffer
@@ -418,13 +494,17 @@ classdef ControlPanel < matlab.apps.AppBase
                         app.ABR.adcUseBPFilter = isequal(app.FilterEnableSwitch.Value,'Enabled');
                         
                         app.ABR.adcUseNotchFilter  = app.FilterNotchFilterKnob.Value ~= 0;
-                        app.ABR.adcNotchFilterFreq = app.FilterNotchFilterKnob.Value;
+                        fv = app.FilterNotchFilterKnob.Value;
+                        if fv > 0
+                            app.ABR.adcNotchFilterFreq = fv;
+                        end
                         
-                        app.ABR.createADCfilt;
+                        app.ABR = app.ABR.createADCfilt;
                         
                         drawnow
                         
                         app.programState = 'ACQUIRE';
+                        
                         
                     case 'ACQUIRE'
                         app.AcquisitionStateLabel.Text = 'Acquiring';
@@ -436,7 +516,7 @@ classdef ControlPanel < matlab.apps.AppBase
                             % do it
                             ax = app.live_plot;
 %                             app.acquireBatch(ax,'showTimingStats',isequal(app.OptionShowTimingStats.Checked,'on'));
-                            app.ABR.playrec(app,ax,'showTimingStats',isequal(app.OptionShowTimingStats.Checked,'on'));
+                            app.ABR = app.ABR.playrec(app,ax,'showTimingStats',isequal(app.OptionShowTimingStats.Checked,'on'));
 
                             app.programState = 'REPCOMPLETE';
                             
@@ -500,6 +580,17 @@ classdef ControlPanel < matlab.apps.AppBase
                 case 'Idle'
                     % Send stop signal
                     app.programState = 'USERIDLE';
+                    
+                    % reset gui
+                    app.AcquisitionStateLabel.Text = 'Cancelled';
+                    
+                    app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
+                    app.AcquisitionStateLamp.Tooltip = 'User cancelled acquisition';
+                    
+                    app.ControlPauseButton.Value = 0;
+                    app.ControlPauseButton.Text = 'Pause ||';
+                    app.ControlPauseButton.BackgroundColor = [0.96 0.96 0.96];
+                    app.ControlPauseButton.Tooltip = 'Click to Pause';
             end
         end
         
@@ -526,8 +617,43 @@ classdef ControlPanel < matlab.apps.AppBase
                 hObj.Text = '*PAUSED*';
                 hObj.Tooltip = 'Click to Resume';
                 hObj.UserData = hObj.BackgroundColor;
-                hObj.BackgroundColor = [1 0.2 0.2];
+                hObj.BackgroundColor = [1 1 0];
             end
+            
+            drawnow
+        end
+        
+        function advance_schedule(~,~)
+            global ACQSTATE
+
+            % TO DO: SHOULD BE ABLE TO ADVANCE TO THE NEXT STATE EVEN IF
+            % NOT CURRENTLY ACQUIRING.  WHAT TO DO WITH 'PAUSED' STATE?
+            
+            % Updating ACQSTATE should be detected by ABR.playrec function
+            % and stop the current acqusition, which returns control to the
+            % StateMachine
+            ACQSTATE = 'REPCOMPLETE'; % 'REPADVANCE'?            
+        end
+        
+        function repeat_schedule_idx(app,event)
+            hObj = event.Source;
+            if event.Value % depressed
+                hObj.BackgroundColor = [0.8 0.8 1];
+                hObj.FontWeight = 'bold';
+                app.ControlStimInfoLabel.Text = sprintf( ...
+                    'Schedule Index %d of %d  |  Repetition %d *REPEATING*', ...
+                    app.scheduleIdx,sum(app.Schedule.selectedData), ...
+                    app.scheduleRunCount(app.scheduleIdx)+1);
+            else
+                hObj.BackgroundColor = [.96 .96 .96];
+                hObj.FontWeight = 'normal';
+                app.ControlStimInfoLabel.Text = sprintf( ...
+                    'Schedule Index %d of %d  |  Repetition %d of %d', ...
+                    app.scheduleIdx,sum(app.Schedule.selectedData), ...
+                    app.scheduleRunCount(app.scheduleIdx)+1, ...
+                    app.NumRepetitionsSpinner.Value);
+            end
+            drawnow
         end
         
         
@@ -541,18 +667,18 @@ classdef ControlPanel < matlab.apps.AppBase
         
         
         
-        
-        
-        
         %% UTILITIES ------------------------------------------------------
         
         function locate_utility(app, event)
             % Launch Schedule Design utility or locate if already exists
             
             try
-                switch event.Source.Text
-                    case 'Schedule Design'
-                        ScheduleDesign; %(app.schedDesignFile);
+                switch event.Source.UserData
+                    case 'ScheduleDesign'
+                        ScheduleDesign;
+                        
+                    case ''
+                        return
                         
                     otherwise
                         run(event);
@@ -632,6 +758,8 @@ classdef ControlPanel < matlab.apps.AppBase
 
             figure(f);
         end
+        
+        
     end
     
     
@@ -647,6 +775,7 @@ classdef ControlPanel < matlab.apps.AppBase
             
             ACQSTATE = 'IDLE';
 
+            
             app.createComponents
             
             % Register the app with App Designer
@@ -658,14 +787,11 @@ classdef ControlPanel < matlab.apps.AppBase
                 app.load_config_file;
                 
             elseif nargin == 0
-                lastConfigFile = getpref('ABRControlPanel','lastConfigFile',[]);
+                lastConfigFile = getpref('ABRControlPanel','configFile',[]);
                 if ~isempty(lastConfigFile)
-                    app.configFile = lastConfigFile;
-                    app.load_config_file;
+                    app.load_config_file(lastConfigFile);
                 end
             end
-            
-            
             
             app.populate_gui;
             
@@ -677,6 +803,13 @@ classdef ControlPanel < matlab.apps.AppBase
             
             % Delete UIFigure when app is deleted
             delete(app.ControlPanelUIFigure)
+        end
+        
+        
+        
+        function select_audiodevice(app)
+            app.ABR = app.ABR.selectAudioDevice;
+            app.SelectAudioDeviceMenu.Text = sprintf('Audio Device: "%s"',app.ABR.audioDevice);
         end
     end
     

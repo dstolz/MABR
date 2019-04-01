@@ -6,8 +6,12 @@ function createComponents(app)
 % Create ControlPanelUIFigure
 app.ControlPanelUIFigure = uifigure;
 app.ControlPanelUIFigure.Position = [50 400 480 275];
+
 app.ControlPanelUIFigure.Name = 'ABR Control Panel';
 
+
+
+%% MENU -------------------------------------------------------------------
 % Create FileMenu
 app.FileMenu = uimenu(app.ControlPanelUIFigure);
 app.FileMenu.Text = 'File';
@@ -28,7 +32,6 @@ app.SaveConfigurationMenu.Callback = createCallbackFcn(app, @save_config_file, f
 app.OptionsMenu = uimenu(app.ControlPanelUIFigure);
 app.OptionsMenu.Text = 'Options';
 
-
 % Create StayonTopMenu
 app.StayonTopMenu = uimenu(app.OptionsMenu);
 app.StayonTopMenu.Text = 'Stay on Top';
@@ -48,7 +51,11 @@ app.ASIOSettingsMenu.Tooltip = 'Launches Sound Card ASIO Settings';
 app.ASIOSettingsMenu.Separator = 'on';
 app.ASIOSettingsMenu.MenuSelectedFcn = createCallbackFcn(app, @launch_asiosettings, false);
 
-
+% Create SelectAudioDeviceMenu 
+app.SelectAudioDeviceMenu = uimenu(app.OptionsMenu);
+app.SelectAudioDeviceMenu.Text = 'Select Audio Device';
+app.SelectAudioDeviceMenu.Tooltip = 'Select Audio Device';
+app.SelectAudioDeviceMenu.MenuSelectedFcn = createCallbackFcn(app, @select_audiodevice, false);
 
 
 
@@ -64,11 +71,44 @@ app.TabGroup.Position = [1 1 480 273];
 app.ConfigTab = uitab(app.TabGroup);
 app.ConfigTab.Title = 'Config';
 
+% Create ConfigFileSave
+app.ConfigFileSave = uibutton(app.ConfigTab, 'push');
+app.ConfigFileSave.FontSize = 14;
+app.ConfigFileSave.Position = [275 155 60 24];
+app.ConfigFileSave.Text = 'save';
+app.ConfigFileSave.ButtonPushedFcn = createCallbackFcn(app, @save_config_file, false);
+
+% Create ConfigFileLoad
+app.ConfigFileLoad = uibutton(app.ConfigTab, 'push');
+app.ConfigFileLoad.FontSize = 14;
+app.ConfigFileLoad.Position = [340 155 60 24];
+app.ConfigFileLoad.Text = 'load';
+app.ConfigFileLoad.ButtonPushedFcn = createCallbackFcn(app, @load_config_file, false);
+
+% Create ConfigFileLabel
+app.ConfigFileLabel = uilabel(app.ConfigTab);
+app.ConfigFileLabel.HorizontalAlignment = 'right';
+app.ConfigFileLabel.FontSize = 14;
+app.ConfigFileLabel.Position = [44 180 48 22];
+app.ConfigFileLabel.Text = 'Config';
+
+% Create ConfigFileDropDown
+app.ConfigFileDropDown = uidropdown(app.ConfigTab);
+app.ConfigFileDropDown.Items = {'ConfigFile.cfg'};
+app.ConfigFileDropDown.Editable = 'off';
+app.ConfigFileDropDown.FontSize = 14;
+app.ConfigFileDropDown.BackgroundColor = [1 1 1];
+app.ConfigFileDropDown.Position = [107 180 300 22];
+app.ConfigFileDropDown.Value = 'ConfigFile.cfg';
+app.ConfigFileDropDown.Tooltip = 'Select a configuration file';
+app.ConfigFileDropDown.ValueChangedFcn = createCallbackFcn(app, @config_file_changed,true);
+
+
 % Create ScheduleDropDownLabel
 app.ScheduleDropDownLabel = uilabel(app.ConfigTab);
 app.ScheduleDropDownLabel.HorizontalAlignment = 'right';
 app.ScheduleDropDownLabel.FontSize = 14;
-app.ScheduleDropDownLabel.Position = [29 182 64 22];
+app.ScheduleDropDownLabel.Position = [29 115 64 22];
 app.ScheduleDropDownLabel.Text = 'Schedule';
 
 % Create ConfigScheduleDropDown
@@ -77,28 +117,30 @@ app.ConfigScheduleDropDown.Items = {''};
 app.ConfigScheduleDropDown.Editable = 'off';
 app.ConfigScheduleDropDown.FontSize = 14;
 app.ConfigScheduleDropDown.BackgroundColor = [1 1 1];
-app.ConfigScheduleDropDown.Position = [108 182 287 22];
+app.ConfigScheduleDropDown.Position = [108 115 300 22];
 app.ConfigScheduleDropDown.Value = '';
 app.ConfigScheduleDropDown.ValueChangedFcn = createCallbackFcn(app, @load_schedule_file,true);
 
-% Create ConfigLocateSchedButton
-app.ConfigLocateSchedButton = uibutton(app.ConfigTab, 'push');
-app.ConfigLocateSchedButton.FontSize = 14;
-app.ConfigLocateSchedButton.Position = [399.5 180 53 24];
-app.ConfigLocateSchedButton.Text = 'locate';
-app.ConfigLocateSchedButton.ButtonPushedFcn = createCallbackFcn(app, @locate_schedule_file,false);
+% Create ConfigLoadSchedButton
+app.ConfigLoadSchedButton = uibutton(app.ConfigTab, 'push');
+app.ConfigLoadSchedButton.FontSize = 14;
+app.ConfigLoadSchedButton.Position = [340 90 60 24];
+app.ConfigLoadSchedButton.Text = 'load';
+app.ConfigLoadSchedButton.ButtonPushedFcn = createCallbackFcn(app, @locate_schedule_file,false);
 
-% Create ConfigNewButton
-app.ConfigNewButton = uibutton(app.ConfigTab, 'push');
-app.ConfigNewButton.FontSize = 14;
-app.ConfigNewButton.Position = [401 124 49 24];
-app.ConfigNewButton.Text = 'new';
+% Create ConfigNewSchedButton
+app.ConfigNewSchedButton = uibutton(app.ConfigTab, 'push');
+app.ConfigNewSchedButton.FontSize = 14;
+app.ConfigNewSchedButton.Position = [275 90 60 24];
+app.ConfigNewSchedButton.Text = 'new';
+app.ConfigNewSchedButton.UserData = 'ScheduleDesign';
+app.ConfigNewSchedButton.ButtonPushedFcn = createCallbackFcn(app, @locate_utility, true);
 
 % Create OutputDropDownLabel
 app.OutputDropDownLabel = uilabel(app.ConfigTab);
 app.OutputDropDownLabel.HorizontalAlignment = 'right';
 app.OutputDropDownLabel.FontSize = 14;
-app.OutputDropDownLabel.Position = [44 126 48 22];
+app.OutputDropDownLabel.Position = [44 50 48 22];
 app.OutputDropDownLabel.Text = 'Output';
 
 % Create ConfigOutputDropDown
@@ -107,21 +149,9 @@ app.ConfigOutputDropDown.Items = {'data_output_file.abr'};
 app.ConfigOutputDropDown.Editable = 'on';
 app.ConfigOutputDropDown.FontSize = 14;
 app.ConfigOutputDropDown.BackgroundColor = [1 1 1];
-app.ConfigOutputDropDown.Position = [107 126 287 22];
+app.ConfigOutputDropDown.Position = [107 50 300 22];
 app.ConfigOutputDropDown.Value = 'data_output_file.abr';
-
-% Create ConfigSaveButton
-app.ConfigSaveButton = uibutton(app.ConfigTab, 'push');
-app.ConfigSaveButton.Position = [267 67 100 30];
-app.ConfigSaveButton.Text = 'Save';
-app.ConfigSaveButton.ButtonPushedFcn = createCallbackFcn(app, @save_config_file, false);
-
-% Create ConfigLoadButton
-app.ConfigLoadButton = uibutton(app.ConfigTab, 'push');
-app.ConfigLoadButton.Position = [120 67 100 30];
-app.ConfigLoadButton.Text = 'Load';
-app.ConfigLoadButton.ButtonPushedFcn = createCallbackFcn(app, @load_config_file, false);
-
+app.ConfigOutputDropDown.Tooltip = 'Select an output file or create a new one by editing the name.';
 
 
 
@@ -179,7 +209,7 @@ app.SubjectSexSwitch = uiswitch(app.SubjectInfoTab, 'slider');
 app.SubjectSexSwitch.Items = {'Female', 'Male'};
 app.SubjectSexSwitch.Orientation = 'vertical';
 app.SubjectSexSwitch.Tooltip = {'Select subject sex'};
-app.SubjectSexSwitch.Position = [426 180 14 31];
+app.SubjectSexSwitch.Position = [425 140 14 31];
 app.SubjectSexSwitch.Value = 'Female';
 
 % Create ScientistDropDownLabel
@@ -187,15 +217,16 @@ app.ScientistDropDownLabel = uilabel(app.SubjectInfoTab);
 app.ScientistDropDownLabel.HorizontalAlignment = 'right';
 app.ScientistDropDownLabel.Position = [183 203 51 22];
 app.ScientistDropDownLabel.Text = 'Scientist';
+app.ScientistDropDownLabel.Tooltip = 'Select or enter initials';
 
 % Create SubjectScientistDropDown
 app.SubjectScientistDropDown = uidropdown(app.SubjectInfoTab);
+app.SubjectScientistDropDown.Editable = 'on';
 app.SubjectScientistDropDown.Position = [249 203 123 22];
 
 % Create SubjectAddaSubjectButton
 app.SubjectAddaSubjectButton = uibutton(app.SubjectInfoTab, 'push');
 app.SubjectAddaSubjectButton.FontSize = 10;
-app.SubjectAddaSubjectButton.Tooltip = {'Select subject directory'};
 app.SubjectAddaSubjectButton.Position = [20 5 100 22];
 app.SubjectAddaSubjectButton.Text = 'Add a Subject';
 app.SubjectAddaSubjectButton.ButtonPushedFcn = createCallbackFcn(app, @add_subject,false);
@@ -286,11 +317,14 @@ app.Panel_2.Position = [270 78 196 157];
 app.ControlAdvanceButton = uibutton(app.Panel_2, 'push');
 app.ControlAdvanceButton.Position = [18 60 90 35];
 app.ControlAdvanceButton.Text = 'Advance >';
+app.ControlAdvanceButton.ButtonPushedFcn = createCallbackFcn(app, @advance_schedule,false);
 
 % Create ControlRepeatButton
 app.ControlRepeatButton = uibutton(app.Panel_2, 'state');
 app.ControlRepeatButton.Text = 'Repeat';
 app.ControlRepeatButton.Position = [18 105 90 35];
+app.ControlRepeatButton.ValueChangedFcn = createCallbackFcn(app, @repeat_schedule_idx,true);
+
 
 % Create ControlPauseButton
 app.ControlPauseButton = uibutton(app.Panel_2, 'state');
@@ -422,5 +456,5 @@ app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
 % Create AcquisitionStateLabel
 app.AcquisitionStateLabel = uilabel(app.ControlPanelUIFigure);
 app.AcquisitionStateLabel.HorizontalAlignment = 'right';
-app.AcquisitionStateLabel.Position = [370 253 80 22];
+app.AcquisitionStateLabel.Position = [370 250 80 22];
 app.AcquisitionStateLabel.Text = 'Ready';

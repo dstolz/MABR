@@ -16,12 +16,14 @@ n = obj.dacBufferLength;
 k = obj.frameLength;
 
 % wait until we reach the next sweep time
-while obj.nextSweepTime > hat + obj.timingAdjustment, end
+while obj.nextSweepTime > hat, end
 
 T = hat; % stimulus onset
 
 for i = 1:k:n
-    [obj.adcBuffer(i:i+k-1),nu,no] = obj.APR(obj.dacBuffer(i:i+k-1));
+    idx = i+k-1;
+    idx(idx > n) = [];
+    [obj.adcBuffer(idx),nu,no] = obj.APR(obj.dacBuffer(idx));
 %     if nu, fprintf('Number of underruns = %d\n',nu); end
 %     if no, fprintf('Number of overruns  = %d\n',no); end
 end
