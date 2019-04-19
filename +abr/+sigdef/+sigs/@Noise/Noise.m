@@ -1,4 +1,4 @@
-classdef Noise < sigdef.Signal
+classdef Noise < abr.sigdef.Signal
     % Daniel Stolzberg, PhD (c) 2019
 
     properties (Access = public)
@@ -13,12 +13,15 @@ classdef Noise < sigdef.Signal
         filterDesign
     end
     
+    
+    properties (Constant)
+        Type = 'Noise';
+    end
+    
     methods
         
         % Constructor
         function obj = Noise(HPfreq,LPfreq,filterOrder)
-            
-            obj.Type = 'Noise';
             
             if nargin < 1 || isempty(HPfreq),       HPfreq = 0.004; end
             if nargin < 2 || isempty(LPfreq),       LPfreq = 12; end
@@ -27,15 +30,21 @@ classdef Noise < sigdef.Signal
             
             obj.HPfreq       = abr.sigdef.sigProp(HPfreq,'High-Pass Fc','kHz',1000);
             obj.HPfreq.Alias = 'HP Freq';
+            obj.HPfreq.ValueFormat = '%.3f';
             
             obj.LPfreq       = abr.sigdef.sigProp(LPfreq,'Low-Pass Fc','kHz',1000);
             obj.LPfreq.Alias = 'LP Freq';
+            obj.LPfreq.ValueFormat = '%.3f';
             
             obj.filterOrder  = abr.sigdef.sigProp(filterOrder,'Filter order');
             obj.filterOrder.Alias = 'Filt Order';
+            obj.filterOrder.ValueFormat = '%d';
             
-            obj.seed         = abr.sigdef.sigProp(0,'Seed#; 0 = "shuffle"');
+            obj.seed       = abr.sigdef.sigProp(0,'Seed#; 0 = "shuffle"');
             obj.seed.Alias = 'Seed';
+            
+            obj.defaultSortProperty = 'HPfreq';
+
         end
         
         function update(obj)
@@ -60,7 +69,7 @@ classdef Noise < sigdef.Signal
         end
         
         function obj = set.HPfreq(obj,value)
-            if isa(value,'sigdef.sigProp')
+            if isa(value,'abr.sigdef.sigProp')
                 obj.HPfreq = value;
             else
                 mustBePositive(value);
@@ -72,7 +81,7 @@ classdef Noise < sigdef.Signal
         end
         
         function obj = set.LPfreq(obj,value)
-            if isa(value,'sigdef.sigProp')
+            if isa(value,'abr.sigdef.sigProp')
                 obj.LPfreq = value;
             else
                 mustBePositive(value);

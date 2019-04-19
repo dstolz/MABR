@@ -1,6 +1,9 @@
 function obj = selectAudioDevice(obj,deviceString)
 % obj.audioDevice([deviceString])
 
+if ~isa(obj.APR,'audioPlayerRecorder')
+    obj.APR = audioPlayerRecorder;
+end
 devices = getAudioDevices(obj.APR);
 
 if nargin == 2 && ~isempty(deviceString) && ~ismember(deviceString,devices)

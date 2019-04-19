@@ -17,16 +17,15 @@ classdef sigProp
         Active        (1,1) logical {mustBeNonempty} = true;
         Validation    (1,:) char
         
+        
+        ValueFormat   (1,:) char = '%g';
     end
     
-    properties (SetAccess = private, GetAccess = public, Dependent)
+    properties (SetAccess = private, Dependent)
         DescriptionWithUnit char
         realValue % Value * ScalingFactor
         unitValueString char
         AliasWithUnit (1,:) char
-    end
-    
-    properties (SetAccess = private, GetAccess = public, Dependent, Transient)
         Evaluated % returns eval(obj.Value)
     end
     
@@ -72,7 +71,7 @@ classdef sigProp
         
         function s = get.unitValueString(obj)
             if isnumeric(obj.Value)
-                s = sprintf('%.2f %s',obj.Value,obj.Unit);
+                s = sprintf([obj.ValueFormat ' %s'],obj.Value,obj.Unit);
             else
                 s = obj.Value;
             end
@@ -122,6 +121,22 @@ classdef sigProp
                 s = obj.Unit;
             end
         end
+        
+        
+        function d = info_text(obj)
+            if ischar(obj.Value)
+                d = sprintf('%s:\t%s %s',obj.DescriptionWithUnit,obj.Value);
+            else
+                d = sprintf(['%s:\t' obj.ValueFormat ' %s'],obj.Description,obj.Value,obj.Unit);
+            end
+        end
+        
+        % overloaded functions
+        function disp(obj)
+            fprintf('\t%s\n',obj.info_text)
+            
+        end
     end
+    
     
 end

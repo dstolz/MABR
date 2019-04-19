@@ -4,7 +4,7 @@ classdef (Abstract) Signal
     % Daniel Stolzberg, PhD (c) 2019
     
     
-    properties (GetAccess = public, SetAccess = public)
+    properties
         Fs              (1,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 48000; % Hz
         
         dacChannel      (1,1) uint8  {mustBeNonempty,mustBePositive,mustBeFinite} = 1;
@@ -19,18 +19,22 @@ classdef (Abstract) Signal
         windowOpts      (1,1) abr.sigdef.sigProp
         windowRFTime    (1,1) abr.sigdef.sigProp
         
+        SoundCal        (1,1) abr.AcousticCalibration
     end
     
     
-    properties (GetAccess = public, SetAccess = private,Dependent)
+    properties (SetAccess = private,Dependent)
         timeVector      (:,1) double {mustBeFinite};
         N = 0;
+        signalCount     
     end
     
-    properties (SetAccess = protected, GetAccess = public)
+    properties (SetAccess = protected)
         data % waveform data
         dataParams
-        Type
+        
+        defaultSortProperty (1,:) char = 'soundLevel';
+
     end
     
     properties (Access = protected, Hidden = true, Transient)
@@ -79,13 +83,12 @@ classdef (Abstract) Signal
         
         
         
-        
         function obj = applyGate(obj)
             
             n = round(obj.Fs*obj.windowRFTime.realValue)*2;
             
             wo = obj.windowOpts.Value;
-            if isempty(wo) || isequal(wo,'[]')
+            if isempty(wo) || isequal(wo,'[]') || isnan(wo)
                 w = window(str2func(obj.windowFcn.Value),n);
             else
                 w = window(str2func(obj.windowFcn.Value),n,obj.windowOpts.Value{:});
@@ -112,7 +115,11 @@ classdef (Abstract) Signal
         end
         
         function n = get.N(obj)
-            n = length(obj.timeVector);
+            n = length(obj.timeVector{1});
+        end
+        
+        function n = get.signalCount(obj)
+            n = size(obj.data,1);
         end
         
         function obj = set.duration(obj,value)
@@ -186,7 +193,7 @@ classdef (Abstract) Signal
         function processUpdate(obj)
             if obj.ignoreProcessUpdate, return; end
             
-            obj.update; % subclass function
+            obj = obj.update; % subclass function
             
             h = findobj('type','line','-and','tag','SignalPlot');
             if ~isempty(h)
@@ -197,10 +204,11 @@ classdef (Abstract) Signal
         
         
         
+        
         % Overloaded methods ----------------------------------------------
         function signalAnalyzer(obj)
             fprintf('Launching Signal Analyzer ...')
-            signalAnalyzer(obj.data,'TimeValues',obj.timeVector);
+            signalAnalyzer(obj.data{1},'TimeValues',obj.timeVector{1});
             fprintf(' done\n')
         end
         
@@ -236,6 +244,49 @@ classdef (Abstract) Signal
             
         end
         
+        function disp(obj)
+            props = properties(obj);
+            props = sort(props);
+            n = max(cellfun(@length,props)) + 1;
+            d = '';
+            
+            for i = 1:length(props)
+                v = obj.(props{i});
+                if isnumeric(v)
+                    d = sprintf('%s%+*s: %g\n',d,n,props{i},v);
+                elseif ischar(v)
+                    d = sprintf('%s%+*s: ''%s''\n',d,n,props{i},v);
+                elseif isa(v,'abr.sigdef.sigProp')
+                    d = sprintf('%s%+*s: %s\n',d,n,props{i},v.info_text);
+                end
+            end
+            
+            disp(d)
+        end
+        
+        function obj = sort(obj,prop,sortDir)
+            if nargin < 2, prop = obj.defaultSortProperty; end
+            if nargin < 3, sortDir = 'ascend'; end
+            
+            mustBeMember(sortDir,{'ascend','descend'});
+            
+            P = properties(obj);
+            ind = cellfun(@(a) isa(obj.(a),'abr.sigdef.sigProp'),P);
+            P(~ind) = [];
+            
+            assert(ischar(prop) && ismember(prop,P),'Invalid property.');
+            
+            obj = obj.update;
+            
+            [~,idx] = sort(obj.dataParams.(prop),sortDir);
+            
+            obj.data = obj.data(idx);
+            
+            dp = fieldnames(obj.dataParams);
+            for i = 1:length(dp)
+                obj.dataParams.(dp{i}) = obj.dataParams.(dp{i})(idx);
+            end
+        end
         
     end
     

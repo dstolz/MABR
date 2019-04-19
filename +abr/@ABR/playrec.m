@@ -32,12 +32,16 @@ ABR.DAC.SweepLength = length(dacSweep);
 ABR.DAC.SweepOnsets = 1:ABR.DAC.SweepLength:ABR.DAC.N;
 
 
+% Initialize ADC Buffer
+decfrsz = frsz/ABR.adcDecimationFactor;
+decIdx  = 1:ABR.adcDecimationFactor:frsz;
+
 % CREATE INDEXES MATCHING THE DECIMATED ADC BUFFER
 dacSweepIdx = repmat(1:ABR.numSweeps,length(dacSweep),1);
 dacSweepIdx = dacSweepIdx(:);
-
 adcSweepIdx = dacSweepIdx(1:ABR.adcDecimationFactor:end);
-ABR.ADC.Data = 0;
+
+ABR.ADC.preallocate(decfrsz*length(adcSweepIdx));
 ABR.ADC.SweepOnsets = [1; find(diff(adcSweepIdx))];
 ABR.ADC.SweepLength = min(arrayfun(@(a) sum(adcSweepIdx==a),unique(adcSweepIdx)));
 
@@ -47,11 +51,14 @@ ACQSTATE = 'ACQUIRE';
 
 updateTime = hat+1;
 
+
 k = 1;
-m = 1:ABR.DAC.FrameSize:ABR.DAC.N;
-midx = (0:ABR.DAC.FrameSize-1)'+m;
+m = 1:frsz:ABR.DAC.N;
+midx = (0:frsz-1)'+m;
 
 OUTPUT = ABR.DAC.Data;
+
+% timing = zeros(length(m),1);
 for i = 1:length(m)
         
     % look for change in acquisition state
@@ -66,6 +73,7 @@ for i = 1:length(m)
    
     
     % playback/record audio data
+%     timing(i) = hat;
     [INPUT,nu,no] = ABR.APR(OUTPUT(midx(:,i)));
     if nu, fprintf('Number of underruns = %d\n',nu); end
     if no, fprintf('Number of overruns  = %d\n',no); end
@@ -74,24 +82,27 @@ for i = 1:length(m)
     
     % downsample acquired signal 
     % > NOTE NO EXPLICIT ANTI-ALIASING FILTER FOR ONLINE PERFORMANCE
-    n = length(INPUT);
-    adcIdx = k:k+n/ABR.adcDecimationFactor-1;
-    k = adcIdx(end);
     
-    INPUT = INPUT(1:ABR.adcDecimationFactor:end);
-    n = length(INPUT);
+    INPUT = INPUT(decIdx);
 
     
-    % optional digital filter of downsampled data
+    % optional digital filter of downsampled data; try to avoid
+    % onset/offset transients by extending first and last samples, acausal
+    % filtering, and then trimming to input signal
     if ABR.adcUseBPFilter
-        INPUT = filtfilt(ABR.adcFilterDesign,[ones(n,1)*INPUT(1); INPUT; ones(n,1)*INPUT(1)]);
-        INPUT = INPUT(n+1:n*2);
+        INPUT = filtfilt(ABR.adcFilterDesign, ...
+            [repmat(INPUT(1),decfrsz,1); INPUT; repmat(INPUT(end),decfrsz,1)]);
+        INPUT = INPUT(decfrsz+1:decfrsz*2);
     end
     if ABR.adcUseNotchFilter
-        INPUT = filtfilt(ABR.adcNotchFilterDesign,[ones(n,1)*INPUT(1); INPUT; ones(n,1)*INPUT(1)]);
-        INPUT = INPUT(n+1:n*2);
+        INPUT = filtfilt(ABR.adcNotchFilterDesign, ...
+            [repmat(INPUT(1),decfrsz,1); INPUT; repmat(INPUT(end),decfrsz,1)]);
+        INPUT = INPUT(decfrsz+1:decfrsz*2);
     end
-
+    
+    % copy INPUT to ABR.ADC.Data buffer in the correct position
+    adcIdx = k:k+frsz/ABR.adcDecimationFactor-1;
+    k = adcIdx(end);
     ABR.ADC.Data(adcIdx) = INPUT;
     
     if hat >= updateTime + 0.1 % seconds
@@ -128,7 +139,8 @@ end
         
         if options.showstimulusplot
             hs = line(ax,'xdata',ABR.dacBufferTimeVector*1000, ...
-                'ydata',ABR.DAC.Data/max(abs(ABR.DAC.Data)),'linewidth',2, ...
+                'ydata',ABR.DAC.Data./max(abs(ABR.DAC.Data)), ...
+                'linewidth',2, ...
                 'color',[0.2 0.8 0.2 0.5]);
         end
         
@@ -158,8 +170,6 @@ end
         ax.YAxis.Limits = [-1 1] * yl;
         ax.Title.String = sprintf('Sweep %d/%d',dacSweepIdx(m(i)),ABR.numSweeps);
         
-        ax.Toolbar.Visible = 'off'; % disable zoom/pan options
-        ax.HitTest = 'off';
         
         if ~isempty(app)
             app.ControlSweepCountGauge.Value = dacSweepIdx(m(i));
@@ -170,7 +180,7 @@ end
 
     function display_timing_results
         
-        d = diff(ABR.sweepOnsets(2:end)); % first dacSweep time is not true
+        d = diff(timing(2:end)); % first dacSweep time is not true
         
         intendedRate = 1/ABR.sweepRate;
         d = d - intendedRate;
@@ -227,7 +237,6 @@ end
         hax.Position([2 4]) = tax.Position([2 4]);
         
         
-        fprintf('ABR.timingAdjustment = %g sec\n',ABR.timingAdjustment)
         fprintf(['1/sweepRate\t%0.9f sec\nd(t) ', ...
             'median\t\t%9.3f us\nd(t) ', ...
             'mean\t\t%9.3f us\nd(t) std\t\t%9.3f us\n'], ...

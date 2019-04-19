@@ -6,9 +6,8 @@ function createComponents(app)
 % Create ControlPanelUIFigure
 app.ControlPanelUIFigure = uifigure;
 app.ControlPanelUIFigure.Position = [50 400 480 275];
-
 app.ControlPanelUIFigure.Name = 'ABR Control Panel';
-
+app.ControlPanelUIFigure.CloseRequestFcn = createCallbackFcn(app, @close_request, true);
 
 
 %% MENU -------------------------------------------------------------------
@@ -36,6 +35,8 @@ app.OptionsMenu.Text = 'Options';
 app.StayonTopMenu = uimenu(app.OptionsMenu);
 app.StayonTopMenu.Text = 'Stay on Top';
 app.StayonTopMenu.Separator = 'on';
+app.StayonTopMenu.Checked = 'off';
+app.StayonTopMenu.MenuSelectedFcn = createCallbackFcn(app, @always_on_top,false);
 
 % Create OptionShowTimingStats
 app.OptionShowTimingStats = uimenu(app.OptionsMenu);
@@ -249,7 +250,7 @@ app.ControlStimInfoLabel = uilabel(app.ControlTab);
 app.ControlStimInfoLabel.Position = [22 41 436 30];
 app.ControlStimInfoLabel.HorizontalAlignment = 'center';
 app.ControlStimInfoLabel.VerticalAlignment = 'bottom';
-app.ControlStimInfoLabel.FontSize = 12;
+app.ControlStimInfoLabel.FontSize = 14;
 app.ControlStimInfoLabel.Text = '';
 
 % Create RepetitionsLabel

@@ -9,6 +9,8 @@ classdef Buffer
         SweepOnsets  (:,1) double {mustBePositive,mustBeInteger} = 1;
         SweepLength  (1,1) double {mustBePositive,mustBeInteger} = 1;
         
+        SweepValue   
+        
         FrameSize    (1,1) double {mustBePositive,mustBeInteger} = 1;
         
         PadValue     (1,1) = 0; % data type cast to obj.Data type
@@ -104,12 +106,18 @@ classdef Buffer
         
         
         % Helper Functions ------------------------------------------------
-        function insertData(obj,data,dataOnset)
+        function obj = insertData(obj,data,dataOnset)
             obj.Data(dataOnset:length(data)-1) = data;
         end
         
+        function obj = appendData(obj,data)
+            obj.Data(end+1:end+length(data)) = data;
+        end
         
-        
+        function obj = preallocate(obj,n,val)
+            if nargin < 3 || isempty(val), val = 0; end
+            obj.Data = val*ones(n,1);
+        end
         
         % Plotting Functions ----------------------------------------------
         
@@ -188,6 +196,27 @@ classdef Buffer
             end
             
             f = obj.SampleRate*(0:(L/2))/L;
+        end
+        
+        
+        function signalAnalyzer(obj)
+            y = obj.SweepValue;
+            if isempty(y), y = 1:obj.NumSweeps; end
+            z = obj.SweepData;
+            str = '';
+            for i = 1:length(y)
+                if isnumeric(y(i))
+                    n = sprintf('Sig_%g',y(i));
+                else
+                    n = sprintf('Sig_%s',y(i));
+                end
+                n = matlab.lang.makeValidName(n);
+                eval(sprintf('%s = z(:,i);',n));
+                str = [str ',' n];
+            end
+            
+            eval(sprintf('signalAnalyzer(%s,''SampleRate'',obj.SampleRate);',str));
+            
         end
         
     end

@@ -1,4 +1,4 @@
-classdef File < sigdef.Signal
+classdef File < abr.sigdef.Signal
     % Daniel Stolzberg, PhD (c) 2019
     
     properties (Access = public)
@@ -13,11 +13,14 @@ classdef File < sigdef.Signal
     end
     
     
+    properties (Constant)
+        type = 'File';
+    end
+    
     methods
         
         % Constructor
         function obj = File(fullFilename)
-            obj.Type = 'File';
             
             if nargin < 1 || isempty(fullFilename), fullFilename = ''; end
 

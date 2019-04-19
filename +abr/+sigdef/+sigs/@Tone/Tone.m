@@ -6,6 +6,9 @@ classdef Tone < abr.sigdef.Signal
         startPhase      (1,1) abr.sigdef.sigProp
     end
     
+    properties (Constant)
+        Type = 'Tone';
+    end
     
     methods
         
@@ -13,7 +16,6 @@ classdef Tone < abr.sigdef.Signal
         function obj = Tone(frequency,soundLevel,startPhase)
             obj.ignoreProcessUpdate = true;
             
-            obj.Type = 'Tone';
             
             if nargin < 1 || isempty(frequency),  frequency = 'octaves(1,32,6)'; end
             if nargin < 2 || isempty(soundLevel), soundLevel = '0:10:80'; end
@@ -21,12 +23,16 @@ classdef Tone < abr.sigdef.Signal
             
             obj.frequency       = abr.sigdef.sigProp(frequency,'Frequency','kHz',1000);            
             obj.frequency.Alias = 'Frequency';
+            obj.frequency.ValueFormat = '%0.3f';
             
             obj.soundLevel.Value = soundLevel;
+            obj.soundLevel.ValueFormat = '%0.2f';
             
             obj.startPhase       = abr.sigdef.sigProp(startPhase,'Start Phase','deg');
             obj.startPhase.Alias = 'Start Phase';
                         
+            obj.defaultSortProperty = 'frequency';
+            
             obj.ignoreProcessUpdate = false;
         end
         
@@ -55,25 +61,27 @@ classdef Tone < abr.sigdef.Signal
             
             k = 1;
             for i = 1:numel(time)
-                for j = 1:numel(pol)
+%                 for j = 1:numel(pol)
                     for m = 1:numel(freq)
                         for n = 1:numel(phi)
                             for a = 1:numel(A)
-                                
+                                    
                                 Adb = CALVOLT.*10.^((A(a)-CALVAL)./20);
                                 
-                                obj.data{k,1} = Adb.*sin(2*pi*freq(m)*time{i}+phi(n))*double(pol(j));
+                                obj.data{k,1} = Adb.*sin(2*pi*freq(m)*time{i}+phi(n));
+%                                 obj.data{k,1} = Adb.*sin(2*pi*freq(m)*time{i}+phi(n))*double(pol(j));
                                 obj.dataParams.frequency(k,1)  = freq(m);
                                 obj.dataParams.soundLevel(k,1) = A(a);
                                 obj.dataParams.startPhase(k,1) = phi(n);
-                                obj.dataParams.polarity(k,1)   = pol(j);
+%                                 obj.dataParams.polarity(k,1)   = pol(j);
                                 obj.dataParams.duration(k,1)   = obj.duration.realValue(i); % same as timeVector
                                 k = k + 1;
                             end
                         end
                     end
-                end
+%                 end
             end
+            
             obj = obj.applyGate; % superclass function
         end
         
