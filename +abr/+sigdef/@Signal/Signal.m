@@ -19,7 +19,8 @@ classdef (Abstract) Signal
         windowOpts      (1,1) abr.sigdef.sigProp
         windowRFTime    (1,1) abr.sigdef.sigProp
         
-        SoundCal        (1,1) abr.AcousticCalibration
+        CalibrationType (1,:) char {mustBeMember(CalibrationType,{'lut','interp'})} = 'lut';
+        
     end
     
     
@@ -34,7 +35,6 @@ classdef (Abstract) Signal
         dataParams
         
         defaultSortProperty (1,:) char = 'soundLevel';
-
     end
     
     properties (Access = protected, Hidden = true, Transient)
@@ -88,7 +88,8 @@ classdef (Abstract) Signal
             n = round(obj.Fs*obj.windowRFTime.realValue)*2;
             
             wo = obj.windowOpts.Value;
-            if isempty(wo) || isequal(wo,'[]') || isnan(wo)
+
+            if isempty(wo) || ismember(wo,{'[]','~'}) || isnan(wo)
                 w = window(str2func(obj.windowFcn.Value),n);
             else
                 w = window(str2func(obj.windowFcn.Value),n,obj.windowOpts.Value{:});
@@ -191,6 +192,9 @@ classdef (Abstract) Signal
         end
         
         function processUpdate(obj)
+            
+            return % FOR NOW
+            
             if obj.ignoreProcessUpdate, return; end
             
             obj = obj.update; % subclass function

@@ -53,8 +53,8 @@ classdef sigProp
         end
         
         function v = get.Value(obj)
-            if isnumeric(obj.Value)
-                v = obj.Value;
+            if iscellstr(obj.Value)
+                v = char(obj.Value);
             else
                 v = obj.Value;
             end
@@ -88,6 +88,8 @@ classdef sigProp
         function v = get.Evaluated(obj)
             v = obj.Value;
             if ~isempty(obj.Function) || isnumeric(v), return; end
+            
+            if iscellstr(v), v = char(v); end
             
             if v(1) ~= '[', v = ['[' v ']']; end
             
@@ -126,6 +128,8 @@ classdef sigProp
         function d = info_text(obj)
             if ischar(obj.Value)
                 d = sprintf('%s:\t%s %s',obj.DescriptionWithUnit,obj.Value);
+            elseif iscellstr(obj.Value)
+                d = sprintf('%s:\t%s %s',obj.Description,char(obj.Value),obj.Unit);
             else
                 d = sprintf(['%s:\t' obj.ValueFormat ' %s'],obj.Description,obj.Value,obj.Unit);
             end

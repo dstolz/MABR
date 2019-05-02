@@ -10,6 +10,7 @@ classdef ABR
         
         audioDevice   (1,:) char
         
+        altPolarity   (1,1) logical = false;
         
         sweepRate     (1,1) double {mustBePositive, mustBeFinite} = 21.1; % Hz
         numSweeps     (1,1) double {mustBeInteger, mustBePositive} = 1024;

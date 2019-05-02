@@ -25,7 +25,21 @@ ABR.DAC.FrameSize = 1;
 n = ceil(ABR.DAC.SampleRate ./ ABR.sweepRate - ABR.DAC.N);
 silence  = zeros(n,1,'like',ABR.DAC.Data);
 dacSweep = [ABR.DAC.Data; silence];
-ABR.DAC.Data = repmat(dacSweep,ABR.numSweeps,1);
+
+
+if ABR.altPolarity
+    % alternate stimulus polarity for every presentation
+    n = ABR.numSweeps/2;
+    data = repmat([dacSweep; -dacSweep],n,1);
+    if mod(ABR.numSweeps,2) == 1
+        ABR.DAC.Data = data(1:end-length(dacSweep));
+    else
+        ABR.DAC.Data = data;
+    end
+else
+    ABR.DAC.Data = repmat(dacSweep,ABR.numSweeps,1);
+end
+
 ABR.DAC.FrameSize = frsz;
 
 ABR.DAC.SweepLength = length(dacSweep);
@@ -69,7 +83,7 @@ for i = 1:length(m)
         pause(0.25);
     end
     
-    if ~isequal(ACQSTATE,'ACQUIRE'), break; end    
+    if ~isequal(ACQSTATE,'ACQUIRE'), return; end    
    
     
     % playback/record audio data
@@ -82,7 +96,6 @@ for i = 1:length(m)
     
     % downsample acquired signal 
     % > NOTE NO EXPLICIT ANTI-ALIASING FILTER FOR ONLINE PERFORMANCE
-    
     INPUT = INPUT(decIdx);
 
     
@@ -112,6 +125,7 @@ for i = 1:length(m)
     
 end
 
+ACQSTATE = 'IDLE';
 
 update_plot(hl,hs);
 

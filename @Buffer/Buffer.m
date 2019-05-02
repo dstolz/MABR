@@ -176,6 +176,8 @@ classdef Buffer
 
         end
         
+        
+        
         % Overloaded Functions --------------------------------------------
         function [M,f] = fft(obj)
             Y = obj.SweepMean;

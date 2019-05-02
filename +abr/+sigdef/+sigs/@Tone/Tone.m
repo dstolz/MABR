@@ -16,7 +16,6 @@ classdef Tone < abr.sigdef.Signal
         function obj = Tone(frequency,soundLevel,startPhase)
             obj.ignoreProcessUpdate = true;
             
-            
             if nargin < 1 || isempty(frequency),  frequency = 'octaves(1,32,6)'; end
             if nargin < 2 || isempty(soundLevel), soundLevel = '0:10:80'; end
             if nargin < 3 || isempty(startPhase), startPhase = 0;  end
@@ -32,6 +31,8 @@ classdef Tone < abr.sigdef.Signal
             obj.startPhase.Alias = 'Start Phase';
                         
             obj.defaultSortProperty = 'frequency';
+            
+            obj.CalibrationType = 'interp';
             
             obj.ignoreProcessUpdate = false;
         end
