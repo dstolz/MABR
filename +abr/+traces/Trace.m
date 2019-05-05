@@ -10,7 +10,7 @@ classdef Trace < handle &  matlab.mixin.SetGet
         Alpha           (1,1) double {mustBePositive,mustBeLessThanOrEqual(Alpha,1)} = 1; % 0 = clear; 1 = opaque
         LineWidth       (1,1) double {mustBePositive,mustBeFinite} = 1;
         
-        Marker          (:,1) traces.Marker
+        Marker          (:,1) abr.traces.Marker
         LabelText       (1,:) char = '';
         
         TimeUnit        (1,:) char {mustBeMember(TimeUnit,{'auto','s','ms','us','ns'})} = 'auto';
@@ -18,6 +18,7 @@ classdef Trace < handle &  matlab.mixin.SetGet
     
     properties (SetAccess = private)
         ID  (1,1) int32
+        RMS (1,1) double
     end
     
     properties (SetAccess = private, Dependent)
@@ -110,6 +111,10 @@ classdef Trace < handle &  matlab.mixin.SetGet
             h = [obj.Marker.LabelHandle];
         end
         
+        function v = get.RMS(obj)
+            v = rms(obj.Data);
+        end
+        
         
         % Overloaded Functions --------------------------------------------
         function plot(obj,ax)
@@ -140,7 +145,7 @@ classdef Trace < handle &  matlab.mixin.SetGet
                 t.FontWeight = 'bold';
                 t.BackgroundColor = [ax.Color 0.9];
                 t.Margin = 0.1;
-                t.HorizontalAlignment = 'center';
+                t.HorizontalAlignment = 'left';
                 t.VerticalAlignment   = 'baseline';
                 kobj.LabelHandle = t;
                 

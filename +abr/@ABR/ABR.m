@@ -3,8 +3,10 @@ classdef ABR
 % 
 % Daniel Stolzberg, PhD (c) 2019
     properties
-        DAC           (1,1) Buffer
-        ADC           (1,1) Buffer
+        DAC           (1,1) abr.Buffer
+        ADC           (1,1) abr.Buffer
+%         Calibration   (1,1) abr.AcousticCalibration
+        SIG           (1,1) % abr.sigdef.sigs....
                 
         adcDecimationFactor (1,1) {mustBeInteger,mustBePositive} = 4;
         
@@ -12,9 +14,9 @@ classdef ABR
         
         altPolarity   (1,1) logical = false;
         
-        sweepRate     (1,1) double {mustBePositive, mustBeFinite} = 21.1; % Hz
-        numSweeps     (1,1) double {mustBeInteger, mustBePositive} = 1024;
-        eventOnset    (1,1) double {mustBePositive,mustBeFinite} = 0.1; % seconds
+        sweepRate     (1,1) double {mustBePositive, mustBeFinite}   = 21.1; % Hz
+        numSweeps     (1,1) double {mustBeInteger,  mustBePositive} = 1024;
+        eventOnset    (1,1) double {mustBePositive, mustBeFinite}   = 0.1; % seconds
         
         adcWindow     (1,2) double {mustBeFinite} = [0 0.015]; % seconds
         
@@ -26,36 +28,29 @@ classdef ABR
         
         adcUseBPFilter    (1,1) logical = true;
         adcUseNotchFilter (1,1) logical = true;
+        
     end
     
-    properties (GetAccess = public, SetAccess = private)
+    properties (SetAccess = private)
         APR
+
         
-                
+
         adcFilterDesign;
         adcNotchFilterDesign
         
         sweepCount = 1;
         
-    end
-    
-    properties (GetAccess = public, SetAccess = private, Dependent)        
-        programState = 'Idle'; % depends on private property STATE
-        
-    end
-    
-    properties (Access = private,Hidden = true)
-        STATE = -1; % -1: IDLE, 0: READY, 1: RECORDING, 2: COMPLETED
-        
-        dacPaddingSamples = [0 0 0 0]; % [prestim, poststim, stim, framepad]
+
     end
     
     
     
     methods   
-        obj = playrec(obj,app,ax,varargin); % TESTING
+        obj = playrec(obj,app,ax,varargin);
         obj = selectAudioDevice(obj,deviceString);
         obj = prepareSweep(obj);
+        r = analysis(obj,type,varargin);
         
         % Constructor
         function obj = ABR
@@ -82,19 +77,7 @@ classdef ABR
         
         
         
-        
-        
-        
-        
-        % PROPERTY METHODS
-        function s = get.programState(obj)
-            switch obj.STATE
-                case -1, s = 'Idle';
-                case 0,  s = 'Read';
-                case 1,  s = 'Recording';
-                case 2,  s = 'Finished';
-            end
-        end
+       
         
         % DAC -------------------------------------------------------------
      

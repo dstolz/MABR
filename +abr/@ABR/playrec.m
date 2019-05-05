@@ -61,7 +61,7 @@ ABR.ADC.SweepLength = min(arrayfun(@(a) sum(adcSweepIdx==a),unique(adcSweepIdx))
 
 [hl,hs] = setup_plot;
 
-ACQSTATE = 'ACQUIRE';
+ACQSTATE = abr.ACQSTATE.ACQUIRE;
 
 updateTime = hat+1;
 
@@ -76,14 +76,14 @@ OUTPUT = ABR.DAC.Data;
 for i = 1:length(m)
         
     % look for change in acquisition state
-    while isequal(ACQSTATE,'PAUSED') && ~isempty(app)
+    while ACQSTATE == abr.ACQSTATE.PAUSED && ~isempty(app)
         app.AcquisitionStateLamp.Color = [1 1 .3];
         pause(0.25);
         app.AcquisitionStateLamp.Color = [.7 .7 0];
         pause(0.25);
     end
     
-    if ~isequal(ACQSTATE,'ACQUIRE'), return; end    
+    if ACQSTATE ~= abr.ACQSTATE.ACQUIRE, return; end    
    
     
     % playback/record audio data
@@ -125,7 +125,7 @@ for i = 1:length(m)
     
 end
 
-ACQSTATE = 'IDLE';
+ACQSTATE = abr.ACQSTATE.IDLE;
 
 update_plot(hl,hs);
 

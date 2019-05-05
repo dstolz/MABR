@@ -12,7 +12,7 @@ if isempty(tidx), return; end
 
 C = hFig.CurrentPoint;
 
-L = traces.Organizer.button_state_left;
+L = abr.traces.Organizer.button_state_left;
 
 if ~L, LAST_STATE = 0; return; end
 

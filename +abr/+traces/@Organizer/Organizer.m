@@ -1,4 +1,4 @@
-classdef Organizer < handle
+classdef (ConstructOnLoad = true) Organizer < handle
     
     properties
         SortBy          (:,1) cell
@@ -8,7 +8,7 @@ classdef Organizer < handle
         YScaling        (1,1) double {mustBePositive,mustBeNonempty,mustBeFinite} = 0.7;
         YSpacing        (1,1) double {mustBePositive,mustBeNonempty,mustBeFinite} = 1;
         
-        Traces          (1,:) traces.Trace
+        Traces          (1,:) abr.traces.Trace
         
         groupColors     (:,3) double {mustBeNonnegative,mustBeLessThanOrEqual(groupColors,1)} = lines;
 
@@ -56,11 +56,12 @@ classdef Organizer < handle
             
             if nargin == 0, return; end
             
-            if isa(traces,'traces.Trace')
+            if isa(traces,'abr.traces.Trace')
                 for i = 1:length(traces)
                     obj.addTrace(traces(i).Data,traces(i).Props,traces(i).FirstTimepoint,traces(i).SampleRate);
                 end
             end
+            
         end
         
         
@@ -77,16 +78,18 @@ classdef Organizer < handle
             if nargin < 4 || isempty(firstTimepoint), firstTimepoint = 0; end
             if nargin < 5 || isempty(Fs), Fs = 1; end
             if isempty(obj.Traces) || obj.N == 1 && obj.Traces.ID == -1
-                obj.Traces = traces.Trace(data,props,firstTimepoint,Fs);
+                obj.Traces = abr.traces.Trace(data,props,firstTimepoint,Fs);
                 obj.YPosition = 0;
                 obj.GroupIdx  = 1; % default group
             else
-                obj.Traces(end+1) = traces.Trace(data,props,firstTimepoint,Fs);
-                obj.YPosition(end+1) = obj.YPosition(end) + obj.YSpacing;
+                obj.Traces(end+1) = abr.traces.Trace(data,props,firstTimepoint,Fs);
+                obj.YPosition(end+1) = min(obj.YPosition) - obj.YSpacing;
                 obj.GroupIdx(end+1) = 1; % default group
             end
             
             obj.Traces(end).Color = obj.groupColors(obj.GroupIdx(end),:);
+
+            plot(obj);
         end
                 
         function deleteTrace(obj,idx)
@@ -139,6 +142,7 @@ classdef Organizer < handle
                 u = unique(m(:,i));
                 ind(i) = length(u) > 1;
             end
+            if ~any(ind), ind = true(size(ind)); end
             n = obj.PropertyNames(ind);
         end
         
@@ -147,6 +151,8 @@ classdef Organizer < handle
 %             b = obj.SortBy;
 %             m = obj.PropertyMatrix;
             n = obj.informativeProps;
+            if isempty(n), return; end
+                
             for i = 1:obj.N
                 s{i} = '';
 %                 s{i} = sprintf('\\color[rgb]{%0.3f,%0.3f,%0.3f}',obj.Traces(i).Color);
@@ -220,7 +226,7 @@ classdef Organizer < handle
             if ~obj.N, return; end
 
             delete(obj.Traces);
-            obj.Traces = traces.Trace;
+            obj.Traces = abr.traces.Trace;
 
             try
                 cla(obj.mainAx);
@@ -260,14 +266,19 @@ classdef Organizer < handle
         end
         
         function save(obj,hObj,event) %#ok<INUSD>
-            dfltpn = getpref('TraceOrganizer','dfltpath',cd);
-            [fn,pn] = uiputfile({'*.torg','Trace Organizer File (*.torg)'}, ...
-                'Save Trace Organizer',dfltpn);
-            if isequal(pn,0), return; end
+            if nargin == 2 && ischar(hObj)
+                ffn = hObj;
+            else
+                dfltpn = getpref('TraceOrganizer','dfltpath',cd);
+                [fn,pn] = uiputfile({'*.torg','Trace Organizer File (*.torg)'}, ...
+                    'Save Trace Organizer',dfltpn);
+                if isequal(pn,0), return; end
+                ffn = fullfile(pn,fn);
+            end
+            
+            TO = obj; % this actually works for a handle class?
 
-            TO = obj;
-
-            save(fullfile(pn,fn),'TO','-mat'); 
+            save(ffn,'TO','-mat'); 
             setpref('TraceOrganizer','dfltpath',pn);
         end
         
@@ -284,8 +295,8 @@ classdef Organizer < handle
                     'NumberTitle','off', ...
                     'Color',[1 1 1], ...
                     'MenuBar','none', ...
-                    'KeyPressFcn',{'traces.Organizer.key_processor',obj}, ...
-                    'WindowButtonMotionFcn',{'traces.Organizer.move_trace',obj}, ...
+                    'KeyPressFcn',{'abr.traces.Organizer.key_processor',obj}, ...
+                    'WindowButtonMotionFcn',{'abr.traces.Organizer.move_trace',obj}, ...
                     'Units','pixels', ...
                     'Position',[800 30 570 620]);
                 
@@ -303,7 +314,7 @@ classdef Organizer < handle
                     'XGrid','on','YGrid','on', ...
                     'GridLineStyle',':', ...
                     'Box','on', ...
-                    'ButtonDownFcn',{'traces.Organizer.axes_clicked',obj}, ...
+                    'ButtonDownFcn',{'abr.traces.Organizer.axes_clicked',obj}, ...
                     'HandleVisibility','off', ...
                     'YTickLabelRotation',30);
                 
@@ -311,7 +322,7 @@ classdef Organizer < handle
                 
                 c = uicontextmenu;
                 m1 = uimenu(c,'Label','Delete Trace', ...
-                    'Callback',{'traces.Organizer.key_processor',obj,'delete'});
+                    'Callback',{'abr.traces.Organizer.key_processor',obj,'delete'});
                 obj.ContextMenu = c;
                 
 %                 obj.init_timer;
@@ -340,8 +351,8 @@ classdef Organizer < handle
 
                 obj.Traces(k).plot(obj.mainAx);
                 obj.Traces(k).LineHandle.YData = D{k} + obj.YPosition(k);
-                obj.Traces(k).LineHandle.ButtonDownFcn  = {'traces.Organizer.trace_clicked',obj,k};
-                obj.Traces(k).LabelHandle.ButtonDownFcn = {'traces.Organizer.trace_label_clicked',obj,k};
+                obj.Traces(k).LineHandle.ButtonDownFcn  = {'abr.traces.Organizer.trace_clicked',obj,k};
+                obj.Traces(k).LabelHandle.ButtonDownFcn = {'abr.traces.Organizer.trace_label_clicked',obj,k};
                 obj.TraceIdx(k) = k;
                 
                 obj.Traces(k).LabelHandle.Position(2) = obj.YPosition(k);
@@ -431,7 +442,7 @@ classdef Organizer < handle
         
         function trace_label_clicked(h,event,obj,traceIdx) 
 %             fprintf('Clicked Label: %s\n',h.String)
-            traces.Organizer.trace_clicked(h,event,obj,traceIdx); % FOR NOW
+            abr.traces.Organizer.trace_clicked(h,event,obj,traceIdx); % FOR NOW
         end
             
             

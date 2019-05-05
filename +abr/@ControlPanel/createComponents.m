@@ -5,7 +5,7 @@ function createComponents(app)
 
 % Create ControlPanelUIFigure
 app.ControlPanelUIFigure = uifigure;
-app.ControlPanelUIFigure.Position = [50 400 480 275];
+app.ControlPanelUIFigure.Position = [50 400 550 275];
 app.ControlPanelUIFigure.Name = 'ABR Control Panel';
 app.ControlPanelUIFigure.CloseRequestFcn = createCallbackFcn(app, @close_request, true);
 
@@ -38,12 +38,12 @@ app.StayonTopMenu.Separator = 'on';
 app.StayonTopMenu.Checked = 'off';
 app.StayonTopMenu.MenuSelectedFcn = createCallbackFcn(app, @always_on_top,false);
 
-% Create OptionShowTimingStats
-app.OptionShowTimingStats = uimenu(app.OptionsMenu);
-app.OptionShowTimingStats.Text = 'Show Timing Stats';
-app.OptionShowTimingStats.Separator = 'on';
-app.OptionShowTimingStats.Checked = 'off';
-app.OptionShowTimingStats.MenuSelectedFcn = createCallbackFcn(app, @menu_option_processor,true);
+% % Create OptionShowTimingStats
+% app.OptionShowTimingStats = uimenu(app.OptionsMenu);
+% app.OptionShowTimingStats.Text = 'Show Timing Stats';
+% app.OptionShowTimingStats.Separator = 'on';
+% app.OptionShowTimingStats.Checked = 'off';
+% app.OptionShowTimingStats.MenuSelectedFcn = createCallbackFcn(app, @menu_option_processor,true);
 
 % Create ASIOSettingsMenu
 app.ASIOSettingsMenu = uimenu(app.OptionsMenu);
@@ -61,10 +61,12 @@ app.SelectAudioDeviceMenu.MenuSelectedFcn = createCallbackFcn(app, @select_audio
 
 
 
-% Create TabGroup
+%% Create TabGroup --------------------------------------------------------
 app.TabGroup = uitabgroup(app.ControlPanelUIFigure);
 app.TabGroup.SelectionChangedFcn = createCallbackFcn(app, @TabGroupSelectionChanged, true);
-app.TabGroup.Position = [1 1 480 273];
+app.TabGroup.Position = [1 1 550 273];
+app.TabGroup.TabLocation = 'left';
+
 
 
 %% CONFIG TAB -------------------------------------------------------------
@@ -72,17 +74,24 @@ app.TabGroup.Position = [1 1 480 273];
 app.ConfigTab = uitab(app.TabGroup);
 app.ConfigTab.Title = 'Config';
 
+y = 210; yspacing = 30;
+x = 5; labelWidth = 80;
+ddl = 210;
+ddx = 107;
+abx = 330;
+bbx = 395;
+
 % Create ConfigFileSave
 app.ConfigFileSave = uibutton(app.ConfigTab, 'push');
 app.ConfigFileSave.FontSize = 14;
-app.ConfigFileSave.Position = [275 155 60 24];
+app.ConfigFileSave.Position = [abx y 60 24];
 app.ConfigFileSave.Text = 'save';
 app.ConfigFileSave.ButtonPushedFcn = createCallbackFcn(app, @save_config_file, false);
 
 % Create ConfigFileLoad
 app.ConfigFileLoad = uibutton(app.ConfigTab, 'push');
 app.ConfigFileLoad.FontSize = 14;
-app.ConfigFileLoad.Position = [340 155 60 24];
+app.ConfigFileLoad.Position = [bbx y 60 24];
 app.ConfigFileLoad.Text = 'load';
 app.ConfigFileLoad.ButtonPushedFcn = createCallbackFcn(app, @load_config_file, false);
 
@@ -90,7 +99,7 @@ app.ConfigFileLoad.ButtonPushedFcn = createCallbackFcn(app, @load_config_file, f
 app.ConfigFileLabel = uilabel(app.ConfigTab);
 app.ConfigFileLabel.HorizontalAlignment = 'right';
 app.ConfigFileLabel.FontSize = 14;
-app.ConfigFileLabel.Position = [44 180 48 22];
+app.ConfigFileLabel.Position = [x y labelWidth 22];
 app.ConfigFileLabel.Text = 'Config';
 
 % Create ConfigFileDropDown
@@ -99,17 +108,19 @@ app.ConfigFileDropDown.Items = {'ConfigFile.cfg'};
 app.ConfigFileDropDown.Editable = 'off';
 app.ConfigFileDropDown.FontSize = 14;
 app.ConfigFileDropDown.BackgroundColor = [1 1 1];
-app.ConfigFileDropDown.Position = [107 180 300 22];
+app.ConfigFileDropDown.Position = [ddx y ddl 22];
 app.ConfigFileDropDown.Value = 'ConfigFile.cfg';
 app.ConfigFileDropDown.Tooltip = 'Select a configuration file';
-app.ConfigFileDropDown.ValueChangedFcn = createCallbackFcn(app, @config_file_changed,true);
+app.ConfigFileDropDown.ValueChangedFcn = createCallbackFcn(app, @load_config_file,true);
 
+
+y = y-yspacing;
 
 % Create ScheduleDropDownLabel
 app.ScheduleDropDownLabel = uilabel(app.ConfigTab);
 app.ScheduleDropDownLabel.HorizontalAlignment = 'right';
 app.ScheduleDropDownLabel.FontSize = 14;
-app.ScheduleDropDownLabel.Position = [29 115 64 22];
+app.ScheduleDropDownLabel.Position = [x y labelWidth 22];
 app.ScheduleDropDownLabel.Text = 'Schedule';
 
 % Create ConfigScheduleDropDown
@@ -118,43 +129,122 @@ app.ConfigScheduleDropDown.Items = {''};
 app.ConfigScheduleDropDown.Editable = 'off';
 app.ConfigScheduleDropDown.FontSize = 14;
 app.ConfigScheduleDropDown.BackgroundColor = [1 1 1];
-app.ConfigScheduleDropDown.Position = [108 115 300 22];
+app.ConfigScheduleDropDown.Position = [ddx y ddl 22];
 app.ConfigScheduleDropDown.Value = '';
 app.ConfigScheduleDropDown.ValueChangedFcn = createCallbackFcn(app, @load_schedule_file,true);
 
 % Create ConfigLoadSchedButton
 app.ConfigLoadSchedButton = uibutton(app.ConfigTab, 'push');
 app.ConfigLoadSchedButton.FontSize = 14;
-app.ConfigLoadSchedButton.Position = [340 90 60 24];
+app.ConfigLoadSchedButton.Position = [bbx y 60 24];
 app.ConfigLoadSchedButton.Text = 'load';
 app.ConfigLoadSchedButton.ButtonPushedFcn = createCallbackFcn(app, @locate_schedule_file,false);
 
 % Create ConfigNewSchedButton
 app.ConfigNewSchedButton = uibutton(app.ConfigTab, 'push');
 app.ConfigNewSchedButton.FontSize = 14;
-app.ConfigNewSchedButton.Position = [275 90 60 24];
+app.ConfigNewSchedButton.Position = [abx y 60 24];
 app.ConfigNewSchedButton.Text = 'new';
 app.ConfigNewSchedButton.UserData = 'ScheduleDesign';
 app.ConfigNewSchedButton.ButtonPushedFcn = createCallbackFcn(app, @locate_utility, true);
 
-% Create OutputDropDownLabel
-app.OutputDropDownLabel = uilabel(app.ConfigTab);
-app.OutputDropDownLabel.HorizontalAlignment = 'right';
-app.OutputDropDownLabel.FontSize = 14;
-app.OutputDropDownLabel.Position = [44 50 48 22];
-app.OutputDropDownLabel.Text = 'Output';
 
-% Create ConfigOutputDropDown
-app.ConfigOutputDropDown = uidropdown(app.ConfigTab);
-app.ConfigOutputDropDown.Items = {'data_output_file.abr'};
-app.ConfigOutputDropDown.Editable = 'on';
-app.ConfigOutputDropDown.FontSize = 14;
-app.ConfigOutputDropDown.BackgroundColor = [1 1 1];
-app.ConfigOutputDropDown.Position = [107 50 300 22];
-app.ConfigOutputDropDown.Value = 'data_output_file.abr';
-app.ConfigOutputDropDown.Tooltip = 'Select an output file or create a new one by editing the name.';
+y = y - yspacing;
+
+% Create CalibrationNew
+app.CalibrationNew = uibutton(app.ConfigTab, 'push');
+app.CalibrationNew.FontSize = 14;
+app.CalibrationNew.Position = [abx y 60 24];
+app.CalibrationNew.Text = 'new';
+app.CalibrationNew.ButtonPushedFcn = createCallbackFcn(app, @abr.Calibration, false);
+
+% Create CalibrationLoad
+app.CalibrationLoad = uibutton(app.ConfigTab, 'push');
+app.CalibrationLoad.FontSize = 14;
+app.CalibrationLoad.Position = [bbx y 60 24];
+app.CalibrationLoad.Text = 'load';
+app.CalibrationLoad.ButtonPushedFcn = createCallbackFcn(app, @locate_calibration_file, false);
+
+% Create CalibrationDropDownLabel
+app.CalibrationDropDownLabel = uilabel(app.ConfigTab);
+app.CalibrationDropDownLabel.HorizontalAlignment = 'right';
+app.CalibrationDropDownLabel.FontSize = 14;
+app.CalibrationDropDownLabel.Position = [x y labelWidth 22];
+app.CalibrationDropDownLabel.Text = 'Calibration';
+
+% Create CalibrationDropDown
+app.CalibrationDropDown = uidropdown(app.ConfigTab);
+app.CalibrationDropDown.Items = {''};
+app.CalibrationDropDown.Editable = 'off';
+app.CalibrationDropDown.FontSize = 14;
+app.CalibrationDropDown.BackgroundColor = [1 1 1];
+app.CalibrationDropDown.Position = [ddx y ddl 22];
+app.CalibrationDropDown.Value = '';
+app.CalibrationDropDown.Tooltip = 'Select a calibration file';
+app.CalibrationDropDown.ValueChangedFcn = createCallbackFcn(app, @load_calibration_file,true);
 
 
+app.OutputPanel = uipanel('Parent',app.ConfigTab,'Title','ABR Data Output', ...
+    'Position',[5 10 450 100]);
+
+x = 5;
+y = 50;
+ddx = 100;
+
+% Create OutputFileDropDown
+app.OutputFileDropDown = uidropdown(app.OutputPanel);
+app.OutputFileDropDown.Editable = 'on';
+app.OutputFileDropDown.FontSize = 14;
+app.OutputFileDropDown.BackgroundColor = [1 1 1];
+app.OutputFileDropDown.Position = [ddx y 300 22];
+app.OutputFileDropDown.Items = {''};
+app.OutputFileDropDown.Value = '';
+app.OutputFileDropDown.Tooltip = 'Select an output file or create a new one by editing the name.';
+app.OutputFileDropDown.ValueChangedFcn = createCallbackFcn(app, @output_file_changed,true);
+
+
+% Create OutputFileLabel
+app.OutputFileLabel = uilabel(app.OutputPanel);
+app.OutputFileLabel.HorizontalAlignment = 'right';
+app.OutputFileLabel.FontSize = 14;
+app.OutputFileLabel.Position = [x y labelWidth 22];
+app.OutputFileLabel.Text = 'Output File';
+
+y = y - yspacing;
+
+
+% Create OutputPathDropDown
+recentPaths = getpref('ABRControlPanel','outputFolder',{app.root}); % set with recent directories
+ind = isfolder(recentPaths);
+recentPaths(~ind) = [];
+app.OutputPathDropDown = uidropdown(app.OutputPanel);
+app.OutputPathDropDown.Editable = 'off';
+app.OutputPathDropDown.FontSize = 14;
+app.OutputPathDropDown.BackgroundColor = [1 1 1];
+app.OutputPathDropDown.Position = [ddx y 300 22];
+app.OutputPathDropDown.Items = app.truncate_str(recentPaths,40);
+app.OutputPathDropDown.ItemsData = recentPaths;
+app.OutputPathDropDown.Value = recentPaths{1};
+app.OutputPathDropDown.ValueChangedFcn = createCallbackFcn(app, @output_path_changed,true);
+
+% Create OutputPathSelectButton
+app.OutputPathSelectButton = uibutton(app.OutputPanel, 'push');
+app.OutputPathSelectButton.FontSize = 14;
+app.OutputPathSelectButton.Position = [ddx+300+5 y 40 24];
+app.OutputPathSelectButton.Text = 'dir';
+app.OutputPathSelectButton.Tooltip = 'Locate a data output directory';
+app.OutputPathSelectButton.ButtonPushedFcn = createCallbackFcn(app, @output_select_directory, false);
+
+% Create OutputPathLabel
+app.OutputPathLabel = uilabel(app.OutputPanel);
+app.OutputPathLabel.HorizontalAlignment = 'right';
+app.OutputPathLabel.FontSize = 14;
+app.OutputPathLabel.Position = [x y labelWidth 22];
+app.OutputPathLabel.Text = 'Directory';
+
+e.Value = app.OutputFileDropDown.Value;
+e.Source = app.OutputFileDropDown;
+app.output_path_changed(e);
 
 %% SUBJECT TAB -------------------------------------------------------------
 % Create SubjectInfoTab
@@ -242,7 +332,7 @@ app.ControlTab.Title = 'Control';
 
 % Create ControlSweepCountGauge
 app.ControlSweepCountGauge = uigauge(app.ControlTab, 'linear');
-app.ControlSweepCountGauge.Position = [22 1 436 40];
+app.ControlSweepCountGauge.Position = [22 1 420 40];
 app.ControlSweepCountGauge.Limits = [1 128];
 
 % Create ControlStimInfoLabel
@@ -268,17 +358,6 @@ app.NumRepetitionsSpinner.HorizontalAlignment = 'center';
 app.NumRepetitionsSpinner.Position = [147 132 73 22];
 app.NumRepetitionsSpinner.Value = 1;
 
-% Create ControlAdvCriteriaDropDownLabel
-app.ControlAdvCriteriaDropDownLabel = uilabel(app.ControlTab);
-app.ControlAdvCriteriaDropDownLabel.HorizontalAlignment = 'right';
-app.ControlAdvCriteriaDropDownLabel.Position = [17 101 121 22];
-app.ControlAdvCriteriaDropDownLabel.Text = 'Advancement Criteria';
-
-% Create ControlAdvCriteriaDropDown
-app.ControlAdvCriteriaDropDown = uidropdown(app.ControlTab);
-app.ControlAdvCriteriaDropDown.Items = {'# Sweeps', 'Correlation Threshold', ''};
-app.ControlAdvCriteriaDropDown.Position = [146 101 109 22];
-app.ControlAdvCriteriaDropDown.Value = '# Sweeps';
 
 % Create SweepsSpinnerLabel
 app.SweepsSpinnerLabel = uilabel(app.ControlTab);
@@ -310,9 +389,34 @@ app.SweepRateHzSpinner.HorizontalAlignment = 'center';
 app.SweepRateHzSpinner.Position = [147 166 73 22];
 app.SweepRateHzSpinner.Value = 21.1;
 
+% Create SweepDurationLabel
+app.SweepDurationLabel = uilabel(app.ControlTab);
+app.SweepDurationLabel.HorizontalAlignment = 'right';
+app.SweepDurationLabel.Position = [20 101 117 22];
+app.SweepDurationLabel.Text = 'Sweep Duration (ms)';
+
+% Create SweepDurationSpinner
+app.SweepDurationSpinner = uispinner(app.ControlTab);
+app.SweepDurationSpinner.Limits = [0.1 1000];
+app.SweepDurationSpinner.HorizontalAlignment = 'center';
+app.SweepDurationSpinner.Position = [147 101 73 22];
+app.SweepDurationSpinner.Value = 10;
+
+% Create ControlAdvCriteriaDropDownLabel
+app.ControlAdvCriteriaDropDownLabel = uilabel(app.ControlTab);
+app.ControlAdvCriteriaDropDownLabel.HorizontalAlignment = 'right';
+app.ControlAdvCriteriaDropDownLabel.Position = [17 65 121 22];
+app.ControlAdvCriteriaDropDownLabel.Text = 'Advance on';
+
+% Create ControlAdvCriteriaDropDown
+app.ControlAdvCriteriaDropDown = uidropdown(app.ControlTab);
+app.ControlAdvCriteriaDropDown.Items = {'# Sweeps', 'Correlation Threshold', '< Define >'};
+app.ControlAdvCriteriaDropDown.Position = [146 65 100 22];
+app.ControlAdvCriteriaDropDown.Value = '# Sweeps';
+
 % Create Panel_2
 app.Panel_2 = uipanel(app.ControlTab);
-app.Panel_2.Position = [270 78 196 157];
+app.Panel_2.Position = [250 80 200 150];
 
 % Create ControlAdvanceButton
 app.ControlAdvanceButton = uibutton(app.Panel_2, 'push');
@@ -349,7 +453,7 @@ app.AcqFilterTab.Title = 'Acq Filter';
 
 % Create Panel_3
 app.Panel_3 = uipanel(app.AcqFilterTab);
-app.Panel_3.Position = [27 22 422 213];
+app.Panel_3.Position = [10 22 430 213];
 
 % Create FilterHPFcEditFieldLabel
 app.FilterHPFcEditFieldLabel = uilabel(app.Panel_3);
@@ -426,19 +530,22 @@ app.UtilitiesTab.Title = 'Utilities';
 
 % Create UtilityScheduleDesignButton
 app.UtilityScheduleDesignButton = uibutton(app.UtilitiesTab, 'push');
-app.UtilityScheduleDesignButton.ButtonPushedFcn = createCallbackFcn(app,@locate_utility,true);
 app.UtilityScheduleDesignButton.Position = [61 131 111 34];
 app.UtilityScheduleDesignButton.Text = 'Schedule Design';
+app.UtilityScheduleDesignButton.ButtonPushedFcn = createCallbackFcn(app,@abr.ScheduleDesign,false);
 
 % Create UtilitySoundCalibrationButton
 app.UtilitySoundCalibrationButton = uibutton(app.UtilitiesTab, 'push');
 app.UtilitySoundCalibrationButton.Position = [61 182 111 34];
 app.UtilitySoundCalibrationButton.Text = 'Sound Calibration';
+app.UtilitySoundCalibrationButton.ButtonPushedFcn = createCallbackFcn(app,@abr.Calibration,false);
+
 
 % Create UtilityABRDataViewerButton
 app.UtilityABRDataViewerButton = uibutton(app.UtilitiesTab, 'push');
 app.UtilityABRDataViewerButton.Position = [61 31 111 34];
-app.UtilityABRDataViewerButton.Text = 'ABR Data Viewer';
+app.UtilityABRDataViewerButton.Text = 'ABR Trace Organizer';
+app.UtilityABRDataViewerButton.ButtonPushedFcn = createCallbackFcn(app,@abr.traces.Organizer,false);
 
 % Create UtilityOnlineAnalysisButton
 app.UtilityOnlineAnalysisButton = uibutton(app.UtilitiesTab, 'push');
@@ -450,12 +557,12 @@ app.UtilityOnlineAnalysisButton.Text = 'Online Analysis';
 
 % Create AcquisitionStateLamp
 app.AcquisitionStateLamp = uilamp(app.ControlPanelUIFigure);
-app.AcquisitionStateLamp.Position = [457 253 20 20];
+app.AcquisitionStateLamp.Position = [525 250 20 20];
 app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
 
-
+p = app.AcquisitionStateLamp.Position;
 % Create AcquisitionStateLabel
 app.AcquisitionStateLabel = uilabel(app.ControlPanelUIFigure);
 app.AcquisitionStateLabel.HorizontalAlignment = 'right';
-app.AcquisitionStateLabel.Position = [370 250 80 22];
+app.AcquisitionStateLabel.Position = [p(1)-105 p(2) 100 22];
 app.AcquisitionStateLabel.Text = 'Ready';

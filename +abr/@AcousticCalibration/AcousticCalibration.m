@@ -2,8 +2,8 @@ classdef AcousticCalibration
     
     
     properties
-        filename      (1,:) char
-        timestamp
+        Filename      (1,:) char
+        Timestamp
         
         Device        (1,:) char
         DeviceInfo
@@ -29,10 +29,10 @@ classdef AcousticCalibration
         CalInterpMethod (1,:) char {mustBeMember(CalInterpMethod,{'linear','nearest','next','previous','pchip','cubic','v5cubic','makima','spline'})} = 'makima';
         CalcWindow    (1,2) double {mustBeNonnegative,mustBeFinite} = [0 1];
         
-        SIG           (1,1)
+        SIG           (1,1) % abr.sigdef.sigs....
         
-        DAC           (1,1) Buffer
-        ADC           (1,1) Buffer
+        DAC           (1,1) abr.Buffer
+        ADC           (1,1) abr.Buffer
         
         
         Note
@@ -134,12 +134,16 @@ classdef AcousticCalibration
                 
             else
                 for i = 1:obj.ADC.NumSweeps
-                    [r(1,i),harmpow(:,i),harmfreq(:,i)] = thd(obj.ADC.SweepData(:,i),obj.ADC.SampleRate,5);
+                    [r(1,i),harmpow(:,i),harmfreq(:,i)] = thd(obj.ADC.SweepData(:,i),obj.ADC.SampleRate,5); %#ok<AGROW>
                 end
                 varargout{1} = r;
                 varargout{2} = harmpow;
                 varargout{3} = harmfreq;
             end
+        end
+        
+        function r = isvalid(obj)
+            r = ~isempty(obj.MeasuredV);
         end
         
     end

@@ -1,32 +1,38 @@
-classdef ControlPanel < matlab.apps.AppBase
+classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
     % Daniel Stolzberg, PhD (c) 2019
     
     properties (Access = public)
-        ABR         (1,1) abr.ABR
+        ABR                 (1,1) abr.ABR
         
-        TrcOrg      (1,1) traces.Organizer
-        
-        Subject     (1,1) abr.Subject
-        Schedule    (1,1) Schedule
+        TrcOrg              (1,1) abr.traces.Organizer
         
         Config
+
+        Subject             (1,1) abr.Subject
+        Schedule            (1,1) abr.Schedule
+        Calibration         (1,1) abr.AcousticCalibration
         
-        configFile   (1,:) char
-        scheduleFile (1,:) char
+        configFile          (1,:) char
+        scheduleFile        (1,:) char
+        calibrationFile     (1,:) char
+        outputFile          (1,:) char
         
     end
     
-    properties (SetAccess = private,GetAccess = public)
-        programState     (1,:) char  = 'STARTUP';
+    properties (SetAccess = private)
+        programState     (1,1) abr.PROGRAMSTATE = abr.PROGRAMSTATE.STARTUP;
         
         SIG              (1,1)
         
         scheduleRunCount (:,1)
         scheduleIdx      (1,1) = 1;
+        
+        DATA             (:,1) abr.ABR
+        
     end
     
     % Properties that correspond to app components
-    properties (Access = public) %(Access = private)
+    properties % (Access = private)
         ControlPanelUIFigure           matlab.ui.Figure
         FileMenu                       matlab.ui.container.Menu
         LoadConfigurationMenu          matlab.ui.container.Menu
@@ -43,11 +49,20 @@ classdef ControlPanel < matlab.apps.AppBase
         ConfigFileLoad                 matlab.ui.control.Button
         ConfigFileLabel                matlab.ui.control.Label
         ConfigFileDropDown             matlab.ui.control.DropDown
+        CalibrationNew                 matlab.ui.control.Button
+        CalibrationLoad                matlab.ui.control.Button
+        CalibrationDropDownLabel       matlab.ui.control.Label
+        CalibrationDropDown            matlab.ui.control.DropDown
         ScheduleDropDownLabel          matlab.ui.control.Label
         ConfigScheduleDropDown         matlab.ui.control.DropDown
         ConfigNewSchedButton           matlab.ui.control.Button
         ConfigLoadSchedButton          matlab.ui.control.Button
-        OutputDropDownLabel            matlab.ui.control.Label
+        OutputPanel                    matlab.ui.container.Panel
+        OutputPathLabel                matlab.ui.control.Label
+        OutputFileLabel                matlab.ui.control.Label
+        OutputPathDropDown             matlab.ui.control.DropDown
+        OutputFileDropDown             matlab.ui.control.DropDown
+        OutputPathSelectButton         matlab.ui.control.Button
         ConfigOutputDropDown           matlab.ui.control.DropDown
         SubjectInfoTab                 matlab.ui.container.Tab
         DOBDatePickerLabel             matlab.ui.control.Label
@@ -64,7 +79,6 @@ classdef ControlPanel < matlab.apps.AppBase
         SubjectScientistDropDown       matlab.ui.control.DropDown
         SubjectAddaSubjectButton       matlab.ui.control.Button
         ControlTab                     matlab.ui.container.Tab
-        ControlSweepCountGauge         matlab.ui.control.LinearGauge
         ControlStimInfoLabel           matlab.ui.control.Label
         NumRepetitionsLabel            matlab.ui.control.Label
         NumRepetitionsSpinner          matlab.ui.control.Spinner
@@ -74,12 +88,13 @@ classdef ControlPanel < matlab.apps.AppBase
         SweepCountSpinner              matlab.ui.control.Spinner
         SweepRateHzSpinnerLabel        matlab.ui.control.Label
         SweepRateHzSpinner             matlab.ui.control.Spinner
+        SweepDurationSpinner           matlab.ui.control.Spinner
+        SweepDurationLabel             matlab.ui.control.Label
         Panel_2                        matlab.ui.container.Panel
         ControlAdvanceButton           matlab.ui.control.Button
         ControlRepeatButton            matlab.ui.control.StateButton
         ControlPauseButton             matlab.ui.control.StateButton
         ControlAcquisitionSwitch       matlab.ui.control.ToggleSwitch
-        AcquisitionStateLamp           matlab.ui.control.Lamp
         AcquisitionStateLabel          matlab.ui.control.Label
         Panel_3                        matlab.ui.container.Panel
         FilterHPFcEditFieldLabel       matlab.ui.control.Label
@@ -104,17 +119,45 @@ classdef ControlPanel < matlab.apps.AppBase
         TIMER (1,1) timer
     end
     
+    properties
+        ControlSweepCountGauge         matlab.ui.control.LinearGauge
+        AcquisitionStateLamp           matlab.ui.control.Lamp
+    end
+    
     
     % Set/Get Properties
     methods
         
         
-        function set.programState(app,state)
-            app.programState = state;
-            app.StateMachine;
+        function ffn = get.outputFile(app)
+            fn = app.OutputFileDropDown.Value;
+            pn = app.OutputPathDropDown.Value;
+            
+            ffn = fullfile(pn,fn);
+            
+            if isequal(ffn,app.outputFile), return; end % no change
+
+            if exist(ffn,'file') == 2
+                fprintf('Appending to output file: %s (%s)\n',fn,pn)
+                load(ffn,'-mat','meta');
+                if ~isequal(meta.DataVersion,app.DataVersion)
+                    warndlg(sprintf([ ...
+                        'Data file: %s\n\n', ...
+                        'Existing datafile version, %s, ', ...
+                        'does not match the current program data version, %s.'], ...
+                        ffn,meta.DataVersion,app.DataVersion), ...
+                        'Append existing file','modal');
+                end
+                
+            else
+                fprintf('Creating new output file: %s (%s)\n',fn,pn)
+                meta = app.meta;
+                ABR_Data = abr.ABR; % init
+                TraceOrganizer = abr.traces.Organizer; % init
+                
+                save(ffn,'meta','ABR_Data','TraceOrganizer','-mat','-v7.3');
+            end
         end
-        
-        
         
     end
     
@@ -142,26 +185,24 @@ classdef ControlPanel < matlab.apps.AppBase
                 app.ConfigFileDropDown.Items     = {'Load a configuration file -->'};
                 app.ConfigFileDropDown.ItemsData = {'NO CONFIG'};
                 app.ConfigFileDropDown.Value     = 'NO CONFIG';
+                app.ConfigFileDropDown.Tooltip   = 'No Configuration File Selected';
+                app.ConfigFileDropDown.FontColor = [1 0 0];
+                app.ConfigFileLabel.Tooltip      = '';
                 app.configFile = '';
             else
                 ffn = app.configFile;
                 c = getpref('ABRControlPanel','recentConfigs',[]);
-                ind = ismember(c,ffn) | cellfun(@(a) not(isequal(exist(a,'file'),2)),c);
+                ind = ismember(c,ffn) | cellfun(@(a) not(eq(exist(a,'file'),2)),c);
                 c(ind) = [];
                 c = [{ffn}; c];
                 d = cellfun(@dir,c);
-                fn = cellfun(@(a,b) sprintf('%s\t[%s]', ...
-                    a(find(a==filesep,1,'last')+1:find(a=='.',1,'last')-1), b),...
-                    c,{d.date}','uni',0);
-                app.ConfigFileDropDown.Items     = fn;
+                app.ConfigFileDropDown.Items     = {d.name};
                 app.ConfigFileDropDown.ItemsData = c;
                 app.ConfigFileDropDown.Value     = app.configFile;  
-                setpref('ABRControlPanel','recentConfigs',c);
-%            
-%                 f = dir(fullfile(fileparts(app.configFile),'*.cfg'));
-%                 app.ConfigFileDropDown.Items     = {f.name};
-%                 app.ConfigFileDropDown.ItemsData = cellfun(@fullfile,{f.folder},{f.name},'uni',0);
-%                 app.ConfigFileDropDown.Value     = app.configFile;            
+                app.ConfigFileDropDown.Tooltip   = app.last_modified_str(app.configFile);
+                app.ConfigFileDropDown.FontColor = [0 0 0];
+                app.ConfigFileLabel.Tooltip      = fileparts(app.configFile);
+                setpref('ABRControlPanel','recentConfigs',c);         
             end
             
             
@@ -170,16 +211,44 @@ classdef ControlPanel < matlab.apps.AppBase
                 app.ConfigScheduleDropDown.Items     = {'Load a schedule file -->'};
                 app.ConfigScheduleDropDown.ItemsData = {'NO SCHED FILES'};
                 app.ConfigScheduleDropDown.Value     = 'NO SCHED FILES';
+                app.ConfigScheduleDropDown.Tooltip   = 'Must load a schedule file.';
+                app.ConfigScheduleDropDown.FontColor = [1 0 0];
+                app.ScheduleDropDownLabel.Tooltip    = '';
                 app.scheduleFile = '';
             else
                 d = dir(fullfile(fileparts(app.scheduleFile),'*.sch'));
-                fn = cellfun(@(a,b) sprintf('%s\t[%s]', ...
-                    a(1:find(a=='.',1,'last')-1), b),...
-                    {d.name},{d.date},'uni',0);
-                app.ConfigScheduleDropDown.Items     = fn;
-                app.ConfigScheduleDropDown.ItemsData = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
+                ffns = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
+                app.ConfigScheduleDropDown.Items     = {d.name};
+                app.ConfigScheduleDropDown.ItemsData = ffns;
                 app.ConfigScheduleDropDown.Value     = app.scheduleFile;
+                app.ConfigScheduleDropDown.Tooltip   = app.last_modified_str(app.scheduleFile);
+                app.ConfigScheduleDropDown.FontColor = [0 0 0];
+                app.ScheduleDropDownLabel.Tooltip    = fileparts(app.scheduleFile);
             end
+            
+            
+            % Calibration Files
+            if isempty(app.calibrationFile)
+                    app.CalibrationDropDown.Items     = {'< NO CALIBRATION FILES! >'};
+                    app.CalibrationDropDown.ItemsData = {'< NO CALIBRATION FILES! >'};
+                    app.CalibrationDropDown.Value     = '< NO CALIBRATION FILES! >';
+                    app.CalibrationDropDown.Tooltip   = 'No Calibration File!';
+                    app.CalibrationDropDown.FontColor = [1 0 0];
+                    app.CalibrationDropDownLabel.Tooltip = '';
+                    app.calibrationFile = [];
+            else
+                    d = dir(fullfile(fileparts(app.calibrationFile),'*.cal'));
+                    fns = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
+                    app.CalibrationDropDown.Items     = {d.name};
+                    app.CalibrationDropDown.ItemsData = fns;
+                    app.CalibrationDropDown.Value     = app.calibrationFile;
+                    app.CalibrationDropDown.Tooltip   = app.last_modified_str(app.calibrationFile);
+                    app.CalibrationDropDown.FontColor = [0 0 0];
+                    app.CalibrationDropDownLabel.Tooltip = fileparts(app.calibrationFile);
+                    setpref('ABRControlPanel','calpth',fileparts(app.calibrationFile));
+            end
+            
+            
             
             
             % other
@@ -189,7 +258,12 @@ classdef ControlPanel < matlab.apps.AppBase
         
         
         
-        
+        function auto_save_abr_data(app)
+            app.DATA(end+1) = app.ABR;
+            ABR_Data        = app.DATA;
+            TraceOrganizer  = app.TrcOrg;
+            save(app.outputFile,'ABR_Data','TraceOrganizer','-mat','-append');
+        end
         
         %% MENU -----------------------------------------------------------
         function launch_asiosettings(app)
@@ -230,8 +304,10 @@ classdef ControlPanel < matlab.apps.AppBase
         
         %% CONFIG ---------------------------------------------------------
         function gather_config_parameters(app)
-            app.Config.scheduleFile = app.scheduleFile;
-            app.Config.configFile   = app.configFile;
+            app.Config.scheduleFile    = app.scheduleFile;
+            app.Config.configFile      = app.configFile;
+            app.Config.calibrationFile = app.calibrationFile;
+            app.Config.outputFile      = app.outputFile;
             
             app.Config.Control.advCriteria = app.ControlAdvCriteriaDropDown.Value;
             app.Config.Control.numSweeps   = app.SweepCountSpinner.Value;
@@ -300,6 +376,27 @@ classdef ControlPanel < matlab.apps.AppBase
             figure(app.ControlPanelUIFigure);
         end
         
+        function locate_calibration_file(app)
+            dfltPth = getpref('ABRControlPanel','calibrationPath',cd);
+            
+            [fn,pn] = uigetfile({'*.cal','Acoustic Calibration File (*.cal)'}, ...
+                'Load Acoustic Calibration File',dfltPth);
+            
+            if isequal(fn,0), return; end
+            
+            app.calibrationFile = fullfile(pn,fn);
+            
+            if isempty(app.calibrationFile), return; end
+                        
+            setpref('ABRControlPanel','calibrationPath',pn);
+            
+            app.populate_gui;
+            
+            app.load_calibration_file;
+            
+            figure(app.ControlPanelUIFigure);
+        end
+        
         function load_config_file(app,ffn)
             if nargin < 2 || isempty(ffn)
                 dfltPth = getpref('ABRControlPanel','configPath',cd);
@@ -328,7 +425,8 @@ classdef ControlPanel < matlab.apps.AppBase
             app.Config = abrConfig.Config;
             app.ABR    = abrConfig.ABR;
             
-            app.scheduleFile = app.Config.scheduleFile;
+            app.scheduleFile    = app.Config.scheduleFile;
+            app.calibrationFile = app.Config.calibrationFile;
             
             setpref('ABRControlPanel','configPath',fileparts(app.configFile));
             setpref('ABRControlPanel','configFile',app.configFile);
@@ -338,10 +436,10 @@ classdef ControlPanel < matlab.apps.AppBase
             app.apply_config_parameters;
             
             app.load_schedule_file;
+            app.load_calibration_file;
             
             figure(app.ControlPanelUIFigure);
         end
-        
         
         function save_config_file(app,ffn)
             % Save configuration file
@@ -363,10 +461,11 @@ classdef ControlPanel < matlab.apps.AppBase
             
             app.gather_config_parameters;
 
-            abrConfig.Config       = app.Config;
-            abrConfig.scheduleFile = app.scheduleFile;
-            abrConfig.configFile   = ffn;
-            abrConfig.ABR          = app.ABR;
+            abrConfig.Config            = app.Config;
+            abrConfig.scheduleFile      = app.scheduleFile;
+            abrConfig.calibratonFile    = app.calibrationFile;
+            abrConfig.configFile        = ffn;
+            abrConfig.ABR               = app.ABR;
             
             save(ffn,'abrConfig','-mat');
             
@@ -379,13 +478,84 @@ classdef ControlPanel < matlab.apps.AppBase
             app.populate_gui;
         end
         
-        
-        function config_file_changed(app,event)
+        function output_select_directory(app)
+            recentPaths = getpref('ABRControlPanel','outputFolder',{app.root}); % set with recent directories
+
+            pn = uigetdir(recentPaths{1},'Pick a Directory');
+            figure(app.ControlPanelUIFigure); % because it hides for some reason
             
-            app.load_config_file(event.Source.Value);
             
+            ind = ismember(recentPaths,pn);
+            recentPaths(ind) = [];
+            
+            ind = isfolder(recentPaths);
+            recentPaths(~ind) = [];
+
+            recentPaths = [pn; recentPaths];
+            
+            app.OutputPathDropDown.Items = recentPaths;
+            app.OutputPathDropDown.ItemsData = recentPaths;
+            app.OutputPathDropDown.Value = pn;
+            
+            setpref('ABRControlPanel','outputFolder',recentPaths(1:min([10 length(recentPaths)])));
         end
         
+        function output_path_changed(app,event)
+            recentPaths = getpref('ABRControlPanel','outputFolder',{app.root}); % set with recent directories
+            
+            pn = event.Value;
+            h = event.Source;
+            
+            
+            h.ItemsData = recentPaths;
+            h.Items     = app.truncate_str(recentPaths,40);
+            h.Value     = pn;
+            h.Tooltip   = pn;
+            
+            setpref('ABRControlPanel','outputFolder',recentPaths(1:min([10 length(recentPaths)])));
+
+            % update output file dropdown items
+            fn = app.OutputFileDropDown.Value;
+            if isempty(fn), fn = 'abr_data_file.abr'; end
+            d  = dir(fullfile(pn,'*.abr'));
+            fns = {d.name};
+            if ~ismember(fn,fns), fns = [{fn} fns]; end
+            app.OutputFileDropDown.Items     = fns;
+            app.OutputFileDropDown.ItemsData = fns;
+            app.OutputFileDropDown.Value     = fn;
+            
+            e.Value = app.OutputFileDropDown.Value;
+            e.Source = app.OutputFileDropDown;
+            app.output_file_changed(e);
+        end
+        
+        function output_file_changed(app,event)
+            
+            pn = app.OutputPathDropDown.Value;
+            
+            nfn = event.Value;
+            if ~endsWith(nfn,'.abr'), nfn = [nfn,'.abr']; end
+            nffn = fullfile(pn,nfn);
+            if ~app.validate_filename(nffn)
+                uialert(app.ControlPanelUIFigure, ...
+                    sprintf('Invalid Filename: %s',nffn), ...
+                    'Invalid Filename','Icon','error','Modal',true);
+                app.OutputFileDropDown.FontColor = [1 0 0];
+                % * TO DO: DISABLE RUNNING EXPERIMENT WITH INVALID FILENAME
+                return
+            end
+            
+            fns = app.OutputFileDropDown.Items;            
+            
+            if ~ismember(nfn,fns), fns = [{nfn} fns]; end
+            
+            app.outputFile = fullfile(pn,nfn);
+            
+            app.OutputFileDropDown.Items     = fns;
+            app.OutputFileDropDown.ItemsData = fns; %cellfun(@(a) fullfile(pn,a),fns,'uni',0);
+            app.OutputFileDropDown.Value     = nfn;
+            app.OutputFileDropDown.FontColor = [0 0 0];
+        end
         
         function load_schedule_file(app,event)
             if isempty(app.scheduleFile), return; end
@@ -393,37 +563,58 @@ classdef ControlPanel < matlab.apps.AppBase
                 app.scheduleFile = event.Value;
             end
             
+
             if isvalid(app.Schedule)
                 app.Schedule.load_schedule(app.scheduleFile);
             else
-                app.Schedule = Schedule(app.scheduleFile); %#ok<ADPROPLC>
+                h = findobj('type','figure','-and','name','CONTROL_PANEL_SCHEDULE');
+                delete(h);
+                app.Schedule = abr.Schedule(app.scheduleFile);
             end
+            
+            app.ConfigScheduleDropDown.Tooltip = app.last_modified_str(app.scheduleFile);
+            app.ScheduleDropDownLabel.Tooltip    = fileparts(app.scheduleFile);
+            app.Schedule.ScheduleFigure.Tag = 'CONTROL_PANEL_SCHEDULE';
             
             app.SIG = app.Schedule.SIG;
         end
         
-        
-        
+        function load_calibration_file(app,event)
+            if isempty(app.calibrationFile), return; end
+            if nargin == 2
+                app.calibrationFile = event.Value;
+            end
+            
+            if exist(app.calibrationFile,'file') == 2
+                load(app.calibrationFile,'CalibrationData','-mat');
+                app.Calibration = CalibrationData;
+                app.CalibrationDropDownLabel.Tooltip    = fileparts(app.calibrationFile);
+                app.CalibrationDropDown.Tooltip = app.last_modified_str(app.calibrationFile);
+            else
+                app.Calibration = abr.AcousticCalibration; % blank calibration
+                app.CalibrationDropDownLabel.Tooltip    = 'No Calibration File Loaded';
+                app.CalibrationDropDown.Tooltip = 'No Calibration File Loaded';
+            end
+            
+        end
         
         
         %% CONTROL --------------------------------------------------------
         function StateMachine(app)
             global ACQSTATE
+            
             persistent active_state
             
-            if isequal(active_state,app.programState)
-                return
-            end
+            if active_state == app.programState, return; end
             
             active_state = app.programState;
-            fprintf('%s\t%s\n',datestr(now,'HH:MM:SS.FFF'),active_state)
             
             try
                 switch active_state
-                    case 'STARTUP'
+                    case abr.PROGRAMSTATE.STARTUP
                         drawnow
                         
-                    case 'PREFLIGHT'
+                    case abr.PROGRAMSTATE.PREFLIGHT
                         
                         app.gather_config_parameters;
                         
@@ -446,12 +637,12 @@ classdef ControlPanel < matlab.apps.AppBase
                         
                         drawnow
                         
-                        app.programState = 'REPADVANCE'; % to first trial
+                        app.programState = abr.PROGRAMSTATE.REPADVANCE; % to first trial
                         
                         
                         
-                    case 'REPADVANCE'
-                        if isequal(ACQSTATE,'CANCELLED'), return; end
+                    case abr.PROGRAMSTATE.REPADVANCE
+                        if ACQSTATE==abr.ACQSTATE.CANCELLED, return; end
                         
                         app.gather_config_parameters; % in case user updates guis
                         
@@ -467,7 +658,7 @@ classdef ControlPanel < matlab.apps.AppBase
                                     app.scheduleIdx = app.scheduleIdx + find(ind,1,'first');
                                 else
                                     % reached end of schedule
-                                    app.programState = 'SCHEDCOMPLETE';
+                                    app.programState = abr.PROGRAMSTATE.SCHEDCOMPLETE;
                                     return
                                 end
                             end
@@ -493,10 +684,26 @@ classdef ControlPanel < matlab.apps.AppBase
                         app.ABR.ADC.SampleRate = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;
 
                         % generate signal based on its parameters
+                        app.SIG = app.Schedule.sigArray(app.scheduleIdx);
                         app.SIG = app.SIG.update;
                         
+                        
                         % copy stimulus to DAC buffer.
-                        app.ABR.DAC.Data = app.SIG.data{app.scheduleIdx};
+                        app.ABR.DAC.Data = app.SIG.data{1};
+                        
+                        % calibrate stimulus data
+                        if isvalid(app.Calibration)
+                            f  = app.SIG.frequency.realValue;
+                            sl = app.SIG.soundLevel.realValue;
+                            A  = app.Calibration.estimateCalibratedV(f,sl);
+                            app.ABR.DAC.Data = A .* app.ABR.DAC.Data;
+                        else
+                            h = warndlg('Invalid Calibration!','ABR','modal');
+                            uiwait(h);                            
+                        end
+                        
+                        % save original stimulus signal
+                        app.ABR.SIG = app.SIG;
                         
                         % alternate polarity flag
                         app.ABR.altPolarity = app.SIG.polarity.Alternate;
@@ -528,10 +735,10 @@ classdef ControlPanel < matlab.apps.AppBase
                         
                         drawnow
                         
-                        app.programState = 'ACQUIRE';
+                        app.programState = abr.PROGRAMSTATE.ACQUIRE;
                         
                         
-                    case 'ACQUIRE'
+                    case abr.PROGRAMSTATE.ACQUIRE
                         app.AcquisitionStateLabel.Text = 'Acquiring';
                         
                         app.AcquisitionStateLamp.Color = [0 1 0];
@@ -540,44 +747,40 @@ classdef ControlPanel < matlab.apps.AppBase
                         try
                             % do it
                             ax = app.live_plot;
+                            figure(ancestor(ax,'figure'));
+                            app.ABR = app.ABR.playrec(app,ax);%,'showTimingStats',isequal(app.OptionShowTimingStats.Checked,'on'));
 
-                            app.ABR = app.ABR.playrec(app,ax,'showTimingStats',isequal(app.OptionShowTimingStats.Checked,'on'));
-
-                            app.programState = 'REPCOMPLETE';
+                            if app.programState == abr.PROGRAMSTATE.ACQUIRE
+                                app.programState = abr.PROGRAMSTATE.REPCOMPLETE;
+                            end
                                                         
                         catch me
-                            app.programState = 'ACQUISITIONEERROR';
+                            app.programState = abr.PROGRAMSTATE.ACQUISITIONEERROR;
                             rethrow(me);
                         end
                         
                         
                         
-                    case 'REPCOMPLETE'
+                        
+                    case abr.PROGRAMSTATE.REPCOMPLETE
                         app.scheduleRunCount(app.scheduleIdx) = app.scheduleRunCount(app.scheduleIdx) + 1;
                         
                         % Add buffer to traces.Organizer
-                        params = structfun(@(a) a(app.scheduleIdx),app.SIG.dataParams,'uni',0);
                         app.TrcOrg.addTrace(app.ABR.ADC.SweepMean, ...
-                            params, ...
+                            app.SIG.dataParams, ...
                             app.ABR.ADC.TimeVector(1), ...
                             app.ABR.ADC.SampleRate);
                         
-                        % update all trace colors
-                        app.TrcOrg.TraceColors = [0.6 0.6 0.6];
-                        
-                        % update most recent trace color
-                        app.TrcOrg.Traces(end).Color = [0 0 0];
-                        
-                        % Update TraceOrganizer plot
-                        app.TrcOrg.plot;
-                        
+                        %%%% TESTING
+                        R = app.ABR.analysis('peaks');
                         
                         % SAVE ABR DATA
+                        app.auto_save_abr_data;
                         
-                        app.programState = 'REPADVANCE';
+                        app.programState = abr.PROGRAMSTATE.REPADVANCE;
                         
                         
-                    case 'SCHEDCOMPLETE'
+                    case abr.PROGRAMSTATE.SCHEDCOMPLETE
                         app.Schedule.update_highlight([]);
                         app.Schedule.DO_NOT_DELETE = false;
                         app.AcquisitionStateLabel.Text      = 'Finished';
@@ -585,47 +788,63 @@ classdef ControlPanel < matlab.apps.AppBase
                         app.AcquisitionStateLamp.Color      = [0.6 0.6 0.6];
                         app.AcquisitionStateLamp.Tooltip    = 'Finished';
                         app.ControlStimInfoLabel.Text       = 'Completed';
+                        
+                        % SAVE ABR DATA
+                        app.auto_save_abr_data;
+                        
                         drawnow
                         
-                    case 'USERIDLE'
+                    case abr.PROGRAMSTATE.USERIDLE
                         app.Schedule.DO_NOT_DELETE = false;
                         app.AcquisitionStateLabel.Text      = 'Ready';
                         app.ControlAcquisitionSwitch.Value  = 'Idle';
                         app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
                         app.AcquisitionStateLamp.Tooltip    = 'Idle';
-                        ACQSTATE = 'CANCELLED';
+                        ACQSTATE = abr.ACQSTATE.CANCELLED;
+                        
+                        % SAVE ABR DATA
+                        app.auto_save_abr_data;
+                        
                         drawnow
                         
                         
-                    case 'ACQUISITIONEERROR'
+                    case abr.PROGRAMSTATE.ACQUISITIONEERROR
                         app.Schedule.update_highlight(app.scheduleIdx,[1 0.2 0.2]);
                         app.Schedule.DO_NOT_DELETE = false;
                         app.AcquisitionStateLabel.Text      = 'ERROR';
                         app.ControlAcquisitionSwitch.Value  = 'Idle';
                         app.AcquisitionStateLamp.Color      = [1 0 0];
                         app.AcquisitionStateLamp.Tooltip    = 'ERROR';
-                        ACQSTATE = 'CANCELLED';
+                        ACQSTATE = abr.ACQSTATE.CANCELLED;
+                        
+                        % SAVE ABR DATA
+                        app.auto_save_abr_data;
+                        
                         drawnow
                 end
                 
             catch stateME
 %                 fprintf(2,'Current Program State: "%s"\n',app.programState)
-                app.programState = 'ACQUISITIONEERROR';
+                app.programState = abr.PROGRAMSTATE.ACQUISITIONEERROR
                 rethrow(stateME);
             end
+            
                 
         end
         
-        
         function control_acq_switch(app,event)
+            
             switch event.Value
                 case 'Acquire'
-                    app.programState = 'PREFLIGHT';
+                    app.programState = abr.PROGRAMSTATE.PREFLIGHT;
                     
-
+                    while ~any(app.programState == [abr.PROGRAMSTATE.USERIDLE, abr.PROGRAMSTATE.ACQUISITIONEERROR, abr.PROGRAMSTATE.SCHEDCOMPLETE])
+                        app.StateMachine;
+                    end
+                    
                 case 'Idle'
                     % Send stop signal
-                    app.programState = 'USERIDLE';
+                    app.programState = abr.PROGRAMSTATE.USERIDLE
                     
                     % reset gui
                     app.AcquisitionStateLabel.Text = 'Cancelled';
@@ -637,7 +856,11 @@ classdef ControlPanel < matlab.apps.AppBase
                     app.ControlPauseButton.Text = 'Pause ||';
                     app.ControlPauseButton.BackgroundColor = [0.96 0.96 0.96];
                     app.ControlPauseButton.Tooltip = 'Click to Pause';
+                    
+                    app.StateMachine;
             end
+            
+            
         end
         
         function pause_button(app)
@@ -645,21 +868,21 @@ classdef ControlPanel < matlab.apps.AppBase
             
             hObj = app.ControlPauseButton;
             
-            if isequal(ACQSTATE,'IDLE')
+            if ACQSTATE == abr.ACQSTATE.IDLE
                 hObj.Text = 'Pause ||';
                 hObj.Value = 0;
                 hObj.Tooltip = 'Click to Pause';
                 hObj.BackgroundColor = [0.96 0.96 0.96];
                 
             elseif hObj.Value == 0
-                ACQSTATE = 'ACQUIRE';
+                ACQSTATE = abr.ACQSTATE.ACQUIRE;
                 hObj.Text = 'Pause ||';
                 hObj.Tooltip = 'Click to Pause';
                 hObj.BackgroundColor = [0.96 0.96 0.96];
                 app.AcquisitionStateLamp.Color = [0 1 0];
                 
-            elseif isequal(ACQSTATE,'ACQUIRE')
-                ACQSTATE = 'PAUSED';
+            elseif ACQSTATE == abr.ACQSTATE.ACQUIRE
+                ACQSTATE = abr.ACQSTATE.PAUSED;
                 hObj.Text = '*PAUSED*';
                 hObj.Tooltip = 'Click to Resume';
                 hObj.UserData = hObj.BackgroundColor;
@@ -672,7 +895,7 @@ classdef ControlPanel < matlab.apps.AppBase
         function advance_schedule(~,~)
             global ACQSTATE
 
-            if isequal(ACQSTATE,'IDLE'), return; end
+            if ACQSTATE == abr.ACQSTATE.IDLE, return; end
             
 
             % TO DO: SHOULD BE ABLE TO ADVANCE TO THE NEXT STATE EVEN IF
@@ -681,10 +904,15 @@ classdef ControlPanel < matlab.apps.AppBase
             % Updating ACQSTATE should be detected by ABR.playrec function
             % and stop the current acqusition, which returns control to the
             % StateMachine
-            ACQSTATE = 'REPCOMPLETE';
+%             ACQSTATE = 'REPCOMPLETE';
+            ACQSTATE = abr.ACQSTATE.IDLE;
         end
         
         function repeat_schedule_idx(app,event)
+            global ACQSTATE
+            
+            if ACQSTATE == abr.ACQSTATE.IDLE, return; end
+
             hObj = event.Source;
             if event.Value % depressed
                 hObj.BackgroundColor = [0.8 0.8 1];
@@ -830,26 +1058,19 @@ classdef ControlPanel < matlab.apps.AppBase
     end
     
     
-    
-    
-    
-    
     methods (Access = public)
         
-        % Construct app
+        % Constructor
         function app = ControlPanel(configFile)
             global ACQSTATE
             
-            ACQSTATE = 'IDLE';
-
+            fprintf('Starting ABR Control Panel ...\n')
             
+            ACQSTATE = abr.ACQSTATE.IDLE;
+
             app.createComponents
             
-            % Register the app with App Designer
-            %             registerApp(app, app.ControlPanelUIFigure)
-            
-            
-            if nargin == 1 && exist(configFile,'file') == 2
+            if nargin == 1 && ischar(configFile) && exist(configFile,'file') == 2
                 app.configFile = configFile;
                 app.load_config_file;
                 
@@ -862,9 +1083,11 @@ classdef ControlPanel < matlab.apps.AppBase
                         
             app.populate_gui;
             
-            app.programState = 'STARTUP';
 
+            figure(app.ControlPanelUIFigure);
+            
             if nargout == 0, clear app; end
+            
         end
         
         % Code that executes before app deletion
@@ -891,7 +1114,7 @@ classdef ControlPanel < matlab.apps.AppBase
                 app.Schedule.DO_NOT_DELETE = false;
             end
             
-            if ismember(ACQSTATE,{'IDLE','CANCELLED'})
+            if any(ACQSTATE == [abr.ACQSTATE.IDLE abr.ACQSTATE.CANCELLED])
                 delete(app);
             else
                 uialert(app.ControlPanelUIFigure, ...

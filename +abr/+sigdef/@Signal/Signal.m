@@ -25,7 +25,7 @@ classdef (Abstract) Signal
     
     
     properties (SetAccess = private,Dependent)
-        timeVector      (:,1) double {mustBeFinite};
+        timeVector      (:,1) double {mustBeFinite}
         N = 0;
         signalCount     
     end

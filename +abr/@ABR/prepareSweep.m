@@ -3,7 +3,6 @@ function obj = prepareSweep(obj)
 % 
 % Daniel Stolzberg, PhD (c) 2019
 
-% if obj.STATE >= 0, return; end
 
 
 if ~ismethod(obj.APR,'isvalid') || ~obj.APR.isvalid
@@ -23,8 +22,4 @@ switch class(obj.DAC.Data)
     case 'int8'
         obj.APR.BitDepth = '8-bit integer';
 end
-obj.sweepCount  = 1;
-% obj.sweepOnsets = nan(obj.numSweeps,1);
-
-
-obj.STATE = 0;
+obj.sweepCount = 1;

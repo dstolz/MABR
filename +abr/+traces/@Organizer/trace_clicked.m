@@ -3,11 +3,25 @@ fcc = obj.mainFig.CurrentModifier;
 
 
 if isequal({'shift'},fcc)
-    if traceIdx < min(obj.TraceSelection)
-        obj.TraceSelection = union(traceIdx:min(obj.TraceSelection),obj.TraceSelection);
-    elseif traceIdx > max(obj.TraceSelection)
-        obj.TraceSelection = union(obj.TraceSelection,max(obj.TraceSelection):traceIdx);
+    tidx = obj.TraceSelection;
+    if isempty(tidx)
+        tidx = traceIdx; 
+    else
+        oy = obj.YPosition(tidx);
+        ny = obj.YPosition(traceIdx);
+        if ny < oy
+            tidx = find(obj.YPosition <= oy & obj.YPosition >= ny);
+        else
+            tidx = find(obj.YPosition >= oy & obj.YPosition <= ny);
+        end
     end
+        
+    obj.TraceSelection = tidx;
+%     if traceIdx < min(obj.TraceSelection)
+%         obj.TraceSelection = union(traceIdx:min(obj.TraceSelection),obj.TraceSelection);
+%     elseif traceIdx > max(obj.TraceSelection)
+%         obj.TraceSelection = union(obj.TraceSelection,max(obj.TraceSelection):traceIdx);
+%     end
     
 elseif isequal({'control'},fcc)
     ind = obj.TraceSelection == traceIdx;
