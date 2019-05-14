@@ -68,259 +68,336 @@ app.TabGroup.Position = [1 1 550 273];
 app.TabGroup.TabLocation = 'left';
 
 
+%% NON-TAB COMPONENTS -----------------------------------------------------
+
+% Create AcquisitionStateLamp
+app.AcquisitionStateLamp = uilamp(app.ControlPanelUIFigure);
+app.AcquisitionStateLamp.Position = [530 250 20 20];
+app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
+
+p = app.AcquisitionStateLamp.Position;
+
+% Create AcquisitionStateLabel
+app.AcquisitionStateLabel = uilabel(app.ControlPanelUIFigure);
+app.AcquisitionStateLabel.HorizontalAlignment = 'right';
+app.AcquisitionStateLabel.Position = [p(1)-102 p(2) 100 22];
+app.AcquisitionStateLabel.FontSize = 14;
+app.AcquisitionStateLabel.FontWeight = 'bold';
+app.AcquisitionStateLabel.Text = 'Ready';
+
+app.HelpButton = uibutton(app.ControlPanelUIFigure, 'push');
+app.HelpButton.Icon = 'helpicon.gif';
+app.HelpButton.IconAlignment = 'center';
+app.HelpButton.Position = [100 250 20 20];
+app.HelpButton.Text = '';
 
 %% CONFIG TAB -------------------------------------------------------------
 % Create ConfigTab
 app.ConfigTab = uitab(app.TabGroup);
-app.ConfigTab.Title = 'Config';
+app.ConfigTab.Title = 'Configure';
 
-y = 210; yspacing = 30;
-x = 5; labelWidth = 80;
-ddl = 210;
-ddx = 107;
-abx = 330;
-bbx = 395;
+nRows = 9; nCols = 6;
+G = uigridlayout(app.ConfigTab,[nRows nCols]);
+G.RowHeight = [{22} repmat({'1x'},1,nRows-1)];
+G.ColumnWidth = {80 '1x' '1x' '1x' 60 60}; 
+    
+% Skip first row to provide some space
+R = 2;
+
+% Create ConfigFileLabel
+app.ConfigFileLabel = uilabel(G);
+app.ConfigFileLabel.HorizontalAlignment = 'right';
+app.ConfigFileLabel.FontSize = 14;
+app.ConfigFileLabel.Layout.Row = R;
+app.ConfigFileLabel.Layout.Column = 1;
+app.ConfigFileLabel.Text = 'Config';
+
+% Create ConfigFileDD
+app.ConfigFileDD = uidropdown(G);
+app.ConfigFileDD.Items = {'ConfigFile.cfg'};
+app.ConfigFileDD.Editable = 'off';
+app.ConfigFileDD.FontSize = 14;
+app.ConfigFileDD.BackgroundColor = [1 1 1];
+app.ConfigFileDD.Layout.Row = R;
+app.ConfigFileDD.Layout.Column = [2 4];
+app.ConfigFileDD.Value = 'ConfigFile.cfg';
+app.ConfigFileDD.Tooltip = 'Select a configuration file';
+app.ConfigFileDD.ValueChangedFcn = createCallbackFcn(app, @load_config_file,true);
+
 
 % Create ConfigFileSave
-app.ConfigFileSave = uibutton(app.ConfigTab, 'push');
+app.ConfigFileSave = uibutton(G, 'push');
 app.ConfigFileSave.FontSize = 14;
-app.ConfigFileSave.Position = [abx y 60 24];
+app.ConfigFileSave.Layout.Row = R;
+app.ConfigFileSave.Layout.Column = 5;
 app.ConfigFileSave.Text = 'save';
 app.ConfigFileSave.ButtonPushedFcn = createCallbackFcn(app, @save_config_file, false);
 
 % Create ConfigFileLoad
-app.ConfigFileLoad = uibutton(app.ConfigTab, 'push');
+app.ConfigFileLoad = uibutton(G, 'push');
 app.ConfigFileLoad.FontSize = 14;
-app.ConfigFileLoad.Position = [bbx y 60 24];
+app.ConfigFileLoad.Layout.Row = R;
+app.ConfigFileLoad.Layout.Column = 6;
 app.ConfigFileLoad.Text = 'load';
 app.ConfigFileLoad.ButtonPushedFcn = createCallbackFcn(app, @load_config_file, false);
 
-% Create ConfigFileLabel
-app.ConfigFileLabel = uilabel(app.ConfigTab);
-app.ConfigFileLabel.HorizontalAlignment = 'right';
-app.ConfigFileLabel.FontSize = 14;
-app.ConfigFileLabel.Position = [x y labelWidth 22];
-app.ConfigFileLabel.Text = 'Config';
 
-% Create ConfigFileDropDown
-app.ConfigFileDropDown = uidropdown(app.ConfigTab);
-app.ConfigFileDropDown.Items = {'ConfigFile.cfg'};
-app.ConfigFileDropDown.Editable = 'off';
-app.ConfigFileDropDown.FontSize = 14;
-app.ConfigFileDropDown.BackgroundColor = [1 1 1];
-app.ConfigFileDropDown.Position = [ddx y ddl 22];
-app.ConfigFileDropDown.Value = 'ConfigFile.cfg';
-app.ConfigFileDropDown.Tooltip = 'Select a configuration file';
-app.ConfigFileDropDown.ValueChangedFcn = createCallbackFcn(app, @load_config_file,true);
+R = R + 1;
+% Create ScheduleDDLabel
+app.ScheduleDDLabel = uilabel(G);
+app.ScheduleDDLabel.HorizontalAlignment = 'right';
+app.ScheduleDDLabel.FontSize = 14;
+app.ScheduleDDLabel.Layout.Row = R;
+app.ScheduleDDLabel.Layout.Column = 1;
+app.ScheduleDDLabel.Text = 'Schedule';
 
-
-y = y-yspacing;
-
-% Create ScheduleDropDownLabel
-app.ScheduleDropDownLabel = uilabel(app.ConfigTab);
-app.ScheduleDropDownLabel.HorizontalAlignment = 'right';
-app.ScheduleDropDownLabel.FontSize = 14;
-app.ScheduleDropDownLabel.Position = [x y labelWidth 22];
-app.ScheduleDropDownLabel.Text = 'Schedule';
-
-% Create ConfigScheduleDropDown
-app.ConfigScheduleDropDown = uidropdown(app.ConfigTab);
-app.ConfigScheduleDropDown.Items = {''};
-app.ConfigScheduleDropDown.Editable = 'off';
-app.ConfigScheduleDropDown.FontSize = 14;
-app.ConfigScheduleDropDown.BackgroundColor = [1 1 1];
-app.ConfigScheduleDropDown.Position = [ddx y ddl 22];
-app.ConfigScheduleDropDown.Value = '';
-app.ConfigScheduleDropDown.ValueChangedFcn = createCallbackFcn(app, @load_schedule_file,true);
+% Create ConfigScheduleDD
+app.ConfigScheduleDD = uidropdown(G);
+app.ConfigScheduleDD.Items = {''};
+app.ConfigScheduleDD.Editable = 'off';
+app.ConfigScheduleDD.FontSize = 14;
+app.ConfigScheduleDD.BackgroundColor = [1 1 1];
+app.ConfigScheduleDD.Layout.Row = R;
+app.ConfigScheduleDD.Layout.Column = [2 4];
+app.ConfigScheduleDD.Value = '';
+app.ConfigScheduleDD.ValueChangedFcn = createCallbackFcn(app, @load_schedule_file,true);
 
 % Create ConfigLoadSchedButton
-app.ConfigLoadSchedButton = uibutton(app.ConfigTab, 'push');
+app.ConfigLoadSchedButton = uibutton(G, 'push');
 app.ConfigLoadSchedButton.FontSize = 14;
-app.ConfigLoadSchedButton.Position = [bbx y 60 24];
+app.ConfigLoadSchedButton.Layout.Row = R;
+app.ConfigLoadSchedButton.Layout.Column = 5;
 app.ConfigLoadSchedButton.Text = 'load';
 app.ConfigLoadSchedButton.ButtonPushedFcn = createCallbackFcn(app, @locate_schedule_file,false);
 
 % Create ConfigNewSchedButton
-app.ConfigNewSchedButton = uibutton(app.ConfigTab, 'push');
+app.ConfigNewSchedButton = uibutton(G, 'push');
 app.ConfigNewSchedButton.FontSize = 14;
-app.ConfigNewSchedButton.Position = [abx y 60 24];
+app.ConfigNewSchedButton.Layout.Row = R;
+app.ConfigNewSchedButton.Layout.Column = 6;
 app.ConfigNewSchedButton.Text = 'new';
 app.ConfigNewSchedButton.UserData = 'ScheduleDesign';
 app.ConfigNewSchedButton.ButtonPushedFcn = createCallbackFcn(app, @locate_utility, true);
 
+R = R + 1;
 
-y = y - yspacing;
+% Create CalibrationDDLabel
+app.CalibrationDDLabel = uilabel(G);
+app.CalibrationDDLabel.HorizontalAlignment = 'right';
+app.CalibrationDDLabel.FontSize = 14;
+app.CalibrationDDLabel.Layout.Row = R;
+app.CalibrationDDLabel.Layout.Column = 1;
+app.CalibrationDDLabel.Text = 'Calibration';
 
-% Create CalibrationNew
-app.CalibrationNew = uibutton(app.ConfigTab, 'push');
-app.CalibrationNew.FontSize = 14;
-app.CalibrationNew.Position = [abx y 60 24];
-app.CalibrationNew.Text = 'new';
-app.CalibrationNew.ButtonPushedFcn = createCallbackFcn(app, @abr.Calibration, false);
+% Create CalibrationDD
+app.CalibrationDD = uidropdown(G);
+app.CalibrationDD.Items = {''};
+app.CalibrationDD.Editable = 'off';
+app.CalibrationDD.FontSize = 14;
+app.CalibrationDD.BackgroundColor = [1 1 1];
+app.CalibrationDD.Layout.Row = R;
+app.CalibrationDD.Layout.Column = [2 4];
+app.CalibrationDD.Value = '';
+app.CalibrationDD.Tooltip = 'Select a calibration file';
+app.CalibrationDD.ValueChangedFcn = createCallbackFcn(app, @load_calibration_file,true);
 
 % Create CalibrationLoad
-app.CalibrationLoad = uibutton(app.ConfigTab, 'push');
+app.CalibrationLoad = uibutton(G, 'push');
 app.CalibrationLoad.FontSize = 14;
-app.CalibrationLoad.Position = [bbx y 60 24];
+app.CalibrationLoad.Layout.Row = R;
+app.CalibrationLoad.Layout.Column = 5;
 app.CalibrationLoad.Text = 'load';
 app.CalibrationLoad.ButtonPushedFcn = createCallbackFcn(app, @locate_calibration_file, false);
 
-% Create CalibrationDropDownLabel
-app.CalibrationDropDownLabel = uilabel(app.ConfigTab);
-app.CalibrationDropDownLabel.HorizontalAlignment = 'right';
-app.CalibrationDropDownLabel.FontSize = 14;
-app.CalibrationDropDownLabel.Position = [x y labelWidth 22];
-app.CalibrationDropDownLabel.Text = 'Calibration';
+% Create CalibrationNew
+app.CalibrationNew = uibutton(G, 'push');
+app.CalibrationNew.FontSize = 14;
+app.CalibrationNew.Layout.Row = R;
+app.CalibrationNew.Layout.Column = 6;
+app.CalibrationNew.Text = 'new';
+app.CalibrationNew.ButtonPushedFcn = createCallbackFcn(app, @abr.Calibration, false);
 
-% Create CalibrationDropDown
-app.CalibrationDropDown = uidropdown(app.ConfigTab);
-app.CalibrationDropDown.Items = {''};
-app.CalibrationDropDown.Editable = 'off';
-app.CalibrationDropDown.FontSize = 14;
-app.CalibrationDropDown.BackgroundColor = [1 1 1];
-app.CalibrationDropDown.Position = [ddx y ddl 22];
-app.CalibrationDropDown.Value = '';
-app.CalibrationDropDown.Tooltip = 'Select a calibration file';
-app.CalibrationDropDown.ValueChangedFcn = createCallbackFcn(app, @load_calibration_file,true);
+R = R + 2; % allow some extra space
 
+app.OutputPanel = uipanel('Parent',G,'Title','ABR Data Output');
+app.OutputPanel.Layout.Row = [R R+3];
+app.OutputPanel.Layout.Column = [1 nCols];
 
-app.OutputPanel = uipanel('Parent',app.ConfigTab,'Title','ABR Data Output', ...
-    'Position',[5 10 450 100]);
-
-x = 5;
-y = 50;
-ddx = 100;
-
-% Create OutputFileDropDown
-app.OutputFileDropDown = uidropdown(app.OutputPanel);
-app.OutputFileDropDown.Editable = 'on';
-app.OutputFileDropDown.FontSize = 14;
-app.OutputFileDropDown.BackgroundColor = [1 1 1];
-app.OutputFileDropDown.Position = [ddx y 300 22];
-app.OutputFileDropDown.Items = {''};
-app.OutputFileDropDown.Value = '';
-app.OutputFileDropDown.Tooltip = 'Select an output file or create a new one by editing the name.';
-app.OutputFileDropDown.ValueChangedFcn = createCallbackFcn(app, @output_file_changed,true);
-
+nRows = 2; nCols = 3;
+G = uigridlayout(app.OutputPanel,[nRows nCols]);
+G.RowHeight = repmat({24},1,nRows);
+G.ColumnWidth = {80 '1x' 60};
+    
+R = 1;
 
 % Create OutputFileLabel
-app.OutputFileLabel = uilabel(app.OutputPanel);
+app.OutputFileLabel = uilabel(G);
 app.OutputFileLabel.HorizontalAlignment = 'right';
 app.OutputFileLabel.FontSize = 14;
-app.OutputFileLabel.Position = [x y labelWidth 22];
-app.OutputFileLabel.Text = 'Output File';
+app.OutputFileLabel.Text = 'Filename';
+app.OutputFileLabel.Layout.Row = R;
+app.OutputFileLabel.Layout.Column = 1;
 
-y = y - yspacing;
+% Create OutputFileDD
+app.OutputFileDD = uidropdown(G);
+app.OutputFileDD.Editable = 'on';
+app.OutputFileDD.FontSize = 14;
+app.OutputFileDD.BackgroundColor = [1 1 1];
+app.OutputFileDD.Items = {''};
+app.OutputFileDD.Value = '';
+app.OutputFileDD.Tooltip = 'Select an output file or create a new one by editing the name.';
+app.OutputFileDD.ValueChangedFcn = createCallbackFcn(app, @output_file_changed,true);
+app.OutputFileDD.Layout.Row = R;
+app.OutputFileDD.Layout.Column = 2;
+
+R = R + 1;
+
+% Create OutputPathLabel
+app.OutputPathLabel = uilabel(G);
+app.OutputPathLabel.HorizontalAlignment = 'right';
+app.OutputPathLabel.FontSize = 14;
+app.OutputPathLabel.Text = 'Directory';
+app.OutputPathLabel.Layout.Row = R;
+app.OutputPathLabel.Layout.Column = 1;
 
 
-% Create OutputPathDropDown
+% Create OutputPathDD
 recentPaths = getpref('ABRControlPanel','outputFolder',{app.root}); % set with recent directories
 ind = isfolder(recentPaths);
 recentPaths(~ind) = [];
-app.OutputPathDropDown = uidropdown(app.OutputPanel);
-app.OutputPathDropDown.Editable = 'off';
-app.OutputPathDropDown.FontSize = 14;
-app.OutputPathDropDown.BackgroundColor = [1 1 1];
-app.OutputPathDropDown.Position = [ddx y 300 22];
-app.OutputPathDropDown.Items = app.truncate_str(recentPaths,40);
-app.OutputPathDropDown.ItemsData = recentPaths;
-app.OutputPathDropDown.Value = recentPaths{1};
-app.OutputPathDropDown.ValueChangedFcn = createCallbackFcn(app, @output_path_changed,true);
+app.OutputPathDD = uidropdown(G);
+app.OutputPathDD.Editable = 'off';
+app.OutputPathDD.FontSize = 14;
+app.OutputPathDD.BackgroundColor = [1 1 1];
+app.OutputPathDD.Items = app.truncate_str(recentPaths,40);
+app.OutputPathDD.ItemsData = recentPaths;
+app.OutputPathDD.Value = recentPaths{1};
+app.OutputPathDD.ValueChangedFcn = createCallbackFcn(app, @output_path_changed,true);
+app.OutputPathDD.Layout.Row = R;
+app.OutputPathDD.Layout.Column = 2;
 
 % Create OutputPathSelectButton
-app.OutputPathSelectButton = uibutton(app.OutputPanel, 'push');
+app.OutputPathSelectButton = uibutton(G, 'push');
 app.OutputPathSelectButton.FontSize = 14;
-app.OutputPathSelectButton.Position = [ddx+300+5 y 40 24];
 app.OutputPathSelectButton.Text = 'dir';
 app.OutputPathSelectButton.Tooltip = 'Locate a data output directory';
 app.OutputPathSelectButton.ButtonPushedFcn = createCallbackFcn(app, @output_select_directory, false);
+app.OutputPathSelectButton.Layout.Row = R;
+app.OutputPathSelectButton.Layout.Column = nCols;
 
-% Create OutputPathLabel
-app.OutputPathLabel = uilabel(app.OutputPanel);
-app.OutputPathLabel.HorizontalAlignment = 'right';
-app.OutputPathLabel.FontSize = 14;
-app.OutputPathLabel.Position = [x y labelWidth 22];
-app.OutputPathLabel.Text = 'Directory';
-
-e.Value = app.OutputFileDropDown.Value;
-e.Source = app.OutputFileDropDown;
+e.Value = app.OutputFileDD.Value;
+e.Source = app.OutputFileDD;
 app.output_path_changed(e);
+
+
+
+
+
+
 
 %% SUBJECT TAB -------------------------------------------------------------
 % Create SubjectInfoTab
 app.SubjectInfoTab = uitab(app.TabGroup);
 app.SubjectInfoTab.Title = 'Subject Info';
 
-% Create DOBDatePickerLabel
-app.DOBDatePickerLabel = uilabel(app.SubjectInfoTab);
-app.DOBDatePickerLabel.HorizontalAlignment = 'right';
-app.DOBDatePickerLabel.Position = [203 105 32 22];
-app.DOBDatePickerLabel.Text = 'DOB';
 
-% Create SubjectDOBDatePicker
-app.SubjectDOBDatePicker = uidatepicker(app.SubjectInfoTab);
-app.SubjectDOBDatePicker.Position = [249 105 148 22];
+nRows = 8; nCols = 4;
+G = uigridlayout(app.SubjectInfoTab,[nRows nCols]);
+G.RowHeight = repmat({'1x'},1,nRows);
+G.ColumnWidth = {'1x' 35 '1x' 60}; 
+    % Create SubjectTree
+app.SubjectTree = uitree(G);
+app.SubjectTree.Layout.Row = [2 nRows-1];
+app.SubjectTree.Layout.Column  = 1;
 
-% Create SubjectTree
-app.SubjectTree = uitree(app.SubjectInfoTab);
-app.SubjectTree.Position = [20 29 150 203];
+% Create SubjectAddaSubjectButton
+app.SubjectAddaSubjectButton = uibutton(G, 'push');
+app.SubjectAddaSubjectButton.FontSize = 10;
+app.SubjectAddaSubjectButton.Layout.Row = nRows;
+app.SubjectAddaSubjectButton.Layout.Column = 1;
+app.SubjectAddaSubjectButton.Text = 'Add a Subject';
+app.SubjectAddaSubjectButton.ButtonPushedFcn = createCallbackFcn(app, @add_subject,false);
 
-% Create NotesTextAreaLabel
-app.NotesTextAreaLabel = uilabel(app.SubjectInfoTab);
-app.NotesTextAreaLabel.HorizontalAlignment = 'right';
-app.NotesTextAreaLabel.Position = [195 73 37 22];
-app.NotesTextAreaLabel.Text = 'Notes';
 
-% Create SubjectNotesTextArea
-app.SubjectNotesTextArea = uitextarea(app.SubjectInfoTab);
-app.SubjectNotesTextArea.Position = [247 16 193 81];
+R = 2;
+% Create UserDDLabel
+app.UserDDLabel = uilabel(G);
+app.UserDDLabel.HorizontalAlignment = 'right';
+app.UserDDLabel.Layout.Row = R;
+app.UserDDLabel.Layout.Column = 2;
+app.UserDDLabel.Text = 'User';
+app.UserDDLabel.Tooltip = 'Select or enter initials';
 
+% Create SubjectUserDD
+app.SubjectUserDD = uidropdown(G);
+app.SubjectUserDD.Editable = 'on';
+app.SubjectUserDD.Layout.Row = R;
+app.SubjectUserDD.Layout.Column = 3;
+
+R = R + 1;
 % Create AliasEditFieldLabel
-app.AliasEditFieldLabel = uilabel(app.SubjectInfoTab);
+app.AliasEditFieldLabel = uilabel(G);
 app.AliasEditFieldLabel.HorizontalAlignment = 'right';
-app.AliasEditFieldLabel.Position = [202 166 32 22];
+app.AliasEditFieldLabel.Layout.Row = R;
+app.AliasEditFieldLabel.Layout.Column = 2;
 app.AliasEditFieldLabel.Text = 'Alias';
 
-% Create SubjectAliasEditField
-app.SubjectAliasEditField = uieditfield(app.SubjectInfoTab, 'text');
-app.SubjectAliasEditField.Position = [249 166 123 22];
+% Create AliasEditField
+app.AliasEditField = uieditfield(G, 'text');
+app.AliasEditField.Layout.Row = R;
+app.AliasEditField.Layout.Column = 3;
 
+R = R + 1;
 % Create IDEditFieldLabel
-app.IDEditFieldLabel = uilabel(app.SubjectInfoTab);
+app.IDEditFieldLabel = uilabel(G);
 app.IDEditFieldLabel.HorizontalAlignment = 'right';
-app.IDEditFieldLabel.Position = [209 135 25 22];
+app.IDEditFieldLabel.Layout.Row = R;
+app.IDEditFieldLabel.Layout.Column = 2;
 app.IDEditFieldLabel.Text = 'ID';
 
 % Create SubjectIDEditField
-app.SubjectIDEditField = uieditfield(app.SubjectInfoTab, 'text');
-app.SubjectIDEditField.Position = [249 135 123 22];
+app.SubjectIDEditField = uieditfield(G, 'text');
+app.SubjectIDEditField.Layout.Row = R;
+app.SubjectIDEditField.Layout.Column = 3;
+
+R = R + 1;
+% Create DOBDatePickerLabel
+app.DOBDatePickerLabel = uilabel(G);
+app.DOBDatePickerLabel.HorizontalAlignment = 'right';
+app.DOBDatePickerLabel.Layout.Row = R;
+app.DOBDatePickerLabel.Layout.Column = 2;
+app.DOBDatePickerLabel.Text = 'DOB';
+
+% Create SubjectDOBDatePicker
+app.SubjectDOBDatePicker = uidatepicker(G);
+app.SubjectDOBDatePicker.Layout.Row = R;
+app.SubjectDOBDatePicker.Layout.Column = 3;
+
 
 % Create SubjectSexSwitch
-app.SubjectSexSwitch = uiswitch(app.SubjectInfoTab, 'slider');
+app.SubjectSexSwitch = uiswitch(G, 'slider');
 app.SubjectSexSwitch.Items = {'Female', 'Male'};
 app.SubjectSexSwitch.Orientation = 'vertical';
 app.SubjectSexSwitch.Tooltip = {'Select subject sex'};
-app.SubjectSexSwitch.Position = [425 140 14 31];
+app.SubjectSexSwitch.Layout.Row = [2 4];
+app.SubjectSexSwitch.Layout.Column = 4;
 app.SubjectSexSwitch.Value = 'Female';
 
-% Create ScientistDropDownLabel
-app.ScientistDropDownLabel = uilabel(app.SubjectInfoTab);
-app.ScientistDropDownLabel.HorizontalAlignment = 'right';
-app.ScientistDropDownLabel.Position = [183 203 51 22];
-app.ScientistDropDownLabel.Text = 'Scientist';
-app.ScientistDropDownLabel.Tooltip = 'Select or enter initials';
 
-% Create SubjectScientistDropDown
-app.SubjectScientistDropDown = uidropdown(app.SubjectInfoTab);
-app.SubjectScientistDropDown.Editable = 'on';
-app.SubjectScientistDropDown.Position = [249 203 123 22];
+R = R + 1;
+% Create NotesTextAreaLabel
+app.NotesTextAreaLabel = uilabel(G);
+app.NotesTextAreaLabel.HorizontalAlignment = 'right';
+app.NotesTextAreaLabel.Layout.Row = R;
+app.NotesTextAreaLabel.Layout.Column = 2;
+app.NotesTextAreaLabel.Text = 'Notes';
 
-% Create SubjectAddaSubjectButton
-app.SubjectAddaSubjectButton = uibutton(app.SubjectInfoTab, 'push');
-app.SubjectAddaSubjectButton.FontSize = 10;
-app.SubjectAddaSubjectButton.Position = [20 5 100 22];
-app.SubjectAddaSubjectButton.Text = 'Add a Subject';
-app.SubjectAddaSubjectButton.ButtonPushedFcn = createCallbackFcn(app, @add_subject,false);
+% Create SubjectNotesTextArea
+app.SubjectNotesTextArea = uitextarea(G);
+app.SubjectNotesTextArea.Layout.Row = [R nRows];
+app.SubjectNotesTextArea.Layout.Column = [3 nCols];
+
+
 
 
 
@@ -330,122 +407,171 @@ app.SubjectAddaSubjectButton.ButtonPushedFcn = createCallbackFcn(app, @add_subje
 app.ControlTab = uitab(app.TabGroup);
 app.ControlTab.Title = 'Control';
 
-% Create ControlSweepCountGauge
-app.ControlSweepCountGauge = uigauge(app.ControlTab, 'linear');
-app.ControlSweepCountGauge.Position = [22 1 420 40];
-app.ControlSweepCountGauge.Limits = [1 128];
+nRows = 8; nCols = 4;
+G = uigridlayout(app.ControlTab,[nRows nCols]);
+G.RowHeight = [repmat({'1x'},1,nRows-1) 40];
+G.ColumnWidth = {120 100 '1x' 180}; 
+    
+R = 2;
 
+% Create SweepsSpinnerLabel
+app.SweepsSpinnerLabel = uilabel(G);
+app.SweepsSpinnerLabel.HorizontalAlignment = 'right';
+app.SweepsSpinnerLabel.Layout.Row = R;
+app.SweepsSpinnerLabel.Layout.Column = 1;
+app.SweepsSpinnerLabel.Text = '# Sweeps';
+app.SweepsSpinnerLabel.Tooltip = 'Number of sweeps, i.e. stimulus presentations, per schedule row.';
+
+% Create SweepCountSpinner
+app.SweepCountSpinner = uispinner(G);
+app.SweepCountSpinner.Limits = [1 inf];
+app.SweepCountSpinner.RoundFractionalValues = 'on';
+app.SweepCountSpinner.ValueDisplayFormat = '%d';
+app.SweepCountSpinner.HorizontalAlignment = 'center';
+app.SweepCountSpinner.Layout.Row = R;
+app.SweepCountSpinner.Layout.Column = 2;
+app.SweepCountSpinner.Value = 128;
+app.SweepCountSpinner.ValueChangedFcn = createCallbackFcn(app, @update_sweep_count, true);
+app.SweepCountSpinner.CreateFcn = createCallbackFcn(app, @update_sweep_count, true);
+
+R = R + 1;
+% Create SweepRateHzSpinnerLabel
+app.SweepRateHzSpinnerLabel = uilabel(G);
+app.SweepRateHzSpinnerLabel.HorizontalAlignment = 'right';
+app.SweepRateHzSpinnerLabel.Layout.Row = R;
+app.SweepRateHzSpinnerLabel.Layout.Column = 1;
+app.SweepRateHzSpinnerLabel.Text = 'Sweep Rate (Hz)';
+app.SweepRateHzSpinnerLabel.Tooltip = 'Stimulus presentation rate in Hz';
+
+% Create SweepRateHzSpinner
+app.SweepRateHzSpinner = uispinner(G);
+app.SweepRateHzSpinner.Limits = [0.001 100];
+app.SweepRateHzSpinner.HorizontalAlignment = 'center';
+app.SweepRateHzSpinner.Layout.Row = R;
+app.SweepRateHzSpinner.Layout.Column = 2;
+app.SweepRateHzSpinner.Value = 21.1;
+
+R = R + 1;
+% Create RepetitionsLabel
+app.NumRepetitionsLabel = uilabel(G);
+app.NumRepetitionsLabel.HorizontalAlignment = 'right';
+app.NumRepetitionsLabel.Layout.Row = R;
+app.NumRepetitionsLabel.Layout.Column = 1;
+app.NumRepetitionsLabel.Text = '# Repetitions';
+app.NumRepetitionsLabel.Tooltip = 'Number of repetitions per schedule row';
+
+% Create NumRepetitionsSpinner
+app.NumRepetitionsSpinner = uispinner(G);
+app.NumRepetitionsSpinner.Limits = [1 Inf];
+app.NumRepetitionsSpinner.RoundFractionalValues = 'on';
+app.NumRepetitionsSpinner.ValueDisplayFormat = '%d';
+app.NumRepetitionsSpinner.HorizontalAlignment = 'center';
+app.NumRepetitionsSpinner.Layout.Row = R;
+app.NumRepetitionsSpinner.Layout.Column = 2;
+app.NumRepetitionsSpinner.Value = 1;
+
+R = R + 1;
+% Create SweepDurationLabel
+app.SweepDurationLabel = uilabel(G);
+app.SweepDurationLabel.HorizontalAlignment = 'right';
+app.SweepDurationLabel.Layout.Row = R;
+app.SweepDurationLabel.Layout.Column = 1;
+app.SweepDurationLabel.Text = 'Sweep Duration (ms)';
+app.SweepDurationLabel.Tooltip = 'ABR acquisition duration in milliseconds';
+
+% Create SweepDurationSpinner
+app.SweepDurationSpinner = uispinner(G);
+app.SweepDurationSpinner.Limits = [0.1 1000];
+app.SweepDurationSpinner.HorizontalAlignment = 'center';
+app.SweepDurationSpinner.Layout.Row = R;
+app.SweepDurationSpinner.Layout.Column = 2;
+app.SweepDurationSpinner.Value = 10;
+
+R = R + 1;
+% Create ControlAdvCriteriaDDLabel
+app.ControlAdvCriteriaDDLabel = uilabel(G);
+app.ControlAdvCriteriaDDLabel.HorizontalAlignment = 'right';
+app.ControlAdvCriteriaDDLabel.Layout.Row = R;
+app.ControlAdvCriteriaDDLabel.Layout.Column = 1;
+app.ControlAdvCriteriaDDLabel.Text = 'Advance on...';
+app.ControlAdvCriteriaDDLabel.Tooltip = 'Criterion function used to advance to the next schedule row';
+
+% Create ControlAdvCriteriaDD
+app.ControlAdvCriteriaDD = uidropdown(G);
+app.ControlAdvCriteriaDD.Items = {'# Sweeps', 'Correlation Threshold', '< Define >'};
+app.ControlAdvCriteriaDD.Layout.Row = R;
+app.ControlAdvCriteriaDD.Layout.Column = 2;
+app.ControlAdvCriteriaDD.Value = '# Sweeps';
+
+% Create Panel_2
+app.Panel_2 = uipanel(G);
+app.Panel_2.Layout.Row = [2 6];
+app.Panel_2.Layout.Column = 4;
+
+
+
+nRows = 3; nCols = 2;
+Gpanel = uigridlayout(app.Panel_2,[nRows nCols]);
+Gpanel.RowHeight = repmat({'1x'},1,nRows);
+Gpanel.ColumnWidth = {'1x' '1x'}; 
+    
+R = 1;
+% Create ControlAdvanceButton
+app.ControlAdvanceButton = uibutton(Gpanel, 'push');
+app.ControlAdvanceButton.Layout.Row = R;
+app.ControlAdvanceButton.Layout.Column = 1;
+app.ControlAdvanceButton.Text = 'Advance';
+app.ControlAdvanceButton.Icon = fullfile(app.iconPath,'advance.gif');
+app.ControlAdvanceButton.IconAlignment = 'right';
+app.ControlAdvanceButton.ButtonPushedFcn = createCallbackFcn(app, @advance_schedule,false);
+
+R = R + 1;
+% Create ControlRepeatButton
+app.ControlRepeatButton = uibutton(Gpanel, 'state');
+app.ControlRepeatButton.Text = 'Repeat';
+app.ControlRepeatButton.Layout.Row = R;
+app.ControlRepeatButton.Layout.Column = 1;
+app.ControlRepeatButton.Icon = fullfile(app.iconPath,'repeat.gif');
+app.ControlRepeatButton.IconAlignment = 'right';
+app.ControlRepeatButton.ValueChangedFcn = createCallbackFcn(app, @repeat_schedule_idx,true);
+
+
+R = R + 1;
+% Create ControlPauseButton
+app.ControlPauseButton = uibutton(Gpanel, 'state');
+app.ControlPauseButton.Text = 'Pause';
+app.ControlPauseButton.Layout.Row = R;
+app.ControlPauseButton.Layout.Column = 1;
+app.ControlPauseButton.Icon = fullfile(app.iconPath,'pause.gif');
+app.ControlPauseButton.IconAlignment = 'right';
+app.ControlPauseButton.ValueChangedFcn = createCallbackFcn(app, @pause_button,false);
+
+
+% Create ControlAcquisitionSwitch
+app.ControlAcquisitionSwitch = uiswitch(Gpanel, 'toggle');
+app.ControlAcquisitionSwitch.Items = {'Idle', 'Acquire'};
+app.ControlAcquisitionSwitch.FontSize = 16;
+app.ControlAcquisitionSwitch.Layout.Row = [1 3];
+app.ControlAcquisitionSwitch.Layout.Column = 2;
+app.ControlAcquisitionSwitch.Value = 'Idle';
+app.ControlAcquisitionSwitch.ValueChangedFcn = createCallbackFcn(app, @control_acq_switch, true);
+
+
+%%%%%
 % Create ControlStimInfoLabel
-app.ControlStimInfoLabel = uilabel(app.ControlTab);
-app.ControlStimInfoLabel.Position = [22 41 436 30];
+app.ControlStimInfoLabel = uilabel(G);
+app.ControlStimInfoLabel.Layout.Row = length(G.RowHeight)-1;
+app.ControlStimInfoLabel.Layout.Column = [1 length(G.ColumnWidth)];
 app.ControlStimInfoLabel.HorizontalAlignment = 'center';
 app.ControlStimInfoLabel.VerticalAlignment = 'bottom';
 app.ControlStimInfoLabel.FontSize = 14;
 app.ControlStimInfoLabel.Text = '';
 
-% Create RepetitionsLabel
-app.NumRepetitionsLabel = uilabel(app.ControlTab);
-app.NumRepetitionsLabel.HorizontalAlignment = 'right';
-app.NumRepetitionsLabel.Position = [61 132 76 22];
-app.NumRepetitionsLabel.Text = '# Repetitions';
-
-% Create NumRepetitionsSpinner
-app.NumRepetitionsSpinner = uispinner(app.ControlTab);
-app.NumRepetitionsSpinner.Limits = [1 Inf];
-app.NumRepetitionsSpinner.RoundFractionalValues = 'on';
-app.NumRepetitionsSpinner.ValueDisplayFormat = '%d';
-app.NumRepetitionsSpinner.HorizontalAlignment = 'center';
-app.NumRepetitionsSpinner.Position = [147 132 73 22];
-app.NumRepetitionsSpinner.Value = 1;
-
-
-% Create SweepsSpinnerLabel
-app.SweepsSpinnerLabel = uilabel(app.ControlTab);
-app.SweepsSpinnerLabel.HorizontalAlignment = 'right';
-app.SweepsSpinnerLabel.Position = [79 199 58 22];
-app.SweepsSpinnerLabel.Text = '# Sweeps';
-
-% Create SweepCountSpinner
-app.SweepCountSpinner = uispinner(app.ControlTab);
-app.SweepCountSpinner.Limits = [1 inf];
-app.SweepCountSpinner.RoundFractionalValues = 'on';
-app.SweepCountSpinner.ValueDisplayFormat = '%d';
-app.SweepCountSpinner.HorizontalAlignment = 'center';
-app.SweepCountSpinner.Position = [147 199 73 22];
-app.SweepCountSpinner.Value = 128;
-app.SweepCountSpinner.ValueChangedFcn = createCallbackFcn(app, @update_sweep_count, true);
-app.SweepCountSpinner.CreateFcn = createCallbackFcn(app, @update_sweep_count, true);
-
-% Create SweepRateHzSpinnerLabel
-app.SweepRateHzSpinnerLabel = uilabel(app.ControlTab);
-app.SweepRateHzSpinnerLabel.HorizontalAlignment = 'right';
-app.SweepRateHzSpinnerLabel.Position = [40 166 97 22];
-app.SweepRateHzSpinnerLabel.Text = 'Sweep Rate (Hz)';
-
-% Create SweepRateHzSpinner
-app.SweepRateHzSpinner = uispinner(app.ControlTab);
-app.SweepRateHzSpinner.Limits = [0.001 100];
-app.SweepRateHzSpinner.HorizontalAlignment = 'center';
-app.SweepRateHzSpinner.Position = [147 166 73 22];
-app.SweepRateHzSpinner.Value = 21.1;
-
-% Create SweepDurationLabel
-app.SweepDurationLabel = uilabel(app.ControlTab);
-app.SweepDurationLabel.HorizontalAlignment = 'right';
-app.SweepDurationLabel.Position = [20 101 117 22];
-app.SweepDurationLabel.Text = 'Sweep Duration (ms)';
-
-% Create SweepDurationSpinner
-app.SweepDurationSpinner = uispinner(app.ControlTab);
-app.SweepDurationSpinner.Limits = [0.1 1000];
-app.SweepDurationSpinner.HorizontalAlignment = 'center';
-app.SweepDurationSpinner.Position = [147 101 73 22];
-app.SweepDurationSpinner.Value = 10;
-
-% Create ControlAdvCriteriaDropDownLabel
-app.ControlAdvCriteriaDropDownLabel = uilabel(app.ControlTab);
-app.ControlAdvCriteriaDropDownLabel.HorizontalAlignment = 'right';
-app.ControlAdvCriteriaDropDownLabel.Position = [17 65 121 22];
-app.ControlAdvCriteriaDropDownLabel.Text = 'Advance on';
-
-% Create ControlAdvCriteriaDropDown
-app.ControlAdvCriteriaDropDown = uidropdown(app.ControlTab);
-app.ControlAdvCriteriaDropDown.Items = {'# Sweeps', 'Correlation Threshold', '< Define >'};
-app.ControlAdvCriteriaDropDown.Position = [146 65 100 22];
-app.ControlAdvCriteriaDropDown.Value = '# Sweeps';
-
-% Create Panel_2
-app.Panel_2 = uipanel(app.ControlTab);
-app.Panel_2.Position = [250 80 200 150];
-
-% Create ControlAdvanceButton
-app.ControlAdvanceButton = uibutton(app.Panel_2, 'push');
-app.ControlAdvanceButton.Position = [18 60 90 35];
-app.ControlAdvanceButton.Text = 'Advance >';
-app.ControlAdvanceButton.ButtonPushedFcn = createCallbackFcn(app, @advance_schedule,false);
-
-% Create ControlRepeatButton
-app.ControlRepeatButton = uibutton(app.Panel_2, 'state');
-app.ControlRepeatButton.Text = 'Repeat';
-app.ControlRepeatButton.Position = [18 105 90 35];
-app.ControlRepeatButton.ValueChangedFcn = createCallbackFcn(app, @repeat_schedule_idx,true);
-
-
-% Create ControlPauseButton
-app.ControlPauseButton = uibutton(app.Panel_2, 'state');
-app.ControlPauseButton.Text = 'Pause ||';
-app.ControlPauseButton.Position = [18 16 90 35];
-app.ControlPauseButton.ValueChangedFcn = createCallbackFcn(app, @pause_button,false);
-
-% Create ControlAcquisitionSwitch
-app.ControlAcquisitionSwitch = uiswitch(app.Panel_2, 'toggle');
-app.ControlAcquisitionSwitch.Items = {'Idle', 'Acquire'};
-app.ControlAcquisitionSwitch.FontSize = 16;
-app.ControlAcquisitionSwitch.Position = [135 45 31 70];
-app.ControlAcquisitionSwitch.Value = 'Idle';
-app.ControlAcquisitionSwitch.ValueChangedFcn = createCallbackFcn(app, @control_acq_switch, true);
-
-
+% Create ControlSweepCountGauge
+app.ControlSweepCountGauge = uigauge(G, 'linear');
+app.ControlSweepCountGauge.Layout.Row = length(G.RowHeight);
+app.ControlSweepCountGauge.Layout.Column = [1 length(G.ColumnWidth)];
+app.ControlSweepCountGauge.Limits = [1 128];
 
 %% FILTER TAB -------------------------------------------------------------
 app.AcqFilterTab = uitab(app.TabGroup);
@@ -528,41 +654,42 @@ app.FilterNotchFilterLabel.Text = 'Digital Notch Filter';
 app.UtilitiesTab = uitab(app.TabGroup);
 app.UtilitiesTab.Title = 'Utilities';
 
+
+nRows = 5; nCols = 3;
+G = uigridlayout(app.UtilitiesTab,[nRows nCols]);
+G.RowHeight = repmat({'1x'},1,nRows);
+G.ColumnWidth = repmat({'1x'},1,nCols);
+    
+R = 2;
+
 % Create UtilityScheduleDesignButton
-app.UtilityScheduleDesignButton = uibutton(app.UtilitiesTab, 'push');
-app.UtilityScheduleDesignButton.Position = [61 131 111 34];
+app.UtilityScheduleDesignButton = uibutton(G, 'push');
+app.UtilityScheduleDesignButton.Layout.Row = R;
+app.UtilityScheduleDesignButton.Layout.Column = 1;
 app.UtilityScheduleDesignButton.Text = 'Schedule Design';
 app.UtilityScheduleDesignButton.ButtonPushedFcn = createCallbackFcn(app,@abr.ScheduleDesign,false);
 
+R = R + 1;
 % Create UtilitySoundCalibrationButton
-app.UtilitySoundCalibrationButton = uibutton(app.UtilitiesTab, 'push');
-app.UtilitySoundCalibrationButton.Position = [61 182 111 34];
+app.UtilitySoundCalibrationButton = uibutton(G, 'push');
+app.UtilitySoundCalibrationButton.Layout.Row = R;
+app.UtilitySoundCalibrationButton.Layout.Column = 1;
 app.UtilitySoundCalibrationButton.Text = 'Sound Calibration';
 app.UtilitySoundCalibrationButton.ButtonPushedFcn = createCallbackFcn(app,@abr.Calibration,false);
 
-
+R = R + 1;
 % Create UtilityABRDataViewerButton
-app.UtilityABRDataViewerButton = uibutton(app.UtilitiesTab, 'push');
-app.UtilityABRDataViewerButton.Position = [61 31 111 34];
+app.UtilityABRDataViewerButton = uibutton(G, 'push');
+app.UtilityABRDataViewerButton.Layout.Row = R;
+app.UtilityABRDataViewerButton.Layout.Column = 1;
 app.UtilityABRDataViewerButton.Text = 'ABR Trace Organizer';
 app.UtilityABRDataViewerButton.ButtonPushedFcn = createCallbackFcn(app,@abr.traces.Organizer,false);
 
+R = R + 1;
 % Create UtilityOnlineAnalysisButton
-app.UtilityOnlineAnalysisButton = uibutton(app.UtilitiesTab, 'push');
-app.UtilityOnlineAnalysisButton.Position = [61 81 111 34];
+app.UtilityOnlineAnalysisButton = uibutton(G, 'push');
+app.UtilityOnlineAnalysisButton.Layout.Row = R;
+app.UtilityOnlineAnalysisButton.Layout.Column = 1;
 app.UtilityOnlineAnalysisButton.Text = 'Online Analysis';
 
 
-%% NON-TAB COMPONENTS -----------------------------------------------------
-
-% Create AcquisitionStateLamp
-app.AcquisitionStateLamp = uilamp(app.ControlPanelUIFigure);
-app.AcquisitionStateLamp.Position = [525 250 20 20];
-app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
-
-p = app.AcquisitionStateLamp.Position;
-% Create AcquisitionStateLabel
-app.AcquisitionStateLabel = uilabel(app.ControlPanelUIFigure);
-app.AcquisitionStateLabel.HorizontalAlignment = 'right';
-app.AcquisitionStateLabel.Position = [p(1)-105 p(2) 100 22];
-app.AcquisitionStateLabel.Text = 'Ready';

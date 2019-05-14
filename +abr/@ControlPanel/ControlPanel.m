@@ -6,7 +6,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
         
         TrcOrg              (1,1) abr.traces.Organizer
         
-        Config
+        Config              (1,1) struct
 
         Subject             (1,1) abr.Subject
         Schedule            (1,1) abr.Schedule
@@ -48,22 +48,22 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
         ConfigFileSave                 matlab.ui.control.Button
         ConfigFileLoad                 matlab.ui.control.Button
         ConfigFileLabel                matlab.ui.control.Label
-        ConfigFileDropDown             matlab.ui.control.DropDown
+        ConfigFileDD                   matlab.ui.control.DropDown
         CalibrationNew                 matlab.ui.control.Button
         CalibrationLoad                matlab.ui.control.Button
-        CalibrationDropDownLabel       matlab.ui.control.Label
-        CalibrationDropDown            matlab.ui.control.DropDown
-        ScheduleDropDownLabel          matlab.ui.control.Label
-        ConfigScheduleDropDown         matlab.ui.control.DropDown
+        CalibrationDDLabel             matlab.ui.control.Label
+        CalibrationDD                  matlab.ui.control.DropDown
+        ScheduleDDLabel                matlab.ui.control.Label
+        ConfigScheduleDD               matlab.ui.control.DropDown
         ConfigNewSchedButton           matlab.ui.control.Button
         ConfigLoadSchedButton          matlab.ui.control.Button
         OutputPanel                    matlab.ui.container.Panel
         OutputPathLabel                matlab.ui.control.Label
         OutputFileLabel                matlab.ui.control.Label
-        OutputPathDropDown             matlab.ui.control.DropDown
-        OutputFileDropDown             matlab.ui.control.DropDown
+        OutputPathDD                   matlab.ui.control.DropDown
+        OutputFileDD                   matlab.ui.control.DropDown
         OutputPathSelectButton         matlab.ui.control.Button
-        ConfigOutputDropDown           matlab.ui.control.DropDown
+        ConfigOutputDD                 matlab.ui.control.DropDown
         SubjectInfoTab                 matlab.ui.container.Tab
         DOBDatePickerLabel             matlab.ui.control.Label
         SubjectDOBDatePicker           matlab.ui.control.DatePicker
@@ -71,19 +71,19 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
         NotesTextAreaLabel             matlab.ui.control.Label
         SubjectNotesTextArea           matlab.ui.control.TextArea
         AliasEditFieldLabel            matlab.ui.control.Label
-        SubjectAliasEditField          matlab.ui.control.EditField
+        AliasEditField                 matlab.ui.control.EditField
         IDEditFieldLabel               matlab.ui.control.Label
         SubjectIDEditField             matlab.ui.control.EditField
         SubjectSexSwitch               matlab.ui.control.Switch
-        ScientistDropDownLabel         matlab.ui.control.Label
-        SubjectScientistDropDown       matlab.ui.control.DropDown
+        UserDDLabel                    matlab.ui.control.Label
+        SubjectUserDD                  matlab.ui.control.DropDown
         SubjectAddaSubjectButton       matlab.ui.control.Button
         ControlTab                     matlab.ui.container.Tab
         ControlStimInfoLabel           matlab.ui.control.Label
         NumRepetitionsLabel            matlab.ui.control.Label
         NumRepetitionsSpinner          matlab.ui.control.Spinner
-        ControlAdvCriteriaDropDownLabel  matlab.ui.control.Label
-        ControlAdvCriteriaDropDown     matlab.ui.control.DropDown
+        ControlAdvCriteriaDDLabel      matlab.ui.control.Label
+        ControlAdvCriteriaDD           matlab.ui.control.DropDown
         SweepsSpinnerLabel             matlab.ui.control.Label
         SweepCountSpinner              matlab.ui.control.Spinner
         SweepRateHzSpinnerLabel        matlab.ui.control.Label
@@ -112,7 +112,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
         UtilitySoundCalibrationButton  matlab.ui.control.Button
         UtilityABRDataViewerButton     matlab.ui.control.Button
         UtilityOnlineAnalysisButton    matlab.ui.control.Button
-        
+        HelpButton                     matlab.ui.control.Button
         
         SubjectNode     matlab.ui.container.TreeNode
         
@@ -130,8 +130,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
         
         
         function ffn = get.outputFile(app)
-            fn = app.OutputFileDropDown.Value;
-            pn = app.OutputPathDropDown.Value;
+            fn = app.OutputFileDD.Value;
+            pn = app.OutputPathDD.Value;
             
             ffn = fullfile(pn,fn);
             
@@ -182,11 +182,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
         function populate_gui(app)
             % Config file
             if isempty(app.configFile)
-                app.ConfigFileDropDown.Items     = {'Load a configuration file -->'};
-                app.ConfigFileDropDown.ItemsData = {'NO CONFIG'};
-                app.ConfigFileDropDown.Value     = 'NO CONFIG';
-                app.ConfigFileDropDown.Tooltip   = 'No Configuration File Selected';
-                app.ConfigFileDropDown.FontColor = [1 0 0];
+                app.ConfigFileDD.Items     = {'Load a configuration file -->'};
+                app.ConfigFileDD.ItemsData = {'NO CONFIG'};
+                app.ConfigFileDD.Value     = 'NO CONFIG';
+                app.ConfigFileDD.Tooltip   = 'No Configuration File Selected';
+                app.ConfigFileDD.FontColor = [1 0 0];
                 app.ConfigFileLabel.Tooltip      = '';
                 app.configFile = '';
             else
@@ -196,11 +196,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                 c(ind) = [];
                 c = [{ffn}; c];
                 d = cellfun(@dir,c);
-                app.ConfigFileDropDown.Items     = {d.name};
-                app.ConfigFileDropDown.ItemsData = c;
-                app.ConfigFileDropDown.Value     = app.configFile;  
-                app.ConfigFileDropDown.Tooltip   = app.last_modified_str(app.configFile);
-                app.ConfigFileDropDown.FontColor = [0 0 0];
+                app.ConfigFileDD.Items     = {d.name};
+                app.ConfigFileDD.ItemsData = c;
+                app.ConfigFileDD.Value     = app.configFile;  
+                app.ConfigFileDD.Tooltip   = app.last_modified_str(app.configFile);
+                app.ConfigFileDD.FontColor = [0 0 0];
                 app.ConfigFileLabel.Tooltip      = fileparts(app.configFile);
                 setpref('ABRControlPanel','recentConfigs',c);         
             end
@@ -208,43 +208,43 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             
             % Schedule File
             if isempty(app.scheduleFile)  
-                app.ConfigScheduleDropDown.Items     = {'Load a schedule file -->'};
-                app.ConfigScheduleDropDown.ItemsData = {'NO SCHED FILES'};
-                app.ConfigScheduleDropDown.Value     = 'NO SCHED FILES';
-                app.ConfigScheduleDropDown.Tooltip   = 'Must load a schedule file.';
-                app.ConfigScheduleDropDown.FontColor = [1 0 0];
-                app.ScheduleDropDownLabel.Tooltip    = '';
+                app.ConfigScheduleDD.Items     = {'Load a schedule file -->'};
+                app.ConfigScheduleDD.ItemsData = {'NO SCHED FILES'};
+                app.ConfigScheduleDD.Value     = 'NO SCHED FILES';
+                app.ConfigScheduleDD.Tooltip   = 'Must load a schedule file.';
+                app.ConfigScheduleDD.FontColor = [1 0 0];
+                app.ScheduleDDLabel.Tooltip    = '';
                 app.scheduleFile = '';
             else
                 d = dir(fullfile(fileparts(app.scheduleFile),'*.sch'));
                 ffns = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
-                app.ConfigScheduleDropDown.Items     = {d.name};
-                app.ConfigScheduleDropDown.ItemsData = ffns;
-                app.ConfigScheduleDropDown.Value     = app.scheduleFile;
-                app.ConfigScheduleDropDown.Tooltip   = app.last_modified_str(app.scheduleFile);
-                app.ConfigScheduleDropDown.FontColor = [0 0 0];
-                app.ScheduleDropDownLabel.Tooltip    = fileparts(app.scheduleFile);
+                app.ConfigScheduleDD.Items     = {d.name};
+                app.ConfigScheduleDD.ItemsData = ffns;
+                app.ConfigScheduleDD.Value     = app.scheduleFile;
+                app.ConfigScheduleDD.Tooltip   = app.last_modified_str(app.scheduleFile);
+                app.ConfigScheduleDD.FontColor = [0 0 0];
+                app.ScheduleDDLabel.Tooltip    = fileparts(app.scheduleFile);
             end
             
             
             % Calibration Files
             if isempty(app.calibrationFile)
-                    app.CalibrationDropDown.Items     = {'< NO CALIBRATION FILES! >'};
-                    app.CalibrationDropDown.ItemsData = {'< NO CALIBRATION FILES! >'};
-                    app.CalibrationDropDown.Value     = '< NO CALIBRATION FILES! >';
-                    app.CalibrationDropDown.Tooltip   = 'No Calibration File!';
-                    app.CalibrationDropDown.FontColor = [1 0 0];
-                    app.CalibrationDropDownLabel.Tooltip = '';
+                    app.CalibrationDD.Items     = {'< NO CALIBRATION FILES! >'};
+                    app.CalibrationDD.ItemsData = {'< NO CALIBRATION FILES! >'};
+                    app.CalibrationDD.Value     = '< NO CALIBRATION FILES! >';
+                    app.CalibrationDD.Tooltip   = 'No Calibration File!';
+                    app.CalibrationDD.FontColor = [1 0 0];
+                    app.CalibrationDDLabel.Tooltip = '';
                     app.calibrationFile = [];
             else
                     d = dir(fullfile(fileparts(app.calibrationFile),'*.cal'));
                     fns = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
-                    app.CalibrationDropDown.Items     = {d.name};
-                    app.CalibrationDropDown.ItemsData = fns;
-                    app.CalibrationDropDown.Value     = app.calibrationFile;
-                    app.CalibrationDropDown.Tooltip   = app.last_modified_str(app.calibrationFile);
-                    app.CalibrationDropDown.FontColor = [0 0 0];
-                    app.CalibrationDropDownLabel.Tooltip = fileparts(app.calibrationFile);
+                    app.CalibrationDD.Items     = {d.name};
+                    app.CalibrationDD.ItemsData = fns;
+                    app.CalibrationDD.Value     = app.calibrationFile;
+                    app.CalibrationDD.Tooltip   = app.last_modified_str(app.calibrationFile);
+                    app.CalibrationDD.FontColor = [0 0 0];
+                    app.CalibrationDDLabel.Tooltip = fileparts(app.calibrationFile);
                     setpref('ABRControlPanel','calpth',fileparts(app.calibrationFile));
             end
             
@@ -309,7 +309,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             app.Config.calibrationFile = app.calibrationFile;
             app.Config.outputFile      = app.outputFile;
             
-            app.Config.Control.advCriteria = app.ControlAdvCriteriaDropDown.Value;
+            app.Config.Control.advCriteria = app.ControlAdvCriteriaDD.Value;
             app.Config.Control.numSweeps   = app.SweepCountSpinner.Value;
             app.Config.Control.sweepRate   = app.SweepRateHzSpinner.Value;
             app.Config.Control.numReps     = app.NumRepetitionsSpinner.Value;
@@ -325,7 +325,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
         
         function apply_config_parameters(app)
             
-            app.ControlAdvCriteriaDropDown.Value = app.Config.Control.advCriteria;
+            app.ControlAdvCriteriaDD.Value = app.Config.Control.advCriteria;
             app.SweepCountSpinner.Value          = app.Config.Control.numSweeps;
             app.SweepRateHzSpinner.Value         = app.Config.Control.sweepRate;
             app.NumRepetitionsSpinner.Value      = app.Config.Control.numReps;
@@ -493,9 +493,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
 
             recentPaths = [pn; recentPaths];
             
-            app.OutputPathDropDown.Items = recentPaths;
-            app.OutputPathDropDown.ItemsData = recentPaths;
-            app.OutputPathDropDown.Value = pn;
+            app.OutputPathDD.Items = recentPaths;
+            app.OutputPathDD.ItemsData = recentPaths;
+            app.OutputPathDD.Value = pn;
             
             setpref('ABRControlPanel','outputFolder',recentPaths(1:min([10 length(recentPaths)])));
         end
@@ -515,23 +515,23 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             setpref('ABRControlPanel','outputFolder',recentPaths(1:min([10 length(recentPaths)])));
 
             % update output file dropdown items
-            fn = app.OutputFileDropDown.Value;
+            fn = app.OutputFileDD.Value;
             if isempty(fn), fn = 'abr_data_file.abr'; end
             d  = dir(fullfile(pn,'*.abr'));
             fns = {d.name};
             if ~ismember(fn,fns), fns = [{fn} fns]; end
-            app.OutputFileDropDown.Items     = fns;
-            app.OutputFileDropDown.ItemsData = fns;
-            app.OutputFileDropDown.Value     = fn;
+            app.OutputFileDD.Items     = fns;
+            app.OutputFileDD.ItemsData = fns;
+            app.OutputFileDD.Value     = fn;
             
-            e.Value = app.OutputFileDropDown.Value;
-            e.Source = app.OutputFileDropDown;
+            e.Value = app.OutputFileDD.Value;
+            e.Source = app.OutputFileDD;
             app.output_file_changed(e);
         end
         
         function output_file_changed(app,event)
             
-            pn = app.OutputPathDropDown.Value;
+            pn = app.OutputPathDD.Value;
             
             nfn = event.Value;
             if ~endsWith(nfn,'.abr'), nfn = [nfn,'.abr']; end
@@ -540,21 +540,21 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                 uialert(app.ControlPanelUIFigure, ...
                     sprintf('Invalid Filename: %s',nffn), ...
                     'Invalid Filename','Icon','error','Modal',true);
-                app.OutputFileDropDown.FontColor = [1 0 0];
+                app.OutputFileDD.FontColor = [1 0 0];
                 % * TO DO: DISABLE RUNNING EXPERIMENT WITH INVALID FILENAME
                 return
             end
             
-            fns = app.OutputFileDropDown.Items;            
+            fns = app.OutputFileDD.Items;            
             
             if ~ismember(nfn,fns), fns = [{nfn} fns]; end
             
             app.outputFile = fullfile(pn,nfn);
             
-            app.OutputFileDropDown.Items     = fns;
-            app.OutputFileDropDown.ItemsData = fns; %cellfun(@(a) fullfile(pn,a),fns,'uni',0);
-            app.OutputFileDropDown.Value     = nfn;
-            app.OutputFileDropDown.FontColor = [0 0 0];
+            app.OutputFileDD.Items     = fns;
+            app.OutputFileDD.ItemsData = fns; %cellfun(@(a) fullfile(pn,a),fns,'uni',0);
+            app.OutputFileDD.Value     = nfn;
+            app.OutputFileDD.FontColor = [0 0 0];
         end
         
         function load_schedule_file(app,event)
@@ -572,8 +572,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                 app.Schedule = abr.Schedule(app.scheduleFile);
             end
             
-            app.ConfigScheduleDropDown.Tooltip = app.last_modified_str(app.scheduleFile);
-            app.ScheduleDropDownLabel.Tooltip    = fileparts(app.scheduleFile);
+            app.ConfigScheduleDD.Tooltip = app.last_modified_str(app.scheduleFile);
+            app.ScheduleDDLabel.Tooltip    = fileparts(app.scheduleFile);
             app.Schedule.ScheduleFigure.Tag = 'CONTROL_PANEL_SCHEDULE';
             
             app.SIG = app.Schedule.SIG;
@@ -588,12 +588,12 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             if exist(app.calibrationFile,'file') == 2
                 load(app.calibrationFile,'CalibrationData','-mat');
                 app.Calibration = CalibrationData;
-                app.CalibrationDropDownLabel.Tooltip    = fileparts(app.calibrationFile);
-                app.CalibrationDropDown.Tooltip = app.last_modified_str(app.calibrationFile);
+                app.CalibrationDDLabel.Tooltip    = fileparts(app.calibrationFile);
+                app.CalibrationDD.Tooltip = app.last_modified_str(app.calibrationFile);
             else
                 app.Calibration = abr.AcousticCalibration; % blank calibration
-                app.CalibrationDropDownLabel.Tooltip    = 'No Calibration File Loaded';
-                app.CalibrationDropDown.Tooltip = 'No Calibration File Loaded';
+                app.CalibrationDDLabel.Tooltip    = 'No Calibration File Loaded';
+                app.CalibrationDD.Tooltip = 'No Calibration File Loaded';
             end
             
         end

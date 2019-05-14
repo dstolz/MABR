@@ -68,7 +68,11 @@ classdef ABRGlobal < handle
         end
         
         function img = icon_img(obj,type)
-            mustBeMember(type,{'file_new','file_open','file_save','helpicon'})
+            d = dir(obj.iconPath);
+            d(ismember({d.name},{'.','..'})) = [];
+            
+            mustBeMember(type,{d.name})
+            
             ffn = fullfile(obj.iconPath,type);
             y = dir([ffn '*']);
             ffn = fullfile(y(1).folder,y(1).name);
@@ -130,6 +134,34 @@ classdef ABRGlobal < handle
                 else
                     str{i} = ['...' str{i}(end-maxn+1:end)];
                 end
+            end
+        end
+        
+        function keep_figure_on_top(hFig,state)
+            % keep_figure_on_top(hFig,state)
+            %
+            % Maintain figure (figure handle = hFig) on top of all other windows if
+            % state = true.
+            %
+            % No errors or warnings are thrown if for some reason this function is
+            % unable to keep hFig on top.
+                        
+            narginchk(2,2);
+            assert(ishandle(hFig),'The first input (hFig) must be a valid figure handle');
+            assert(islogical(state)||isscalar(state),'The second input (state) must be true (1) or false (0)');
+            
+            
+            drawnow expose
+            
+            try %#ok<TRYNC>
+                warning('off','MATLAB:HandleGraphics:ObsoletedProperty:JavaFrame');
+                J = get(hFig,'JavaFrame');
+                if verLessThan('matlab','8.1')
+                    J.fHG1Client.getWindow.setAlwaysOnTop(state);
+                else
+                    J.fHG2Client.getWindow.setAlwaysOnTop(state);
+                end
+                warning('on','MATLAB:HandleGraphics:ObsoletedProperty:JavaFrame');
             end
         end
     end
