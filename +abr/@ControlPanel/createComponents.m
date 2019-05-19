@@ -296,107 +296,107 @@ app.output_path_changed(e);
 
 
 %% SUBJECT TAB -------------------------------------------------------------
-% Create SubjectInfoTab
-app.SubjectInfoTab = uitab(app.TabGroup);
-app.SubjectInfoTab.Title = 'Subject Info';
-
-
-nRows = 8; nCols = 4;
-G = uigridlayout(app.SubjectInfoTab,[nRows nCols]);
-G.RowHeight = repmat({'1x'},1,nRows);
-G.ColumnWidth = {'1x' 35 '1x' 60}; 
-    % Create SubjectTree
-app.SubjectTree = uitree(G);
-app.SubjectTree.Layout.Row = [2 nRows-1];
-app.SubjectTree.Layout.Column  = 1;
-
-% Create SubjectAddaSubjectButton
-app.SubjectAddaSubjectButton = uibutton(G, 'push');
-app.SubjectAddaSubjectButton.FontSize = 10;
-app.SubjectAddaSubjectButton.Layout.Row = nRows;
-app.SubjectAddaSubjectButton.Layout.Column = 1;
-app.SubjectAddaSubjectButton.Text = 'Add a Subject';
-app.SubjectAddaSubjectButton.ButtonPushedFcn = createCallbackFcn(app, @add_subject,false);
-
-
-R = 2;
-% Create UserDDLabel
-app.UserDDLabel = uilabel(G);
-app.UserDDLabel.HorizontalAlignment = 'right';
-app.UserDDLabel.Layout.Row = R;
-app.UserDDLabel.Layout.Column = 2;
-app.UserDDLabel.Text = 'User';
-app.UserDDLabel.Tooltip = 'Select or enter initials';
-
-% Create SubjectUserDD
-app.SubjectUserDD = uidropdown(G);
-app.SubjectUserDD.Editable = 'on';
-app.SubjectUserDD.Layout.Row = R;
-app.SubjectUserDD.Layout.Column = 3;
-
-R = R + 1;
-% Create AliasEditFieldLabel
-app.AliasEditFieldLabel = uilabel(G);
-app.AliasEditFieldLabel.HorizontalAlignment = 'right';
-app.AliasEditFieldLabel.Layout.Row = R;
-app.AliasEditFieldLabel.Layout.Column = 2;
-app.AliasEditFieldLabel.Text = 'Alias';
-
-% Create AliasEditField
-app.AliasEditField = uieditfield(G, 'text');
-app.AliasEditField.Layout.Row = R;
-app.AliasEditField.Layout.Column = 3;
-
-R = R + 1;
-% Create IDEditFieldLabel
-app.IDEditFieldLabel = uilabel(G);
-app.IDEditFieldLabel.HorizontalAlignment = 'right';
-app.IDEditFieldLabel.Layout.Row = R;
-app.IDEditFieldLabel.Layout.Column = 2;
-app.IDEditFieldLabel.Text = 'ID';
-
-% Create SubjectIDEditField
-app.SubjectIDEditField = uieditfield(G, 'text');
-app.SubjectIDEditField.Layout.Row = R;
-app.SubjectIDEditField.Layout.Column = 3;
-
-R = R + 1;
-% Create DOBDatePickerLabel
-app.DOBDatePickerLabel = uilabel(G);
-app.DOBDatePickerLabel.HorizontalAlignment = 'right';
-app.DOBDatePickerLabel.Layout.Row = R;
-app.DOBDatePickerLabel.Layout.Column = 2;
-app.DOBDatePickerLabel.Text = 'DOB';
-
-% Create SubjectDOBDatePicker
-app.SubjectDOBDatePicker = uidatepicker(G);
-app.SubjectDOBDatePicker.Layout.Row = R;
-app.SubjectDOBDatePicker.Layout.Column = 3;
-
-
-% Create SubjectSexSwitch
-app.SubjectSexSwitch = uiswitch(G, 'slider');
-app.SubjectSexSwitch.Items = {'Female', 'Male'};
-app.SubjectSexSwitch.Orientation = 'vertical';
-app.SubjectSexSwitch.Tooltip = {'Select subject sex'};
-app.SubjectSexSwitch.Layout.Row = [2 4];
-app.SubjectSexSwitch.Layout.Column = 4;
-app.SubjectSexSwitch.Value = 'Female';
-
-
-R = R + 1;
-% Create NotesTextAreaLabel
-app.NotesTextAreaLabel = uilabel(G);
-app.NotesTextAreaLabel.HorizontalAlignment = 'right';
-app.NotesTextAreaLabel.Layout.Row = R;
-app.NotesTextAreaLabel.Layout.Column = 2;
-app.NotesTextAreaLabel.Text = 'Notes';
-
-% Create SubjectNotesTextArea
-app.SubjectNotesTextArea = uitextarea(G);
-app.SubjectNotesTextArea.Layout.Row = [R nRows];
-app.SubjectNotesTextArea.Layout.Column = [3 nCols];
-
+% % Create SubjectInfoTab
+% app.SubjectInfoTab = uitab(app.TabGroup);
+% app.SubjectInfoTab.Title = 'Subject Info';
+% 
+% 
+% nRows = 8; nCols = 4;
+% G = uigridlayout(app.SubjectInfoTab,[nRows nCols]);
+% G.RowHeight = repmat({'1x'},1,nRows);
+% G.ColumnWidth = {'1x' 35 '1x' 60}; 
+%     % Create SubjectTree
+% app.SubjectTree = uitree(G);
+% app.SubjectTree.Layout.Row = [2 nRows-1];
+% app.SubjectTree.Layout.Column  = 1;
+% 
+% % Create SubjectAddaSubjectButton
+% app.SubjectAddaSubjectButton = uibutton(G, 'push');
+% app.SubjectAddaSubjectButton.FontSize = 10;
+% app.SubjectAddaSubjectButton.Layout.Row = nRows;
+% app.SubjectAddaSubjectButton.Layout.Column = 1;
+% app.SubjectAddaSubjectButton.Text = 'Add a Subject';
+% app.SubjectAddaSubjectButton.ButtonPushedFcn = createCallbackFcn(app, @add_subject,false);
+% 
+% 
+% R = 2;
+% % Create UserDDLabel
+% app.UserDDLabel = uilabel(G);
+% app.UserDDLabel.HorizontalAlignment = 'right';
+% app.UserDDLabel.Layout.Row = R;
+% app.UserDDLabel.Layout.Column = 2;
+% app.UserDDLabel.Text = 'User';
+% app.UserDDLabel.Tooltip = 'Select or enter initials';
+% 
+% % Create SubjectUserDD
+% app.SubjectUserDD = uidropdown(G);
+% app.SubjectUserDD.Editable = 'on';
+% app.SubjectUserDD.Layout.Row = R;
+% app.SubjectUserDD.Layout.Column = 3;
+% 
+% R = R + 1;
+% % Create AliasEditFieldLabel
+% app.AliasEditFieldLabel = uilabel(G);
+% app.AliasEditFieldLabel.HorizontalAlignment = 'right';
+% app.AliasEditFieldLabel.Layout.Row = R;
+% app.AliasEditFieldLabel.Layout.Column = 2;
+% app.AliasEditFieldLabel.Text = 'Alias';
+% 
+% % Create AliasEditField
+% app.AliasEditField = uieditfield(G, 'text');
+% app.AliasEditField.Layout.Row = R;
+% app.AliasEditField.Layout.Column = 3;
+% 
+% R = R + 1;
+% % Create IDEditFieldLabel
+% app.IDEditFieldLabel = uilabel(G);
+% app.IDEditFieldLabel.HorizontalAlignment = 'right';
+% app.IDEditFieldLabel.Layout.Row = R;
+% app.IDEditFieldLabel.Layout.Column = 2;
+% app.IDEditFieldLabel.Text = 'ID';
+% 
+% % Create SubjectIDEditField
+% app.SubjectIDEditField = uieditfield(G, 'text');
+% app.SubjectIDEditField.Layout.Row = R;
+% app.SubjectIDEditField.Layout.Column = 3;
+% 
+% R = R + 1;
+% % Create DOBDatePickerLabel
+% app.DOBDatePickerLabel = uilabel(G);
+% app.DOBDatePickerLabel.HorizontalAlignment = 'right';
+% app.DOBDatePickerLabel.Layout.Row = R;
+% app.DOBDatePickerLabel.Layout.Column = 2;
+% app.DOBDatePickerLabel.Text = 'DOB';
+% 
+% % Create SubjectDOBDatePicker
+% app.SubjectDOBDatePicker = uidatepicker(G);
+% app.SubjectDOBDatePicker.Layout.Row = R;
+% app.SubjectDOBDatePicker.Layout.Column = 3;
+% 
+% 
+% % Create SubjectSexSwitch
+% app.SubjectSexSwitch = uiswitch(G, 'slider');
+% app.SubjectSexSwitch.Items = {'Female', 'Male'};
+% app.SubjectSexSwitch.Orientation = 'vertical';
+% app.SubjectSexSwitch.Tooltip = {'Select subject sex'};
+% app.SubjectSexSwitch.Layout.Row = [2 4];
+% app.SubjectSexSwitch.Layout.Column = 4;
+% app.SubjectSexSwitch.Value = 'Female';
+% 
+% 
+% R = R + 1;
+% % Create NotesTextAreaLabel
+% app.NotesTextAreaLabel = uilabel(G);
+% app.NotesTextAreaLabel.HorizontalAlignment = 'right';
+% app.NotesTextAreaLabel.Layout.Row = R;
+% app.NotesTextAreaLabel.Layout.Column = 2;
+% app.NotesTextAreaLabel.Text = 'Notes';
+% 
+% % Create SubjectNotesTextArea
+% app.SubjectNotesTextArea = uitextarea(G);
+% app.SubjectNotesTextArea.Layout.Row = [R nRows];
+% app.SubjectNotesTextArea.Layout.Column = [3 nCols];
+% 
 
 
 
