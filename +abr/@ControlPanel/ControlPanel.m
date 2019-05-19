@@ -8,7 +8,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
         
         Config              (1,1) struct
 
-        Subject             (1,1) abr.Subject
+%         Subject             (1,1) abr.Subject
         Schedule            (1,1) abr.Schedule
         Calibration         (1,1) abr.AcousticCalibration
         
