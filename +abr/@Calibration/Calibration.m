@@ -43,11 +43,13 @@ classdef Calibration < matlab.apps.AppBase
         AC              abr.AcousticCalibration = abr.AcousticCalibration;
         playRecObj      audioPlayerRecorder = audioPlayerRecorder;
         STATE           {mustBeMember(STATE,{'setup','idle','prerun','running','postrun','error','usercancelled'})} = 'idle';
-        frameSize       (1,1) double = 1024;
         lastError   % me
         
         
         thisOne
+        
+        %
+        stimulusV       (1,1) double {mustBePositive,mustBeLessThanOrEqual(stimulusV,1)} = 1;
         
         % params
         sweepOnsets     (1,:) double {mustBeNonnegative,mustBeFinite} % sec
@@ -55,7 +57,7 @@ classdef Calibration < matlab.apps.AppBase
         sweepDuration   (1,:) double {mustBePositive,mustBeFinite} = 0.25; % sec
         
         % tone params
-        F1  (1,1) double {mustBePositive,mustBeFinite} = 500;   % First frequency Hz
+        F1  (1,1) double {mustBePositive,mustBeFinite} = 4000;   % First frequency Hz
         F2  (1,1) double {mustBePositive,mustBeFinite} = 86400; % Second frequency Hz (should be set to ~.45*Fs)
         Fn  (1,1) double {mustBePositive,mustBeInteger} = 25;  % number of samples between F1 and F2 (lin)
         
@@ -134,6 +136,9 @@ classdef Calibration < matlab.apps.AppBase
     methods (Access = private)
         
         function gather_parameters(app)
+            
+            app.AC.NormDB        = app.NormLeveldBEditField.Value;
+            
             app.AC.Device        = app.AudioDeviceDropDown.Value;
             app.AC.SampleRate    = str2double(app.SamplingRateDropDown.Value);
             
@@ -158,6 +163,9 @@ classdef Calibration < matlab.apps.AppBase
             
             app.playRecObj.Device     = app.AC.Device;
             app.playRecObj.SampleRate = app.AC.SampleRate;
+            if ~ispc % BufferSize irrelevent on Windows machine
+                app.playRecObj.BufferSize = abr.ABRGlobal.frameLength;
+            end
             
             app.AC.DeviceInfo = app.playRecObj.info;
             
@@ -165,19 +173,25 @@ classdef Calibration < matlab.apps.AppBase
             app.AC.DAC = abr.Buffer(app.AC.SampleRate);
             app.AC.ADC = abr.Buffer(app.AC.SampleRate);
             
-            app.AC.DAC.FrameSize = app.frameSize;
-            app.AC.ADC.FrameSize = app.frameSize;
+            app.AC.DAC.FrameSize = abr.ABRGlobal.frameLength;
+            app.AC.ADC.FrameSize = abr.ABRGlobal.frameLength;
             
         end
         
         
         
         function trigger_playrec(app)
+            % don't read/write directly to object since it is slower than
+            % just accessing a normal vector
+            dacData = app.AC.DAC.Data;
+            adcData(app.AC.DAC.N) = 0;
             bidx = 1:app.AC.DAC.FrameSize:app.AC.DAC.N+1;
             for i = 1:length(bidx)-1
+                if isequal(app.STATE,'usercancelled'), break; end
                 idx = bidx(i):bidx(i+1)-1;
-                app.AC.ADC.Data(idx) = app.playRecObj(app.AC.DAC.Data(idx));
+                adcData(idx) = app.playRecObj(dacData(idx));
             end
+            app.AC.ADC.Data = adcData;
         end
         
         
@@ -420,8 +434,7 @@ classdef Calibration < matlab.apps.AppBase
             
             switch value
                 case 'Run'
-                    % initialize calibration voltage
-                    app.AC.StimulusV = repmat(0.1,app.AC.DAC.NumSweeps,1);
+                    app.gather_parameters;
                     
                     for i = 1:2
                         app.setup_playrec;
@@ -436,7 +449,8 @@ classdef Calibration < matlab.apps.AppBase
                             % multiply full signal by calibrated value
                             stimData = cellfun(@times,num2cell(app.AC.StimulusV),app.AC.SIG.data,'uni',0);
                         else
-                            stimData = app.AC.SIG.data;
+                            app.AC.StimulusV = repmat(app.stimulusV,app.AC.SIG.signalCount,1);
+                            stimData = cellfun(@times,num2cell(app.AC.StimulusV),app.AC.SIG.data,'uni',0);
                         end
                         
                         sweepInterval = 1./app.sweepRate;
@@ -456,6 +470,7 @@ classdef Calibration < matlab.apps.AppBase
                         app.AC.ADC.SweepOnsets = app.AC.DAC.SweepOnsets;
                         
                         
+
                         app.STATE = 'running';
                         
                         app.trigger_playrec;
@@ -466,13 +481,23 @@ classdef Calibration < matlab.apps.AppBase
                         
                         
                         if i == 1
-                            app.AC.NormalizedV = app.AC.computeAdjustedV;
+                            adjV = app.AC.computeAdjustedV;
+                            ind = adjV > 1 | adjV <= 0;
+                            if any(ind)
+                                errordlg(sprintf('%d stimuli have an adjusted voltage <= 0 or > 1!',sum(ind)));
+                                app.STATE = 'error';
+%                                 return
+                                % TESTING
+                                adjV(adjV>1) = 1;
+                            end
+                            app.AC.NormalizedV = adjV;
                             app.AC.StimulusV   = app.AC.NormalizedV;
                         end
                     end
                     
                     app.STATE = 'postrun';
                     
+                    app.AC.Timestamp = now;
                     app.AC.CalibratedV = app.AC.NormalizedV;
                     app.SaveCalibrationDataMenuSelected;
                     
@@ -636,7 +661,7 @@ classdef Calibration < matlab.apps.AppBase
             % Create CalibrationFigure
             app.CalibrationFigure = uifigure;
             app.CalibrationFigure.Position = [100 100 235 550];
-            app.CalibrationFigure.Name = 'UI Figure';
+            app.CalibrationFigure.Name = 'Calibration';
             app.CalibrationFigure.Resize = 'off';
             app.CalibrationFigure.CloseRequestFcn = createCallbackFcn(app, @CalibrationFigureCloseRequest, true);
 

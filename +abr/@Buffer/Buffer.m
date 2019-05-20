@@ -11,7 +11,7 @@ classdef Buffer
         
         SweepValue   
         
-        FrameSize    (1,1) double {mustBePositive,mustBeInteger} = 1;
+        FrameSize    (1,1) double {mustBePositive,mustBeInteger} = 2048;
         
         PadValue     (1,1) = 0; % data type cast to obj.Data type
         PadToFrameSize matlab.lang.OnOffSwitchState = 'on';
@@ -64,7 +64,6 @@ classdef Buffer
             
                 
             d(end+1:end+b-n) = cast(obj.PadValue,'like',d).*ones(b-n,1,'like',d);
-            
         end
         
         
@@ -116,7 +115,7 @@ classdef Buffer
         
         function obj = preallocate(obj,n,val)
             if nargin < 3 || isempty(val), val = 0; end
-            obj.Data = val*ones(n,1);
+            obj.Data = repmat(val,n,1);
         end
         
         % Plotting Functions ----------------------------------------------

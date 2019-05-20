@@ -47,8 +47,11 @@ ABR.DAC.SweepOnsets = 1:ABR.DAC.SweepLength:ABR.DAC.N;
 
 
 % Initialize ADC Buffer
+adcAdj = floor(ABR.ADC.SampleRate * -abr.ABRGlobal.latencyAdjustment);
+
 decfrsz = frsz/ABR.adcDecimationFactor;
 decIdx  = 1:ABR.adcDecimationFactor:frsz;
+decIdxLength = length(decIdx);
 
 % CREATE INDEXES MATCHING THE DECIMATED ADC BUFFER
 dacSweepIdx = repmat(1:ABR.numSweeps,length(dacSweep),1);
@@ -89,15 +92,13 @@ for i = 1:length(m)
     % playback/record audio data
 %     timing(i) = hat;
     [INPUT,nu,no] = ABR.APR(OUTPUT(midx(:,i)));
+    
     if nu, fprintf('Number of underruns = %d\n',nu); end
     if no, fprintf('Number of overruns  = %d\n',no); end
-    
-    
     
     % downsample acquired signal 
     % > NOTE NO EXPLICIT ANTI-ALIASING FILTER FOR ONLINE PERFORMANCE
     INPUT = INPUT(decIdx);
-
     
     % optional digital filter of downsampled data; try to avoid
     % onset/offset transients by extending first and last samples, acausal
@@ -115,7 +116,8 @@ for i = 1:length(m)
     
     % copy INPUT to ABR.ADC.Data buffer in the correct position
     adcIdx = k:k+frsz/ABR.adcDecimationFactor-1;
-    k = adcIdx(end);
+%     adcIdx = k:k+decIdxLength-1;
+    k = adcIdx(end)+1;
     ABR.ADC.Data(adcIdx) = INPUT;
     
     if hat >= updateTime + 0.1 % seconds
@@ -162,7 +164,8 @@ end
             'ydata',nan(ABR.ADC.SweepLength,1), ...
             'linewidth',3,'color',[0.2 0.2 1]);
         
-        ax.XLim = ABR.ADC.TimeVector([1 end])*1000;
+%         ax.XLim = ABR.ADC.TimeVector([1 end])*1000;
+        ax.XLim = [0 app.Config.Control.sweepDuration];
         
         drawnow
     end

@@ -264,15 +264,12 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             app.DATA(end+1) = app.ABR;
             ABR_Data        = app.DATA;
             TraceOrganizer  = app.TrcOrg;
-            if exist(app.outputFile,'file') == 2
-                save(app.outputFile,'ABR_Data','TraceOrganizer','-mat','-append');
-            else
-                save(app.outputFile,'ABR_Data','TraceOrganizer','-mat');
-            end
+            save(app.outputFile,'ABR_Data','TraceOrganizer','-mat');
         end
         
         
         %% MENU -----------------------------------------------------------
+        
         function launch_asiosettings(app)
             % launches external ASIO settings gui
             asiosettings;
@@ -320,9 +317,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             app.Config.Control.numSweeps   = app.SweepCountSpinner.Value;
             app.Config.Control.sweepRate   = app.SweepRateHzSpinner.Value;
             app.Config.Control.numReps     = app.NumRepetitionsSpinner.Value;
+            app.Config.Control.sweepDuration = app.SweepDurationSpinner.Value;
             
-            % TO DO: MAKE ADVANCED AUDIO SETTINGS MENU
-            app.Config.Control.frameLength = 2048;
+            app.Config.Control.frameLength = abr.ABRGlobal.frameLength;
             
             app.Config.Filter.Enable       = app.FilterEnableSwitch.Value;
             app.Config.Filter.adcFilterHP  = app.FilterHPFcEditField.Value;
@@ -336,6 +333,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             app.SweepCountSpinner.Value          = app.Config.Control.numSweeps;
             app.SweepRateHzSpinner.Value         = app.Config.Control.sweepRate;
             app.NumRepetitionsSpinner.Value      = app.Config.Control.numReps;
+            app.SweepDurationSpinner.Value       = app.Config.Control.sweepDuration;
             
             app.FilterEnableSwitch.Value         = app.Config.Filter.Enable;
             app.FilterHPFcEditField.Value        = app.Config.Filter.adcFilterHP;
@@ -686,15 +684,15 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                         % update gui info
                         app.update_ControlStimInfoLabel(nReps);
                         
-                        %%%% MAKE USER OPTION OR READ FROM ASIOSETTINGS????
-                        app.ABR.DAC.FrameSize = 1024;
-                        app.ABR.ADC.FrameSize = 1024;
-                        
                         % convert to signal
-                        app.ABR.DAC.SampleRate = app.SIG.Fs; % ????
+                        app.ABR.DAC.SampleRate = app.SIG.Fs;
+                        app.ABR.DAC.FrameSize = abr.ABRGlobal.frameLength;
                         
-                        % TO DO: make app.ABR.ADC.SampleRate user settable?
-                        app.ABR.ADC.SampleRate = 12000;
+                        % reset the ADC buffer
+                        app.ABR.ADC = abr.Buffer;
+                        
+                        app.ABR.ADC.FrameSize = abr.ABRGlobal.frameLength;
+                        app.ABR.ADC.SampleRate = 12000; % TO DO: make app.ABR.ADC.SampleRate user settable?
                         app.ABR.adcDecimationFactor = max([1 floor(app.SIG.Fs ./ app.ABR.ADC.SampleRate)]);
                         app.ABR.ADC.SampleRate = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;
 
@@ -705,6 +703,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                         
                         % copy stimulus to DAC buffer.
                         app.ABR.DAC.Data = app.SIG.data{1};
+                        
                         
                         % calibrate stimulus data
                         if isvalid(app.Calibration)
@@ -763,7 +762,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                             % do it
                             ax = app.live_plot;
                             figure(ancestor(ax,'figure'));
-                            app.ABR = app.ABR.playrec(app,ax);%,'showTimingStats',isequal(app.OptionShowTimingStats.Checked,'on'));
+                            app.ABR = app.ABR.playrec(app,ax);
 
                             if app.programState == abr.PROGRAMSTATE.ACQUIRE
                                 app.programState = abr.PROGRAMSTATE.REPCOMPLETE;
@@ -789,36 +788,47 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                         %%%% TESTING
                         R = app.ABR.analysis('peaks');
                         
-                        % SAVE ABR DATA
-                        app.auto_save_abr_data;
+%                         % SAVE ABR DATA
+%                         app.AcquisitionStateLabel.Text = 'Saving Data';
+%                         app.auto_save_abr_data;
+%                         drawnow
                         
+                        
+                                                
                         app.programState = abr.PROGRAMSTATE.REPADVANCE;
                         
                         
                     case abr.PROGRAMSTATE.SCHEDCOMPLETE
                         app.Schedule.update_highlight([]);
                         app.Schedule.DO_NOT_DELETE = false;
-                        app.AcquisitionStateLabel.Text      = 'Finished';
                         app.ControlAcquisitionSwitch.Value  = 'Idle';
                         app.AcquisitionStateLamp.Color      = [0.6 0.6 0.6];
-                        app.AcquisitionStateLamp.Tooltip    = 'Finished';
-                        app.ControlStimInfoLabel.Text       = 'Completed';
                         
                         % SAVE ABR DATA
+                        app.AcquisitionStateLabel.Text      = 'Saving Data';
                         app.auto_save_abr_data;
+                        drawnow                        
                         
+                        app.AcquisitionStateLabel.Text      = 'Finished';
+                        app.AcquisitionStateLamp.Tooltip    = 'Finished';
+                        app.ControlStimInfoLabel.Text       = 'Completed';
                         drawnow
                         
+                        
                     case abr.PROGRAMSTATE.USERIDLE
+                        % SAVE ABR DATA
+                        app.AcquisitionStateLabel.Text      = 'Saving Data';
+                        app.AcquisitionStateLamp.Color      = [0.2 0.8 1];
+                        drawnow
+                        app.auto_save_abr_data;
+                                                
+                        
                         app.Schedule.DO_NOT_DELETE = false;
                         app.AcquisitionStateLabel.Text      = 'Ready';
                         app.ControlAcquisitionSwitch.Value  = 'Idle';
                         app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
                         app.AcquisitionStateLamp.Tooltip    = 'Idle';
                         ACQSTATE = abr.ACQSTATE.CANCELLED;
-                        
-                        % SAVE ABR DATA
-                        app.auto_save_abr_data;
                         
                         drawnow
                         
@@ -859,7 +869,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                     
                 case 'Idle'
                     % Send stop signal
-                    app.programState = abr.PROGRAMSTATE.USERIDLE
+                    app.programState = abr.PROGRAMSTATE.USERIDLE;
                     
                     % reset gui
                     app.AcquisitionStateLabel.Text = 'Cancelled';
@@ -1055,7 +1065,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                 return
             end
             p = app.ControlPanelUIFigure.Position;
-            f = figure('name','Live Plot','color','w', ...
+            f = figure('name','Live Plot','color','w','NumberTitle','off', ...
                 'Position',[p(1)+p(3)+20 p(2)+p(4)-280 600 250]);
             ax = axes(f,'tag','live_plot','color','none');
             grid(ax,'on');

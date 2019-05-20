@@ -1,6 +1,9 @@
 classdef ABRGlobal < handle
     % class contains general inormation for the ABR software
     
+    properties
+    end
+    
     properties (SetAccess = private)
         root
         iconPath
@@ -10,6 +13,9 @@ classdef ABRGlobal < handle
     end
     
     properties (Constant)
+        frameLength = 2048;
+        latencyAdjustment = -22.5e-3; % seconds; yoked to the frameLength
+        
         Version  = '0.1 beta';
         DataVersion = '0.1 beta';        
         Author = 'Daniel Stolzberg'
@@ -37,6 +43,7 @@ classdef ABRGlobal < handle
             m.DataVersion = obj.DataVersion;
             m.Checksum    = obj.chksum;
             m.commitDate  = obj.commitDate;
+            m.smileyFace  = ':)';
             m.CurrentTimestamp = datestr(now);
         end
         

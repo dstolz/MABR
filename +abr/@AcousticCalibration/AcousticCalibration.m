@@ -143,7 +143,7 @@ classdef AcousticCalibration
         end
         
         function r = isvalid(obj)
-            r = ~isempty(obj.MeasuredV);
+            r = ~isempty(obj.Timestamp);
         end
         
     end

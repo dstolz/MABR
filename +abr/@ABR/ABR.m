@@ -8,7 +8,7 @@ classdef ABR
 %         Calibration   (1,1) abr.AcousticCalibration
         SIG           (1,1) % abr.sigdef.sigs....
                 
-        adcDecimationFactor (1,1) {mustBeInteger,mustBePositive} = 4;
+        adcDecimationFactor (1,1) {mustBeInteger,mustBePositive} = 1;
         
         audioDevice   (1,:) char
         

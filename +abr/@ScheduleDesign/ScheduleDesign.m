@@ -6,6 +6,8 @@ classdef ScheduleDesign < matlab.apps.AppBase
         FileMenu                  matlab.ui.container.Menu
         SaveScheduleDesignMenu    matlab.ui.container.Menu
         LoadScheduleDesignMenu    matlab.ui.container.Menu
+        OptionsMenu               matlab.ui.container.Menu
+        AudioSamplingRateMenu     matlab.ui.container.Menu
         SigDefTable               matlab.ui.control.Table
         SignalTypeDropDownLabel   matlab.ui.control.Label
         SignalTypeDropDown        matlab.ui.control.DropDown
@@ -97,15 +99,30 @@ classdef ScheduleDesign < matlab.apps.AppBase
             
             app.loadSIG;
             
-            setpref('ScheduleDesign','dfltpn',pn);
-            
+            setpref('ScheduleDesign','dfltpn',pn);            
+        end
+        
+        function update_sampling_rate(app,Fs)
+            AllFs = [44100,48000,64000,88200,96000,128000,176400,192000];
+            if nargin == 2 && ~isempty(AllFs)
+                mustBeMember(Fs,AllFs);
+                app.SIG.Fs = Fs;
+            else
+                
+                SRs = cellfun(@(a) sprintf('%d Hz',a),num2cell(AllFs),'uni',0);
+                i = find(AllFs == app.SIG.Fs);
+                if isempty(i), i = length(AllFs); end
+                [sel,ok] = listdlg('ListString',SRs,'InitialValue',i, ...
+                    'Name','Sampling Rate','PromptString','Select Stimulus Sampling Rate:', ...
+                    'SelectionMode','single');
+                figure(app.ScheduleDesignFigure); % figure disappears for some reason
+                if ~ok, return; end
+                app.SIG.Fs = AllFs(sel);
+            end
+            app.AudioSamplingRateMenu.Text = sprintf('Stimulus Sampling Rate = %d Hz',app.SIG.Fs);
             
         end
-    end
-    
-
-    methods (Access = private)
-
+        
         % Code that executes after component creation
         function startupFcn(app, SIG_IN, MODE)
             app.ScheduleDesignFigure.Tag = 'ScheduleDesignGUI';
@@ -370,6 +387,16 @@ classdef ScheduleDesign < matlab.apps.AppBase
             app.LoadScheduleDesignMenu.MenuSelectedFcn = createCallbackFcn(app, @LoadScheduleDesignMenuSelected, true);
             app.LoadScheduleDesignMenu.Accelerator = 'L';
             app.LoadScheduleDesignMenu.Text = 'Load Schedule Design';
+
+            % Create OptionsMenu
+            app.OptionsMenu = uimenu(app.ScheduleDesignFigure);
+            app.OptionsMenu.Text = 'Options';
+            
+            % Create AudioSamplingRateMenu
+            app.AudioSamplingRateMenu = uimenu(app.OptionsMenu);
+            app.AudioSamplingRateMenu.Text = 'Stimulus Sampling Rate';
+            app.AudioSamplingRateMenu.Tooltip = 'Set the DAC sampling rate';
+            app.AudioSamplingRateMenu.MenuSelectedFcn = createCallbackFcn(app, @update_sampling_rate, false);
 
             % Create SigDefTable
             app.SigDefTable = uitable(app.ScheduleDesignFigure);
