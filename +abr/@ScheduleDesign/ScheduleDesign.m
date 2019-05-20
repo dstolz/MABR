@@ -109,8 +109,7 @@ classdef ScheduleDesign < matlab.apps.AppBase
         % Code that executes after component creation
         function startupFcn(app, SIG_IN, MODE)
             app.ScheduleDesignFigure.Tag = 'ScheduleDesignGUI';
-            c = class(SIG_IN);
-            if nargin >= 2 && ~isempty(SIG_IN) && startsWith(c,'abr.sigdef.')
+            if nargin >= 2 && ~isempty(SIG_IN) && startsWith(class(SIG_IN),'abr.sigdef.')
                 if ischar(SIG_IN) % filename
                     app.load_sig_file(SIG_IN);
                 else

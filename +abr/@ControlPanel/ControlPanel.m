@@ -192,8 +192,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             else
                 ffn = app.configFile;
                 c = getpref('ABRControlPanel','recentConfigs',[]);
-                ind = ismember(c,ffn) | cellfun(@(a) not(eq(exist(a,'file'),2)),c);
-                c(ind) = [];
+                if ~isempty(c)
+                    ind = ismember(c,ffn) | cellfun(@(a) not(eq(exist(a,'file'),2)),c);
+                    c(ind) = [];
+                end
                 c = [{ffn}; c];
                 d = cellfun(@dir,c);
                 app.ConfigFileDD.Items     = {d.name};
