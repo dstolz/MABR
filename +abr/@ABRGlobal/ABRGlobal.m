@@ -71,7 +71,9 @@ classdef ABRGlobal < handle
             d = dir(obj.iconPath);
             d(ismember({d.name},{'.','..'})) = [];
             
-            mustBeMember(type,{d.name})
+            files = {d.name};
+            files = cellfun(@(a) a(1:find(a=='.',1,'last')-1),files,'uni',0);
+            mustBeMember(type,files)
             
             ffn = fullfile(obj.iconPath,type);
             y = dir([ffn '*']);

@@ -262,8 +262,13 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             app.DATA(end+1) = app.ABR;
             ABR_Data        = app.DATA;
             TraceOrganizer  = app.TrcOrg;
-            save(app.outputFile,'ABR_Data','TraceOrganizer','-mat','-append');
+            if exist(app.outputFile,'file') == 2
+                save(app.outputFile,'ABR_Data','TraceOrganizer','-mat','-append');
+            else
+                save(app.outputFile,'ABR_Data','TraceOrganizer','-mat');
+            end
         end
+        
         
         %% MENU -----------------------------------------------------------
         function launch_asiosettings(app)
@@ -631,6 +636,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                         
                         app.load_schedule_file;
                         
+                        app.TrcOrg.figure;
+                        
                         app.Schedule.DO_NOT_DELETE = true;
                         app.scheduleIdx  = find(app.Schedule.selectedData,1,'first');
                         app.scheduleRunCount = zeros(size(app.Schedule.selectedData));
@@ -825,7 +832,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                 
             catch stateME
 %                 fprintf(2,'Current Program State: "%s"\n',app.programState)
-                app.programState = abr.PROGRAMSTATE.ACQUISITIONEERROR
+                app.programState = abr.PROGRAMSTATE.ACQUISITIONEERROR;
                 rethrow(stateME);
             end
             
