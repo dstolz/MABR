@@ -556,6 +556,12 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             
             app.outputFile = fullfile(pn,nfn);
             
+            if exist(app.outputFile,'file') == 0
+                % initialize output file
+                discard = [];
+                save(app.outputFile,'discard','-mat');
+            end
+            
             app.OutputFileDD.Items     = fns;
             app.OutputFileDD.ItemsData = fns; %cellfun(@(a) fullfile(pn,a),fns,'uni',0);
             app.OutputFileDD.Value     = nfn;
@@ -735,7 +741,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                         
                         % reset pause button
                         app.ControlPauseButton.Value = 0;
-                        app.ControlPauseButton.Text = 'Pause ||';
+                        app.ControlPauseButton.Text = 'Pause ';
                         app.ControlPauseButton.Tooltip = 'Click to Pause';
                         app.ControlPauseButton.BackgroundColor = [0.96 0.96 0.96];
                         app.AcquisitionStateLamp.Color = [0 1 0];
@@ -860,7 +866,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                     app.AcquisitionStateLamp.Tooltip = 'User cancelled acquisition';
                     
                     app.ControlPauseButton.Value = 0;
-                    app.ControlPauseButton.Text = 'Pause ||';
+                    app.ControlPauseButton.Text = 'Pause';
                     app.ControlPauseButton.BackgroundColor = [0.96 0.96 0.96];
                     app.ControlPauseButton.Tooltip = 'Click to Pause';
                     
@@ -876,14 +882,14 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             hObj = app.ControlPauseButton;
             
             if ACQSTATE == abr.ACQSTATE.IDLE
-                hObj.Text = 'Pause ||';
+                hObj.Text = 'Pause';
                 hObj.Value = 0;
                 hObj.Tooltip = 'Click to Pause';
                 hObj.BackgroundColor = [0.96 0.96 0.96];
                 
             elseif hObj.Value == 0
                 ACQSTATE = abr.ACQSTATE.ACQUIRE;
-                hObj.Text = 'Pause ||';
+                hObj.Text = 'Pause';
                 hObj.Tooltip = 'Click to Pause';
                 hObj.BackgroundColor = [0.96 0.96 0.96];
                 app.AcquisitionStateLamp.Color = [0 1 0];
