@@ -47,11 +47,8 @@ ABR.DAC.SweepOnsets = 1:ABR.DAC.SweepLength:ABR.DAC.N;
 
 
 % Initialize ADC Buffer
-adcAdj = floor(ABR.ADC.SampleRate * -abr.ABRGlobal.latencyAdjustment);
-
 decfrsz = frsz/ABR.adcDecimationFactor;
 decIdx  = 1:ABR.adcDecimationFactor:frsz;
-decIdxLength = length(decIdx);
 
 % CREATE INDEXES MATCHING THE DECIMATED ADC BUFFER
 dacSweepIdx = repmat(1:ABR.numSweeps,length(dacSweep),1);
@@ -73,7 +70,7 @@ k = 1;
 m = 1:frsz:ABR.DAC.N;
 midx = (0:frsz-1)'+m;
 
-OUTPUT = ABR.DAC.Data;
+OUTPUT = [ABR.DAC.Data ABR.DACtiming.Data];
 
 % timing = zeros(length(m),1);
 for i = 1:length(m)
@@ -96,30 +93,40 @@ for i = 1:length(m)
     if nu, fprintf('Number of underruns = %d\n',nu); end
     if no, fprintf('Number of overruns  = %d\n',no); end
     
+    
+    INPUTsignal = INPUT(:,1);
+    
+    % transfer INPUT timing to corresponding buffer
+    ABR.ADCtiming.Data(k:k+frsz-1) = INPUT(:,2);
+
+    
     % downsample acquired signal 
     % > NOTE NO EXPLICIT ANTI-ALIASING FILTER FOR ONLINE PERFORMANCE
-    INPUT = INPUT(decIdx);
+    INPUTsignal = INPUTsignal(decIdx,1);
+    
     
     % optional digital filter of downsampled data; try to avoid
     % onset/offset transients by extending first and last samples, acausal
-    % filtering, and then trimming to input signal
+    % filtering, and then trimming to INPUTsignal signal
     if ABR.adcUseBPFilter
-        INPUT = filtfilt(ABR.adcFilterDesign, ...
-            [repmat(INPUT(1),decfrsz,1); INPUT; repmat(INPUT(end),decfrsz,1)]);
-        INPUT = INPUT(decfrsz+1:decfrsz*2);
+        INPUTsignal = filtfilt(ABR.adcFilterDesign, ...
+            [repmat(INPUTsignal(1),decfrsz,1); INPUTsignal; repmat(INPUTsignal(end),decfrsz,1)]);
+        INPUTsignal = INPUTsignal(decfrsz+1:decfrsz*2);
     end
     if ABR.adcUseNotchFilter
-        INPUT = filtfilt(ABR.adcNotchFilterDesign, ...
-            [repmat(INPUT(1),decfrsz,1); INPUT; repmat(INPUT(end),decfrsz,1)]);
-        INPUT = INPUT(decfrsz+1:decfrsz*2);
+        INPUTsignal = filtfilt(ABR.adcNotchFilterDesign, ...
+            [repmat(INPUTsignal(1),decfrsz,1); INPUTsignal; repmat(INPUTsignal(end),decfrsz,1)]);
+        INPUTsignal = INPUTsignal(decfrsz+1:decfrsz*2);
     end
     
-    % copy INPUT to ABR.ADC.Data buffer in the correct position
+        
+    % copy INPUTsignal to ABR.ADC.Data buffer in the correct position
     adcIdx = k:k+frsz/ABR.adcDecimationFactor-1;
-%     adcIdx = k:k+decIdxLength-1;
     k = adcIdx(end)+1;
-    ABR.ADC.Data(adcIdx) = INPUT;
+    ABR.ADC.Data(adcIdx) = INPUTsignal;
     
+    
+    % update plot only every 100 ms or so
     if hat >= updateTime + 0.1 % seconds
         update_plot(hl,hs);
         updateTime = hat;
@@ -164,14 +171,17 @@ end
             'ydata',nan(ABR.ADC.SweepLength,1), ...
             'linewidth',3,'color',[0.2 0.2 1]);
         
-%         ax.XLim = ABR.ADC.TimeVector([1 end])*1000;
-        ax.XLim = [0 app.Config.Control.sweepDuration];
+        ax.XLim = ABR.adcWindow*1000; % s -> ms
         
         drawnow
     end
 
     function update_plot(hl,hs)
-        y = ABR.ADC.SweepMean * 1000; % V -> mV
+%         y = ABR.ADC.SweepMean * 1000; % V -> mV
+
+        y = ABR.ADC.Data;
+        sweepSamps = ABR.timing_samples;
+        y = mean(y(sweepSamps))*1000; % V -> mv
         
         hl.YData = y;
         

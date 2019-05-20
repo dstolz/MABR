@@ -11,9 +11,9 @@ if ~ismethod(obj.APR,'isvalid') || ~obj.APR.isvalid
     
     % release(obj.APR);
     
-    obj.APR.PlayerChannelMapping = 1;
-    % obj.APR.RecorderChannelMapping = 1;
-    obj.APR.RecorderChannelMapping = 3; % LOOPBACK TEST ON FIREFACE UCX
+    % channel mapping
+    obj.APR.PlayerChannelMapping   = [obj.ABR.DACsignalCh obj.ABR.DACtimingCh];
+    obj.APR.RecorderChannelMapping = [obj.ABR.ADCsignalCh obj.ABR.ADCtimingCh];
     
     obj.APR.SampleRate  = obj.DAC.SampleRate;
     

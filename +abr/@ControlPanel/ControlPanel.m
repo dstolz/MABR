@@ -155,7 +155,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                 ABR_Data = abr.ABR; % init
                 TraceOrganizer = abr.traces.Organizer; % init
                 
-                save(ffn,'meta','ABR_Data','TraceOrganizer','-mat','-v7.3');
+                save(ffn,'meta','ABR_Data','TraceOrganizer','-mat','-nocompression');
             end
         end
         
@@ -264,7 +264,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             app.DATA(end+1) = app.ABR;
             ABR_Data        = app.DATA;
             TraceOrganizer  = app.TrcOrg;
-            save(app.outputFile,'ABR_Data','TraceOrganizer','-mat');
+            save(app.outputFile,'ABR_Data','TraceOrganizer','-mat','-nocompression');
         end
         
         
@@ -472,7 +472,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             abrConfig.configFile        = ffn;
             abrConfig.ABR               = app.ABR;
             
-            save(ffn,'abrConfig','-mat');
+            save(ffn,'abrConfig','-mat','-nocompression');
             
             fprintf('ABR Configuration file saved: %s\n',fn)
             
@@ -704,6 +704,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                         % copy stimulus to DAC buffer.
                         app.ABR.DAC.Data = app.SIG.data{1};
                         
+                        % sweep duration
+                        app.ABR.adcWindow = [0 app.Config.Control.sweepDuration];
                         
                         % calibrate stimulus data
                         if isvalid(app.Calibration)

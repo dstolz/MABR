@@ -5,6 +5,10 @@ classdef ABR
     properties
         DAC           (1,1) abr.Buffer
         ADC           (1,1) abr.Buffer
+        
+        DACtiming     (1,1) abr.Buffer
+        ADCtiming     (1,1) abr.Buffer
+        
 %         Calibration   (1,1) abr.AcousticCalibration
         SIG           (1,1) % abr.sigdef.sigs....
                 
@@ -16,7 +20,6 @@ classdef ABR
         
         sweepRate     (1,1) double {mustBePositive, mustBeFinite}   = 21.1; % Hz
         numSweeps     (1,1) double {mustBeInteger,  mustBePositive} = 1024;
-        eventOnset    (1,1) double {mustBePositive, mustBeFinite}   = 0.1; % seconds
         
         adcWindow     (1,2) double {mustBeFinite} = [0 0.015]; % seconds
         
@@ -29,19 +32,20 @@ classdef ABR
         adcUseBPFilter    (1,1) logical = true;
         adcUseNotchFilter (1,1) logical = true;
         
+        ADCsignalCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 1;
+        ADCtimingCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 2;
+        DACsignalCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 1;
+        DACtimingCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 2;
+        
     end
     
     properties (SetAccess = private)
         APR
 
-        
-
         adcFilterDesign;
         adcNotchFilterDesign
         
         sweepCount = 1;
-        
-
     end
     
     
@@ -76,11 +80,33 @@ classdef ABR
         
         
         
+                
+        % DACtiming -------------------------------------------------------
+        function obj = get.DACtiming(obj)
+            obj.DACtiming = obj.DAC; % copy obj.DAC buffer
+            
+            % send an impulse at the onset of each sweep
+            timingSignal(obj.DACtiming.SweepLength,1) = 0;
+            timingSignal(obj.DACtiming.SweepOnsets)   = 1;
+            obj.DACtiming.Data = timingSignal;
+        end
         
-       
         
-        % DAC -------------------------------------------------------------
-     
+        
+        function idx = timing_onsets(obj)
+            % find rising edges in timing signal ***NEEDS REALWORLD TESTING***
+            idx = find(obj.ADCtiming.Data(1:end-1) < obj.ADCtiming.Data(2:end));
+        end
+        
+        function samps = timing_samples(obj)
+            Fs = ABR.ADCtiming.SampleRate;
+            swidx = floor(Fs.*ABR.adcWindow(1)):ceil(Fs.*ABR.adcWindow(2));
+            samps = obj.timing_onsets + (swidx); % matrix expansion
+            
+            % clip any sweeps that are beyond the end of the buffer
+            samps(any(samps>obj.DACtiming.N,2),:) = [];
+        end
+        
         
         % ADC -------------------------------------------------------------
         function obj = createADCfilt(obj)
