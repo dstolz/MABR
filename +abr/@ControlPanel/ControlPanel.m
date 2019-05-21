@@ -127,7 +127,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
     
     % Set/Get Properties
     methods
-        
+        createComponents(app);
         
         function ffn = get.outputFile(app)
             fn = app.OutputFileDD.Value;
@@ -155,7 +155,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                 ABR_Data = abr.ABR; % init
                 TraceOrganizer = abr.traces.Organizer; % init
                 
-                save(ffn,'meta','ABR_Data','TraceOrganizer','-mat','-nocompression');
+                save(ffn,'meta','ABR_Data','TraceOrganizer','-mat','-v7.3');
             end
         end
         
@@ -197,14 +197,25 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                     c(ind) = [];
                 end
                 c = [{ffn}; c];
-                d = cellfun(@dir,c);
-                app.ConfigFileDD.Items     = {d.name};
-                app.ConfigFileDD.ItemsData = c;
-                app.ConfigFileDD.Value     = app.configFile;  
-                app.ConfigFileDD.Tooltip   = app.last_modified_str(app.configFile);
-                app.ConfigFileDD.FontColor = [0 0 0];
-                app.ConfigFileLabel.Tooltip      = fileparts(app.configFile);
-                setpref('ABRControlPanel','recentConfigs',c);         
+                vind = cellfun(@(a) exist(a,'file')==0,c);
+                c(vind) = [];
+                if isempty(c)
+                    app.ConfigFileDD.Items     = {'< NO CONFIG FILES >'};
+                    app.ConfigFileDD.ItemsData = {'< NO CONFIG FILES >'};
+                    app.ConfigFileDD.Value     = '< NO CONFIG FILES >';
+                    app.ConfigFileDD.Tooltip   = '< NO CONFIG FILES >';
+                    app.ConfigFileDD.FontColor = [1 0 0];
+                    app.ConfigFileLabel.Tooltip = '< NO CONFIG FILES >';
+                else
+                    d = cellfun(@dir,c);
+                    app.ConfigFileDD.Items     = {d.name};
+                    app.ConfigFileDD.ItemsData = c;
+                    app.ConfigFileDD.Value     = app.configFile;
+                    app.ConfigFileDD.Tooltip   = app.last_modified_str(app.configFile);
+                    app.ConfigFileDD.FontColor = [0 0 0];
+                    app.ConfigFileLabel.Tooltip = fileparts(app.configFile);
+                    setpref('ABRControlPanel','recentConfigs',c);
+                end
             end
             
             
@@ -264,7 +275,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             app.DATA(end+1) = app.ABR;
             ABR_Data        = app.DATA;
             TraceOrganizer  = app.TrcOrg;
-            save(app.outputFile,'ABR_Data','TraceOrganizer','-mat','-nocompression');
+            save(app.outputFile,'ABR_Data','TraceOrganizer','-mat','-v7.3');
         end
         
         
@@ -471,8 +482,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             abrConfig.calibratonFile    = app.calibrationFile;
             abrConfig.configFile        = ffn;
             abrConfig.ABR               = app.ABR;
+            abrConfig.meta              = app.meta;
             
-            save(ffn,'abrConfig','-mat','-nocompression');
+            save(ffn,'abrConfig','-mat','-v7.3');
             
             fprintf('ABR Configuration file saved: %s\n',fn)
             
@@ -509,11 +521,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             recentPaths = getpref('ABRControlPanel','outputFolder',{app.root}); % set with recent directories
             
             pn = event.Value;
-            h = event.Source;
+            h  = event.Source;
             
             
             h.ItemsData = recentPaths;
-            h.Items     = app.truncate_str(recentPaths,40);
+            h.Items     = app.truncate_str(recentPaths,30);
             h.Value     = pn;
             h.Tooltip   = pn;
             
@@ -1095,7 +1107,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             
             ACQSTATE = abr.ACQSTATE.IDLE;
 
-            app.createComponents
+            app.createComponents;
             
             if nargin == 1 && ischar(configFile) && exist(configFile,'file') == 2
                 app.configFile = configFile;
@@ -1103,7 +1115,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                 
             elseif nargin == 0
                 lastConfigFile = getpref('ABRControlPanel','configFile',[]);
-                if ~isempty(lastConfigFile)
+                if ~isempty(lastConfigFile) && exist(lastConfigFile,'file') == 2
                     app.load_config_file(lastConfigFile);
                 end
             end

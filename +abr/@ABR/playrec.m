@@ -70,6 +70,9 @@ k = 1;
 m = 1:frsz:ABR.DAC.N;
 midx = (0:frsz-1)'+m;
 
+
+ABR.DACtiming = ABR.initDACtiming;
+
 OUTPUT = [ABR.DAC.Data ABR.DACtiming.Data];
 
 % timing = zeros(length(m),1);

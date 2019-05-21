@@ -82,12 +82,12 @@ classdef ABR
         
                 
         % DACtiming -------------------------------------------------------
-        function obj = get.DACtiming(obj)
+        function obj = initDACtiming(obj)
             obj.DACtiming = obj.DAC; % copy obj.DAC buffer
             
             % send an impulse at the onset of each sweep
-            timingSignal(obj.DACtiming.SweepLength,1) = 0;
-            timingSignal(obj.DACtiming.SweepOnsets)   = 1;
+            timingSignal(obj.DAC.N,1) = 0;
+            timingSignal(obj.DACtiming.SweepOnsets) = 1;
             obj.DACtiming.Data = timingSignal;
         end
         

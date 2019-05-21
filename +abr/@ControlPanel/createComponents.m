@@ -130,7 +130,9 @@ app.ConfigFileSave = uibutton(G, 'push');
 app.ConfigFileSave.FontSize = 14;
 app.ConfigFileSave.Layout.Row = R;
 app.ConfigFileSave.Layout.Column = 5;
+app.ConfigFileSave.Icon = fullfile(app.iconPath,'file_save.png');
 app.ConfigFileSave.Text = 'save';
+app.ConfigFileSave.VerticalAlignment = 'top';
 app.ConfigFileSave.ButtonPushedFcn = createCallbackFcn(app, @save_config_file, false);
 
 % Create ConfigFileLoad
@@ -138,7 +140,9 @@ app.ConfigFileLoad = uibutton(G, 'push');
 app.ConfigFileLoad.FontSize = 14;
 app.ConfigFileLoad.Layout.Row = R;
 app.ConfigFileLoad.Layout.Column = 6;
+app.ConfigFileLoad.Icon = fullfile(app.iconPath,'file_open.png');
 app.ConfigFileLoad.Text = 'load';
+app.ConfigFileLoad.VerticalAlignment = 'top';
 app.ConfigFileLoad.ButtonPushedFcn = createCallbackFcn(app, @load_config_file, false);
 
 
@@ -166,16 +170,20 @@ app.ConfigScheduleDD.ValueChangedFcn = createCallbackFcn(app, @load_schedule_fil
 app.ConfigLoadSchedButton = uibutton(G, 'push');
 app.ConfigLoadSchedButton.FontSize = 14;
 app.ConfigLoadSchedButton.Layout.Row = R;
-app.ConfigLoadSchedButton.Layout.Column = 5;
+app.ConfigLoadSchedButton.Layout.Column = 6;
 app.ConfigLoadSchedButton.Text = 'load';
+app.ConfigLoadSchedButton.Icon = fullfile(app.iconPath,'file_open.png');
+app.ConfigLoadSchedButton.VerticalAlignment = 'top';
 app.ConfigLoadSchedButton.ButtonPushedFcn = createCallbackFcn(app, @locate_schedule_file,false);
 
 % Create ConfigNewSchedButton
 app.ConfigNewSchedButton = uibutton(G, 'push');
 app.ConfigNewSchedButton.FontSize = 14;
 app.ConfigNewSchedButton.Layout.Row = R;
-app.ConfigNewSchedButton.Layout.Column = 6;
+app.ConfigNewSchedButton.Layout.Column = 5;
 app.ConfigNewSchedButton.Text = 'new';
+app.ConfigNewSchedButton.Icon = fullfile(app.iconPath,'file_new.png');
+app.ConfigNewSchedButton.VerticalAlignment = 'top';
 app.ConfigNewSchedButton.UserData = 'ScheduleDesign';
 app.ConfigNewSchedButton.ButtonPushedFcn = createCallbackFcn(app, @locate_utility, true);
 
@@ -205,16 +213,20 @@ app.CalibrationDD.ValueChangedFcn = createCallbackFcn(app, @load_calibration_fil
 app.CalibrationLoad = uibutton(G, 'push');
 app.CalibrationLoad.FontSize = 14;
 app.CalibrationLoad.Layout.Row = R;
-app.CalibrationLoad.Layout.Column = 5;
+app.CalibrationLoad.Layout.Column = 6;
 app.CalibrationLoad.Text = 'load';
+app.CalibrationLoad.Icon = fullfile(app.iconPath,'file_open.png');
+app.CalibrationLoad.VerticalAlignment = 'top';
 app.CalibrationLoad.ButtonPushedFcn = createCallbackFcn(app, @locate_calibration_file, false);
 
 % Create CalibrationNew
 app.CalibrationNew = uibutton(G, 'push');
 app.CalibrationNew.FontSize = 14;
 app.CalibrationNew.Layout.Row = R;
-app.CalibrationNew.Layout.Column = 6;
+app.CalibrationNew.Layout.Column = 5;
 app.CalibrationNew.Text = 'new';
+app.CalibrationNew.Icon = fullfile(app.iconPath,'file_new.png');
+app.CalibrationNew.VerticalAlignment = 'top';
 app.CalibrationNew.ButtonPushedFcn = createCallbackFcn(app, @abr.Calibration, false);
 
 R = R + 2; % allow some extra space
