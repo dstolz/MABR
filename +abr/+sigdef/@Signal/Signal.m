@@ -7,7 +7,7 @@ classdef (Abstract) Signal
     properties
         Fs              (1,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 48000; % Hz
         
-        dacChannel      (1,1) uint8  {mustBeNonempty,mustBePositive,mustBeFinite} = 1;
+        Channel      (1,1) uint8  {mustBeNonempty,mustBePositive,mustBeFinite} = 1;
         
         % COMMON SIGNAL PROPERTIES
         soundLevel      (1,1) abr.sigdef.sigProp
