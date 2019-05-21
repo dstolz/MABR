@@ -1,4 +1,4 @@
-classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
+classdef ControlPanel < matlab.apps.AppBase & abr.Universal
     % Daniel Stolzberg, PhD (c) 2019
     
     properties (Access = public)
@@ -331,7 +331,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             app.Config.Control.numReps     = app.NumRepetitionsSpinner.Value;
             app.Config.Control.sweepDuration = app.SweepDurationSpinner.Value;
             
-            app.Config.Control.frameLength = abr.ABRGlobal.frameLength;
+            app.Config.Control.frameLength = abr.Universal.frameLength;
             
             app.Config.Filter.Enable       = app.FilterEnableSwitch.Value;
             app.Config.Filter.adcFilterHP  = app.FilterHPFcEditField.Value;
@@ -699,12 +699,12 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                         
                         % convert to signal
                         app.ABR.DAC.SampleRate = app.SIG.Fs;
-                        app.ABR.DAC.FrameSize = abr.ABRGlobal.frameLength;
+                        app.ABR.DAC.FrameSize = abr.Universal.frameLength;
                         
                         % reset the ADC buffer
                         app.ABR.ADC = abr.Buffer;
                         
-                        app.ABR.ADC.FrameSize = abr.ABRGlobal.frameLength;
+                        app.ABR.ADC.FrameSize = abr.Universal.frameLength;
                         app.ABR.ADC.SampleRate = 12000; % TO DO: make app.ABR.ADC.SampleRate user settable?
                         app.ABR.adcDecimationFactor = max([1 floor(app.SIG.Fs ./ app.ABR.ADC.SampleRate)]);
                         app.ABR.ADC.SampleRate = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;

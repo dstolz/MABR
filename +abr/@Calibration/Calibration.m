@@ -164,7 +164,7 @@ classdef Calibration < matlab.apps.AppBase
             app.playRecObj.Device     = app.AC.Device;
             app.playRecObj.SampleRate = app.AC.SampleRate;
             if ~ispc % BufferSize irrelevent on Windows machine
-                app.playRecObj.BufferSize = abr.ABRGlobal.frameLength;
+                app.playRecObj.BufferSize = abr.Universal.frameLength;
             end
             
             app.AC.DeviceInfo = app.playRecObj.info;
@@ -173,8 +173,8 @@ classdef Calibration < matlab.apps.AppBase
             app.AC.DAC = abr.Buffer(app.AC.SampleRate);
             app.AC.ADC = abr.Buffer(app.AC.SampleRate);
             
-            app.AC.DAC.FrameSize = abr.ABRGlobal.frameLength;
-            app.AC.ADC.FrameSize = abr.ABRGlobal.frameLength;
+            app.AC.DAC.FrameSize = abr.Universal.frameLength;
+            app.AC.ADC.FrameSize = abr.Universal.frameLength;
             
         end
         

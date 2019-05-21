@@ -61,7 +61,6 @@ classdef (ConstructOnLoad = true) Organizer < handle
                     obj.addTrace(traces(i).Data,traces(i).Props,traces(i).FirstTimepoint,traces(i).SampleRate);
                 end
             end
-            
         end
         
         
@@ -70,7 +69,6 @@ classdef (ConstructOnLoad = true) Organizer < handle
             try obj.clear; end
             delete(obj);
         end
-        
         
         
         function addTrace(obj,data,props,firstTimepoint,Fs)
@@ -379,7 +377,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             
             
     
-            A = abr.ABRGlobal;
+            A = abr.Universal;
             
             obj.tbh.Clear = uipushtool(obj.tbh.toolbar);
             obj.tbh.Clear.Tooltip = 'Clear';

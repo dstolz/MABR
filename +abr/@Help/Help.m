@@ -1,9 +1,9 @@
-classdef Help < handle
+classdef Help < handle & abr.Universal
     
     % TO BE CREATED
     
     properties (SetAccess = private)
-        ABRGlobal (1,1) abr.ABRGlobal = abr.ABRGlobal;
+
     end
     
     properties (SetAccess = protected)

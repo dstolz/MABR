@@ -1,50 +1,81 @@
-classdef ABRGlobal < handle
+classdef Universal < handle
     % class contains general inormation for the ABR software
     
     properties
     end
     
     properties (SetAccess = private)
-        root
         iconPath
-        chksum
+        hash
+        shortHash
         commitDate
         meta
+        
+        helpFile
+    end
+    
+    properties (Access = private)
+        gitPath
     end
     
     properties (Constant)
         frameLength = 2048;
-        latencyAdjustment = -22.5e-3; % seconds; yoked to the frameLength
         
-        Version  = '0.1 beta';
-        DataVersion = '0.1 beta';        
-        Author = 'Daniel Stolzberg'
-        
-        
-        HelpFile = 'ABR_Help_File.txt'; % must be on Matlab's path
+        SoftwareVersion = '0.1 beta';
+        DataVersion     = '0.1 beta';    
+        Author          = 'Daniel Stolzberg';
+        AuthorEmail     = 'daniel.stolzberg@gmail.com';
+                
+        HelpFile = 'ABR_Help_File.xml'; % must be on Matlab's path
     end
     
     methods
         % Constructor
-        function obj = ABRGlobal()
+        function obj = Universal()
             
         end
         
-        function r = get.root(obj)
-            r = which('abr.ABRGlobal');
-            i = strfind(r,'+abr');
-            r = r(1:i-1);
+        
+        
+        function startup(obj)
+            banner = [ ...
+                '    ___    ____  ____     '; ...
+                '   /   |  / __ )/ __ \    '; ...
+                '  / /| | / __  / /_/ /    '; ...
+                ' / ___ |/ /_/ / _, _/     '; ...
+                '/_/  |_/_____/_/ |_|      '];
+            banner = cellstr(banner);
+            
+            banner{1} = sprintf('%s\t|\t<a href="mailto:daniel.stolzberg@gmail.com">Daniel Stolzberg, PhD</a>',banner{1});
+            banner{2} = sprintf('%s\t|\t<a href="matlab: type ABRCopyright.txt">copyright 2019</a>',banner{2});
+            banner{3} = sprintf('%s\t|\tSoftware = v%s',banner{3},obj.SoftwareVersion);
+            banner{4} = sprintf('%s\t|\tData = v%s',banner{4},obj.DataVersion);
+            banner{5} = sprintf('%s\t|\tgit hash = <a href="matlab: disp(''%s'')">%s</a>',banner{5},obj.hash,obj.shortHash);
+            banner{end+1} = '';
+            banner{end+1} = sprintf('\t-> <a href="matlab: abr.ControlPanel;">Control Panel</a>');
+            banner{end+1} = sprintf('\t-> <a href="matlab: abr.Calibration;">Audio Calibration</a>');
+            banner{end+1} = sprintf('\t-> <a href="matlab: abr.ScheduleDesign;">Stimulus Design</a>');
+            
+            disp(char(banner))
         end
+        
         
         function m = get.meta(obj)
             m.Author      = obj.Author;
+            m.AuthorEmail = obj.AuthorEmail;
             m.Copyright   = 'Copyright to Daniel Stolzberg, 2019';
-            m.Version     = obj.Version;
+            m.SoftwareVersion = obj.SoftwareVersion;
             m.DataVersion = obj.DataVersion;
-            m.Checksum    = obj.chksum;
-            m.commitDate  = obj.commitDate;
-            m.smileyFace  = ':)';
+            m.Checksum    = obj.hash;
+            m.CommitDate  = obj.commitDate;
+            m.SmileyFace  = ':)';
             m.CurrentTimestamp = datestr(now);
+            
+            m = orderfields(m);
+        end
+        
+        function h = get.helpFile(obj)
+            h = which(obj.HelpFile);
         end
         
         function p = get.iconPath(obj)
@@ -52,11 +83,10 @@ classdef ABRGlobal < handle
         end
         
             
-        function chksum = get.chksum(obj)
-                        
-            chksum = nan;
+        function hash = get.hash(obj)
+            hash = nan;
             
-            fid = fopen(fullfile(obj.root,'.git','logs','HEAD'),'r');
+            fid = fopen(fullfile(obj.gitPath,'.git','logs','HEAD'),'r');
             
             if fid < 3, return; end
             
@@ -65,11 +95,15 @@ classdef ABRGlobal < handle
             fclose(fid);
             
             a = find(g==' ');
-            chksum = g(a(1)+1:a(2)-1);
+            hash = g(a(1)+1:a(2)-1);
+        end
+        
+        function sc = get.shortHash(obj)
+            sc = obj.hash(1:7);
         end
         
         function c = get.commitDate(obj)
-            fn = fullfile(obj.root,'.git','logs','HEAD');
+            fn = fullfile(obj.gitPath,'.git','logs','HEAD');
             d  = dir(fn);
             c  = d.date;
         end
@@ -97,6 +131,13 @@ classdef ABRGlobal < handle
     end
     
     methods (Static)
+        
+        function r = root
+            r = which('abr.Universal');
+            i = strfind(r,'\@');
+            r = r(1:i-1);
+        end
+        
         
         function s = last_modified_str(datens)
             % s = last_modified_str(datens)
@@ -173,6 +214,7 @@ classdef ABRGlobal < handle
                 warning('on','MATLAB:HandleGraphics:ObsoletedProperty:JavaFrame');
             end
         end
+        
     end
     
     
