@@ -1,5 +1,5 @@
-function ABR = playrec(ABR,app,ax,varargin)
-% playrec(ABR,app,ax,'Name','Value')
+function ABR = playrec(ABR,app,livePlotAx,liveAnalysisAx,varargin)
+% playrec(ABR,app,livePlotAx,liveAnalysisAx,'Name','Value')
 %
 % This function handles the acquisition of a batch of sweeps as well as
 % updating live data plot.
@@ -157,26 +157,26 @@ end
     function [hl,hs] = setup_plot
         hs = [];
         
-        cla(ax);
+        cla(livePlotAx);
         
         % axis lines
-        line(ax,'xdata',ABR.ADC.TimeVector([1 end])*1000,'ydata',[0 0], ...
+        line(livePlotAx,'xdata',ABR.ADC.TimeVector([1 end])*1000,'ydata',[0 0], ...
             'color',[0.5 0.5 0.5],'linewidth',1);
-        line(ax,'xdata',[0 0],'ydata',[-100 100], ...
+        line(livePlotAx,'xdata',[0 0],'ydata',[-100 100], ...
             'color',[0.5 0.5 0.5],'linewidth',1);
         
         if options.showstimulusplot
-            hs = line(ax,'xdata',ABR.dacBufferTimeVector*1000, ...
+            hs = line(livePlotAx,'xdata',ABR.dacBufferTimeVector*1000, ...
                 'ydata',ABR.DAC.Data./max(abs(ABR.DAC.Data)), ...
                 'linewidth',2, ...
                 'color',[0.2 0.8 0.2 0.5]);
         end
         
-        hl = line(ax,'xdata',ABR.ADC.TimeVector*1000, ...
+        hl = line(livePlotAx,'xdata',ABR.ADC.TimeVector*1000, ...
             'ydata',nan(ABR.ADC.SweepLength,1), ...
             'linewidth',3,'color',[0.2 0.2 1]);
         
-        ax.XLim = ABR.adcWindow*1000; % s -> ms
+        livePlotAx.XLim = ABR.adcWindow*1000; % s -> ms
         
         drawnow
     end
@@ -207,8 +207,8 @@ end
         
         if isnan(yl), yl = 1; end
         
-        ax.YAxis.Limits = [-1 1] * yl;
-        ax.Title.String = sprintf('Sweep %d/%d',dacSweepIdx(m(i)),ABR.numSweeps);
+        livePlotAx.YAxis.Limits = [-1 1] * yl;
+        livePlotAx.Title.String = sprintf('Sweep %d/%d',dacSweepIdx(m(i)),ABR.numSweeps);
         
         
     end

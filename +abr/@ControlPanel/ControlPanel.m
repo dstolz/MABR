@@ -777,7 +777,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                             % do it
                             ax = app.live_plot;
                             figure(ancestor(ax,'figure'));
-                            app.ABR = app.ABR.playrec(app,ax);
+                            
+                            axa = app.live_analysis_plot;
+                            figure(ancestor(axa,'figure'));
+                            app.ABR = app.ABR.playrec(app,ax,axa);
 
                             if app.programState == abr.PROGRAMSTATE.ACQUIRE
                                 app.programState = abr.PROGRAMSTATE.REPCOMPLETE;
@@ -1086,6 +1089,27 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
             grid(ax,'on');
             box(ax,'on');
             ax.XAxis.Label.String = 'time (ms)';
+            ax.YAxis.Label.String = 'amplitude (mV)';
+            
+            ax.Toolbar.Visible = 'off'; % disable zoom/pan options
+            ax.HitTest = 'off';
+            
+            figure(f);
+        end
+        
+        function ax = live_analysis_plot(app)    
+            f = findobj('type','figure','-and','name','Live Analysis');
+            if ~isempty(f) && ishandle(f)
+                ax = findobj('type','axes','-and','tag','live_analysis_plot');
+                return
+            end
+            p = app.ControlPanelUIFigure.Position;
+            f = figure('name','Live Analysis','color','w','NumberTitle','off', ...
+                'Position',[p(1)+p(3)-60020 p(2)+p(4)-280 600 250]);
+            ax = axes(f,'tag','live_analysis_plot','color','none');
+            grid(ax,'on');
+            box(ax,'on');
+            ax.XAxis.Label.String = app.ABR.SIG;
             ax.YAxis.Label.String = 'amplitude (mV)';
             
             ax.Toolbar.Visible = 'off'; % disable zoom/pan options
