@@ -58,8 +58,11 @@ app.SelectAudioDeviceMenu.Text = 'Select Audio Device';
 app.SelectAudioDeviceMenu.Tooltip = 'Select Audio Device';
 app.SelectAudioDeviceMenu.MenuSelectedFcn = createCallbackFcn(app, @select_audiodevice, false);
 
-
-
+% Create SetupAudioChannelsMenu
+app.SetupAudioChannelsMenu = uimenu(app.OptionsMenu);
+app.SetupAudioChannelsMenu.Text = 'Setup Audio Channels';
+app.SetupAudioChannelsMenu.Tooltip = 'Setup Stimulus, Acquisition, and Loop-Back channels';
+app.SetupAudioChannelsMenu.MenuSelectedFcn = createCallbackFcn(app, @setup_audiochannels, false);
 
 %% Create TabGroup --------------------------------------------------------
 app.TabGroup = uitabgroup(app.ControlPanelUIFigure);

@@ -42,6 +42,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
         StayonTopMenu                  matlab.ui.container.Menu
         ASIOSettingsMenu               matlab.ui.container.Menu
         SelectAudioDeviceMenu          matlab.ui.container.Menu
+        SetupAudioChannelsMenu         matlab.ui.container.Menu
         TabGroup                       matlab.ui.container.TabGroup
         ConfigTab                      matlab.ui.container.Tab
         AcqFilterTab                   matlab.ui.container.Tab
@@ -1142,6 +1143,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
             app.ABR = app.ABR.selectAudioDevice;
             app.SelectAudioDeviceMenu.Text = sprintf('Audio Device: "%s"',app.ABR.audioDevice);
             figure(app.ControlPanelUIFigure);
+        end
+        
+        
+        function setup_audiochannels(app)
+            app.ABR = app.ABR.setupAudioChannels;
         end
     end
     

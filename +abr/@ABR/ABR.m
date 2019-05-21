@@ -53,6 +53,7 @@ classdef ABR
     methods   
         obj = playrec(obj,app,ax,varargin);
         obj = selectAudioDevice(obj,deviceString);
+        obj = setupAudioChannels(obj);
         obj = prepareSweep(obj);
         r = analysis(obj,type,varargin);
         
@@ -95,7 +96,7 @@ classdef ABR
         
         function idx = timing_onsets(obj)
             % find rising edges in timing signal ***NEEDS REALWORLD TESTING***
-            ind = obj.ADCtiming.Data > 0.5; % threshold
+            ind = obj.ADCtiming.Data > 0.75; % threshold
             idx = find(ind(1:end-1) & obj.ADCtiming.Data(1:end-1) < obj.ADCtiming.Data(2:end));
         end
         
