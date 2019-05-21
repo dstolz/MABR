@@ -25,6 +25,7 @@ classdef Universal < handle
         DataVersion     = '0.1 beta';    
         Author          = 'Daniel Stolzberg';
         AuthorEmail     = 'daniel.stolzberg@gmail.com';
+        GithubRepository= 'https://github.com/dstolz/abr';
                 
         HelpFile = 'ABR_Help_File.xml'; % must be on Matlab's path
     end
@@ -37,7 +38,7 @@ classdef Universal < handle
         
         
         
-        function startup(obj)
+        function banner(obj)
             banner = [ ...
                 '    ___    ____  ____     '; ...
                 '   /   |  / __ )/ __ \    '; ...
@@ -48,9 +49,9 @@ classdef Universal < handle
             
             banner{1} = sprintf('%s\t|\t<a href="mailto:daniel.stolzberg@gmail.com">Daniel Stolzberg, PhD</a>',banner{1});
             banner{2} = sprintf('%s\t|\t<a href="matlab: type ABRCopyright.txt">copyright 2019</a>',banner{2});
-            banner{3} = sprintf('%s\t|\tSoftware = v%s',banner{3},obj.SoftwareVersion);
-            banner{4} = sprintf('%s\t|\tData = v%s',banner{4},obj.DataVersion);
-            banner{5} = sprintf('%s\t|\tgit hash = <a href="matlab: disp(''%s'')">%s</a>',banner{5},obj.hash,obj.shortHash);
+            banner{3} = sprintf('%s\t|\tSoftware v%s',banner{3},obj.SoftwareVersion);
+            banner{4} = sprintf('%s\t|\tData     v%s',banner{4},obj.DataVersion);
+            banner{5} = sprintf('%s\t|\tgit commit <a href="matlab: web(''%s'',''-browser'')">%s</a>',banner{5},obj.GithubRepository,obj.shortHash);
             banner{end+1} = '';
             banner{end+1} = sprintf('\t-> <a href="matlab: abr.ControlPanel;">Control Panel</a>');
             banner{end+1} = sprintf('\t-> <a href="matlab: abr.Calibration;">Audio Calibration</a>');
@@ -65,6 +66,7 @@ classdef Universal < handle
             m.AuthorEmail = obj.AuthorEmail;
             m.Copyright   = 'Copyright to Daniel Stolzberg, 2019';
             m.SoftwareVersion = obj.SoftwareVersion;
+            m.GithubRepository = obj.GithubRepository;
             m.DataVersion = obj.DataVersion;
             m.Checksum    = obj.hash;
             m.CommitDate  = obj.commitDate;
@@ -83,6 +85,10 @@ classdef Universal < handle
         end
         
             
+        function p = get.gitPath(obj)
+            p = fileparts(obj.root);
+        end
+        
         function hash = get.hash(obj)
             hash = nan;
             
