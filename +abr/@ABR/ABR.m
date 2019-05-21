@@ -95,13 +95,19 @@ classdef ABR
         
         function idx = timing_onsets(obj)
             % find rising edges in timing signal ***NEEDS REALWORLD TESTING***
-            idx = find(obj.ADCtiming.Data(1:end-1) < obj.ADCtiming.Data(2:end));
+            ind = obj.ADCtiming.Data > 0.5; % threshold
+            idx = find(ind(1:end-1) & obj.ADCtiming.Data(1:end-1) < obj.ADCtiming.Data(2:end));
         end
         
         function samps = timing_samples(obj)
-            Fs = ABR.ADCtiming.SampleRate;
-            swidx = floor(Fs.*ABR.adcWindow(1)):ceil(Fs.*ABR.adcWindow(2));
-            samps = obj.timing_onsets + (swidx); % matrix expansion
+            aFs = obj.DAC.SampleRate;
+            bFs = obj.ADC.SampleRate;
+                        
+            tons  = bFs.*(obj.timing_onsets./aFs); % DAC Fs -> ADC Fs
+            
+            swidx = floor(bFs.*obj.adcWindow(1)):ceil(bFs.*obj.adcWindow(2));
+
+            samps = tons + (swidx); % matrix expansion
             
             % clip any sweeps that are beyond the end of the buffer
             samps(any(samps>obj.DACtiming.N,2),:) = [];

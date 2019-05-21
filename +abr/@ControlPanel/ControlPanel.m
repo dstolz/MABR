@@ -717,7 +717,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.ABRGlobal
                         app.ABR.DAC.Data = app.SIG.data{1};
                         
                         % sweep duration
-                        app.ABR.adcWindow = [0 app.Config.Control.sweepDuration];
+                        app.ABR.adcWindow = [0 app.Config.Control.sweepDuration]/1000; % ms -> s
                         
                         % calibrate stimulus data
                         if isvalid(app.Calibration)

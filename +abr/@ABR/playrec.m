@@ -71,7 +71,7 @@ m = 1:frsz:ABR.DAC.N;
 midx = (0:frsz-1)'+m;
 
 
-ABR.DACtiming = ABR.initDACtiming;
+ABR = ABR.initDACtiming;
 
 OUTPUT = [ABR.DAC.Data ABR.DACtiming.Data];
 
@@ -91,7 +91,7 @@ for i = 1:length(m)
     
     % playback/record audio data
 %     timing(i) = hat;
-    [INPUT,nu,no] = ABR.APR(OUTPUT(midx(:,i)));
+    [INPUT,nu,no] = ABR.APR(OUTPUT(midx(:,i),:));
     
     if nu, fprintf('Number of underruns = %d\n',nu); end
     if no, fprintf('Number of overruns  = %d\n',no); end
@@ -184,6 +184,9 @@ end
 
         y = ABR.ADC.Data;
         sweepSamps = ABR.timing_samples;
+        
+        if isempty(sweepSamps), return; end % need something better to fall back on
+        
         y = mean(y(sweepSamps))*1000; % V -> mv
         
         hl.YData = y;
@@ -196,6 +199,8 @@ end
         if ~isempty(hs)
             hs.YData = yl.*ABR.DAC.SweepData(:,1)./max(abs(ABR.DAC.SweepData(:,1)));
         end
+        
+        if isnan(yl), yl = 1; end
         
         ax.YAxis.Limits = [-1 1] * yl;
         ax.Title.String = sprintf('Sweep %d/%d',dacSweepIdx(m(i)),ABR.numSweeps);
