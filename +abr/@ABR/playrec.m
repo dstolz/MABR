@@ -133,6 +133,8 @@ for i = 1:length(m)
     if hat >= updateTime + 0.1 % seconds
         update_plot(hl,hs);
         updateTime = hat;
+        app.ControlSweepCountGauge.Value = dacSweepIdx(m(i));
+        drawnow limitrate
     end
     
 end
@@ -180,14 +182,17 @@ end
     end
 
     function update_plot(hl,hs)
-%         y = ABR.ADC.SweepMean * 1000; % V -> mV
-
-        y = ABR.ADC.Data;
         sweepSamps = ABR.timing_samples;
         
-        if isempty(sweepSamps), return; end % need something better to fall back on
-        
-        y = mean(y(sweepSamps))*1000; % V -> mv
+        if isempty(sweepSamps)
+            y = ABR.ADC.SweepMean * 1000; % V -> mV
+        else
+            if i > 10
+                fprintf(2,'UNABLE TO LOCK ON LOOP-BACK SIGNAL!\n')
+            end
+            y = ABR.ADC.Data;
+            y = mean(y(sweepSamps))*1000; % V -> mv
+        end
         
         hl.YData = y;
         
@@ -206,11 +211,6 @@ end
         ax.Title.String = sprintf('Sweep %d/%d',dacSweepIdx(m(i)),ABR.numSweeps);
         
         
-        if ~isempty(app)
-            app.ControlSweepCountGauge.Value = dacSweepIdx(m(i));
-        end
-        
-        drawnow limitrate
     end
 
     function display_timing_results
