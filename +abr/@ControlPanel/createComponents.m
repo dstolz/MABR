@@ -60,7 +60,7 @@ app.SelectAudioDeviceMenu.MenuSelectedFcn = createCallbackFcn(app, @select_audio
 
 % Create SetupAudioChannelsMenu
 app.SetupAudioChannelsMenu = uimenu(app.OptionsMenu);
-app.SetupAudioChannelsMenu.Text = 'Setup Audio Channels';
+app.SetupAudioChannelsMenu.Text = 'Define Audio Channels';
 app.SetupAudioChannelsMenu.Tooltip = 'Setup Stimulus, Acquisition, and Loop-Back channels';
 app.SetupAudioChannelsMenu.MenuSelectedFcn = createCallbackFcn(app, @setup_audiochannels, false);
 

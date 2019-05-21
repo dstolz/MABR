@@ -2,6 +2,30 @@
 <documentation>
     <version>1.0</version>
     <control_panel>
+        <menu>
+            <options>
+                <stay_on_top>
+                    <title>Keep Control Panel on Top</title>
+                    <text>Keep the Control Panel on top of all other windows.  Note that this feature may not work in the current version... sorry!</text>
+                    <type>menu</type>
+                </stay_on_top>
+                <asio_settings>
+                    <title>Adjust ASIO Settings</title>
+                    <text>Launch external ASIO settings utility.  The sampling rate and frame length are automatically set from Matlab so you should not have to adjust any settings in your ASIO utility directly.  Some setups may require customization.
+                    <type>menu</type>
+                </asio_settings>
+                <audio_device>
+                    <title>Select Audio Device</title>
+                    <text>Select which audio device connected to your computer to use for stimulation and acquisition.  Currently, this must be the same device.  The ABR Control Panel will remember your selection unless something about your sound card changes.</text>
+                    <type>menu</type>
+                </audio_device>
+                <audio_channels>
+                    <title>Define Audio Channels</title>
+                    <text>Use this to define which channels on your sound card should be used for audio output (to the speaker), signal input (bioamplifier input), loop-back timing input and output.
+                    <type>menu</type>
+                </audio_channels>
+            </options>
+        </menu>
         <configure>
             <title>Configuration Panel</title>
             <config_file>
