@@ -1,0 +1,156 @@
+{
+	"documentation": {
+		"version": 1.0,
+		"control_panel": {
+			"title": "Control Panel",
+			"description": "The ABR Control Panel handles stimulus presentation and acquisition of ABR data.",
+			"type": "figure",
+			"components": {
+				"menu": {
+					"options": {
+						"stay_on_top": {
+							"title": "Keep Control Panel on Top",
+							"description": "Keep the Control Panel on top of all other windows.  Note that this feature may not work in the current version... sorry!",
+							"type": "menu"
+						},
+						"asio_settings": {
+							"title": "Adjust ASIO Settings",
+							"description": "Launch external ASIO settings utility.  The sampling rate and frame length are automatically set from Matlab so you should not have to adjust any settings in your ASIO utility directly.  Some setups may require customization.",
+							"type": "menu"
+						},
+						"audio_device": {
+							"title": "Select Audio Device",
+							"description": "Select which audio device connected to your computer to use for stimulation and acquisition.  Currently, this must be the same device.  The ABR Control Panel will remember your selection unless something about your sound card changes.",
+							"type": "menu"
+						},
+						"audio_channels": {
+							"title": "Define Audio Channels",
+							"description": "Use this to define which channels on your sound card should be used for audio output (to the speaker), signal input (bioamplifier input), loop-back timing input and output.",
+							"type": "menu"
+						}
+					}
+				},
+				"configure": {
+					"title": "Configuration Panel",
+					"config_file": {
+						"title": "Config File",
+						"description": "Selecting a configuration file will update all other fields and variables in this GUI.",
+						"type": "dropdown"
+					},
+					"schedule_file": {
+						"title": "Schedule File",
+						"description": "Choose a schedule to control stimulus presentation.",
+						"type": "dropdown"
+					},
+					"calibration_file": {
+						"title": "Calibration File",
+						"description": "Select a calibration file associated with the stimulus in the selected schedule",
+						"type": "dropdown"
+					},
+					"data_output_file": {
+						"title": "Data Output File",
+						"description": "Update the data output filename.  Determines where to write the ABR data.  Use the dropdown box to select a different file to write to in the same directory.",
+						"type": "dropdown"
+					},
+					"data_output_directory": {
+						"title": "Data Output Directory",
+						"description": "Select a directory to output the ABR data.  Use the dropdown to select a recently used directory.",
+						"type": "dropdown"
+					}
+				},
+				"control": {
+					"title": "Control Panel",
+					"num_sweeps": {
+						"title": "Number of Sweeps",
+						"description": "Number of sweeps to present before moving to the next row in the schedule.",
+						"type": "numeric",
+						"value": 1024,
+						"unit": "none"
+					},
+					"sweep_rate": {
+						"title": "Sweep Rate",
+						"description": "Frequency at which to present stimuli.",
+						"type": "numeric",
+						"value": 21.1,
+						"unit": "Hz"
+					},
+					"num_repetitions": {
+						"title": "Number of Repetitions",
+						"description": "Number of times to present each row before moving on",
+						"type": "numeric",
+						"value": 1,
+						"unit": "none"
+					},
+					"sweep_duration": {
+						"title": "Sweep Duration",
+						"description": "Duration of the response waveform",
+						"type": "numeric",
+						"value": 10,
+						"unit": "ms"
+					},
+					"advance_on": {
+						"title": "Advance Schedule Criterion",
+						"description": "Criterion to advance to the next row in the schedule.  Click the \"Define\" option to select a custom function.",
+						"type": "dropdown",
+						"unit": "none"
+					},
+					"advance": {
+						"title": "Advance Schedule Row",
+						"description": "Click to advance to the next schedule row (or next sweep if # Repetitions > 1).",
+						"type": "momentary_button"
+					},
+					"repeat": {
+						"title": "Repeat Schedule Row",
+						"description": "Click to repeat the current stimulus presentation.  Click the button again to deactivate.",
+						"type": "state_button"
+					},
+					"pause": {
+						"title": "Pause Acquisition",
+						"description": "Click to toggle pause/play",
+						"type": "state_button"
+					},
+					"acquire": {
+						"title": "Start/Stop Acquisition",
+						"description": "Use to toggle acquisition of ABR.",
+						"type": "state_button"
+					}
+				},
+				"acq_filter": {
+					"title": "Acquisition Filter Panel",
+					"filter": {
+						"description": "Set high-pass and low-pass frequency corner of a digital acquisition filter.  The filter can be enabled/disabled using the switch.",
+						"type": "numeric",
+						"unit": "Hz",
+						"value": "10 3000"
+					},
+					"notch_filter": {
+						"description": "Set digital notch-band filter for line noise rejection.",
+						"type": "numeric",
+						"unit": "Hz",
+						"value": "Disabled"
+					}
+				},
+				"utilities": {
+					"title": "Utilities Panel"
+				}
+			}
+		},
+		"calibration": {
+			"hardware": {
+				"type": "panel"
+			},
+			"reference": {
+				"type": "panel"
+			},
+			"stimulus": {
+				"type": "panel"
+			},
+			"calibrate": {
+				"type": "panel"
+			}
+		},
+		"schedule_design": "",
+		"schedule": "",
+		"trace_organizer": ""
+	}
+}
