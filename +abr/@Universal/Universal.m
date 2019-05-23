@@ -27,7 +27,7 @@ classdef Universal < handle
         AuthorEmail     = 'daniel.stolzberg@gmail.com';
         GithubRepository= 'https://github.com/dstolz/abr';
                 
-        HelpFile = 'ABR_Help_File.xml'; % must be on Matlab's path
+        DocumentationFile = 'ABR_Documentation.json'; % must be on Matlab's path
     end
     
     methods
@@ -132,6 +132,14 @@ classdef Universal < handle
                 img = ind2rgb(img,map);
             end
             img(img == 0) = nan;
+        end
+        
+        
+        
+        function d = get_description(obj,varargin)
+            text = fileread(obj.DocumentationFile);
+            j = jsondecode(text);
+            d = getfield(j.documentation,varargin{:},'description');
         end
         
     end
