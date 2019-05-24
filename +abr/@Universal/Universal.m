@@ -195,6 +195,9 @@ classdef Universal < handle
                 if exist(datens,'file') == 2
                     d = dir(datens);
                     datens = d(1).date;
+                else
+                    s = sprintf('File does not exist! "%s"',datens);
+                    return
                 end
                 datens = datenum(datens);
             end

@@ -712,7 +712,6 @@ classdef Schedule < matlab.apps.AppBase
             app.ScheduleInfoButton.IconAlignment = 'center';
             app.ScheduleInfoButton.Position = [150 5 20 23];
             app.ScheduleInfoButton.Text = '';
-            app.ScheduleInfoButton.Button
 
             % Create RemoveRowsButton
             app.RemoveRowsButton = uibutton(app.ButtonPanel, 'push');
@@ -729,7 +728,7 @@ classdef Schedule < matlab.apps.AppBase
 
     methods (Access = public)
 
-        % Construct app
+        % Constructor
         function app = Schedule(varargin)
 
             % Create and configure components
@@ -746,7 +745,7 @@ classdef Schedule < matlab.apps.AppBase
             end
         end
 
-        % Code that executes before app deletion
+        % Destructor
         function delete(app)
 
             % Delete UIFigure when app is deleted

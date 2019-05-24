@@ -9,7 +9,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
         Config              (1,1) struct
 
 %         Subject             (1,1) abr.Subject
-        Schedule            (1,1) abr.Schedule
+        Schedule            (1,1) %abr.Schedule
         Calibration         (1,1) abr.AcousticCalibration
         
         configFile          (1,:) char
@@ -230,7 +230,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
             
             
             % Schedule File
-            if isempty(app.scheduleFile)  
+            if isempty(app.scheduleFile) || exist(app.scheduleFile,'file') ~= 2
                 app.ConfigScheduleDD.Items     = {'Load a schedule file -->'};
                 app.ConfigScheduleDD.ItemsData = {'NO SCHED FILES'};
                 app.ConfigScheduleDD.Value     = 'NO SCHED FILES';
@@ -597,7 +597,13 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
             end
             
 
-            if isvalid(app.Schedule)
+            if isequal(app.Schedule,0)
+                if exist(app.scheduleFile,'file') == 2
+                    app.Schedule = abr.Schedule(app.scheduleFile);
+                else
+                    return % ????
+                end
+            elseif isvalid(app.Schedule)
                 app.Schedule.load_schedule(app.scheduleFile);
             else
                 h = findobj('type','figure','-and','name','CONTROL_PANEL_SCHEDULE');
