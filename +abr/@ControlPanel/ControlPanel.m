@@ -120,6 +120,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
         TIMER (1,1) timer
     end
     
+    properties (Access=private)
+        selectedTab
+    end
+    
     properties
         ControlSweepCountGauge         matlab.ui.control.LinearGauge
         AcquisitionStateLamp           matlab.ui.control.Lamp
@@ -159,7 +163,13 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                 save(ffn,'meta','ABR_Data','TraceOrganizer','-mat','-v7.3');
             end
         end
-        
+       
+        function t = get.selectedTab(app)
+            if isempty(app.selectedTab)
+                app.selectedTab = app.ConfigTab;
+            end
+            t = app.selectedTab;
+        end 
     end
     
     
@@ -172,9 +182,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
         abrAcquireBatch(app,ax,varargin);
         
         % Selection change function: TabGroup
-        function TabGroupSelectionChanged(app, event)
-            selectedTab = app.TabGroup.SelectedTab;
-            
+        function TabGroup_selection_changed(app, event)
+            app.selectedTab = app.TabGroup.SelectedTab;
         end
         
         
@@ -1177,6 +1186,14 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
     
     
     methods (Access = private)
+        
+        function cp_docbox(app,event)
+            c = strrep(lower(app.selectedTab.Title),' ','_');
+            abr.Universal.docbox('control_panel','components',c);
+        end
+        
+        
+        
         function close_request(app,event)
             global ACQSTATE
             try

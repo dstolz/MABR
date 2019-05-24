@@ -36,6 +36,7 @@
                     "tag": "ConfigTab",
                     "type": "tab",
                     "title": "Configuration Panel",
+                    "description": "Select the files to run an experiment.  Save/Load a Config file to quickly access the current experiment setup.\n\nAll file paths and parameter values will be restored when loading a configuration file.",
                     "config_file": {
                         "tag": "ConfigFileDD",
                         "title": "Config File",
@@ -70,6 +71,7 @@
                 "control": {
                     "tag": "ControlTab",
                     "title": "Control Panel",
+                    "description": "Main control panel for starting, stopping, and parameterizing ABR recording.",
                     "num_sweeps": {
                         "tag": "SweepCountSpinner",
                         "title": "Number of Sweeps",
@@ -137,6 +139,7 @@
                 "acq_filter": {
                     "tag": "AcqFilterTab",
                     "title": "Acquisition Filter Panel",
+                    "description": "Digital acquisition filters.  These filters are optional and can be disabled using the corresponding buttons to the right.",
                     "filter": {
                         "tag": [
                             "FilterHPFcEditField",
@@ -156,7 +159,8 @@
                     }
                 },
                 "utilities": {
-                    "title": "Utilities Panel"
+                    "title": "Utilities Panel",
+                    "description": "Brings you to other relevant utilities."
                 }
             }
         },
@@ -192,8 +196,32 @@
                 }
             }
         },
-        "schedule_design": "",
-        "schedule": "",
-        "trace_organizer": ""
+        "schedule_design": {
+            "tag": "ScheduleDesign",
+            "type": "figure",
+            "title": "Stimulus Schedule Design",
+            "description": "",
+            "components": {
+
+            }
+        },
+        "schedule": {
+            "tag": "Schedule",
+            "type": "figure",
+            "title": "Stimulus Schedule",
+            "description": "",
+            "components": {
+                
+            }
+        },
+        "trace_organizer": {
+            "tag": "TraceOrganizer",
+            "type": "figure",
+            "title": "Trace Organizer",
+            "description": "",
+            "components": {
+                
+            }
+        }
     }
 }

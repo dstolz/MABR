@@ -66,7 +66,7 @@ app.SetupAudioChannelsMenu.MenuSelectedFcn = createCallbackFcn(app, @setup_audio
 
 %% Create TabGroup --------------------------------------------------------
 app.TabGroup = uitabgroup(app.ControlPanelUIFigure);
-app.TabGroup.SelectionChangedFcn = createCallbackFcn(app, @TabGroupSelectionChanged, true);
+app.TabGroup.SelectionChangedFcn = createCallbackFcn(app, @TabGroup_selection_changed, true);
 app.TabGroup.Position = [1 1 550 273];
 app.TabGroup.TabLocation = 'left';
 
@@ -93,6 +93,7 @@ app.HelpButton.Icon = 'helpicon.gif';
 app.HelpButton.IconAlignment = 'center';
 app.HelpButton.Position = [100 250 20 20];
 app.HelpButton.Text = '';
+app.HelpButton.ButtonPushedFcn = createCallbackFcn(app, @cp_docbox, true);
 
 %% CONFIG TAB -------------------------------------------------------------
 % Create ConfigTab
@@ -581,6 +582,7 @@ app.ControlStimInfoLabel.HorizontalAlignment = 'center';
 app.ControlStimInfoLabel.VerticalAlignment = 'bottom';
 app.ControlStimInfoLabel.FontSize = 14;
 app.ControlStimInfoLabel.Text = '';
+
 
 % Create ControlSweepCountGauge
 app.ControlSweepCountGauge = uigauge(G, 'linear');

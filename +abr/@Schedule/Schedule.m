@@ -707,17 +707,23 @@ classdef Schedule < matlab.apps.AppBase
 
             % Create ScheduleInfoButton
             app.ScheduleInfoButton = uibutton(app.ButtonPanel, 'push');
-            app.ScheduleInfoButton.ButtonPushedFcn = createCallbackFcn(app, @ScheduleInfoButtonPushed, true);
+            app.ScheduleInfoButton.ButtonPushedFcn = createCallbackFcn(app, @sch_docbox, true);
             app.ScheduleInfoButton.Icon = 'helpicon.gif';
             app.ScheduleInfoButton.IconAlignment = 'center';
             app.ScheduleInfoButton.Position = [150 5 20 23];
             app.ScheduleInfoButton.Text = '';
+            app.ScheduleInfoButton.Button
 
             % Create RemoveRowsButton
             app.RemoveRowsButton = uibutton(app.ButtonPanel, 'push');
             app.RemoveRowsButton.ButtonPushedFcn = createCallbackFcn(app, @RemoveRowsButtonPushed, true);
             app.RemoveRowsButton.Position = [404 5 102 22];
             app.RemoveRowsButton.Text = 'Remove Row(s)';
+        end
+        
+        
+        function sch_docbox(app,event)
+            abr.Universal.docbox('schedule');
         end
     end
 
