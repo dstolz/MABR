@@ -135,14 +135,8 @@ classdef Universal < handle
         end
         
         
-        
-        function d = get_description(obj,varargin)
-            text = fileread(obj.DocumentationFile);
-            j = jsondecode(text);
-            d = getfield(j.documentation,varargin{:},'description');
-        end
-        
     end
+    
     
     methods (Static)
         
@@ -150,6 +144,42 @@ classdef Universal < handle
             r = which('abr.Universal');
             i = strfind(r,'\@');
             r = r(1:i-1);
+        end
+        
+        
+        function j = get_documentation(obj)
+            if nargin == 0
+                obj = abr.Universal;
+            end
+            text = fileread(obj.DocumentationFile);
+            j = jsondecode(text);
+        end
+        
+        
+        function d = get_doc_description(varargin)
+            try
+                d = getfield(abr.Universal.get_documentation,'documentation',varargin{:},'description');
+            catch me
+                d = ['* ' me.message ' *'];
+            end
+        end
+        
+        function v = get_doc_value(varargin)
+            try
+                v = getfield(abr.Universal.get_documentation,varargin{:},'value');
+                if ischar(v), v = str2num(v); end %#ok<ST2NM>
+            catch me
+                v = nan;
+            end
+        end
+        
+        function docbox(varargin)
+            msg = abr.Universal.get_doc_description(varargin{:});
+            msg = ['\fontsize{12}' msg];
+            opt.WindowStyle = 'modal';
+            opt.Interpreter = 'tex';
+            h = msgbox(msg,'Info','help',opt);
+            uiwait(h);
         end
         
         

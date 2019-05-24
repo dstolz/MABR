@@ -26,7 +26,7 @@ classdef Calibration < matlab.apps.AppBase
         NormLeveldBEditField           matlab.ui.control.NumericEditField
         CalibrationStateLamp           matlab.ui.control.Lamp
         CalibrationInfoPanel           matlab.ui.control.Button
-        ReferencePanel                 matlab.ui.container.Panel
+        MicSensitivityPanel                 matlab.ui.container.Panel
         FrequencyHzEditFieldLabel      matlab.ui.control.Label
         FrequencyHzEditField           matlab.ui.control.NumericEditField
         SoundLeveldBSPLEditFieldLabel  matlab.ui.control.Label
@@ -35,7 +35,7 @@ classdef Calibration < matlab.apps.AppBase
         MeasuredVoltagemVEditField     matlab.ui.control.NumericEditField
         SampleButton                   matlab.ui.control.Button
         ReferenceLamp                  matlab.ui.control.Lamp
-        ReferenceInfoButton            matlab.ui.control.Button
+        MicSensitivityInfoButton            matlab.ui.control.Button
     end
 
     
@@ -625,15 +625,6 @@ classdef Calibration < matlab.apps.AppBase
             
         end
 
-        % Button pushed function: ReferenceInfoButton
-        function ReferenceInfoButtonPushed(app, event)
-            msg = sprintf(['\tUse a piston phone or electronic speaker at at a known sound level to estimate the sensitivity of your microphone and amplifier.  Enter the frequency of the reference tone ' ...
-                'it''s known sound level (dB SPL) and click "Sample".\n\nInspect the resulting time- and frequency-domain plots for a clean sinusoid at the specified frequency.']);
-            
-            msgbox(msg,'Reference Help','help','Modal');
-            
-        end
-
         % Value changed function: TypeDropDown
         function TypeDropDownValueChanged(app, event)
             app.load_sig;
@@ -645,11 +636,6 @@ classdef Calibration < matlab.apps.AppBase
             if ~isempty(f), figure(f); end
         end
 
-        % Button pushed function: HardwareInfoButton
-        function HardwareInfoButtonPushed(app, event)
-            msg = sprintf('Select the appropriate audio device and sampling rate for your setup.');
-            msgbox(msg,'Reference Help','help','Modal');
-        end
     end
 
     % App initialization and construction
@@ -703,6 +689,7 @@ classdef Calibration < matlab.apps.AppBase
 
             % Create StimulusInfoButton
             app.StimulusInfoButton = uibutton(app.StimulusPanel, 'push');
+            app.StimulusInfoButton.ButtonPushedFcn = createCallbackFcn(app, @docbox, true);
             app.StimulusInfoButton.Icon = 'helpicon.gif';
             app.StimulusInfoButton.IconAlignment = 'center';
             app.StimulusInfoButton.Position = [5 34 20 23];
@@ -749,7 +736,7 @@ classdef Calibration < matlab.apps.AppBase
 
             % Create HardwareInfoButton
             app.HardwareInfoButton = uibutton(app.HardwarePanel, 'push');
-            app.HardwareInfoButton.ButtonPushedFcn = createCallbackFcn(app, @HardwareInfoButtonPushed, true);
+            app.HardwareInfoButton.ButtonPushedFcn = createCallbackFcn(app, @docbox, true);
             app.HardwareInfoButton.Icon = 'helpicon.gif';
             app.HardwareInfoButton.IconAlignment = 'center';
             app.HardwareInfoButton.Position = [6 45 20 23];
@@ -807,58 +794,59 @@ classdef Calibration < matlab.apps.AppBase
 
             % Create CalibrationInfoPanel
             app.CalibrationInfoPanel = uibutton(app.CalibrationPanel, 'push');
+            app.CalibrationInfoPanel.ButtonPushedFcn = createCallbackFcn(app, @docbox, true);
             app.CalibrationInfoPanel.Icon = 'helpicon.gif';
             app.CalibrationInfoPanel.IconAlignment = 'center';
             app.CalibrationInfoPanel.Position = [6 112 20 23];
             app.CalibrationInfoPanel.Text = '';
 
-            % Create ReferencePanel
-            app.ReferencePanel = uipanel(app.CalibrationFigure);
-%             app.ReferencePanel.Tooltip = {'Use a piston phone or electronic speaker at at a known sound level to estimate the sensitivity of your microphone and amplifier.  Enter the frequency of the reference tone'; ' it''s known sound level (dB SPL) and click "Sample".  Inspect the resulting time- and frequency-domain plots for a clean sinusoid at the specified frequency.s'};
-            app.ReferencePanel.Title = 'Reference';
-            app.ReferencePanel.FontWeight = 'bold';
-            app.ReferencePanel.FontSize = 14;
-            app.ReferencePanel.Position = [11 275 210 160];
+            % Create MicSensitivityPanel
+            app.MicSensitivityPanel = uipanel(app.CalibrationFigure);
+%             app.MicSensitivityPanel.Tooltip = {'Use a piston phone or electronic speaker at at a known sound level to estimate the sensitivity of your microphone and amplifier.  Enter the frequency of the reference tone'; ' it''s known sound level (dB SPL) and click "Sample".  Inspect the resulting time- and frequency-domain plots for a clean sinusoid at the specified frequency.s'};
+            app.MicSensitivityPanel.Title = 'Microphone Sensitivity';
+            app.MicSensitivityPanel.FontWeight = 'bold';
+            app.MicSensitivityPanel.FontSize = 14;
+            app.MicSensitivityPanel.Position = [11 275 210 160];
 
             % Create FrequencyHzEditFieldLabel
-            app.FrequencyHzEditFieldLabel = uilabel(app.ReferencePanel);
+            app.FrequencyHzEditFieldLabel = uilabel(app.MicSensitivityPanel);
             app.FrequencyHzEditFieldLabel.HorizontalAlignment = 'right';
             app.FrequencyHzEditFieldLabel.Position = [46 110 88 22];
             app.FrequencyHzEditFieldLabel.Text = 'Frequency (Hz)';
 
             % Create FrequencyHzEditField
-            app.FrequencyHzEditField = uieditfield(app.ReferencePanel, 'numeric');
+            app.FrequencyHzEditField = uieditfield(app.MicSensitivityPanel, 'numeric');
             app.FrequencyHzEditField.Limits = [1 1000000];
             app.FrequencyHzEditField.Position = [144 110 50 22];
             app.FrequencyHzEditField.Value = 1000;
 
             % Create SoundLeveldBSPLEditFieldLabel
-            app.SoundLeveldBSPLEditFieldLabel = uilabel(app.ReferencePanel);
+            app.SoundLeveldBSPLEditFieldLabel = uilabel(app.MicSensitivityPanel);
             app.SoundLeveldBSPLEditFieldLabel.HorizontalAlignment = 'right';
             app.SoundLeveldBSPLEditFieldLabel.Position = [10 79 124 22];
             app.SoundLeveldBSPLEditFieldLabel.Text = 'Sound Level (dB SPL)';
 
             % Create SoundLeveldBSPLEditField
-            app.SoundLeveldBSPLEditField = uieditfield(app.ReferencePanel, 'numeric');
+            app.SoundLeveldBSPLEditField = uieditfield(app.MicSensitivityPanel, 'numeric');
             app.SoundLeveldBSPLEditField.Limits = [1 1000000];
             app.SoundLeveldBSPLEditField.Position = [144 79 50 22];
             app.SoundLeveldBSPLEditField.Value = 114;
 
             % Create MeasuredVoltagemVEditFieldLabel
-            app.MeasuredVoltagemVEditFieldLabel = uilabel(app.ReferencePanel);
+            app.MeasuredVoltagemVEditFieldLabel = uilabel(app.MicSensitivityPanel);
             app.MeasuredVoltagemVEditFieldLabel.HorizontalAlignment = 'right';
             app.MeasuredVoltagemVEditFieldLabel.Position = [3 9 132 22];
             app.MeasuredVoltagemVEditFieldLabel.Text = 'Measured Voltage (mV)';
 
             % Create MeasuredVoltagemVEditField
-            app.MeasuredVoltagemVEditField = uieditfield(app.ReferencePanel, 'numeric');
+            app.MeasuredVoltagemVEditField = uieditfield(app.MicSensitivityPanel, 'numeric');
             app.MeasuredVoltagemVEditField.LowerLimitInclusive = 'off';
             app.MeasuredVoltagemVEditField.Limits = [0 1000000000];
             app.MeasuredVoltagemVEditField.Position = [145 9 50 22];
             app.MeasuredVoltagemVEditField.Value = 100;
 
             % Create SampleButton
-            app.SampleButton = uibutton(app.ReferencePanel, 'push');
+            app.SampleButton = uibutton(app.MicSensitivityPanel, 'push');
             app.SampleButton.ButtonPushedFcn = createCallbackFcn(app, @SampleButtonPushed, true);
             app.SampleButton.FontSize = 14;
             app.SampleButton.FontWeight = 'bold';
@@ -866,17 +854,30 @@ classdef Calibration < matlab.apps.AppBase
             app.SampleButton.Text = 'Sample';
 
             % Create ReferenceLamp
-            app.ReferenceLamp = uilamp(app.ReferencePanel);
+            app.ReferenceLamp = uilamp(app.MicSensitivityPanel);
             app.ReferenceLamp.Position = [181 45 20 20];
             app.ReferenceLamp.Color = [0.8 0.8 0.8];
 
-            % Create ReferenceInfoButton
-            app.ReferenceInfoButton = uibutton(app.ReferencePanel, 'push');
-            app.ReferenceInfoButton.ButtonPushedFcn = createCallbackFcn(app, @ReferenceInfoButtonPushed, true);
-            app.ReferenceInfoButton.Icon = 'helpicon.gif';
-            app.ReferenceInfoButton.IconAlignment = 'center';
-            app.ReferenceInfoButton.Position = [6 110 20 23];
-            app.ReferenceInfoButton.Text = '';
+            % Create MicSensitivityInfoButton
+            app.MicSensitivityInfoButton = uibutton(app.MicSensitivityPanel, 'push');
+            app.MicSensitivityInfoButton.ButtonPushedFcn = createCallbackFcn(app, @docbox, true);
+            app.MicSensitivityInfoButton.Icon = 'helpicon.gif';
+            app.MicSensitivityInfoButton.IconAlignment = 'center';
+            app.MicSensitivityInfoButton.Position = [6 110 20 23];
+            app.MicSensitivityInfoButton.Text = '';
+        end
+        
+        function docbox(~,event)
+            switch event.Source.Parent.Title
+                case 'Hardware'
+                    abr.Universal.docbox('calibration','components','hardware');
+                case 'Microphone Sensitivity'
+                    abr.Universal.docbox('calibration','components','micsensitivity');
+                case 'Stimulus'
+                    abr.Universal.docbox('calibration','components','stimulus');
+                case 'Calibration'
+                    abr.Universal.docbox('calibration','components','calibrate');
+            end
         end
     end
 
