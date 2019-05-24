@@ -46,6 +46,8 @@ classdef ABR
         adcNotchFilterDesign
         
         sweepCount = 1;
+        
+        adcWindowSamps
     end
     
     
@@ -96,22 +98,20 @@ classdef ABR
         
         function idx = timing_onsets(obj)
             % find rising edges in timing signal ***NEEDS REALWORLD TESTING***
-            ind = obj.ADCtiming.Data > 0.75; % threshold
-            idx = find(ind(1:end-1) & obj.ADCtiming.Data(1:end-1) < obj.ADCtiming.Data(2:end));
+            ind  = obj.ADCtiming.Data >= 0.5; % threshold
+            idx = find(ind(1:end-1));
         end
         
         function samps = timing_samples(obj)
             aFs = obj.DAC.SampleRate;
             bFs = obj.ADC.SampleRate;
                         
-            tons  = bFs.*(obj.timing_onsets./aFs); % DAC Fs -> ADC Fs
+            tons  = floor(bFs.*(obj.timing_onsets./aFs)); % DAC Fs -> ADC Fs
             
-            swidx = floor(bFs.*obj.adcWindow(1)):ceil(bFs.*obj.adcWindow(2));
-
-            samps = tons + (swidx); % matrix expansion
+            samps = tons + obj.adcWindowSamps; % matrix expansion
             
-            % clip any sweeps that are beyond the end of the buffer
-            samps(any(samps>obj.DACtiming.N,2),:) = [];
+            % clip any sweeps that are beyond the end of the ADC buffer
+            samps(any(samps>obj.ADC.N,2),:) = [];
         end
         
         
@@ -154,6 +154,10 @@ classdef ABR
             obj.adcWindow = win;
         end
         
+        function s = get.adcWindowSamps(obj)
+            bFs = obj.ADC.SampleRate;
+            s = floor(bFs.*obj.adcWindow(1)):ceil(bFs.*obj.adcWindow(2));
+        end
         
         function obj = set.adcFilterHP(obj,f)
             assert(f < obj.adcFilterLP,'adcFilterHP must be lower than adcFilterLP'); %#ok<MCSUP>

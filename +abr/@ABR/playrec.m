@@ -57,7 +57,8 @@ adcSweepIdx = dacSweepIdx(1:ABR.adcDecimationFactor:end);
 
 ABR.ADC.preallocate(decfrsz*length(adcSweepIdx));
 ABR.ADC.SweepOnsets = [1; find(diff(adcSweepIdx))];
-ABR.ADC.SweepLength = min(arrayfun(@(a) sum(adcSweepIdx==a),unique(adcSweepIdx)));
+% ABR.ADC.SweepLength = min(arrayfun(@(a) sum(adcSweepIdx==a),unique(adcSweepIdx)));
+ABR.ADC.SweepLength = length(ABR.adcWindowSamps);
 
 [hl,hs] = setup_plot;
 
@@ -185,16 +186,21 @@ end
         sweepSamps = ABR.timing_samples;
         
         if isempty(sweepSamps)
-            y = ABR.ADC.SweepMean * 1000; % V -> mV
-        else
             if i > 10
                 fprintf(2,'UNABLE TO LOCK ON LOOP-BACK SIGNAL!\n')
             end
-            y = ABR.ADC.Data;
-            y = mean(y(sweepSamps))*1000; % V -> mv
+            y = ABR.ADC.SweepMean; 
+        else
+%             y = ABR.ADC.Data;
+            % TESTING ----
+            y = ABR.ADCtiming.Data;
+            y = y(1:16:length(y));
+            % ------------
+            
+            y = mean(y(sweepSamps));
         end
         
-        hl.YData = y;
+        hl.YData = y * 1000; % V -> mV
         
         yl = max(abs(y));
         yl = ceil(yl.*10);

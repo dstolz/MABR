@@ -145,7 +145,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
             if exist(ffn,'file') == 2
                 fprintf('Appending to output file: %s (%s)\n',fn,pn)
                 load(ffn,'-mat','meta');
-                if ~isequal(meta.DataVersion,app.DataVersion)
+                % should probably be ||
+                if exist('meta','var') && ~isequal(meta.DataVersion,app.DataVersion)
                     warndlg(sprintf([ ...
                         'Data file: %s\n\n', ...
                         'Existing datafile version, %s, ', ...
@@ -737,13 +738,18 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                         
                         % calibrate stimulus data
                         if isvalid(app.Calibration)
+                            %TO DO: GENERALIZE FOR ANY STIMULUS SIGNAL!!!
                             f  = app.SIG.frequency.realValue;
                             sl = app.SIG.soundLevel.realValue;
                             A  = app.Calibration.estimateCalibratedV(f,sl);
                             app.ABR.DAC.Data = A .* app.ABR.DAC.Data;
                         else
-                            h = warndlg('Invalid Calibration!','ABR','modal');
-                            uiwait(h);                            
+                            r = questdlg('Invalid Calibration!','ABR','Continue','Cancel','Cancel');
+                            if isequal(r,'Cancel')
+                                app.programState = abr.PROGRAMSTATE.USERIDLE;
+                                ACQSTATE = abr.ACQSTATE.CANCELLED;
+                                return
+                            end
                         end
                         
                         % save original stimulus signal
@@ -771,11 +777,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                         
                         
                         % reset pause button
-                        app.ControlPauseButton.Value = 0;
-                        app.ControlPauseButton.Text = 'Pause ';
-                        app.ControlPauseButton.Tooltip = 'Click to Pause';
+                        app.ControlPauseButton.Value           = 0;
+                        app.ControlPauseButton.Text            = 'Pause ';
+                        app.ControlPauseButton.Tooltip         = 'Click to Pause';
                         app.ControlPauseButton.BackgroundColor = [0.96 0.96 0.96];
-                        app.AcquisitionStateLamp.Color = [0 1 0];
+                        app.AcquisitionStateLamp.Color         = [0 1 0];
                         
                         drawnow
                         
@@ -802,7 +808,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                             end
                                                         
                         catch me
-                            app.programState = abr.PROGRAMSTATE.ACQUISITIONEERROR;
+                            app.programState = abr.PROGRAMSTATE.ACQUISITIONERROR;
                             rethrow(me);
                         end
                         
@@ -820,12 +826,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                         
                         %%%% TESTING
                         R = app.ABR.analysis('peaks');
-                        
-%                         % SAVE ABR DATA
-%                         app.AcquisitionStateLabel.Text = 'Saving Data';
-%                         app.auto_save_abr_data;
-%                         drawnow
-                        
                         
                                                 
                         app.programState = abr.PROGRAMSTATE.REPADVANCE;
@@ -866,7 +866,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                         drawnow
                         
                         
-                    case abr.PROGRAMSTATE.ACQUISITIONEERROR
+                    case abr.PROGRAMSTATE.ACQUISITIONERROR
                         app.Schedule.update_highlight(app.scheduleIdx,[1 0.2 0.2]);
                         app.Schedule.DO_NOT_DELETE = false;
                         app.AcquisitionStateLabel.Text      = 'ERROR';
@@ -883,7 +883,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                 
             catch stateME
 %                 fprintf(2,'Current Program State: "%s"\n',app.programState)
-                app.programState = abr.PROGRAMSTATE.ACQUISITIONEERROR;
+                app.programState = abr.PROGRAMSTATE.ACQUISITIONERROR;
                 rethrow(stateME);
             end
             
@@ -896,7 +896,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                 case 'Acquire'
                     app.programState = abr.PROGRAMSTATE.PREFLIGHT;
                     
-                    while ~any(app.programState == [abr.PROGRAMSTATE.USERIDLE, abr.PROGRAMSTATE.ACQUISITIONEERROR, abr.PROGRAMSTATE.SCHEDCOMPLETE])
+                    while ~any(app.programState == [abr.PROGRAMSTATE.USERIDLE, abr.PROGRAMSTATE.ACQUISITIONERROR, abr.PROGRAMSTATE.SCHEDCOMPLETE])
                         app.StateMachine;
                     end
                     
@@ -1045,7 +1045,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
             
         end
         
-        function createSubjectTree(app)
+        function create_subject_tree(app)
             
             subjs = dir(fullfile(app.subjectDirectory,'*.ABRsubj'));
             
@@ -1124,7 +1124,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
             ax = axes(f,'tag','live_analysis_plot','color','none');
             grid(ax,'on');
             box(ax,'on');
-            ax.XAxis.Label.String = app.ABR.SIG;
+            % Correct???
+            ax.XAxis.Label.String = app.ABR.SIG.defaultSortProperty;
             ax.YAxis.Label.String = 'amplitude (mV)';
             
             ax.Toolbar.Visible = 'off'; % disable zoom/pan options

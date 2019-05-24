@@ -64,7 +64,7 @@ classdef Schedule < matlab.apps.AppBase
         
         function a = get.sigArray(app)
             d = app.ScheduleTable.Data;
-            a = repmat(abr.sigdef.sigs.(app.SIG.Type),size(d,1),1);
+            a = repmat(app.SIG,size(d,1),1);
             for i = 1:length(app.props)
                 for j = 1:size(d,1)
                     a(j).(app.props{i}).Value = d{j,i+1};

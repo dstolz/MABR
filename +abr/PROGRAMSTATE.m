@@ -8,7 +8,7 @@ classdef PROGRAMSTATE < int8
         REPCOMPLETE         (4)
         SCHEDCOMPLETE       (5)
         USERIDLE            (6)
-        ACQUISITIONEERROR   (7)
+        ACQUISITIONERROR    (7)
         ERROR               (-1)
     end
 end
