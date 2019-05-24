@@ -1,4 +1,4 @@
-classdef ABR
+classdef ABR < handle
 % ABR
 % 
 % Daniel Stolzberg, PhD (c) 2019
@@ -37,6 +37,8 @@ classdef ABR
         DACsignalCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 1;
         DACtimingCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 2;
         
+        
+        chunkSize = 5e6; % make this big
     end
     
     properties (SetAccess = private)
@@ -45,17 +47,22 @@ classdef ABR
         adcFilterDesign;
         adcNotchFilterDesign
         
-        sweepCount = 1;
-        
         adcWindowSamps
+        
+        runningMean = [];
+        timingCursor
     end
     
+    properties (SetAccess = private, Dependent)
+        sweepCount
+        
+    end
     
     
     methods   
         obj = playrec(obj,app,ax,varargin);
         obj = selectAudioDevice(obj,deviceString);
-        obj = setupAudioChannels(obj);
+        setupAudioChannels(obj);
         obj = prepareSweep(obj);
         r = analysis(obj,type,varargin);
         
@@ -85,21 +92,50 @@ classdef ABR
         
                 
         % DACtiming -------------------------------------------------------
-        function obj = initDACtiming(obj)
+        function obj = initTimingSignal(obj)
             obj.DACtiming = obj.DAC; % copy obj.DAC buffer
             
             % send an impulse at the onset of each sweep
             timingSignal(obj.DAC.N,1) = 0;
             timingSignal(obj.DACtiming.SweepOnsets) = 1;
+            
             obj.DACtiming.Data = timingSignal;
+            
+            obj.ADCtiming.Data = zeros(size(timingSignal));
+            obj.ADCtiming.SweepOnsets = zeros(size(obj.DACtiming.SweepOnsets));
+                        
+            obj.timingCursor = 1;
+            
+            obj.runningMean = [];
         end
         
         
         
         function idx = timing_onsets(obj)
-            % find rising edges in timing signal ***NEEDS REALWORLD TESTING***
-            ind  = obj.ADCtiming.Data >= 0.5; % threshold
-            idx = find(ind(1:end-1));
+            
+            % find rising edges in timing signal
+            D = obj.ADCtiming.Data;
+            
+            cs = obj.chunkSize;
+            tc = obj.timingCursor;
+            if tc + cs > length(D), cs = length(D) - tc; end
+            
+            ls = tc+cs;
+            
+            ind = D(tc:ls-1) > D(tc+1:ls);
+            ind = ind & D(tc:ls-1) >= 0.5; % threshold
+            
+            idx = tc + find(ind)-1;
+            
+            if isempty(idx), return; end
+
+            nidx = find(obj.ADCtiming.SweepOnsets==0,1);
+            k = nidx:nidx+length(idx)-1;
+            obj.ADCtiming.SweepOnsets(k) = idx;
+            obj.ADC.SweepOnsets(k) = round(idx./obj.adcDecimationFactor);
+            
+            obj.timingCursor = idx(end)+1;
+            
         end
         
         function samps = timing_samples(obj)
@@ -112,6 +148,35 @@ classdef ABR
             
             % clip any sweeps that are beyond the end of the ADC buffer
             samps(any(samps>obj.ADC.N,2),:) = [];
+        end
+        
+        
+        function m = adc_mean(obj)
+            
+            D = obj.ADC.Data';
+            
+            samps = obj.timing_samples;
+            
+            if isempty(samps)
+                m = obj.runningMean;
+                return
+            end
+            
+            y = D(samps);
+            m = mean(y,1);
+            
+            if ~isempty(obj.runningMean) && ~all(isnan(obj.runningMean))
+                sc = obj.sweepCount;    
+                y = obj.runningMean .* sc;
+                n = size(samps,1);
+                m = (y + n.*m)./ (sc+n);
+            end
+            obj.runningMean = m;
+            
+        end
+        
+        function c = get.sweepCount(obj)
+            c = find(obj.ADC.SweepOnsets==0,1)-1;
         end
         
         
@@ -145,7 +210,7 @@ classdef ABR
                 'SampleRate',      obj.ADC.SampleRate);
         end
         
-        function obj = set.adcWindow(obj,win)
+        function set.adcWindow(obj,win)
             assert(numel(win) == 2,'adcWindow must have two values');
             
             win = sort(win);
@@ -159,19 +224,19 @@ classdef ABR
             s = floor(bFs.*obj.adcWindow(1)):ceil(bFs.*obj.adcWindow(2));
         end
         
-        function obj = set.adcFilterHP(obj,f)
+        function set.adcFilterHP(obj,f)
             assert(f < obj.adcFilterLP,'adcFilterHP must be lower than adcFilterLP'); %#ok<MCSUP>
             assert(f < obj.ADC.SampleRate/2,sprintf('Filter must be below Nyquist rate = %.3f Hz',obj.ADC.SampleRate/2));  %#ok<MCSUP>
             obj.adcFilterHP = f;
         end
         
-        function obj = set.adcFilterLP(obj,f)
+        function set.adcFilterLP(obj,f)
             assert(f > obj.adcFilterHP,'adcFilterLP must be higher than adcFilterHP'); %#ok<MCSUP>
             assert(f < obj.ADC.SampleRate/2,sprintf('Filter must be below Nyquist rate = %.3f Hz',obj.ADC.SampleRate/2));  %#ok<MCSUP>
             obj.adcFilterLP = f;
         end
         
-        function obj = set.adcFilterOrder(obj,order)
+        function set.adcFilterOrder(obj,order)
             obj.adcFilterOrder = order;
         end
         

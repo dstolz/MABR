@@ -773,7 +773,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                             app.ABR.adcNotchFilterFreq = fv;
                         end
                         
-                        app.ABR = app.ABR.createADCfilt;
+                        app.ABR.createADCfilt;
                         
                         
                         % reset pause button
@@ -801,7 +801,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                             
                             axa = app.live_analysis_plot;
                             figure(ancestor(axa,'figure'));
-                            app.ABR = app.ABR.playrec(app,ax,axa);
+                            app.ABR.playrec(app,ax,axa);
 
                             if app.programState == abr.PROGRAMSTATE.ACQUIRE
                                 app.programState = abr.PROGRAMSTATE.REPCOMPLETE;
@@ -1180,14 +1180,14 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
         
         
         function select_audiodevice(app)
-            app.ABR = app.ABR.selectAudioDevice;
+            app.ABR.selectAudioDevice;
             app.SelectAudioDeviceMenu.Text = sprintf('Audio Device: "%s"',app.ABR.audioDevice);
             figure(app.ControlPanelUIFigure);
         end
         
         
         function setup_audiochannels(app)
-            app.ABR = app.ABR.setupAudioChannels;
+            app.ABR.setupAudioChannels;
         end
     end
     

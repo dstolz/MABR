@@ -21,6 +21,7 @@ obj.APR.SampleRate = obj.DAC.SampleRate;
 obj.DACtiming.SampleRate = obj.DAC.SampleRate;
 obj.ADCtiming.SampleRate = obj.DAC.SampleRate;
 
+
 switch class(obj.DAC.Data)
     case {'double','single'}
         obj.APR.BitDepth = '32-bit float';
@@ -30,4 +31,3 @@ switch class(obj.DAC.Data)
         obj.APR.BitDepth = '8-bit integer';
 end
 
-obj.sweepCount = 1;

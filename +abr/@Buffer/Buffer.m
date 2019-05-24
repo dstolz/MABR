@@ -3,10 +3,10 @@ classdef Buffer
     properties
         SampleRate   (1,1) double {mustBePositive,mustBeFinite} = 1;
         
-        Data         (:,1)
+        Data         (:,1) single
         
         % in samples
-        SweepOnsets  (:,1) double {mustBePositive,mustBeInteger} = 1;
+        SweepOnsets  (:,1) double {mustBeNonnegative,mustBeInteger} = 0;
         SweepLength  (1,1) double {mustBePositive,mustBeInteger} = 1;
         
         SweepValue   
@@ -54,16 +54,14 @@ classdef Buffer
             d = obj.Data;
             
             n = length(d);
-            
-            m = obj.sweepIdx(end); % max sweep index
-                
+                            
             if rem(n,obj.FrameSize) == 0, return; end
             
-            a = fix(n/obj.FrameSize);
-            b = (a + 1)*obj.FrameSize;
+            frsz = double(obj.FrameSize);
+            a = fix(n/frsz);
+            b = (a + 1)*frsz;
             
-                
-            d(end+1:end+b-n) = cast(obj.PadValue,'like',d).*ones(b-n,1,'like',d);
+            d(end+1:end+b-n) = obj.PadValue;
         end
         
         
@@ -86,7 +84,7 @@ classdef Buffer
         
         function s = get.SweepData(obj)
             idx = obj.sweepIdx;
-            ind = any(idx > obj.N);
+            ind = any(idx > obj.N | idx < 1);
             s = obj.Data(idx(:,~ind));
         end 
         
@@ -95,7 +93,7 @@ classdef Buffer
         end
         
         function m = get.SweepMean(obj)
-            m = mean(obj.SweepData,2,'omitnan');
+            m = mean(obj.SweepData,2);
         end
         
         function n = get.N(obj)

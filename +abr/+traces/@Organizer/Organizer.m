@@ -452,7 +452,9 @@ classdef (ConstructOnLoad = true) Organizer < handle
         
         function L = button_state_left
             if ~libisloaded('user32')
-                loadlibrary('user32.dll', 'user32.h');
+%                 loadlibrary('user32.dll', 'user32.h');
+%                 loadlibrary('C:\WINDOWS\system32\user32.dll','user32.h');
+
             end
             L = calllib('user32', 'GetAsyncKeyState', int32(1)) ~= 0;
 %             R = calllib('user32', 'GetAsyncKeyState', int32(2)) ~= 0;

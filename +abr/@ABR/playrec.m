@@ -1,4 +1,4 @@
-function ABR = playrec(ABR,app,livePlotAx,liveAnalysisAx,varargin)
+function playrec(ABR,app,livePlotAx,liveAnalysisAx,varargin)
 % playrec(ABR,app,livePlotAx,liveAnalysisAx,'Name','Value')
 %
 % This function handles the acquisition of a batch of sweeps as well as
@@ -20,7 +20,7 @@ ABR = ABR.prepareSweep;
 
 
 % PAD dacSweep WITH SILENCE TO GENERATE CORRECT INTER-dacSweep-INTERVAL
-frsz = ABR.DAC.FrameSize; % temporarily set FrameSize to 1 so it doesn't get padded
+dacFrameSize = ABR.DAC.FrameSize; % temporarily set FrameSize to 1 so it doesn't get padded
 ABR.DAC.FrameSize = 1;
 n = ceil(ABR.DAC.SampleRate ./ ABR.sweepRate - ABR.DAC.N);
 silence  = zeros(n,1,'like',ABR.DAC.Data);
@@ -40,15 +40,15 @@ else
     ABR.DAC.Data = repmat(dacSweep,ABR.numSweeps,1);
 end
 
-ABR.DAC.FrameSize = frsz;
+ABR.DAC.FrameSize = dacFrameSize;
 
 ABR.DAC.SweepLength = length(dacSweep);
 ABR.DAC.SweepOnsets = 1:ABR.DAC.SweepLength:ABR.DAC.N;
 
 
 % Initialize ADC Buffer
-decfrsz = frsz/ABR.adcDecimationFactor;
-decIdx  = 1:ABR.adcDecimationFactor:frsz;
+decfrsz = dacFrameSize/ABR.adcDecimationFactor;
+decIdx  = 1:ABR.adcDecimationFactor:dacFrameSize;
 
 % CREATE INDEXES MATCHING THE DECIMATED ADC BUFFER
 dacSweepIdx = repmat(1:ABR.numSweeps,length(dacSweep),1);
@@ -56,9 +56,10 @@ dacSweepIdx = dacSweepIdx(:);
 adcSweepIdx = dacSweepIdx(1:ABR.adcDecimationFactor:end);
 
 ABR.ADC.preallocate(decfrsz*length(adcSweepIdx));
-ABR.ADC.SweepOnsets = [1; find(diff(adcSweepIdx))];
 % ABR.ADC.SweepLength = min(arrayfun(@(a) sum(adcSweepIdx==a),unique(adcSweepIdx)));
 ABR.ADC.SweepLength = length(ABR.adcWindowSamps);
+ABR.ADC.SweepOnsets = zeros(size(ABR.DAC.SweepOnsets));
+
 
 [hl,hs] = setup_plot;
 
@@ -67,12 +68,12 @@ ACQSTATE = abr.ACQSTATE.ACQUIRE;
 updateTime = hat+1;
 
 
-k = 1;
-m = 1:frsz:ABR.DAC.N;
-midx = (0:frsz-1)'+m;
+k = 1; kt = 1;
+m = 1:dacFrameSize:ABR.DAC.N;
+midx = (0:dacFrameSize-1)'+m;
 
 
-ABR = ABR.initDACtiming;
+ABR = ABR.initTimingSignal;
 
 OUTPUT = [ABR.DAC.Data ABR.DACtiming.Data];
 
@@ -91,18 +92,25 @@ for i = 1:length(m)
    
     
     % playback/record audio data
-%     timing(i) = hat;
-    [INPUT,nu,no] = ABR.APR(OUTPUT(midx(:,i),:));
+    INPUT = ABR.APR(OUTPUT(midx(:,i),:));
     
-    if nu, fprintf('Number of underruns = %d\n',nu); end
-    if no, fprintf('Number of overruns  = %d\n',no); end
+%     timing(i) = hat;
+%     [INPUT,nu,no] = ABR.APR(OUTPUT(midx(:,i),:));
+%     if nu, fprintf('Number of underruns = %d\n',nu); end
+%     if no, fprintf('Number of overruns  = %d\n',no); end
     
     
     INPUTsignal = INPUT(:,1);
     
+    
+    
     % transfer INPUT timing to corresponding buffer
-    ABR.ADCtiming.Data(k:k+frsz-1) = INPUT(:,2);
-
+    % **** SLOW AS SHIT FOR LARGE ARRAYS????? ***
+    tic
+    ABR.ADCtiming.Data(kt:kt+dacFrameSize-1) = INPUT(:,2);
+    toc
+    kt = kt+dacFrameSize;
+    
     
     % downsample acquired signal 
     % > NOTE NO EXPLICIT ANTI-ALIASING FILTER FOR ONLINE PERFORMANCE
@@ -125,18 +133,19 @@ for i = 1:length(m)
     
         
     % copy INPUTsignal to ABR.ADC.Data buffer in the correct position
-    adcIdx = k:k+frsz/ABR.adcDecimationFactor-1;
+    adcIdx = k:k+dacFrameSize/ABR.adcDecimationFactor-1;
     k = adcIdx(end)+1;
     ABR.ADC.Data(adcIdx) = INPUTsignal;
     
     
     % update plot only every 100 ms or so
-    if hat >= updateTime + 0.1 % seconds
+    if hat >= updateTime + 0.2 % seconds
         update_plot(hl,hs);
         updateTime = hat;
         app.ControlSweepCountGauge.Value = dacSweepIdx(m(i));
         drawnow limitrate
     end
+    
     
 end
 
@@ -183,23 +192,9 @@ end
     end
 
     function update_plot(hl,hs)
-        sweepSamps = ABR.timing_samples;
         
-        if isempty(sweepSamps)
-            if i > 10
-                fprintf(2,'UNABLE TO LOCK ON LOOP-BACK SIGNAL!\n')
-            end
-            y = ABR.ADC.SweepMean; 
-        else
-%             y = ABR.ADC.Data;
-            % TESTING ----
-            y = ABR.ADCtiming.Data;
-            y = y(1:16:length(y));
-            % ------------
-            
-            y = mean(y(sweepSamps));
-        end
-        
+        y = ABR.adc_mean;
+
         hl.YData = y * 1000; % V -> mV
         
         yl = max(abs(y));

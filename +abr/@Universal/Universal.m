@@ -19,7 +19,7 @@ classdef Universal < handle
     end
     
     properties (Constant)
-        frameLength = 2048;
+        frameLength = 8192;
         
         SoftwareVersion = '0.1 beta';
         DataVersion     = '0.1 beta';    
