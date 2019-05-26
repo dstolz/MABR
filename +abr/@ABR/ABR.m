@@ -88,12 +88,12 @@ classdef ABR < abr.Universal & handle
         
         
          function launch_process(obj)
-            % setup background process
-            cmdStr = sprintf(['addpath(''%s''); ABRstartup; H = abr.Runtime(''background'')'], ...
+            % setup Background process
+            cmdStr = sprintf(['addpath(''%s''); ABRstartup; H = abr.Runtime(''Background'')'], ...
                 fileparts(obj.root));
             
             [s,w] = dos(sprintf('"%s" -sd "%s" -logfile "%s" -noFigureWindows -nosplash -nodesktop -nodisplay -r "%s"', ...
-                obj.matlabExePath,obj.runtimePath,fullfile(obj.runtimePath,'background_process_log.txt'),cmdStr));
+                obj.matlabExePath,obj.runtimePath,fullfile(obj.runtimePath,'Background_process_log.txt'),cmdStr));
         end
                 
         % DACtiming -------------------------------------------------------

@@ -1,5 +1,7 @@
 function prepare_block(obj,ABR)
-% foreground process
+% Daniel Stolzberg (c) 2019
+
+% Foreground process
 
 if isequal(obj.Timer.Running,'off')
     obj.initialize_timer;

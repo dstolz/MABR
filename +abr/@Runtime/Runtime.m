@@ -2,13 +2,16 @@ classdef Runtime < handle
 % Daniel Stolzberg (c) 2019
 
     properties
-        Role (1,:) char {mustBeMember(Role,{'foreground','background'})} = 'foreground';
+        Role (1,:) char {mustBeMember(Role,{'Foreground','Background'})} = 'Foreground';
         
-        mapCom          % memmapfile object
-        mapInputBuffer  % memmapfile object
+        mapCom          % memmapfile object: communications
+        mapInputBuffer  % memmapfile object: circular buffer
     end
     
     properties (SetAccess = private)
+        isBackground (1,1) logical
+        isForeground (1,1) logical
+
         Timer % timer object
         
         Universal   abr.Universal
@@ -20,23 +23,24 @@ classdef Runtime < handle
     end
     
     properties (Constant)
-        timerPeriod = 0.05;
+        timerPeriod = 0.01;
+        maxInputBufferLength = 2^25; % should be power of 2 enough for at least a minute of data at 192kHz sampling rate
     end
     
     methods
 
         % Constructor
         function obj = Runtime(Role)
-            if nargin == 0 || isempty(Role), Role = 'foreground'; end
+            if nargin == 0 || isempty(Role), Role = 'Foreground'; end
             obj.Role = Role;
 
             obj.create_memmapfile;
 
-            if isequal(Role,'background')
+            if obj.isBackground
                 
                 % Make sure MATLAB is running at full steam
                 [s,w] = dos('wmic process where name="MATLAB.exe" CALL setpriority 128'); % 128 = High
-                if s ~=0
+                if s ~= 0
                     warning('Failed to elevate the priority of MATLAB.exe')
                     disp(w)
                 end
@@ -73,7 +77,7 @@ classdef Runtime < handle
             
             % State needs to be padded to a predicatable size
             fwrite(f, abr.ACQSTATE.INIT, 'int8'); % ForegroundState
-            fwrite(f, abr.ACQSTATE.INIT, 'int8'); % BoregroundState
+            fwrite(f, abr.ACQSTATE.INIT, 'int8'); % BackgroundState
             fwrite(f,  1, 'double'); % LatestIdx
             
             fclose(f);
@@ -81,14 +85,14 @@ classdef Runtime < handle
             
             
             
-            % second memmapped file for input buffer
+            % memmapped file for the input buffer
             if exist(obj.Universal.inputBufferFile, 'file'), delete(obj.Universal.inputBufferFile); end
             [f, msg] = fopen(obj.Universal.inputBufferFile, 'wb');
             if f == -1
                 error('abr:Runtime:create_memmapfile:cannotOpenFile', ...
                     'Cannot open file "%s": %s.', obj.Universal.inputBufferFile, msg);
             end
-            fwrite(f, zeros(60e6,2,'single'), 'single'); % Buffer
+            fwrite(f, zeros(obj.maxInputBufferLength,2,'single'), 'single'); % Buffer
             fclose(f);
             
             
@@ -101,21 +105,28 @@ classdef Runtime < handle
                 'int8',     [1,1], 'BackgroundState'; ...
                 'uint32'    [1 1], 'LatestIdx'});
             
-            % Writeable for the background process only
+            % Writeable for the Background process only
             obj.mapInputBuffer = memmapfile(obj.Universal.inputBufferFile, ...
-                'Writable', isequal(obj.Role,'background'), ...
-                'Format', {'single' [60e6 2] 'InputBuffer'});
+                'Writable', obj.isBackground, ...
+                'Format', {'single' [obj.maxInputBufferLength 2] 'InputBuffer'});
                 
         end
         
         
         
         function initialize_timer(obj)
-            % for background process
+            % for Background process
             obj.build_timer;
             start(obj.Timer);
         end
         
+        function tf = get.isBackground(obj)
+            tf = isequal(obj.Role,'Background');
+        end
+
+        function tf = get.isForeground(obj)
+            tf = isequal(obj.Role,'Foreground');
+        end
     end
     
     
@@ -146,24 +157,80 @@ classdef Runtime < handle
     
     methods (Static)
 
-        function timer_start(obj)
-            % make sure there's a global file to monitor
-            obj.create_memmapfile;
+        function timer_start(~,~,obj)
+            % prepare
 
         end
         
-        function timer_runtime(obj)
-            % monitor the global file
-            
+        function timer_runtime(~,~,obj)
+            % kick-out if states agree
+            if obj.mapCom.Data.ForegroundState == obj.mapCom.Data.BackgroundState, return; end
+
+            if obj.isBackground
+                % check if the foreground state has changed
+
+
+                switch obj.mapCom.Data.ForegroundState
+
+                    case abr.ACQSTATE.ERROR
+
+                    case abr.ACQSTATE.IDLE
+
+                    case abr.ACQSTATE.ACQUIRE
+
+                    case abr.ACQSTATE.CANCELLED
+
+                    case abr.ACQSTATE.PAUSED
+
+                    case abr.ACQSTATE.ADVANCE
+
+                    case abr.ACQSTATE.REPEAT
+
+                    case abr.ACQSTATE.COMPLETED
+
+                    case abr.ACQSTATE.START
+
+                    case abr.ACQSTATE.STOP
+
+                end
+
+            else
+                % check if the backgorund state has changed
+                switch obj.mapCom.Data.BackgroundState
+
+                    case abr.ACQSTATE.ERROR
+
+                    case abr.ACQSTATE.IDLE
+
+                    case abr.ACQSTATE.ACQUIRE
+
+                    case abr.ACQSTATE.CANCELLED
+
+                    case abr.ACQSTATE.PAUSED
+
+                    case abr.ACQSTATE.ADVANCE
+
+                    case abr.ACQSTATE.REPEAT
+
+                    case abr.ACQSTATE.COMPLETED
+
+                    case abr.ACQSTATE.START
+
+                    case abr.ACQSTATE.STOP
+
+                end
+
+
+            end
         end
         
-        function timer_stop(obj)
+        function timer_stop(~,~,obj)
             % all done
         end
         
-        function timer_error(obj)
+        function timer_error(~,~,obj)
             % wtf
-        end
+            obj.mapCom.Data.([obj.Role 'State']) = abr.ACQSTATE.ERROR;
 
 
 
