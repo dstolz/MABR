@@ -12,6 +12,14 @@ classdef Universal < handle
         meta
         
         helpFile
+        
+        matlabExePath (1,:) char = fullfile(matlabroot,'bin','matlab.exe');
+
+        runtimePath (1,:) char
+
+        comFile (1,:) char
+        inputBufferFile (1,:) char
+        dacFile  (1,:) char
     end
     
     properties (Access = private)
@@ -33,7 +41,12 @@ classdef Universal < handle
     methods
         % Constructor
         function obj = Universal()
-            
+            obj.runtimePath = fullfile(fileparts(obj.root),'.runtime_data');
+            if ~isdir(obj.runtimePath); mkdir(obj.runtimePath); end
+
+            obj.dacFile = fullfile(obj.runtimePath,'dac.wav');
+            obj.comFile = fullfile(obj.runtimePath,'com.dat');
+            obj.inputBufferFile = fullfile(obj.runtimePath,'input_buffer.dat');
         end
         
         

@@ -1,4 +1,4 @@
-classdef ABR < handle
+classdef ABR < abr.Universal & handle
 % ABR
 % 
 % Daniel Stolzberg, PhD (c) 2019
@@ -38,10 +38,15 @@ classdef ABR < handle
         DACtimingCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 2;
         
         
+        DACfilename = fullfile(abr.Universal.root,'current_ABR_stimulus.wav');
+        ADCfilename = fullfile(abr.Universal.root,'current_ABR_acquisition.wav');
+        
         chunkSize = 5e6; % make this big
+        
     end
     
     properties (SetAccess = private)
+        RUNTIME     abr.Runtime
         APR
 
         adcFilterDesign;
@@ -67,14 +72,7 @@ classdef ABR < handle
         r = analysis(obj,type,varargin);
         
         % Constructor
-        function obj = ABR
-            % Make sure MATLAB is running at full steam
-            [s,w] = dos('wmic process where name="MATLAB.exe" CALL setpriority 128'); % 128 = High
-            if s ~=0
-                warning('Failed to elevate the priority of MATLAB.exe')
-                disp(w)
-            end
-            
+        function obj = ABRstartup
 
         end
         
@@ -89,7 +87,14 @@ classdef ABR < handle
         end
         
         
-        
+         function launch_process(obj)
+            % setup background process
+            cmdStr = sprintf(['addpath(''%s''); ABRstartup; H = abr.Runtime(''background'')'], ...
+                fileparts(obj.root));
+            
+            [s,w] = dos(sprintf('"%s" -sd "%s" -logfile "%s" -noFigureWindows -nosplash -nodesktop -nodisplay -r "%s"', ...
+                obj.matlabExePath,obj.runtimePath,fullfile(obj.runtimePath,'background_process_log.txt'),cmdStr));
+        end
                 
         % DACtiming -------------------------------------------------------
         function obj = initTimingSignal(obj)
