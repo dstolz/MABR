@@ -547,7 +547,7 @@ classdef Schedule < matlab.apps.AppBase
 
         % Button pushed function: ScheduleInfoButton
         function ScheduleInfoButtonPushed(app, event)
-            
+             abr.Universal.docbox('schedule');
         end
 
         % Callback function: RemoveRowsButton, RemoveRowsMenu

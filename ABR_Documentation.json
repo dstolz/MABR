@@ -201,17 +201,20 @@
             "type": "figure",
             "title": "Stimulus Schedule Design",
             "description": "",
-            "components": {
-
-            }
+            "components": {}
         },
         "schedule": {
             "tag": "Schedule",
             "type": "figure",
             "title": "Stimulus Schedule",
-            "description": "",
+            "description": "The Stimulus Schedule enables the user to control which stimulus parameters and the order in which they are presented during an ABR session.  Each row in the schedule is a single stimulus to be presented.  The checkbox in the first column of each row determines if that stimulus will be presented.  Unchecked rows will be skipped.  You can check/uncheck rows before or during an ABR recording.  The stimuli will always be presented from the top of the schedule to bottom.",
             "components": {
-                
+                "SortOnColumn": {
+                    "tag": "SortOnColumn",
+                    "type": "momentary_button",
+                    "title": "Sort on Column",
+                    "description": "Sort on Column - Select any cell in a column and click the Sort on Column button to sort numbers in descending order.  Clicking the button a second time will sort the numbers in ascending order.  This sorting is maintained so clicking a cell a second column and clicking this button will perform a simple hierarchical sorting."
+                }
             }
         },
         "trace_organizer": {
@@ -219,9 +222,7 @@
             "type": "figure",
             "title": "Trace Organizer",
             "description": "",
-            "components": {
-                
-            }
+            "components": {}
         }
     }
 }
