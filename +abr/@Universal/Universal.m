@@ -15,11 +15,12 @@ classdef Universal < handle
         
         matlabExePath (1,:) char = fullfile(matlabroot,'bin','matlab.exe');
 
-        runtimePath (1,:) char
+        runtimePath     (1,:) char
 
-        comFile (1,:) char
+        comFile         (1,:) char
         inputBufferFile (1,:) char
-        dacFile  (1,:) char
+        dacFile         (1,:) char
+        infoFile        (1,:) char
     end
     
     properties (Access = private)
@@ -47,6 +48,7 @@ classdef Universal < handle
             obj.dacFile = fullfile(obj.runtimePath,'dac.wav');
             obj.comFile = fullfile(obj.runtimePath,'com.dat');
             obj.inputBufferFile = fullfile(obj.runtimePath,'input_buffer.dat');
+            obj.infoFile = fullfile(obj.runtimePath,'info.mat');
         end
         
         

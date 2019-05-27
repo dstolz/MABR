@@ -15,11 +15,15 @@ classdef Runtime < handle
         Timer % timer object
         
         Universal   abr.Universal
+
+        infoData
     end
     
     properties (Access = private)
         AFR     % dsp.AudioFileReader
         APR     % auidoPlayerRecorder
+
+        lastReceivedCmd     abr.CMD
     end
     
     properties (Constant)
@@ -78,11 +82,12 @@ classdef Runtime < handle
             % State needs to be padded to a predicatable size
             fwrite(f, abr.ACQSTATE.INIT, 'int8'); % ForegroundState
             fwrite(f, abr.ACQSTATE.INIT, 'int8'); % BackgroundState
+            fwrite(f, abr.ACQSTATE.INIT, 'int8'); % CommandToFg
+            fwrite(f, abr.ACQSTATE.INIT, 'int8'); % CommandToBg
             fwrite(f,  1, 'double'); % LatestIdx
             
             fclose(f);
 
-            
             
             
             % memmapped file for the input buffer
@@ -103,6 +108,8 @@ classdef Runtime < handle
             'Format', { ...
                 'int8',     [1,1], 'ForegroundState'; ...
                 'int8',     [1,1], 'BackgroundState'; ...
+                'int8',     [1,1], 'CommandToFg'; ...
+                'int8',     [1,1], 'CommandToBg'; ...
                 'uint32'    [1 1], 'LatestIdx'});
             
             % Writeable for the Background process only
@@ -126,6 +133,33 @@ classdef Runtime < handle
 
         function tf = get.isForeground(obj)
             tf = isequal(obj.Role,'Foreground');
+        end
+
+        function info = get.infoData(obj)
+            % should be non-time critical data used to communicate between foreground and background process.
+
+            % ADC.channels.signal
+            % ADC.channels.timing
+            % DAC.channels.signal
+            % DAC.channels.timing
+
+            info = load(obj.Universal.infoFile);
+        end
+
+        function update_infoData(obj,varname,vardata)
+            switch class(vardata)
+                case {'single','double'}
+                    e = '%s = %f;';
+                case {'uint8','uint16','uint32','uint64','int8','int16','int32','int64'}
+                    e = '%s = %d;';
+                case {'char','string'}
+                    e = '%s = %s;';
+            end
+
+            eval(e,varname,vardata);
+
+            lastUpdated = now;
+            save(obj.Universal.infoFile,varname,'lastUpdated','-append')
         end
     end
     
@@ -152,75 +186,52 @@ classdef Runtime < handle
             T.ErrorFcn = {obj.timer_error};
         end
 
+
+
     end
+
     
     
     methods (Static)
 
         function timer_start(~,~,obj)
-            % prepare
 
         end
         
         function timer_runtime(~,~,obj)
-            % kick-out if states agree
-            if obj.mapCom.Data.ForegroundState == obj.mapCom.Data.BackgroundState, return; end
-
+            
             if obj.isBackground
-                % check if the foreground state has changed
+                if obj.lastReceivedCmd == obj.mapCom.Data.CommandToBg, return; end
+                obj.lastReceivedCmd = obj.mapCom.Data.CommandToBg;
 
+                try
+                    switch obj.mapCom.Data.CommandToBg
+                        case abr.CMD.Prep
+                                obj.prepare_block_bg; % sets up audioFileReader and audioPlayerRecorder
+                                obj.mapCom.Data.CommandToFg = abr.CMD.Ready;
 
-                switch obj.mapCom.Data.ForegroundState
-
-                    case abr.ACQSTATE.ERROR
-
-                    case abr.ACQSTATE.IDLE
-
-                    case abr.ACQSTATE.ACQUIRE
-
-                    case abr.ACQSTATE.CANCELLED
-
-                    case abr.ACQSTATE.PAUSED
-
-                    case abr.ACQSTATE.ADVANCE
-
-                    case abr.ACQSTATE.REPEAT
-
-                    case abr.ACQSTATE.COMPLETED
-
-                    case abr.ACQSTATE.START
-
-                    case abr.ACQSTATE.STOP
-
+                        case abr.CMD.Run
+                                obj.acquire_block; % runs playback/acquisition
+                                obj.mapCom.Data.CommandToFg = abr.CMD.Completed;
+                            
+                    end
+                catch me
+                    obj.mapCom.Data.CommandToFg = abr.CMD.Error;
+                    str = sprintf('%s\n%s',me.identifier,me.message);
+                    obj.update_infoData('lastError_Bg',str);
                 end
 
+                
             else
-                % check if the backgorund state has changed
-                switch obj.mapCom.Data.BackgroundState
+                if obj.lastReceivedCmd == obj.mapCom.Data.CommandToFg, return; end
+                obj.lastReceivedCmd = obj.mapCom.Data.CommandToFg;
 
-                    case abr.ACQSTATE.ERROR
-
-                    case abr.ACQSTATE.IDLE
-
-                    case abr.ACQSTATE.ACQUIRE
-
-                    case abr.ACQSTATE.CANCELLED
-
-                    case abr.ACQSTATE.PAUSED
-
-                    case abr.ACQSTATE.ADVANCE
-
-                    case abr.ACQSTATE.REPEAT
-
-                    case abr.ACQSTATE.COMPLETED
-
-                    case abr.ACQSTATE.START
-
-                    case abr.ACQSTATE.STOP
-
+                switch obj.mapCom.Data.CommandToFg
+                    case abr.CMD.Idle
+                    case abr.CMD.Prep
+                    case abr.CMD.Run
+                    case abr.CMD.Stop
                 end
-
-
             end
         end
         
@@ -231,8 +242,6 @@ classdef Runtime < handle
         function timer_error(~,~,obj)
             % wtf
             obj.mapCom.Data.([obj.Role 'State']) = abr.ACQSTATE.ERROR;
-
-
-
+        end
     end
 end

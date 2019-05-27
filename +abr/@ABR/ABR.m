@@ -46,7 +46,6 @@ classdef ABR < abr.Universal & handle
     end
     
     properties (SetAccess = private)
-        RUNTIME     abr.Runtime
         APR
 
         adcFilterDesign;

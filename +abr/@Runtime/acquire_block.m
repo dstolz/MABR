@@ -1,25 +1,30 @@
-function acquire_block(obj)
+function r = acquire_block(obj)
 % Daniel Stolzberg (c) 2019
 
 % Background process
 
+r = 0;
+
 Mcom = obj.mapCom;
 Mbuf = obj.mapInputBuffer;
 
-% reset latest input buffer index
-Mcom.LatestIdx = 1;
 
 frameLength = obj.Universal.frameLength;
 
-while ~isDone(obj.AFR) && Mcom.ForegroundState >= 0
+% reset latest input buffer index
+Mcom.Data.Index = [1 frameLength];
 
-    fgstate = Mcom.Data.ForegroundState;
+obj.mapCom.Data.BackgroundState = abr.ACQSTATE.ACQUIRE;
 
-    while fgstate == abr.ACQSTATE.PAUSED
-        pause(0.001);
+while ~isDone(obj.AFR)
+
+    % pause on command
+    while Mcom.Data.CommandToBg == abr.CMD.Pause
+        pause(0.01); % don't lock up matlab
     end
 
-    if fgstate ~= abr.ACQSTATE.ACQUIRE, break; end
+    % break on Stop command
+    if Mcom.Data.CommandToBg == abr.CMD.Stop, break; end
 
     % read current frame
     audioOut = obj.AFR();
@@ -27,26 +32,22 @@ while ~isDone(obj.AFR) && Mcom.ForegroundState >= 0
     % play/record current frame
     audioIn = obj.APR(audioOut);
     
-    idx = Mcom.LatestIdx;
-
-    % wrap index to beginning of buffer
-    if idx+frameLength > obj.maxinputBufferLength
-        idx = 1;
-    end
-
+    idx = Mcom.Data.Index(2)+1;
 
     % place recorded data into memmapped input buffer
     k = idx+frameLength-1;
+
+    % wrap to beginning of buffer
+    if k > obj.maxinputBufferLength-frameLength
+        idx = 1;
+        k = frameLength;
+    end
+    
     Mbuf.Data.InputBuffer(idx:k,:) = audioIn;
+   
 
-        
     % update the latest buffer index
-    Mcom.LatestIdx = k;
-
+    Mcom.Data.Index = [idx k];
 end
 
-
-% release objects
-release(obj.AFR);
-release(obj.APR);
-
+obj.mapCom.Data.BackgroundState = abr.ACQSTATE.COMPLETED;
