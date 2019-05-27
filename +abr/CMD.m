@@ -1,6 +1,8 @@
 classdef CMD < int8
 
     enumeration
+        Kill    (-128)
+        Undef   (-99)
         Error   (-1)
         Idle    (0)
         Prep    (1)

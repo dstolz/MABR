@@ -1,29 +1,38 @@
 classdef Runtime < handle
-% Daniel Stolzberg (c) 2019
-
-    properties
-        Role (1,:) char {mustBeMember(Role,{'Foreground','Background'})} = 'Foreground';
-        
+    % Daniel Stolzberg (c) 2019
+    
+    properties        
         mapCom          % memmapfile object: communications
-        mapInputBuffer  % memmapfile object: circular buffer
+        mapInputBuffer  % memmapfile object: circular buffer        
     end
     
     properties (SetAccess = private)
+        Role (1,:) char {mustBeMember(Role,{'Foreground','Background'})} = 'Foreground';
+
         isBackground (1,1) logical
         isForeground (1,1) logical
-
+        
+        BgIsRunning (1,1) logical
+        FgIsRunning (1,1) logical
+        
         Timer % timer object
         
-        Universal   abr.Universal
-
+        Universal = abr.Universal;
+        
         infoData
+        
+        
+        timer_RuntimeFcn (1,1) = @abr.Runtime.timer_runtime; % function handle
+        timer_ErrorFcn   (1,1) = @abr.Runtime.timer_error; % function handle
+        
+        
+        lastReceivedCmd     abr.CMD
     end
     
     properties (Access = private)
         AFR     % dsp.AudioFileReader
         APR     % auidoPlayerRecorder
-
-        lastReceivedCmd     abr.CMD
+        
     end
     
     properties (Constant)
@@ -32,15 +41,17 @@ classdef Runtime < handle
     end
     
     methods
-
+        
         % Constructor
         function obj = Runtime(Role)
             if nargin == 0 || isempty(Role), Role = 'Foreground'; end
             obj.Role = Role;
-
+            
             obj.create_memmapfile;
-
+            
             if obj.isBackground
+                
+                abr.Universal.startup;
                 
                 % Make sure MATLAB is running at full steam
                 [s,w] = dos('wmic process where name="MATLAB.exe" CALL setpriority 128'); % 128 = High
@@ -48,75 +59,114 @@ classdef Runtime < handle
                     warning('Failed to elevate the priority of MATLAB.exe')
                     disp(w)
                 end
-
-                obj.mapCom.BackgroundState = abr.ACQSTATE.IDLE;
-
+                
+                obj.mapCom.Data.BackgroundState = int8(abr.ACQSTATE.IDLE);
+                
+                obj.initialize_timer;
+                
             else
-                obj.mapCom.ForegroundState = abr.ACQSTATE.IDLE;
-
+                obj.mapCom.Data.ForegroundState = int8(abr.ACQSTATE.IDLE);
             end
-
+            
+            obj.update_infoData(sprintf('%s_ProcessID',obj.Role),feature('getpid'));
             
         end
         
         
         % Destructor
         function delete(obj)
+            try
+                if obj.isBackground
+                    obj.mapCom.Data.BackgroundState = int8(abr.ACQSTATE.DELETED);
+                else
+                    obj.mapCom.Data.ForegroundState = int8(abr.ACQSTATE.DELETED);
+                end
+            end
             
+            try
+                stop(obj.Timer);
+                delete(obj.Timer);
+            end
+        end
+        
+        function tf = get.BgIsRunning(obj)
+%             tf = obj.mapCom.Data.BackgroundState > -3;
+            [~,pidstr] = system('Wmic process where (Name like ''MATLAB.exe'') get ProcessId');
+            p = splitlines(pidstr);
+            p(1) = [];
+            p = cellfun(@deblank,p,'uni',0);
+            ind = ismember(num2str(obj.infoData.Background_ProcessID),p);
+            tf = any(ind);
         end
         
         
-
+        function tf = get.FgIsRunning(obj)
+%             tf = obj.mapCom.Data.ForegroundState > -3;
+            [~,pidstr] = system('Wmic process where (Name like ''MATLAB.exe'') get ProcessId');
+            p = splitlines(pidstr);
+            p(1) = [];
+            p = cellfun(@deblank,p,'uni',0);
+            ind = ismember(num2str(obj.infoData.Foreground_ProcessID),p);
+            tf = any(ind);
+        end
+        
         function create_memmapfile(obj)
             % Create the communications file
             % This needs to be done for all involved instances of matlab.
-
+            
             % NOTE memmapfile does not support char, but can simply convert using char(m.Data)
-            if exist(obj.Universal.comFile, 'file'), delete(obj.Universal.comFile); end
-            [f, msg] = fopen(obj.Universal.comFile, 'wb');
-            if f == -1
-                error('abr:Runtime:create_memmapfile:cannotOpenFile', ...
-                    'Cannot open file "%s": %s.', obj.Universal.comFile, msg);
+            if ~exist(obj.Universal.comFile, 'file')
+                [f, msg] = fopen(obj.Universal.comFile, 'wb');
+                if f == -1
+                    error('abr:Runtime:create_memmapfile:cannotOpenFile', ...
+                        'Cannot open file "%s": %s.', obj.Universal.comFile, msg);
+                end
+                
+                % State needs to be padded to a predicatable size
+                fwrite(f, -99, 'int8'); % ForegroundState
+                fwrite(f, -99, 'int8'); % BackgroundState
+                fwrite(f, -99, 'int8'); % CommandToFg
+                fwrite(f, -99, 'int8'); % CommandToBg
+                fwrite(f, uint32([1 obj.Universal.frameLength]), 'uint32'); % BufferIndex
+                
+                fclose(f);
             end
-            
-            % State needs to be padded to a predicatable size
-            fwrite(f, abr.ACQSTATE.INIT, 'int8'); % ForegroundState
-            fwrite(f, abr.ACQSTATE.INIT, 'int8'); % BackgroundState
-            fwrite(f, abr.ACQSTATE.INIT, 'int8'); % CommandToFg
-            fwrite(f, abr.ACQSTATE.INIT, 'int8'); % CommandToBg
-            fwrite(f,  1, 'double'); % LatestIdx
-            
-            fclose(f);
-
-            
             
             % memmapped file for the input buffer
-            if exist(obj.Universal.inputBufferFile, 'file'), delete(obj.Universal.inputBufferFile); end
-            [f, msg] = fopen(obj.Universal.inputBufferFile, 'wb');
-            if f == -1
-                error('abr:Runtime:create_memmapfile:cannotOpenFile', ...
-                    'Cannot open file "%s": %s.', obj.Universal.inputBufferFile, msg);
+            if ~exist(obj.Universal.inputBufferFile, 'file')
+                [f, msg] = fopen(obj.Universal.inputBufferFile, 'wb');
+                if f == -1
+                    error('abr:Runtime:create_memmapfile:cannotOpenFile', ...
+                        'Cannot open file "%s": %s.', obj.Universal.inputBufferFile, msg);
+                end
+                fwrite(f, zeros(obj.maxInputBufferLength,2,'single'), 'single'); % Buffer
+                fclose(f);
             end
-            fwrite(f, zeros(obj.maxInputBufferLength,2,'single'), 'single'); % Buffer
-            fclose(f);
-            
             
             
             % Memory map the file.
             % Both roles writeable for two-way communication
             obj.mapCom = memmapfile(obj.Universal.comFile,'Writable', true,...
-            'Format', { ...
+                'Format', { ...
                 'int8',     [1,1], 'ForegroundState'; ...
                 'int8',     [1,1], 'BackgroundState'; ...
                 'int8',     [1,1], 'CommandToFg'; ...
                 'int8',     [1,1], 'CommandToBg'; ...
-                'uint32'    [1 1], 'LatestIdx'});
+                'uint32'    [1 2], 'BufferIndex'});
             
             % Writeable for the Background process only
             obj.mapInputBuffer = memmapfile(obj.Universal.inputBufferFile, ...
                 'Writable', obj.isBackground, ...
-                'Format', {'single' [obj.maxInputBufferLength 2] 'InputBuffer'});
-                
+                'Format', { ...
+                'single' [obj.maxInputBufferLength 2] 'InputBuffer'});
+            
+            % reset memmaps
+            if obj.isBackground
+                obj.mapCom.Data.BackgroundState = int8(abr.ACQSTATE.INIT);
+            else
+                obj.mapCom.Data.ForegroundState = int8(abr.ACQSTATE.INIT);
+            end
+            
         end
         
         
@@ -124,28 +174,29 @@ classdef Runtime < handle
         function initialize_timer(obj)
             % for Background process
             obj.build_timer;
+            
             start(obj.Timer);
         end
         
         function tf = get.isBackground(obj)
             tf = isequal(obj.Role,'Background');
         end
-
+        
         function tf = get.isForeground(obj)
             tf = isequal(obj.Role,'Foreground');
         end
-
+        
         function info = get.infoData(obj)
             % should be non-time critical data used to communicate between foreground and background process.
-
+            
             % ADC.channels.signal
             % ADC.channels.timing
             % DAC.channels.signal
             % DAC.channels.timing
-
+            
             info = load(obj.Universal.infoFile);
         end
-
+        
         function update_infoData(obj,varname,vardata)
             switch class(vardata)
                 case {'single','double'}
@@ -155,18 +206,23 @@ classdef Runtime < handle
                 case {'char','string'}
                     e = '%s = %s;';
             end
-
-            eval(e,varname,vardata);
-
+            
+            eval(sprintf(e,varname,vardata));
+            
             lastUpdated = now;
-            save(obj.Universal.infoFile,varname,'lastUpdated','-append')
+            
+            if exist(obj.Universal.infoFile,'file') == 2
+                save(obj.Universal.infoFile,varname,'lastUpdated','-append');
+            else
+                save(obj.Universal.infoFile,varname,'lastUpdated');
+            end
         end
     end
     
     
     
     methods (Access = private)
-
+        
         function build_timer(obj)
             t = timerfindall('Tag','ABR_Runtime');
             if ~isempty(t) && isvalid(t)
@@ -174,74 +230,22 @@ classdef Runtime < handle
                 delete(t);
             end
             
-            T = timer('Name',obj.Name);
+            T = timer('Tag','ABR_Runtime');
             T.BusyMode = 'drop';
             T.ExecutionMode = 'fixedSpacing';
             T.TasksToExecute = inf;
-            T.Period = obj.Period;
-
-            T.StartFcn = {obj.timer_start};
-            T.TimerFcn = {obj.timer_runtime};
-            T.StopFcn  = {obj.timer_stop};
-            T.ErrorFcn = {obj.timer_error};
+            T.Period = obj.timerPeriod;
+            
+            T.TimerFcn = {obj.timer_RuntimeFcn,obj};
+            T.ErrorFcn = {obj.timer_ErrorFcn,obj};
+            
+            obj.Timer = T;
         end
-
-
-
     end
-
-    
     
     methods (Static)
-
-        function timer_start(~,~,obj)
-
-        end
+        timer_runtime(a,b,obj);
+        timer_error(a,b,obj);
         
-        function timer_runtime(~,~,obj)
-            
-            if obj.isBackground
-                if obj.lastReceivedCmd == obj.mapCom.Data.CommandToBg, return; end
-                obj.lastReceivedCmd = obj.mapCom.Data.CommandToBg;
-
-                try
-                    switch obj.mapCom.Data.CommandToBg
-                        case abr.CMD.Prep
-                                obj.prepare_block_bg; % sets up audioFileReader and audioPlayerRecorder
-                                obj.mapCom.Data.CommandToFg = abr.CMD.Ready;
-
-                        case abr.CMD.Run
-                                obj.acquire_block; % runs playback/acquisition
-                                obj.mapCom.Data.CommandToFg = abr.CMD.Completed;
-                            
-                    end
-                catch me
-                    obj.mapCom.Data.CommandToFg = abr.CMD.Error;
-                    str = sprintf('%s\n%s',me.identifier,me.message);
-                    obj.update_infoData('lastError_Bg',str);
-                end
-
-                
-            else
-                if obj.lastReceivedCmd == obj.mapCom.Data.CommandToFg, return; end
-                obj.lastReceivedCmd = obj.mapCom.Data.CommandToFg;
-
-                switch obj.mapCom.Data.CommandToFg
-                    case abr.CMD.Idle
-                    case abr.CMD.Prep
-                    case abr.CMD.Run
-                    case abr.CMD.Stop
-                end
-            end
-        end
-        
-        function timer_stop(~,~,obj)
-            % all done
-        end
-        
-        function timer_error(~,~,obj)
-            % wtf
-            obj.mapCom.Data.([obj.Role 'State']) = abr.ACQSTATE.ERROR;
-        end
     end
 end

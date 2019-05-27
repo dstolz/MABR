@@ -46,8 +46,6 @@ classdef ABR < abr.Universal & handle
     end
     
     properties (SetAccess = private)
-        APR
-
         adcFilterDesign;
         adcNotchFilterDesign
         
@@ -64,21 +62,20 @@ classdef ABR < abr.Universal & handle
     
     
     methods   
-        obj = playrec(obj,app,ax,varargin);
+        %obj = playrec(obj,app,ax,varargin);
         obj = selectAudioDevice(obj,deviceString);
         setupAudioChannels(obj);
-        obj = prepareSweep(obj);
+        %obj = prepareSweep(obj);
         r = analysis(obj,type,varargin);
         
         % Constructor
-        function obj = ABRstartup
+        function obj = ABR()
 
         end
         
         % Destructor
         function delete(obj)
             try
-               delete(obj.APR); 
                delete(obj.adcFilterDesign);
             catch me
                 
@@ -86,14 +83,24 @@ classdef ABR < abr.Universal & handle
         end
         
         
-         function launch_process(obj)
+        function launch_bg_process(obj)
             % setup Background process
-            cmdStr = sprintf(['addpath(''%s''); ABRstartup; H = abr.Runtime(''Background'')'], ...
-                fileparts(obj.root));
+%             cmdStr = sprintf('addpath(''%s''); H = abr.Runtime(''Background'');', ...
+%                 fileparts(obj.root));
+%             
+%             [s,w] = system(sprintf('"%s" -sd "%s" -logfile "%s" -noFigureWindows -nosplash -nodesktop -nodisplay -r "%s"', ...
+%                 obj.matlabExePath,obj.runtimePath,fullfile(obj.runtimePath,'Background_process_log.txt'),cmdStr));
             
-            [s,w] = dos(sprintf('"%s" -sd "%s" -logfile "%s" -noFigureWindows -nosplash -nodesktop -nodisplay -r "%s"', ...
-                obj.matlabExePath,obj.runtimePath,fullfile(obj.runtimePath,'Background_process_log.txt'),cmdStr));
+
+            % testing
+            cmdStr = sprintf('addpath(''%s''); H = abr.Runtime(''Background'')', ...
+                fileparts(obj.root));
+
+            [s,w] = system(sprintf('"%s" -nosplash -r "%s"', ...
+                obj.matlabExePath,cmdStr));
         end
+
+
                 
         % DACtiming -------------------------------------------------------
         function obj = initTimingSignal(obj)

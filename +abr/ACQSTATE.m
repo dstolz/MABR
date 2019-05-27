@@ -1,6 +1,7 @@
 classdef ACQSTATE < int8
     
     enumeration
+        DELETED     (-3)
         INIT        (-2)
         ERROR       (-1)
         IDLE        (0)

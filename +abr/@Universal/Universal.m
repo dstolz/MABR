@@ -13,7 +13,7 @@ classdef Universal < handle
         
         helpFile
         
-        matlabExePath (1,:) char = fullfile(matlabroot,'bin','matlab.exe');
+        matlabExePath   (1,:) char = fullfile(matlabroot,'bin','matlab.exe');
 
         runtimePath     (1,:) char
 
@@ -28,7 +28,7 @@ classdef Universal < handle
     end
     
     properties (Constant)
-        frameLength = 8192;
+        frameLength = 2048;
         
         SoftwareVersion = '0.1 beta';
         DataVersion     = '0.1 beta';    
@@ -50,8 +50,6 @@ classdef Universal < handle
             obj.inputBufferFile = fullfile(obj.runtimePath,'input_buffer.dat');
             obj.infoFile = fullfile(obj.runtimePath,'info.mat');
         end
-        
-        
         
         function banner(obj)
             banner = [ ...
@@ -155,10 +153,21 @@ classdef Universal < handle
     
     methods (Static)
         
+        
         function r = root
-            r = which('abr.Universal');
-            i = strfind(r,'\@');
-            r = r(1:i-1);
+            r = fileparts(fileparts(which('abr.Universal')));
+        end        
+        
+        function startup
+            U = abr.Universal;
+            U.banner;
+            U.addpaths;
+        end
+        
+        function addpaths
+            r = fileparts(abr.Universal.root);
+            addpath(fullfile(r,'helpers'));
+            addpath(fullfile(r,'external'));
         end
         
         

@@ -1,0 +1,20 @@
+[Warning: "-r" selected using the -sd startup option could not be accessed.
+Using "C:\Users\Daniel\src\ABR\src" as the initial working folder instead.] 
+
+	Home License -- for personal use only.  Not for government,
+	academic, research, commercial, or other organizational use.
+
+    ___    ____  ____	|	<a href="mailto:daniel.stolzberg@gmail.com">Daniel Stolzberg, PhD</a>                  
+   /   |  / __ )/ __ \	|	<a href="matlab: type ABRCopyright.txt">copyright 2019</a>                            
+  / /| | / __  / /_/ /	|	Software v0.1 beta                                                                    
+ / ___ |/ /_/ / _, _/	|	Data     v0.1 beta                                                                     
+/_/  |_/_____/_/ |_|	|	git commit <a href="matlab: web('https://github.com/dstolz/abr','-browser')">e2b9d54</a>
+                                                                                                               
+	-> <a href="matlab: abr.ControlPanel;">Control Panel</a>                                                      
+	-> <a href="matlab: abr.Calibration;">Audio Calibration</a>                                                   
+	-> <a href="matlab: abr.ScheduleDesign;">Stimulus Design</a>                                                  
+
+ans =
+
+     []
+

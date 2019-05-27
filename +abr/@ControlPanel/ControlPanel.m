@@ -28,7 +28,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
         scheduleIdx      (1,1) = 1;
         
         DATA             (:,1) abr.ABR
-        
+    end
+
+    properties (Access = private)
+        Runtime     %abr.Runtime
     end
     
     % Properties that correspond to app components
@@ -655,13 +658,30 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                         drawnow
                         
                     case abr.PROGRAMSTATE.PREFLIGHT
+
+                        % setup as foreground process and launch background process
+                        if isempty(app.Runtime) || ~isvalid(app.Runtime) || ~app.Runtime.FgIsRunning
+                            app.Runtime = abr.Runtime;
+                        end
                         
+                        % idle background process
+                        app.Runtime.mapCom.Data.CommandToBg = int8(abr.CMD.Idle);
+                        
+                        if ~app.Runtime.BgIsRunning
+                            app.ABR.launch_bg_process;
+                        end
+                        
+                        % wait for the background process to load
+%                         while app.Runtime.mapCom.Data.BackgroundState < 0
+%                             pause(0.01);
+%                         end
+%                         
                         app.gather_config_parameters;
                         
+                        % reset pause button state
                         app.pause_button;
 
                         app.AcquisitionStateLabel.Text = 'Starting';
-                        
                         app.AcquisitionStateLamp.Color = [1 1 0];
                         app.AcquisitionStateLamp.Tooltip = 'Starting ...';
                         
@@ -689,33 +709,45 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                         app.gather_config_parameters; % in case user updates guis
                         
                         if app.ControlRepeatButton.Value % 1 == depressed 
-                            nReps = -1;
+                            nReps = -1; 
+
+                            % update gui info
+                            app.update_ControlStimInfoLabel(nReps);
                         else
                             % find next trial
-                            nReps = app.NumRepetitionsSpinner.Value;
-                            if app.scheduleRunCount(app.scheduleIdx) >= nReps
-                                ind = app.scheduleRunCount(app.scheduleIdx+1:end) < nReps ...
-                                    & app.Schedule.selectedData(app.scheduleIdx+1:end);
-                                if any(ind)
-                                    app.scheduleIdx = app.scheduleIdx + find(ind,1,'first');
-                                else
-                                    % reached end of schedule
-                                    app.programState = abr.PROGRAMSTATE.SCHEDCOMPLETE;
-                                    return
-                                end
+                            switch app.ControlAdvCriteriaDD.Value
+                                case '# Sweeps'
+                                    nReps = app.NumRepetitionsSpinner.Value;
+                                    
+                                    if app.scheduleRunCount(app.scheduleIdx) >= nReps
+                                        ind = app.scheduleRunCount(app.scheduleIdx+1:end) < nReps ...
+                                            & app.Schedule.selectedData(app.scheduleIdx+1:end);
+                                        if any(ind)
+                                            app.scheduleIdx = app.scheduleIdx + find(ind,1,'first');
+                                        else
+                                            % reached end of schedule
+                                            app.programState = abr.PROGRAMSTATE.SCHEDCOMPLETE;
+                                            return
+                                        end
+                                    end
+                                                            
+                                    % update gui info
+                                    app.update_ControlStimInfoLabel(nReps);
+                                case '< Define >'
+
+                                otherwise
+                                    app.scheduleIdx = feval(app.ControlAdvCriteriaDD.ItemsData,app);
                             end
                         end
                         
                         % update Schedule table selection                        
                         app.Schedule.sigArray(app.scheduleIdx).update;
                         app.Schedule.update_highlight(app.scheduleIdx);
-                        
-                        % update gui info
-                        app.update_ControlStimInfoLabel(nReps);
+
                         
                         % convert to signal
                         app.ABR.DAC.SampleRate = app.SIG.Fs;
-                        app.ABR.DAC.FrameSize = abr.Universal.frameLength;
+                        app.ABR.DAC.FrameSize  = abr.Universal.frameLength;
                         
                         % reset the ADC buffer
                         app.ABR.ADC = abr.Buffer;
@@ -728,7 +760,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                         % generate signal based on its parameters
                         app.SIG = app.Schedule.sigArray(app.scheduleIdx);
                         app.SIG = app.SIG.update;
-                        
                         
                         % copy stimulus to DAC buffer.
                         app.ABR.DAC.Data = app.SIG.data{1};
@@ -785,6 +816,25 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                         
                         drawnow
                         
+                        
+                        % update infoData with channel ids
+                        app.Runtime.update_infoData('DACsignalCh',app.ABR.DACsignalCh);
+                        app.Runtime.update_infoData('DACtimingCh',app.ABR.DACtimingCh);
+                        app.Runtime.update_infoData('ADCsignalCh',app.ABR.ADCsignalCh);
+                        app.Runtime.update_infoData('ADCtimingCh',app.ABR.ADCtimingCh);
+                        
+                        % write audio file to .runtime
+                        app.Runtime.prepare_block_fg(app.ABR);
+    
+                        % wait for state of background process to update
+                        while abr.CMD(app.Runtime.mapCom.Data.CommandToFg) ~= abr.CMD.Ready
+                            pause(0.01);
+                            if app.Runtime.mapCom.Data.BackgroundState == abr.ACQSTATE.ERROR
+                                app.programState = abr.PROGRAMSTATE.ERROR;
+                                return
+                            end
+                        end
+                        
                         app.programState = abr.PROGRAMSTATE.ACQUIRE;
                         
                         
@@ -795,14 +845,18 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal
                         app.AcquisitionStateLamp.Tooltip = 'Acquiring';
                         
                         try
-                            % do it
-                            ax = app.live_plot;
-                            figure(ancestor(ax,'figure'));
+%                             % do it
+%                             ax = app.live_plot;
+%                             figure(ancestor(ax,'figure'));
+%                             
+%                             axa = app.live_analysis_plot;
+%                             figure(ancestor(axa,'figure'));
+%                             app.ABR.playrec(app,ax,axa);
                             
-                            axa = app.live_analysis_plot;
-                            figure(ancestor(axa,'figure'));
-                            app.ABR.playrec(app,ax,axa);
-
+                            app.Runtime.mapCom.Data.CommandToBg = int8(abr.CMD.Run);
+                            
+%                             app.Runtime.mapCom.Data.BackgroundState == abr.r
+    
                             if app.programState == abr.PROGRAMSTATE.ACQUIRE
                                 app.programState = abr.PROGRAMSTATE.REPCOMPLETE;
                             end

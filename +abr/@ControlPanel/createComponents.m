@@ -514,10 +514,12 @@ app.ControlAdvCriteriaDDLabel.Tooltip = 'Criterion function used to advance to t
 
 % Create ControlAdvCriteriaDD
 app.ControlAdvCriteriaDD = uidropdown(G);
-app.ControlAdvCriteriaDD.Items = {'# Sweeps', 'Correlation Threshold', '< Define >'};
 app.ControlAdvCriteriaDD.Layout.Row = R;
 app.ControlAdvCriteriaDD.Layout.Column = 2;
+app.ControlAdvCriteriaDD.Items = {'# Sweeps', 'Correlation Threshold', '< Define >'};
+app.ControlAdvCriteriaDD.ItemsData = {'# Sweeps', @abr_corr_threshold, '< Define >'};
 app.ControlAdvCriteriaDD.Value = '# Sweeps';
+
 
 % Create Panel_2
 app.Panel_2 = uipanel(G);

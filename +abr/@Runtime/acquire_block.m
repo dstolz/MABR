@@ -5,26 +5,26 @@ function r = acquire_block(obj)
 
 r = 0;
 
-Mcom = obj.mapCom;
-Mbuf = obj.mapInputBuffer;
+C = obj.mapCom;
+B = obj.mapInputBuffer;
 
 
 frameLength = obj.Universal.frameLength;
 
 % reset latest input buffer index
-Mcom.Data.Index = [1 frameLength];
+C.Data.BufferIndex = uint32([1 frameLength]);
 
-obj.mapCom.Data.BackgroundState = abr.ACQSTATE.ACQUIRE;
+C.Data.BackgroundState = int8(abr.ACQSTATE.ACQUIRE);
 
 while ~isDone(obj.AFR)
 
     % pause on command
-    while Mcom.Data.CommandToBg == abr.CMD.Pause
+    while C.Data.CommandToBg == int8(abr.CMD.Pause)
         pause(0.01); % don't lock up matlab
     end
 
     % break on Stop command
-    if Mcom.Data.CommandToBg == abr.CMD.Stop, break; end
+    if C.Data.CommandToBg == int8(abr.CMD.Stop), break; end
 
     % read current frame
     audioOut = obj.AFR();
@@ -32,22 +32,22 @@ while ~isDone(obj.AFR)
     % play/record current frame
     audioIn = obj.APR(audioOut);
     
-    idx = Mcom.Data.Index(2)+1;
+    idx = C.Data.BufferIndex(2)+1;
 
     % place recorded data into memmapped input buffer
     k = idx+frameLength-1;
 
     % wrap to beginning of buffer
-    if k > obj.maxinputBufferLength-frameLength
+    if k > obj.maxInputBufferLength-frameLength
         idx = 1;
         k = frameLength;
     end
     
-    Mbuf.Data.InputBuffer(idx:k,:) = audioIn;
+    B.Data.InputBuffer(idx:k,:) = audioIn;
    
 
     % update the latest buffer index
-    Mcom.Data.Index = [idx k];
+    C.Data.BufferIndex = uint32([idx k]);
 end
 
-obj.mapCom.Data.BackgroundState = abr.ACQSTATE.COMPLETED;
+obj.mapCom.Data.BackgroundState = int8(abr.ACQSTATE.COMPLETED);
