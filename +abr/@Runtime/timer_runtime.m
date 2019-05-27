@@ -3,29 +3,29 @@ function timer_runtime(T,event,obj)
 if obj.isBackground
     
     if obj.lastReceivedCmd == obj.mapCom.Data.CommandToBg, return; end
-    obj.lastReceivedCmd = abr.CMD(obj.mapCom.Data.CommandToBg);
+    obj.lastReceivedCmd = abr.Cmd(obj.mapCom.Data.CommandToBg);
     
     switch obj.mapCom.Data.CommandToBg
-        case abr.CMD.Prep
+        case abr.Cmd.Prep
             obj.prepare_block_bg; % sets up audioFileReader and audioPlayerRecorder
-            obj.mapCom.Data.CommandToFg = int8(abr.CMD.Ready);
+            obj.mapCom.Data.CommandToFg = int8(abr.Cmd.Ready);
             
-        case abr.CMD.Run
+        case abr.Cmd.Run
             obj.acquire_block; % runs playback/acquisition
-            obj.mapCom.Data.CommandToFg = int8(abr.CMD.Completed);
+            obj.mapCom.Data.CommandToFg = int8(abr.Cmd.Completed);
             
     end
     
     
 else
     if obj.lastReceivedCmd == obj.mapCom.Data.CommandToFg, return; end
-    obj.lastReceivedCmd = abr.CMD(obj.mapCom.Data.CommandToFg);
+    obj.lastReceivedCmd = abr.Cmd(obj.mapCom.Data.CommandToFg);
     
     switch obj.mapCom.Data.CommandToFg
-        case abr.CMD.Idle
-        case abr.CMD.Prep
-        case abr.CMD.Run
-        case abr.CMD.Stop
+        case abr.Cmd.Idle
+        case abr.Cmd.Prep
+        case abr.Cmd.Run
+        case abr.Cmd.Stop
     end
 end
 end

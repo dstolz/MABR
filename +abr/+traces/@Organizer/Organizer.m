@@ -433,7 +433,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
     
     
     methods (Static)
-        key_processor(hFig,KeyData,obj,cmd);
+        key_processor(hFig,KeyData,obj,Cmd);
         move_trace(hFig,event,obj);
         trace_clicked(h,event,obj,traceIdx);
 

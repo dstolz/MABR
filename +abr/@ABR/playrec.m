@@ -6,7 +6,7 @@ function playrec(ABR,app,livePlotAx,liveAnalysisAx,varargin)
 %
 % Daniel Stolzberg, PhD (c) 2019
 
-global ACQSTATE
+global stateAcq
 
 options.showtimingstats = false;
 options.showstimulusplot = false;
@@ -63,7 +63,7 @@ ABR.ADC.SweepOnsets = zeros(size(ABR.DAC.SweepOnsets));
 
 [hl,hs] = setup_plot;
 
-ACQSTATE = abr.ACQSTATE.ACQUIRE;
+stateAcq = abr.stateAcq.ACQUIRE;
 
 updateTime = hat+1;
 
@@ -81,14 +81,14 @@ OUTPUT = [ABR.DAC.Data ABR.DACtiming.Data];
 for i = 1:length(m)
         
     % look for change in acquisition state
-    while ACQSTATE == abr.ACQSTATE.PAUSED && ~isempty(app)
+    while stateAcq == abr.stateAcq.PAUSED && ~isempty(app)
         app.AcquisitionStateLamp.Color = [1 1 .3];
         pause(0.25);
         app.AcquisitionStateLamp.Color = [.7 .7 0];
         pause(0.25);
     end
     
-    if ACQSTATE ~= abr.ACQSTATE.ACQUIRE, return; end    
+    if stateAcq ~= abr.stateAcq.ACQUIRE, return; end    
    
     
     % playback/record audio data
@@ -149,7 +149,7 @@ for i = 1:length(m)
     
 end
 
-ACQSTATE = abr.ACQSTATE.IDLE;
+stateAcq = abr.stateAcq.IDLE;
 
 update_plot(hl,hs);
 

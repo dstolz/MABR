@@ -14,17 +14,17 @@ frameLength = obj.Universal.frameLength;
 % reset latest input buffer index
 C.Data.BufferIndex = uint32([1 frameLength]);
 
-C.Data.BackgroundState = int8(abr.ACQSTATE.ACQUIRE);
+C.Data.BackgroundState = int8(abr.stateAcq.ACQUIRE);
 
 while ~isDone(obj.AFR)
 
     % pause on command
-    while C.Data.CommandToBg == int8(abr.CMD.Pause)
+    while C.Data.CommandToBg == int8(abr.Cmd.Pause)
         pause(0.01); % don't lock up matlab
     end
 
     % break on Stop command
-    if C.Data.CommandToBg == int8(abr.CMD.Stop), break; end
+    if C.Data.CommandToBg == int8(abr.Cmd.Stop), break; end
 
     % read current frame
     audioOut = obj.AFR();
@@ -50,4 +50,4 @@ while ~isDone(obj.AFR)
     C.Data.BufferIndex = uint32([idx k]);
 end
 
-obj.mapCom.Data.BackgroundState = int8(abr.ACQSTATE.COMPLETED);
+obj.mapCom.Data.BackgroundState = int8(abr.stateAcq.COMPLETED);

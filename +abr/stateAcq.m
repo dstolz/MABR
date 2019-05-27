@@ -1,4 +1,4 @@
-classdef ACQSTATE < int8
+classdef stateAcq < int8
     
     enumeration
         DELETED     (-3)

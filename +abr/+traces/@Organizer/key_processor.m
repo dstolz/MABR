@@ -1,7 +1,7 @@
-function key_processor(hFig,KeyData,obj,cmd) %#ok<INUSL>
+function key_processor(hFig,KeyData,obj,Cmd) %#ok<INUSL>
 
-if nargin == 4 && ischar(cmd)
-    K = cmd;
+if nargin == 4 && ischar(Cmd)
+    K = Cmd;
     M = 'control';
 else
     K = KeyData.Key;

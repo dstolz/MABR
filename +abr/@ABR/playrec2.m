@@ -1,6 +1,6 @@
 function playrec2(ABR,app,livePlotAx,liveAnalysisAx,varargin)
 
-global ACQSTATE
+global stateAcq
 
 
 Fs = ABR.DAC.SampleRate;
@@ -51,14 +51,14 @@ updateTime = hat;
 while ~isDone(AFR)
     
     % look for change in acquisition state
-    while ACQSTATE == abr.ACQSTATE.PAUSED && ~isempty(app)
+    while stateAcq == abr.stateAcq.PAUSED && ~isempty(app)
         app.AcquisitionStateLamp.Color = [1 1 .3];
         pause(0.25);
         app.AcquisitionStateLamp.Color = [.7 .7 0];
         pause(0.25);
     end
     
-    if ACQSTATE ~= abr.ACQSTATE.ACQUIRE, break; end
+    if stateAcq ~= abr.stateAcq.ACQUIRE, break; end
     
     
     % read current frame

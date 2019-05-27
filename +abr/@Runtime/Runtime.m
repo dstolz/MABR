@@ -26,7 +26,7 @@ classdef Runtime < handle
         timer_ErrorFcn   (1,1) = @abr.Runtime.timer_error; % function handle
         
         
-        lastReceivedCmd     abr.CMD
+        lastReceivedCmd     abr.Cmd
     end
     
     properties (Access = private)
@@ -60,12 +60,12 @@ classdef Runtime < handle
                     disp(w)
                 end
                 
-                obj.mapCom.Data.BackgroundState = int8(abr.ACQSTATE.IDLE);
+                obj.mapCom.Data.BackgroundState = int8(abr.stateAcq.IDLE);
                 
                 obj.initialize_timer;
                 
             else
-                obj.mapCom.Data.ForegroundState = int8(abr.ACQSTATE.IDLE);
+                obj.mapCom.Data.ForegroundState = int8(abr.stateAcq.IDLE);
             end
             
             obj.update_infoData(sprintf('%s_ProcessID',obj.Role),feature('getpid'));
@@ -77,9 +77,9 @@ classdef Runtime < handle
         function delete(obj)
             try
                 if obj.isBackground
-                    obj.mapCom.Data.BackgroundState = int8(abr.ACQSTATE.DELETED);
+                    obj.mapCom.Data.BackgroundState = int8(abr.stateAcq.DELETED);
                 else
-                    obj.mapCom.Data.ForegroundState = int8(abr.ACQSTATE.DELETED);
+                    obj.mapCom.Data.ForegroundState = int8(abr.stateAcq.DELETED);
                 end
             end
             
@@ -162,9 +162,9 @@ classdef Runtime < handle
             
             % reset memmaps
             if obj.isBackground
-                obj.mapCom.Data.BackgroundState = int8(abr.ACQSTATE.INIT);
+                obj.mapCom.Data.BackgroundState = int8(abr.stateAcq.INIT);
             else
-                obj.mapCom.Data.ForegroundState = int8(abr.ACQSTATE.INIT);
+                obj.mapCom.Data.ForegroundState = int8(abr.stateAcq.INIT);
             end
             
         end
@@ -246,6 +246,5 @@ classdef Runtime < handle
     methods (Static)
         timer_runtime(a,b,obj);
         timer_error(a,b,obj);
-        
     end
 end

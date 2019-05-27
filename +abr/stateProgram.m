@@ -1,4 +1,4 @@
-classdef PROGRAMSTATE < int8
+classdef stateProgram < int8
     
     enumeration
         STARTUP             (0)

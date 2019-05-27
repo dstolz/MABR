@@ -1,4 +1,4 @@
-classdef CMD < int8
+classdef Cmd < int8
 
     enumeration
         Kill    (-128)
