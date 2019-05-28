@@ -103,7 +103,7 @@ classdef ABR < abr.Universal & handle
 
                 
         % DACtiming -------------------------------------------------------
-        function obj = initTimingSignal(obj)
+        function obj = init_timing_signal(obj)            
             obj.DACtiming = obj.DAC; % copy obj.DAC buffer
             
             % send an impulse at the onset of each sweep

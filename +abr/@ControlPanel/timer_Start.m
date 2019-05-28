@@ -1,7 +1,6 @@
 function timer_Start(T,event,app)
 
 
-
 % setup live plot
 ax = app.live_plot;
 figure(ancestor(ax,'figure'));

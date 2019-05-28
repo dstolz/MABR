@@ -127,8 +127,8 @@ classdef Runtime < handle
                 fwrite(f, -99, 'int8'); % BackgroundState
                 fwrite(f, -99, 'int8'); % CommandToFg
                 fwrite(f, -99, 'int8'); % CommandToBg
-                fwrite(f, uint32([1 obj.Universal.frameLength]), 'uint32'); % BufferIndex
-                
+                fwrite(f, [1 obj.Universal.frameLength], 'uint32'); % BufferIndex
+                fwrite(f, 0,   'uint32');
                 fclose(f);
             end
             
@@ -152,7 +152,8 @@ classdef Runtime < handle
                 'int8',     [1,1], 'BackgroundState'; ...
                 'int8',     [1,1], 'CommandToFg'; ...
                 'int8',     [1,1], 'CommandToBg'; ...
-                'uint32'    [1 2], 'BufferIndex'});
+                'uint32',   [1 2], 'BufferIndex'; ...
+                'uint32',   [1 1], 'TimingIndex'});
             
             % Writeable for the Background process only
             obj.mapInputBuffer = memmapfile(obj.Universal.inputBufferFile, ...
@@ -244,7 +245,7 @@ classdef Runtime < handle
     end
     
     methods (Static)
-        timer_runtime(a,b,obj);
-        timer_error(a,b,obj);
+        timer_runtime(T,event,obj);
+        timer_error(T,event,obj);
     end
 end

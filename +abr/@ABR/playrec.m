@@ -73,7 +73,7 @@ m = 1:dacFrameSize:ABR.DAC.N;
 midx = (0:dacFrameSize-1)'+m;
 
 
-ABR = ABR.initTimingSignal;
+ABR = ABR.init_timing_signal;
 
 OUTPUT = [ABR.DAC.Data ABR.DACtiming.Data];
 

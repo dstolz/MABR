@@ -1285,10 +1285,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     end
     
     methods (Static)
-        timer_Start(obj);
-        timer_Runtime(obj);
-        timer_Stop(obj);
-        timer_Error(obj);
+        timer_Start(T,event,obj);
+        timer_Runtime(T,event,obj);
+        timer_Stop(T,event,obj);
+        timer_Error(T,event,obj);
     end
 end
 
