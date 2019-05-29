@@ -81,8 +81,7 @@ classdef Runtime < handle
                 
                 obj.initialize_timer;
                 
-                
-%                 % HIDE MATLAB PROCESS
+%                 % HIDE MATLAB PROCESS - doesn't seem to work or not stable
 %                 com.mathworks.mde.desk.MLDesktop.getInstance.getMainFrame.hide;
                 
             else
