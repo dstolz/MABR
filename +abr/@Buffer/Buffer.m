@@ -53,8 +53,10 @@ classdef Buffer
             % FrameSize.
             d = obj.Data;
             
+            if ~obj.PadToFrameSize, return; end
+            
             n = length(d);
-                            
+                           
             if rem(n,obj.FrameSize) == 0, return; end
             
             frsz = double(obj.FrameSize);

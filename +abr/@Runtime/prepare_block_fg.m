@@ -1,32 +1,29 @@
-function prepare_block_fg(obj,ABR)
+function prepare_block_fg(obj,sweep,Fs,nReps,sweepRate,altPolarity)
 % Daniel Stolzberg (c) 2019
 
-ABR.init_timing_signal;
+r = round(Fs/sweepRate);
 
-
-y = ABR.DAC.Data;
-% append dac timing signal
+y = [sweep(:); zeros(r-length(sweep),1,'like',sweep)];
 
 % repeat for numSweeps
-if ABR.altPolarity
+if altPolarity
     oy = y;
     y = [y; -y];
-    n = floor(ABR.numSweeps/2);
+    n = floor(nReps/2);
     y = repmat(y,n,1);
-    if rem(ABR.numSweeps,2), y = [y; oy]; end
+    if rem(nReps,2), y = [y; oy]; end
 else
-    y = repmat(y,ABR.numSweeps,1);
+    y = repmat(y,nReps,1);
 end
 
-timingSignal = [1; zeros(ABR.DAC.N-1,1)];
-y = [y repmat(timingSignal,ABR.numSweeps,1)];
+timingSignal = [1; zeros(r-1,1)];
+y = [y repmat(timingSignal,nReps,1)];
 
 
 % write wav file to disk
 audiowrite( ...
     obj.Universal.dacFile, ...
-    y, ...
-    ABR.DAC.SampleRate, ...
+    y,Fs, ...
     'BitsPerSample',32, ...
     'Title','ABR Stimulus');
 

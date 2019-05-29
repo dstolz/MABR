@@ -1,4 +1,4 @@
-ABR Toolbox for Matlab
+MABR, Matlab Auditory Brainstem Response Toolbox for Matlab
 Copyright (C) Daniel Stolzberg, PhD - All Rights Reserved
 Unauthorized copying of this file, via any medium is strictly prohibited
 Proprietary and confidential

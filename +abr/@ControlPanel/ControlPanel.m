@@ -827,6 +827,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ABR.SIG = app.SIG;
                         
                         % copy stimulus to DAC buffer.
+                        app.ABR.DAC.PadToFrameSize = 'off';
                         app.ABR.DAC.Data = app.SIG.data{1};
                         
                         % sweep duration
@@ -891,7 +892,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.Runtime.update_infoData('ADCtimingCh',app.ABR.ADCtimingCh);
                         
                         % write audio file to .runtime
-                        app.Runtime.prepare_block_fg(app.ABR);
+                        app.Runtime.prepare_block_fg(app.ABR.DAC.Data, ...
+                            app.ABR.DAC.SampleRate,app.ABR.numSweeps, ...
+                            app.ABR.sweepRate,app.ABR.altPolarity);
                         
                         % tell background process to prep
                         app.Runtime.CommandToBg = abr.Cmd.Prep;

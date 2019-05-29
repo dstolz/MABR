@@ -35,6 +35,8 @@ idx = LC + find(ind)-1;
 app.ABR.ADC.SweepOnsets(app.ABR.ADC.SweepOnsets<1) = []; % move to init
 app.ABR.ADC.SweepOnsets = [app.ABR.ADC.SweepOnsets; idx];
 
+nSweeps = length(app.ABR.ADC.SweepOnsets);
+
 lastCheckedIdx = bufferHead;
 
 
@@ -43,17 +45,46 @@ swin = round(app.ABR.DAC.SampleRate.*app.ABR.adcWindow);
 swin = swin(1):app.ABR.adcDecimationFactor:swin(2);
 samps = app.ABR.ADC.SweepOnsets + swin; % matrix expansion
 
-samps(any(samps>app.Runtime.maxInputBufferLength,2),:) = [];
 
 
 % organize incoming signal
-y = app.Runtime.mapInputBuffer.Data(samps);
-if size(y,2) == 1, y = y'; end
+data = app.Runtime.mapInputBuffer.Data(samps);
+if nSweeps == 1, data = data'; end
 
 % update plots
 tvec = 1000 .* swin ./ app.ABR.ADC.SampleRate;
-app.abr_live_plot(y,tvec);
+app.abr_live_plot(data,tvec);
 
+if nSweeps > 1
+    % compute inter-sweep correlation coefficient
+    bsamps = -1:-1:-size(samps,2);
+    bsamps = app.ABR.ADC.SweepOnsets + bsamps;
+    bsamps(any(bsamps < 1,2),:) = [];
+    
+    pre = app.Runtime.mapInputBuffer.Data(bsamps);
+    
+    pre = abs(pre);  data = abs(data);
+
+    tic
+    i = randperm(nSweeps,min(nSweeps,100));
+    R = corrcoef([pre(i,:)' data(i,:)']);
+    R(logical(eye(size(R,1)))) = nan;
+    
+    k = length(i);
+    Rpre   = R(1:k,1:k); 
+    Rcross = R(k+1:k*2,1:k);
+    Rpost  = R(k+1:end,k+1:end);
+
+    
+    Rpre   = mean(Rpre(~isnan(Rpre)));
+    Rcross = mean(Rcross(~isnan(Rcross)));
+    Rpost  = mean(Rpost(~isnan(Rpost)));
+    
+    t= toc;
+    
+    fprintf('# Sweeps = % 4d:\tPre % 4.3f\tCross % 4.3f\tPost % 4.3f\t%.3f ms\n', ...
+        nSweeps,Rpre,Rcross,Rpost,t*1000)
+end
 
 % update GUI
 app.ControlSweepCountGauge.Value = length(app.ABR.ADC.SweepOnsets);

@@ -63,18 +63,22 @@ classdef Universal < handle
         
         function banner(obj)
             banner = [ ...
-                '    ___    ____  ____     '; ...
-                '   /   |  / __ )/ __ \    '; ...
-                '  / /| | / __  / /_/ /    '; ...
-                ' / ___ |/ /_/ / _, _/     '; ...
-                '/_/  |_/_____/_/ |_|      '];
-            banner = cellstr(banner);
+                {'       __  ______    ____  ____     '}; ...
+                {'      /  |/  /   |  / __ )/ __ \    '}; ...
+                {'     / /|_/ / /| | / __  / /_/ /    '}; ...
+                {'    / /  / / ___ |/ /_/ / _, _/     '}; ...
+                {'   /_/  /_/_/  |_/_____/_/ |_|      '}; ...
+                {' Matlab Auditory Brainstem Response '}];
             
-            banner{1} = sprintf('%s\t|\t<a href="mailto:daniel.stolzberg@gmail.com">Daniel Stolzberg, PhD</a>',banner{1});
-            banner{2} = sprintf('%s\t|\t<a href="matlab: type ABRCopyright.txt">copyright 2019</a>',banner{2});
-            banner{3} = sprintf('%s\t|\tSoftware v%s',banner{3},obj.SoftwareVersion);
-            banner{4} = sprintf('%s\t|\tData     v%s',banner{4},obj.DataVersion);
-            banner{5} = sprintf('%s\t|\tgit commit <a href="matlab: web(''%s'',''-browser'')">%s</a>',banner{5},obj.GithubRepository,obj.shortHash);
+            
+            i = 1;
+            banner{i} = sprintf('%s|\tSoftware v%s',banner{i},obj.SoftwareVersion); i = i + 1;
+            banner{i} = sprintf('%s|\tData     v%s',banner{i},obj.DataVersion); i = i + 1;
+            banner{i} = sprintf('%s|\tgit commit <a href="matlab: web(''%s'',''-browser'')">%s</a>',banner{i},obj.GithubRepository,obj.shortHash); i = i + 1;
+            banner{i} = sprintf('%s|',banner{i}); i = i + 1;
+            banner{i} = sprintf('%s|\t<a href="matlab: type Copyright.txt">Copyright 2019</a>',banner{i}); i = i + 1;
+            banner{i} = sprintf('%s|\t<a href="matlab: disp(''Email: daniel.stolzberg@gmail.com'')">Daniel Stolzberg, PhD</a>',banner{i}); i = i + 1;
+            
 %             banner{end+1} = '';
 %             banner{end+1} = sprintf('\t-> <a href="matlab: abr.ControlPanel;">Control Panel</a>');
 %             banner{end+1} = sprintf('\t-> <a href="matlab: abr.Calibration;">Audio Calibration</a>');
