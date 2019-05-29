@@ -51,6 +51,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         ASIOSettingsMenu               matlab.ui.container.Menu
         SelectAudioDeviceMenu          matlab.ui.container.Menu
         SetupAudioChannelsMenu         matlab.ui.container.Menu
+        VerbosityMenu                  matlab.ui.container.Menu
         TabGroup                       matlab.ui.container.TabGroup
         ConfigTab                      matlab.ui.container.Tab
         AcqFilterTab                   matlab.ui.container.Tab
@@ -338,6 +339,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         %% CONFIG ---------------------------------------------------------
         function gather_config_parameters(app)
+            vprintf(3,'Gathering configuration parameters')
+            
             app.Config.scheduleFile    = app.scheduleFile;
             app.Config.configFile      = app.configFile;
             app.Config.calibrationFile = app.calibrationFile;
@@ -647,40 +650,62 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         end
         
         
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         %% CONTROL --------------------------------------------------------
         function StateMachine(app)
             global stateAcq
             
-            persistent active_state
+            persistent activeState
             
-            if active_state == app.stateProgram, return; end
+            if activeState == app.stateProgram, return; end
             
-            active_state = app.stateProgram;
+            activeState = app.stateProgram;
+            
+            vprintf(2,'State Machine incremented; activeState = %s',activeState)
             
             try
-                switch active_state
+                switch activeState
                     case abr.stateProgram.STARTUP
                         drawnow
                         
-                    case abr.stateProgram.PREFLIGHT
-
-                        % setup as foreground process and launch background process
-                        if isempty(app.Runtime) || ~isvalid(app.Runtime) || ~app.Runtime.FgIsRunning
-                            app.Runtime = abr.Runtime;
-                        end
+                    case abr.stateProgram.PREP_BLOCK
                         
-                        % idle background process
-                        app.Runtime.mapCom.Data.CommandToBg = int8(abr.Cmd.Idle);
-                        
-                        if ~app.Runtime.BgIsRunning
-                            app.ABR.launch_bg_process;
-                        end
-                        
-                        % wait for the background process to load
-%                         while app.Runtime.mapCom.Data.BackgroundState < 0
-%                             pause(0.01);
-%                         end
-%                         
                         app.gather_config_parameters;
                         
                         % reset pause button state
@@ -693,10 +718,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ControlSweepCountGauge.Value = 0;
                         app.ControlPauseButton.Value = 0;
                         
-                        
+                        vprintf(3,'Reloading schedule file')
                         app.load_schedule_file;
                         
-                        app.TrcOrg.figure;
+%                         app.TrcOrg.figure;
                         
                         app.Schedule.DO_NOT_DELETE = true;
                         app.scheduleIdx  = find(app.Schedule.selectedData,1,'first');
@@ -704,11 +729,33 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         drawnow
                         
-                        app.stateProgram = abr.stateProgram.REPADVANCE; % to first trial
+
+                        % setup as foreground process and launch background process
+                        if isempty(app.Runtime) || isstruct(app.Runtime) || ~isvalid(app.Runtime) || ~app.Runtime.FgIsRunning
+                            app.Runtime = abr.Runtime;
+                        end
+                        
+                        % idle background process
+                        app.Runtime.CommandToBg = abr.Cmd.Idle;
+                        
+                        if ~app.Runtime.BgIsRunning
+                            abr.Runtime.launch_bg_process;
+                        end
+                        
+                        % reset background process
+                        app.Runtime.CommandToBg = abr.Cmd.Idle;
+                        
+                        % wait for the background process to load
+                        while ~app.Runtime.BgIsRunning
+                            pause(0.01);
+                        end
+                        
+                        app.stateProgram = abr.stateProgram.ADVANCE_BLOCK; % to first trial
+                        
+                        app.StateMachine;
                         
                         
-                        
-                    case abr.stateProgram.REPADVANCE
+                    case abr.stateProgram.ADVANCE_BLOCK
                         if stateAcq==abr.stateAcq.CANCELLED, return; end
                         
                         app.gather_config_parameters; % in case user updates guis
@@ -731,11 +778,12 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                                             app.scheduleIdx = app.scheduleIdx + find(ind,1,'first');
                                         else
                                             % reached end of schedule
-                                            app.stateProgram = abr.stateProgram.SCHEDCOMPLETE;
+                                            app.stateProgram = abr.stateProgram.SCHED_COMPLETE;
+                                            app.StateMachine;
                                             return
                                         end
                                     end
-                                                            
+                                    
                                     % update gui info
                                     app.update_ControlStimInfoLabel(nReps);
                                 case '< Define >'
@@ -745,10 +793,17 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             end
                         end
                         
+                        
+                        % update status
+                        app.AcquisitionStateLabel.Text = 'Advancing';
+                        app.AcquisitionStateLabel.Tooltip = 'Advancing to next block';
+                        app.AcquisitionStateLamp.Color = [0 0.4 0.8];
+                        drawnow
+                        
+                        
                         % update Schedule table selection                        
-                        app.Schedule.sigArray(app.scheduleIdx).update;
+%                         app.Schedule.sigArray(app.scheduleIdx).update;
                         app.Schedule.update_highlight(app.scheduleIdx);
-
                         
                         % convert to signal
                         app.ABR.DAC.SampleRate = app.SIG.Fs;
@@ -758,13 +813,18 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ABR.ADC = abr.Buffer;
                         
                         app.ABR.ADC.FrameSize = abr.Universal.frameLength;
-                        app.ABR.ADC.SampleRate = 12000; % TO DO: make app.ABR.ADC.SampleRate user settable?
+                        app.ABR.ADC.SampleRate = abr.Universal.ADCSampleRate; % TO DO: make app.ABR.ADC.SampleRate user settable?
                         app.ABR.adcDecimationFactor = max([1 floor(app.SIG.Fs ./ app.ABR.ADC.SampleRate)]);
                         app.ABR.ADC.SampleRate = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;
 
                         % generate signal based on its parameters
                         app.SIG = app.Schedule.sigArray(app.scheduleIdx);
+
+                        % compute signal
                         app.SIG = app.SIG.update;
+                        
+                        % copy unmodified stimulus signal
+                        app.ABR.SIG = app.SIG;
                         
                         % copy stimulus to DAC buffer.
                         app.ABR.DAC.Data = app.SIG.data{1};
@@ -782,28 +842,25 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         else
                             r = questdlg('Invalid Calibration!','ABR','Continue','Cancel','Cancel');
                             if isequal(r,'Cancel')
-                                app.stateProgram = abr.stateProgram.USERIDLE;
+                                app.stateProgram = abr.stateProgram.USER_IDLE;
                                 stateAcq = abr.stateAcq.CANCELLED;
                                 return
                             end
                         end
                         
-                        % save original stimulus signal
-                        app.ABR.SIG = app.SIG;
-                        
                         % alternate polarity flag
                         app.ABR.altPolarity = app.SIG.polarity.Alternate;
                         
                         % update ABR info after setting buffer
-                        app.ABR.numSweeps   = app.Config.Control.numSweeps;
-                        app.ABR.sweepRate   = app.Config.Control.sweepRate;
+                        app.ABR.numSweeps = app.Config.Control.numSweeps;
+                        app.ABR.sweepRate = app.Config.Control.sweepRate;
                         
                         % setup optional digital filters
                         app.ABR.adcFilterLP = app.Config.Filter.adcFilterLP;
                         app.ABR.adcFilterHP = app.Config.Filter.adcFilterHP;
                         app.ABR.adcUseBPFilter = isequal(app.FilterEnableSwitch.Value,'Enabled');
                         
-                        app.ABR.adcUseNotchFilter  = app.FilterNotchFilterKnob.Value ~= 0;
+                        app.ABR.adcUseNotchFilter = app.FilterNotchFilterKnob.Value ~= 0;
                         fv = app.FilterNotchFilterKnob.Value;
                         if fv > 0
                             app.ABR.adcNotchFilterFreq = fv;
@@ -812,12 +869,17 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ABR.createADCfilt;
                         
                         
-                        % reset pause button
-                        app.ControlPauseButton.Value           = 0;
-                        app.ControlPauseButton.Text            = 'Pause ';
-                        app.ControlPauseButton.Tooltip         = 'Click to Pause';
-                        app.ControlPauseButton.BackgroundColor = [0.96 0.96 0.96];
-                        app.AcquisitionStateLamp.Color         = [0 1 0];
+%                         % reset pause button
+%                         app.ControlPauseButton.Value           = 0;
+%                         app.ControlPauseButton.Text            = 'Pause ';
+%                         app.ControlPauseButton.Tooltip         = 'Click to Pause';
+%                         app.ControlPauseButton.BackgroundColor = [0.96 0.96 0.96];
+                        
+                                                
+                        % update status
+                        app.AcquisitionStateLabel.Text    = 'Acquire';
+                        app.AcquisitionStateLabel.Tooltip = 'Aquiring block';
+                        app.AcquisitionStateLamp.Color    = [0 1 0];
                         
                         drawnow
                         
@@ -830,49 +892,60 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         % write audio file to .runtime
                         app.Runtime.prepare_block_fg(app.ABR);
-    
+                        
+                        % tell background process to prep
+                        app.Runtime.CommandToBg = abr.Cmd.Prep;
+                        
                         % wait for state of background process to update
-                        while abr.Cmd(app.Runtime.mapCom.Data.CommandToFg) ~= abr.Cmd.Ready
+                        while app.Runtime.BackgroundState ~= abr.stateAcq.READY
                             pause(0.01);
-                            if app.Runtime.mapCom.Data.BackgroundState == abr.stateAcq.ERROR
+                            if app.Runtime.BackgroundState == abr.stateAcq.ERROR
                                 app.stateProgram = abr.stateProgram.ERROR;
                                 return
                             end
                         end
                         
+                        stateAcq = abr.stateAcq.READY;
+
                         app.stateProgram = abr.stateProgram.ACQUIRE;
+                        
+                        app.StateMachine;
+                        
                         
                         
                     case abr.stateProgram.ACQUIRE
+                                                
+                        % send command to background process to acquire block
+                        app.Runtime.CommandToBg = abr.Cmd.Run;
                         
-                        abr.run_acq_timer;
-                        
-                        app.Runtime.mapCom.Data.CommandToBg = int8(abr.Cmd.Run);
+                        stateAcq = abr.stateAcq.ACQUIRE;
                         
                         app.AcquisitionStateLabel.Text = 'Acquiring';
                         app.AcquisitionStateLamp.Color = [0 1 0];
                         app.AcquisitionStateLamp.Tooltip = 'Acquiring';
                         
+                        % start monitoring timer
+                        app.run_acq_timer;
                         
+                            
                         
-                        
-                    case abr.stateProgram.REPCOMPLETE
+                    case abr.stateProgram.BLOCK_COMPLETE
                         app.scheduleRunCount(app.scheduleIdx) = app.scheduleRunCount(app.scheduleIdx) + 1;
                         
                         % Add buffer to traces.Organizer
-                        app.TrcOrg.addTrace(app.ABR.ADC.SweepMean, ...
-                            app.SIG.dataParams, ...
-                            app.ABR.ADC.TimeVector(1), ...
-                            app.ABR.ADC.SampleRate);
+%                         app.TrcOrg.addTrace(app.ABR.ADC.SweepMean, ...
+%                             app.SIG.dataParams, ...
+%                             app.ABR.ADC.TimeVector(1), ...
+%                             app.ABR.ADC.SampleRate);
                         
                         %%%% TESTING
-                        R = app.ABR.analysis('peaks');
+%                         R = app.ABR.analysis('peaks');
                         
                                                 
-                        app.stateProgram = abr.stateProgram.REPADVANCE;
+                        app.stateProgram = abr.stateProgram.ADVANCE_BLOCK;
+                        app.StateMachine;
                         
-                        
-                    case abr.stateProgram.SCHEDCOMPLETE
+                    case abr.stateProgram.SCHED_COMPLETE
                         app.Schedule.update_highlight([]);
                         app.Schedule.DO_NOT_DELETE = false;
                         app.ControlAcquisitionSwitch.Value  = 'Idle';
@@ -889,7 +962,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         drawnow
                         
                         
-                    case abr.stateProgram.USERIDLE
+                    case abr.stateProgram.USER_IDLE
                         % SAVE ABR DATA
                         app.AcquisitionStateLabel.Text      = 'Saving Data';
                         app.AcquisitionStateLamp.Color      = [0.2 0.8 1];
@@ -907,7 +980,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         drawnow
                         
                         
-                    case abr.stateProgram.ACQUISITIONERROR
+                    case abr.stateProgram.ACQ_ERROR
                         app.Schedule.update_highlight(app.scheduleIdx,[1 0.2 0.2]);
                         app.Schedule.DO_NOT_DELETE = false;
                         app.AcquisitionStateLabel.Text      = 'ERROR';
@@ -924,7 +997,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 
             catch stateME
 %                 fprintf(2,'Current Program State: "%s"\n',app.stateProgram)
-                app.stateProgram = abr.stateProgram.ACQUISITIONERROR;
+                app.stateProgram = abr.stateProgram.ACQ_ERROR;
+                app.StateMachine;
                 rethrow(stateME);
             end
             
@@ -932,20 +1006,25 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         end
         
         function control_acq_switch(app,event)
-            
+            vprintf(3,'User set control switch to %s',event.Value)
+
             switch event.Value
                 case 'Acquire'
-                    app.stateProgram = abr.stateProgram.PREFLIGHT;
+                    app.stateProgram = abr.stateProgram.PREP_BLOCK;
                     app.StateMachine;
 
-
-%                     while ~any(app.stateProgram == [abr.stateProgram.USERIDLE, abr.stateProgram.ACQUISITIONERROR, abr.stateProgram.SCHEDCOMPLETE])
+%                     while ~any(app.stateProgram == [abr.stateProgram.USER_IDLE, abr.stateProgram.ACQ_ERROR, abr.stateProgram.SCHED_COMPLETE])
 %                         app.StateMachine;
 %                     end
                     
                 case 'Idle'
-                    % Send stop signal
-                    app.stateProgram = abr.stateProgram.USERIDLE;
+                    stop(app.Timer);
+                    
+                    app.stateProgram = abr.stateProgram.USER_IDLE;
+                    
+                    % Send stop signal to background process
+                    
+                    app.Runtime.CommandToBg = abr.Cmd.Stop;
                     
                     % reset gui
                     app.AcquisitionStateLabel.Text = 'Cancelled';
@@ -958,6 +1037,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                     app.ControlPauseButton.BackgroundColor = [0.96 0.96 0.96];
                     app.ControlPauseButton.Tooltip = 'Click to Pause';
                     
+                    app.stateProgram = abr.stateProgram.USER_IDLE;
                     app.StateMachine;
             end
         end
@@ -975,6 +1055,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             T.ExecutionMode = 'fixedSpacing';
             T.TasksToExecute = inf;
             T.Period = 0.05;
+            T.StartDelay = 1;
             
             T.StartFcn = {app.timer_StartFcn,app};
             T.TimerFcn = {app.timer_RuntimeFcn,app};
@@ -1000,6 +1081,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 hObj.BackgroundColor = [0.96 0.96 0.96];
                 
             elseif hObj.Value == 0
+                % send command to background process
+                if app.Runtime.CommandToBg == abr.Cmd.Pause
+                    app.Runtime.CommandToBg = abr.Cmd.Run;
+                end
                 stateAcq = abr.stateAcq.ACQUIRE;
                 hObj.Text = 'Pause';
                 hObj.Tooltip = 'Click to Pause';
@@ -1007,6 +1092,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 app.AcquisitionStateLamp.Color = [0 1 0];
                 
             elseif stateAcq == abr.stateAcq.ACQUIRE
+                % send command to background process
+                app.Runtime.CommandToBg = abr.Cmd.Pause;
                 stateAcq = abr.stateAcq.PAUSED;
                 hObj.Text = '*PAUSED*';
                 hObj.Tooltip = 'Click to Resume';
@@ -1017,7 +1104,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             drawnow
         end
         
-        function advance_schedule(~,~)
+        function advance_schedule(app,~)
             global stateAcq
 
             if stateAcq == abr.stateAcq.IDLE, return; end
@@ -1029,8 +1116,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             % Updating stateAcq should be detected by ABR.playrec function
             % and stop the current acqusition, which returns control to the
             % StateMachine
-%             stateAcq = 'REPCOMPLETE';
-            stateAcq = abr.stateAcq.IDLE;
+            stateAcq = abr.stateAcq.ADVANCED;
+            app.Runtime.CommandToBg = abr.Cmd.Stop;
         end
         
         function repeat_schedule_idx(app,event)
@@ -1158,26 +1245,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         
         %% OTHER ----------------------------------------------------------
-        function ax = live_plot(app)    
-            f = findobj('type','figure','-and','name','Live Plot');
-            if ~isempty(f) && ishandle(f)
-                ax = findobj('type','axes','-and','tag','live_plot');
-                return
-            end
-            p = app.ControlPanelUIFigure.Position;
-            f = figure('name','Live Plot','color','w','NumberTitle','off', ...
-                'Position',[p(1)+p(3)+20 p(2)+p(4)-280 600 250]);
-            ax = axes(f,'tag','live_plot','color','none');
-            grid(ax,'on');
-            box(ax,'on');
-            ax.XAxis.Label.String = 'time (ms)';
-            ax.YAxis.Label.String = 'amplitude (mV)';
-            
-            ax.Toolbar.Visible = 'off'; % disable zoom/pan options
-            ax.HitTest = 'off';
-            
-            figure(f);
-        end
+       
         
         function ax = live_analysis_plot(app)    
             f = findobj('type','figure','-and','name','Live Analysis');
@@ -1201,20 +1269,58 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             figure(f);
         end
         
-        
+        function update_verbosity(app)
+            global GVerbosity
+            
+            vstr = {'0 - Stealth mode'; ...
+                 '1 - Basic info'; ...
+                 '2 - Lots of info'; ...
+                 '3 - Looking under the hood'; ...
+                 '4 - Ludicrus!'};
+            
+            [s,v] = listdlg('PromptString','Set Verbosity Level', ...
+                'SelectionMode','single', ...
+                'InitialValue',GVerbosity+1, ...
+                'ListString',vstr);
+            
+            if isequal(v,0), return; end
+            
+            GVerbosity = s-1;
+            
+            app.VerbosityMenu.Text = sprintf('Program Verbosity = %d',GVerbosity);
+            
+            vprintf(1,'Verbosity set to %s',vstr{GVerbosity+1})
+            
+            figure(app.ControlPanelUIFigure);
+        end
     end
     
     
     methods (Access = public)
+        abr_live_plot(app,sweeps,tvec);
         
         % Constructor
         function app = ControlPanel(configFile)
             global stateAcq
             
-            fprintf('Starting ABR Control Panel ...\n')
+            abr.Universal.startup;
             
-            stateAcq = abr.stateAcq.IDLE;
+            fprintf('\nStarting ABR Control Panel ...\n')
 
+            stateAcq = abr.stateAcq.IDLE;
+            
+            % setup as foreground process and launch background process
+            if isempty(app.Runtime) || isstruct(app.Runtime) || ~isvalid(app.Runtime) || ~app.Runtime.FgIsRunning
+                app.Runtime = abr.Runtime;
+            end
+            
+            % idle background process
+            app.Runtime.CommandToBg = abr.Cmd.Idle;
+            
+            if ~app.Runtime.BgIsRunning
+                abr.Runtime.launch_bg_process;
+            end
+            
             app.createComponents;
             
             if nargin == 1 && ischar(configFile) && exist(configFile,'file') == 2
@@ -1274,12 +1380,15 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 app.Schedule.DO_NOT_DELETE = false;
             end
             
-            if any(stateAcq == [abr.stateAcq.IDLE abr.stateAcq.CANCELLED])
-                delete(app);
-            else
+            if stateAcq == abr.stateAcq.ACQUIRE
                 uialert(app.ControlPanelUIFigure, ...
                     sprintf('I''m sorry Dave, I''m afraid I can''t do that.\n\nPlease first set acquisition to "Idle".'), ...
                     'Control Panel','Icon','warning','modal',true);
+            else
+                try
+                    app.Runtime.CommandToBg = abr.Cmd.Kill;
+                end
+                delete(app);
             end
         end
     end

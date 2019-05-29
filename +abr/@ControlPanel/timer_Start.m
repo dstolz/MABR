@@ -1,10 +1,5 @@
 function timer_Start(T,event,app)
 
-
+vprintf(2,'Starting ControlPanel Timer')
 % setup live plot
-ax = app.live_plot;
-figure(ancestor(ax,'figure'));
-
-axa = app.live_analysis_plot;
-figure(ancestor(axa,'figure'));
-app.ABR.playrec(app,ax,axa);
+app.abr_live_plot;

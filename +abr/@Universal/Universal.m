@@ -19,8 +19,11 @@ classdef Universal < handle
 
         comFile         (1,:) char
         inputBufferFile (1,:) char
+        inputTimingFile (1,:) char
         dacFile         (1,:) char
         infoFile        (1,:) char
+        
+        errorLogPath    (1,:) char
     end
     
     properties (Access = private)
@@ -28,6 +31,7 @@ classdef Universal < handle
     end
     
     properties (Constant)
+        ADCSampleRate = 48000;
         frameLength = 2048;
         
         SoftwareVersion = '0.1 beta';
@@ -43,12 +47,17 @@ classdef Universal < handle
         % Constructor
         function obj = Universal()
             obj.runtimePath = fullfile(fileparts(obj.root),'.runtime_data');
+            
             if ~isdir(obj.runtimePath); mkdir(obj.runtimePath); end
 
             obj.dacFile = fullfile(obj.runtimePath,'dac.wav');
             obj.comFile = fullfile(obj.runtimePath,'com.dat');
             obj.inputBufferFile = fullfile(obj.runtimePath,'input_buffer.dat');
+            obj.inputTimingFile = fullfile(obj.runtimePath,'input_timing.dat');
             obj.infoFile = fullfile(obj.runtimePath,'info.mat');
+            
+            obj.errorLogPath = fullfile(fileparts(obj.root),'.error_logs');
+            if ~isdir(obj.errorLogPath), mkdir(obj.errorLogPath); end
         end
         
         function banner(obj)
@@ -65,10 +74,10 @@ classdef Universal < handle
             banner{3} = sprintf('%s\t|\tSoftware v%s',banner{3},obj.SoftwareVersion);
             banner{4} = sprintf('%s\t|\tData     v%s',banner{4},obj.DataVersion);
             banner{5} = sprintf('%s\t|\tgit commit <a href="matlab: web(''%s'',''-browser'')">%s</a>',banner{5},obj.GithubRepository,obj.shortHash);
-            banner{end+1} = '';
-            banner{end+1} = sprintf('\t-> <a href="matlab: abr.ControlPanel;">Control Panel</a>');
-            banner{end+1} = sprintf('\t-> <a href="matlab: abr.Calibration;">Audio Calibration</a>');
-            banner{end+1} = sprintf('\t-> <a href="matlab: abr.ScheduleDesign;">Stimulus Design</a>');
+%             banner{end+1} = '';
+%             banner{end+1} = sprintf('\t-> <a href="matlab: abr.ControlPanel;">Control Panel</a>');
+%             banner{end+1} = sprintf('\t-> <a href="matlab: abr.Calibration;">Audio Calibration</a>');
+%             banner{end+1} = sprintf('\t-> <a href="matlab: abr.ScheduleDesign;">Stimulus Design</a>');
             
             disp(char(banner))
         end

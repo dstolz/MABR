@@ -82,23 +82,6 @@ classdef ABR < abr.Universal & handle
             end
         end
         
-        
-        function launch_bg_process(obj)
-            % setup Background process
-%             cmdStr = sprintf('addpath(''%s''); H = abr.Runtime(''Background'');', ...
-%                 fileparts(obj.root));
-%             
-%             [s,w] = system(sprintf('"%s" -sd "%s" -logfile "%s" -noFigureWindows -nosplash -nodesktop -nodisplay -r "%s"', ...
-%                 obj.matlabExePath,obj.runtimePath,fullfile(obj.runtimePath,'Background_process_log.txt'),cmdStr));
-            
-
-            % testing
-            cmdStr = sprintf('addpath(''%s''); H = abr.Runtime(''Background'')', ...
-                fileparts(obj.root));
-
-            [s,w] = system(sprintf('"%s" -nosplash -r "%s"', ...
-                obj.matlabExePath,cmdStr));
-        end
 
 
                 

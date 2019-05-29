@@ -3,11 +3,24 @@ function prepare_block_fg(obj,ABR)
 
 ABR.init_timing_signal;
 
-% append dac timing signal
-y = [ABR.DAC.Data [1; zeros(ABR.DAC.N-1,1)]];
 
-% repeate for numSweeps
-y = repmat(y,ABR.numSweeps,1);
+y = ABR.DAC.Data;
+% append dac timing signal
+
+% repeat for numSweeps
+if ABR.altPolarity
+    oy = y;
+    y = [y; -y];
+    n = floor(ABR.numSweeps/2);
+    y = repmat(y,n,1);
+    if rem(ABR.numSweeps,2), y = [y; oy]; end
+else
+    y = repmat(y,ABR.numSweeps,1);
+end
+
+timingSignal = [1; zeros(ABR.DAC.N-1,1)];
+y = [y repmat(timingSignal,ABR.numSweeps,1)];
+
 
 % write wav file to disk
 audiowrite( ...
@@ -17,4 +30,3 @@ audiowrite( ...
     'BitsPerSample',32, ...
     'Title','ABR Stimulus');
 
-obj.mapCom.Data.CommandToBg = int8(abr.Cmd.Prep);

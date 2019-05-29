@@ -3,6 +3,8 @@
 % Create UIFigure and components
 function createComponents(app)
 
+global GVerbosity
+
 % Create ControlPanelUIFigure
 app.ControlPanelUIFigure = uifigure;
 app.ControlPanelUIFigure.Position = [50 400 550 275];
@@ -63,6 +65,15 @@ app.SetupAudioChannelsMenu = uimenu(app.OptionsMenu);
 app.SetupAudioChannelsMenu.Text = 'Define Audio Channels';
 app.SetupAudioChannelsMenu.Tooltip = 'Setup Stimulus, Acquisition, and Loop-Back channels';
 app.SetupAudioChannelsMenu.MenuSelectedFcn = createCallbackFcn(app, @setup_audiochannels, false);
+
+% Create VerbosityMenu
+app.VerbosityMenu = uimenu(app.OptionsMenu);
+app.VerbosityMenu.Text = sprintf('Program Verbosity = %d',GVerbosity);
+app.VerbosityMenu.Tooltip = 'Specify the verbosity of command line output.';
+app.VerbosityMenu.Separator = 'on';
+app.VerbosityMenu.MenuSelectedFcn = createCallbackFcn(app, @update_verbosity, false);
+
+
 
 %% Create TabGroup --------------------------------------------------------
 app.TabGroup = uitabgroup(app.ControlPanelUIFigure);

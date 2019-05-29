@@ -3,7 +3,14 @@ classdef Runtime < handle
     
     properties        
         mapCom          % memmapfile object: communications
-        mapInputBuffer  % memmapfile object: circular buffer        
+        mapInputBuffer  % memmapfile object: ADC buffer       
+        mapTimingBuffer % memmapfile object: timing buffer
+        
+        CommandToBg     (1,1) abr.Cmd
+        CommandToFg     (1,1) abr.Cmd
+        
+        BackgroundState (1,1) abr.stateAcq
+        ForegroundState (1,1) abr.stateAcq
     end
     
     properties (SetAccess = private)
@@ -23,6 +30,7 @@ classdef Runtime < handle
         
         
         timer_RuntimeFcn (1,1) = @abr.Runtime.timer_runtime; % function handle
+        timer_StopFcn    (1,1) = @abr.Runtime.timer_stop; % function handle
         timer_ErrorFcn   (1,1) = @abr.Runtime.timer_error; % function handle
         
         
@@ -37,7 +45,7 @@ classdef Runtime < handle
     
     properties (Constant)
         timerPeriod = 0.01;
-        maxInputBufferLength = 2^25; % should be power of 2 enough for at least a minute of data at 192kHz sampling rate
+        maxInputBufferLength = 2^26; % should be power of 2 enough for at least a minute of data at 192kHz sampling rate
     end
     
     methods
@@ -47,28 +55,48 @@ classdef Runtime < handle
             if nargin == 0 || isempty(Role), Role = 'Foreground'; end
             obj.Role = Role;
             
+            obj.update_infoData(sprintf('%s_ProcessID',obj.Role),feature('getpid'));
+            
             obj.create_memmapfile;
             
             if obj.isBackground
                 
                 abr.Universal.startup;
                 
+                abr.Runtime.print_do_not_close;
+
+                                
                 % Make sure MATLAB is running at full steam
-                [s,w] = dos('wmic process where name="MATLAB.exe" CALL setpriority 128'); % 128 = High
+                wmicStr = sprintf('wmic process where processid=''%d'' CALL setpriority 128',obj.infoData.Background_ProcessID);
+                [s,w] = dos(wmicStr); % 128 = High
                 if s ~= 0
                     warning('Failed to elevate the priority of MATLAB.exe')
                     disp(w)
                 end
                 
-                obj.mapCom.Data.BackgroundState = int8(abr.stateAcq.IDLE);
+                % reset command to foreground and background state
+                obj.CommandToFg     = abr.Cmd.Undef;
+                obj.BackgroundState = abr.stateAcq.IDLE;
+                
                 
                 obj.initialize_timer;
                 
+                
+%                 % HIDE MATLAB PROCESS
+%                 com.mathworks.mde.desk.MLDesktop.getInstance.getMainFrame.hide;
+                
             else
-                obj.mapCom.Data.ForegroundState = int8(abr.stateAcq.IDLE);
+                wmicStr = sprintf('wmic process where processid=''%d'' CALL setpriority 32768',obj.infoData.Foreground_ProcessID);
+                [s,w] = dos(wmicStr); % 32768 = Above Normal
+                if s ~= 0
+                    warning('Failed to elevate the priority of MATLAB.exe')
+                    disp(w)
+                end
+                % reset command to background and foreground state
+                obj.CommandToBg     = abr.Cmd.Undef;
+                obj.ForegroundState = abr.stateAcq.IDLE;
             end
             
-            obj.update_infoData(sprintf('%s_ProcessID',obj.Role),feature('getpid'));
             
         end
         
@@ -79,7 +107,7 @@ classdef Runtime < handle
                 if obj.isBackground
                     obj.mapCom.Data.BackgroundState = int8(abr.stateAcq.DELETED);
                 else
-                    obj.mapCom.Data.ForegroundState = int8(abr.stateAcq.DELETED);
+                    obj.ForegroundState = int8(abr.stateAcq.DELETED);
                 end
             end
             
@@ -87,25 +115,32 @@ classdef Runtime < handle
                 stop(obj.Timer);
                 delete(obj.Timer);
             end
+            
+            if obj.isBackground
+                vprintf(1,'Seppuku')
+                seppuku;
+            end
         end
         
         function tf = get.BgIsRunning(obj)
-%             tf = obj.mapCom.Data.BackgroundState > -3;
             [~,pidstr] = system('Wmic process where (Name like ''MATLAB.exe'') get ProcessId');
             p = splitlines(pidstr);
             p(1) = [];
             p = cellfun(@deblank,p,'uni',0);
+            i = obj.infoData;
+            if ~isfield(i,'Background_ProcessID'), obj.update_infoData('Background_ProcessID',-1); end
             ind = ismember(num2str(obj.infoData.Background_ProcessID),p);
             tf = any(ind);
         end
         
         
         function tf = get.FgIsRunning(obj)
-%             tf = obj.mapCom.Data.ForegroundState > -3;
             [~,pidstr] = system('Wmic process where (Name like ''MATLAB.exe'') get ProcessId');
             p = splitlines(pidstr);
             p(1) = [];
             p = cellfun(@deblank,p,'uni',0);
+            i = obj.infoData;
+            if ~isfield(i,'Foreground_ProcessID'), obj.update_infoData('Foreground_ProcessID',-1); end
             ind = ismember(num2str(obj.infoData.Foreground_ProcessID),p);
             tf = any(ind);
         end
@@ -128,7 +163,6 @@ classdef Runtime < handle
                 fwrite(f, -99, 'int8'); % CommandToFg
                 fwrite(f, -99, 'int8'); % CommandToBg
                 fwrite(f, [1 obj.Universal.frameLength], 'uint32'); % BufferIndex
-                fwrite(f, 0,   'uint32');
                 fclose(f);
             end
             
@@ -139,7 +173,18 @@ classdef Runtime < handle
                     error('abr:Runtime:create_memmapfile:cannotOpenFile', ...
                         'Cannot open file "%s": %s.', obj.Universal.inputBufferFile, msg);
                 end
-                fwrite(f, zeros(obj.maxInputBufferLength,2,'single'), 'single'); % Buffer
+                fwrite(f, zeros(obj.maxInputBufferLength,1,'single'), 'single'); % Buffer
+                fclose(f);
+            end
+            
+            % memmapped file for the timing buffer
+            if ~exist(obj.Universal.inputTimingFile, 'file')
+                [f, msg] = fopen(obj.Universal.inputTimingFile, 'wb');
+                if f == -1
+                    error('abr:Runtime:create_memmapfile:cannotOpenFile', ...
+                        'Cannot open file "%s": %s.', obj.Universal.inputTimingFile, msg);
+                end
+                fwrite(f, zeros(obj.maxInputBufferLength,1,'single'), 'single'); % Buffer
                 fclose(f);
             end
             
@@ -152,20 +197,31 @@ classdef Runtime < handle
                 'int8',     [1,1], 'BackgroundState'; ...
                 'int8',     [1,1], 'CommandToFg'; ...
                 'int8',     [1,1], 'CommandToBg'; ...
-                'uint32',   [1 2], 'BufferIndex'; ...
-                'uint32',   [1 1], 'TimingIndex'});
+                'uint32',   [1 2], 'BufferIndex';}, ...
+                'Repeat',1);
             
             % Writeable for the Background process only
+%             obj.mapInputBuffer = memmapfile(obj.Universal.inputBufferFile, ...
+%                 'Writable', obj.isBackground, ...
+%                 'Format', { ...
+%                 'single' [1 2] 'InputBuffer'}, ...
+%                 'Repeat',obj.maxInputBufferLength);
             obj.mapInputBuffer = memmapfile(obj.Universal.inputBufferFile, ...
                 'Writable', obj.isBackground, ...
-                'Format', { ...
-                'single' [obj.maxInputBufferLength 2] 'InputBuffer'});
+                'Format', 'single', ...
+                'Repeat', inf);
             
+            
+            obj.mapTimingBuffer = memmapfile(obj.Universal.inputTimingFile, ...
+                'Writable', obj.isBackground, ...
+                'Format', 'single', ...
+                'Repeat', inf);
+
             % reset memmaps
             if obj.isBackground
                 obj.mapCom.Data.BackgroundState = int8(abr.stateAcq.INIT);
             else
-                obj.mapCom.Data.ForegroundState = int8(abr.stateAcq.INIT);
+                obj.ForegroundState = int8(abr.stateAcq.INIT);
             end
             
         end
@@ -190,12 +246,19 @@ classdef Runtime < handle
         function info = get.infoData(obj)
             % should be non-time critical data used to communicate between foreground and background process.
             
-            % ADC.channels.signal
-            % ADC.channels.timing
-            % DAC.channels.signal
-            % DAC.channels.timing
-            
-            info = load(obj.Universal.infoFile);
+
+            % not sure why, but every once in a while this will fail even
+            % though the file exists and is not locked 
+            while 1
+                try
+                    info = load(obj.Universal.infoFile);
+                    break
+                catch
+                    pause(0.01);
+                    vprintf(4,1,'Loading infoData FAILED!')
+                end
+            end
+ 
         end
         
         function update_infoData(obj,varname,vardata)
@@ -218,6 +281,44 @@ classdef Runtime < handle
                 save(obj.Universal.infoFile,varname,'lastUpdated');
             end
         end
+        
+        function set.BackgroundState(obj,state)
+            vprintf(3,'BackgroundState set to %s',state);
+            obj.mapCom.Data.BackgroundState = int8(state);
+        end
+        
+        function state = get.BackgroundState(obj)
+            state = abr.stateAcq(obj.mapCom.Data.BackgroundState);
+        end
+        
+        function set.ForegroundState(obj,state)
+            vprintf(3,'ForegroundState set to %s',state);
+            obj.mapCom.Data.ForegroundState = int8(state);
+        end
+        
+        function state = get.ForegroundState(obj)
+            state = abr.stateAcq(obj.mapCom.Data.ForegroundState);
+        end
+        
+        function set.CommandToFg(obj,cmd)
+            vprintf(3,'CommandToFg set to %s',cmd);
+            obj.mapCom.Data.CommandToFg = int8(cmd);
+        end
+        
+        function cmd = get.CommandToFg(obj)
+            cmd = abr.Cmd(obj.mapCom.Data.CommandToFg);
+        end
+        
+        function set.CommandToBg(obj,cmd)
+            vprintf(3,'CommandToBg set to %s',cmd);
+            obj.mapCom.Data.CommandToBg = int8(cmd);
+        end
+        
+        function cmd = get.CommandToBg(obj)
+            cmd = abr.Cmd(obj.mapCom.Data.CommandToBg);
+        end
+            
+            
     end
     
     
@@ -242,10 +343,64 @@ classdef Runtime < handle
             
             obj.Timer = T;
         end
+        
+        
     end
     
     methods (Static)
         timer_runtime(T,event,obj);
+        timer_stop(T,event,obj);
         timer_error(T,event,obj);
+        
+        
+        
+        function launch_bg_process
+            
+            U = abr.Universal;
+            
+            d = which('abr.Runtime.timer_runtime');
+            d = strrep(d,'\','\\');
+%             
+% %             % setup Background process
+%             cmdStr = sprintf('addpath(''%s''); dbstop in ''%s'' at 10; H = abr.Runtime(''Background'');', ...
+%                 fileparts(U.root),d);
+
+            % setup Background process
+            cmdStr = sprintf('addpath(''%s''); H = abr.Runtime(''Background'');', ...
+                fileparts(U.root));
+            
+            vprintf(3,'Launching background process; cmdStr = %s',cmdStr)
+
+            [s,w] = system(sprintf('"%s" -sd "%s" -logfile "%s" -nodesktop -minimize -noFigureWindows -nosplash -r "%s"', ...
+                U.matlabExePath,U.runtimePath,fullfile(U.runtimePath,'Background_process_log.txt'),cmdStr));
+            
+            vprintf(3,'Launched background process; message: %s',w)
+
+%             % testing
+%             cmdStr = sprintf('addpath(''%s''); H = abr.Runtime(''Background'')', ...
+%                 fileparts(obj.root));
+
+%             [s,w] = system(sprintf('"%s" -nosplash -r "%s"', ...
+%                 obj.matlabExePath,cmdStr));
+        end
+        
+        
+        
+        function print_do_not_close
+            s = [{' _______    ______         __    __   ______  ________         ______   __        ______    ______   ________  __ '}; ...
+                {'|       \  /      \       |  \  |  \ /      \|        \       /      \ |  \      /      \  /      \ |        \|  \'}; ...
+                {'| $$$$$$$\|  $$$$$$\      | $$\ | $$|  $$$$$$\\$$$$$$$$      |  $$$$$$\| $$     |  $$$$$$\|  $$$$$$\| $$$$$$$$| $$'}; ...
+                {'| $$  | $$| $$  | $$      | $$$\| $$| $$  | $$  | $$         | $$   \$$| $$     | $$  | $$| $$___\$$| $$__    | $$'}; ...
+                {'| $$  | $$| $$  | $$      | $$$$\ $$| $$  | $$  | $$         | $$      | $$     | $$  | $$ \$$    \ | $$  \   | $$'}; ...
+                {'| $$  | $$| $$  | $$      | $$\$$ $$| $$  | $$  | $$         | $$   __ | $$     | $$  | $$ _\$$$$$$\| $$$$$    \$$'}; ...
+                {'| $$__/ $$| $$__/ $$      | $$ \$$$$| $$__/ $$  | $$         | $$__/  \| $$_____| $$__/ $$|  \__| $$| $$_____  __ '}; ...
+                {'| $$    $$ \$$    $$      | $$  \$$$ \$$    $$  | $$          \$$    $$| $$     \\$$    $$ \$$    $$| $$     \|  \'}; ...
+                {' \$$$$$$$   \$$$$$$        \$$   \$$  \$$$$$$    \$$           \$$$$$$  \$$$$$$$$ \$$$$$$   \$$$$$$  \$$$$$$$$ \$$'}];
+            
+            for i = 1:length(s)
+                fprintf('%s\n',s{i})
+            end
+
+        end
     end
 end
