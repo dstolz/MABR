@@ -119,26 +119,18 @@ classdef Runtime < handle
         end
         
         function tf = get.BgIsRunning(obj)
-            [~,pidstr] = system('Wmic process where (Name like ''MATLAB.exe'') get ProcessId');
-            p = splitlines(pidstr);
-            p(1) = [];
-            p = cellfun(@deblank,p,'uni',0);
+            pids = obj.get_all_matlab_pids;
             i = obj.infoData;
             if ~isfield(i,'Background_ProcessID'), obj.update_infoData('Background_ProcessID',-1); end
-            ind = ismember(num2str(obj.infoData.Background_ProcessID),p);
-            tf = any(ind);
+            tf = any(obj.infoData.Background_ProcessID == pids);
         end
         
         
         function tf = get.FgIsRunning(obj)
-            [~,pidstr] = system('Wmic process where (Name like ''MATLAB.exe'') get ProcessId');
-            p = splitlines(pidstr);
-            p(1) = [];
-            p = cellfun(@deblank,p,'uni',0);
+            pids = obj.get_all_matlab_pids;
             i = obj.infoData;
             if ~isfield(i,'Foreground_ProcessID'), obj.update_infoData('Foreground_ProcessID',-1); end
-            ind = ismember(num2str(obj.infoData.Foreground_ProcessID),p);
-            tf = any(ind);
+            tf = any(obj.infoData.Foreground_ProcessID == pids);
         end
         
         function create_memmapfile(obj)
@@ -348,7 +340,12 @@ classdef Runtime < handle
         timer_stop(T,event,obj);
         timer_error(T,event,obj);
         
-        
+        function pid = get_all_matlab_pids
+            [~,pidstr] = system('Wmic process where (Name like ''MATLAB.exe'') get ProcessId');
+            p = splitlines(pidstr);
+            p(1) = [];
+            pid = cellfun(@str2double,cellfun(@deblank,p,'uni',0));
+        end
         
         function launch_bg_process
             
