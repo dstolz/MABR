@@ -1,7 +1,7 @@
 function timer_Runtime(T,event,app)
 
 
-app.live_plotting;
+app.live_analysis;
 
 
 % make sure the background process is still running

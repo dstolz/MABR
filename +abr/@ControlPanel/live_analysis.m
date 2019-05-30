@@ -1,4 +1,4 @@
-function live_plotting(app)
+function live_analysis(app)
 
 [preSweep,postSweep] = app.extract_sweeps;
 if isnan(preSweep(1)) || isnan(postSweep(1)), return; end
