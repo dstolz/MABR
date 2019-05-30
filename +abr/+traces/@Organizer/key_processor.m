@@ -12,11 +12,12 @@ if isempty(K) || ismember(K,{'control','shift'}), return; end
 
 tidx = obj.TraceSelection;
 
+vprintf(4,'Received: modifier = %s;\tkey = %s',M,K)
+
 if isequal(M,{'shift','control'})
     
     % ignore some basic Figure commands
     if any(ismember(K,{'d','u','p'})), return; end
-    
     
     
 elseif isequal(char(M),'control')
@@ -46,7 +47,7 @@ switch lower(K)
         
     case {'d','delete'} % delete selected traces
         if isempty(tidx), return; end
-        obj.deleteTrace(tidx);
+        obj.delete_trace(tidx);
         plot(obj);
         
     case {'e','export'} % export selected trace(s)
