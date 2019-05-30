@@ -449,17 +449,27 @@ app.SweepsSpinnerLabel.Layout.Column = 1;
 app.SweepsSpinnerLabel.Text = '# Sweeps';
 app.SweepsSpinnerLabel.Tooltip = 'Number of sweeps, i.e. stimulus presentations, per schedule row.';
 
-% Create SweepCountSpinner
-app.SweepCountSpinner = uispinner(G);
-app.SweepCountSpinner.Limits = [1 inf];
-app.SweepCountSpinner.RoundFractionalValues = 'on';
-app.SweepCountSpinner.ValueDisplayFormat = '%d';
-app.SweepCountSpinner.HorizontalAlignment = 'center';
-app.SweepCountSpinner.Layout.Row = R;
-app.SweepCountSpinner.Layout.Column = 2;
-app.SweepCountSpinner.Value = 128;
-app.SweepCountSpinner.ValueChangedFcn = createCallbackFcn(app, @update_sweep_count, true);
-app.SweepCountSpinner.CreateFcn = createCallbackFcn(app, @update_sweep_count, true);
+% Creqte SweepCountDD
+app.SweepCountDD = uidropdown(G);
+app.SweepCountDD.Layout.Row = R;
+app.SweepCountDD.Layout.Column = 2;
+app.SweepCountDD.Editable = 'on';
+app.SweepCountDD.Items = cellstr(num2str(2.^(6:11)'));
+app.SweepCountDD.ItemsData = num2cell(2.^(6:11)');
+app.SweepCountDD.Value = 1024;
+app.SweepCountDD.ValueChangedFcn = createCallbackFcn(app, @update_sweep_count, true);
+
+% % Create SweepCountSpinner
+% app.SweepCountSpinner = uispinner(G);
+% app.SweepCountSpinner.Limits = [1 inf];
+% app.SweepCountSpinner.RoundFractionalValues = 'on';
+% app.SweepCountSpinner.ValueDisplayFormat = '%d';
+% app.SweepCountSpinner.HorizontalAlignment = 'center';
+% app.SweepCountSpinner.Layout.Row = R;
+% app.SweepCountSpinner.Layout.Column = 2;
+% app.SweepCountSpinner.Value = 128;
+% app.SweepCountSpinner.ValueChangedFcn = createCallbackFcn(app, @update_sweep_count, true);
+% app.SweepCountSpinner.CreateFcn = createCallbackFcn(app, @update_sweep_count, true);
 
 R = R + 1;
 % Create SweepRateHzSpinnerLabel

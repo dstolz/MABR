@@ -52,7 +52,7 @@ while ~isDone(obj.AFR)
 %     end
 
     % TESTING WITH FAKE LOOP-BACK AND SIGNAL **********************
-    audioIn(:,1) = audioOut(:,1) + randn(frameLength,1);
+    audioIn(:,1) = audioOut(:,1) + randn(frameLength,1)/10;
     audioIn(:,2) = audioOut(:,2);
 
     M.Data(idx:k) = audioIn(:,1);

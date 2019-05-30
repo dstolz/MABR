@@ -1,4 +1,4 @@
-function abr_live_plot(app,sweeps,tvec)
+function abr_live_plot(app,sweeps,tvec,R)
 
 persistent h
 
@@ -25,7 +25,6 @@ h.meanLine.YData = meanSweeps * 1000; % V -> mV
 h.recentLine.XData = tvec;
 h.recentLine.YData = sweeps(end,:) * 1000; % V -> mV
 
-
 y = max(abs(sweeps(:)))*1000;
 y = ceil(y.*10);
 y = y-mod(y,10)+10;
@@ -33,9 +32,12 @@ y = y./10;
 if isnan(y), y = 1; end
 h.ax.YAxis.Limits = [-1 1] * y;
 
-
 h.ax.Title.String = sprintf('%d / %d sweeps',size(sweeps,1),app.ABR.numSweeps);
 
+h.corrBar.YData = R;
+
+x = h.axCorr.YAxis.Limits;
+h.axCorr.YAxis.Limits = [0 max([x(2) .25])];
 
 
 
@@ -49,7 +51,8 @@ if isempty(f)
 end
 
 clf(f);
-ax = axes(f,'tag','live_plot','color','none');
+ax = subplot(1,5,[1 4]);
+
 
 grid(ax,'on');
 box(ax,'on');
@@ -65,7 +68,26 @@ ax.HitTest = 'off';
 h.zeroLine   = line(ax,app.ABR.adcWindow,[0 0],'linewidth',2,'color',[0.6 0.6 0.6]);
 h.meanLine   = line(ax,nan,nan,'linewidth',2,'color',[0 0 0]);
 h.recentLine = line(ax,nan,nan,'linewidth',1,'color',[0.2 0.2 1]);
+
+
+axCorr = subplot(1,5,5);
+
+h.corrBar = bar([1 2 3],[nan nan nan],1, ...
+    'FaceColor','Flat','EdgeColor','none', ...
+    'CData',[1 .4 .4; 1 .6 .2; .2 1 .2]);
+
+axCorr.YAxisLocation = 'right';
+grid(axCorr,'on');
+% axCorr.YAxis.Limits = [0 1];
+axCorr.YAxis.Label.String = 'correlation';
+% axCorr.YLimMode = 'manual';
+axCorr.XAxis.TickValues = [1 2 3];
+axCorr.XAxis.TickLabels = {'Pre'; 'Cross'; 'Post'};
+axCorr.XAxis.TickLabelRotation = 45;
+
+
 h.ax = ax;
+h.axCorr = axCorr;
 h.fig = f;
 
 figure(f);

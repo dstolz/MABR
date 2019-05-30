@@ -96,6 +96,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         ControlAdvCriteriaDD           matlab.ui.control.DropDown
         SweepsSpinnerLabel             matlab.ui.control.Label
         SweepCountSpinner              matlab.ui.control.Spinner
+        SweepCountDD                   matlab.ui.control.DropDown
         SweepRateHzSpinnerLabel        matlab.ui.control.Label
         SweepRateHzSpinner             matlab.ui.control.Spinner
         SweepDurationSpinner           matlab.ui.control.Spinner
@@ -347,7 +348,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             app.Config.outputFile      = app.outputFile;
             
             app.Config.Control.advCriteria = app.ControlAdvCriteriaDD.Value;
-            app.Config.Control.numSweeps   = app.SweepCountSpinner.Value;
+%             app.Config.Control.numSweeps   = app.SweepCountSpinner.Value;
+            app.Config.Control.numSweeps   = str2double(app.SweepCountDD.Value);
             app.Config.Control.sweepRate   = app.SweepRateHzSpinner.Value;
             app.Config.Control.numReps     = app.NumRepetitionsSpinner.Value;
             app.Config.Control.sweepDuration = app.SweepDurationSpinner.Value;
@@ -363,7 +365,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         function apply_config_parameters(app)
             
             app.ControlAdvCriteriaDD.Value = app.Config.Control.advCriteria;
-            app.SweepCountSpinner.Value          = app.Config.Control.numSweeps;
+%             app.SweepCountSpinner.Value          = app.Config.Control.numSweeps;
+            app.SweepCountDD.Value               = num2str(app.Config.Control.numSweeps,'%d');
             app.SweepRateHzSpinner.Value         = app.Config.Control.sweepRate;
             app.NumRepetitionsSpinner.Value      = app.Config.Control.numReps;
             app.SweepDurationSpinner.Value       = app.Config.Control.sweepDuration;
@@ -1055,7 +1058,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             T = timer('Tag','ABR_ControlPanel');
             T.BusyMode = 'drop';
-            T.ExecutionMode = 'fixedSpacing';
+            T.ExecutionMode = 'fixedRate';
             T.TasksToExecute = inf;
             T.Period = 0.05;
             T.StartDelay = 1;
@@ -1145,8 +1148,22 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         
         function update_sweep_count(app,event)
-            app.ControlSweepCountGauge.Limits = double([0 event.Source.Value]);
-            drawnow limitrate
+            v = event.Value;
+            if ischar(v), v = str2double(v); end
+            if isnan(v) || ~isreal(v)
+                event.Source.BackgroundColor = [1 0 0];
+                event.Source.FontColor = [1 1 1];
+                pause(0.5)
+                event.Source.Value = event.PreviousValue;
+                event.Source.FontColor = [0 0 0];
+                event.Source.BackgroundColor = [1 1 1];
+                return 
+            else
+                event.Source.FontColor = [0 0 0];
+                event.Source.BackgroundColor = [1 1 1];
+            end
+            app.ControlSweepCountGauge.Limits = double([0 v]);
+            drawnow
         end
         
         
@@ -1300,7 +1317,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     
     
     methods (Access = public)
-        abr_live_plot(app,sweeps,tvec);
+        abr_live_plot(app,sweeps,tvec,R);
         
         % Constructor
         function app = ControlPanel(configFile)

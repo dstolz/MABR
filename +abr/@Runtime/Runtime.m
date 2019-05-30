@@ -333,7 +333,7 @@ classdef Runtime < handle
             
             T = timer('Tag','ABR_Runtime');
             T.BusyMode = 'drop';
-            T.ExecutionMode = 'fixedSpacing';
+            T.ExecutionMode = 'fixedRate';
             T.TasksToExecute = inf;
             T.Period = obj.timerPeriod;
             

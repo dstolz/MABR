@@ -10,7 +10,6 @@ if isequal(app.Runtime.mapCom.Data.BufferIndex(2),bufferHead), return; end
 bufferHead = app.Runtime.mapCom.Data.BufferIndex(2);
 
 
-
 if isempty(lastCheckedIdx) || lastCheckedIdx > bufferHead, lastCheckedIdx = 1; end
 
 
@@ -51,9 +50,6 @@ samps = app.ABR.ADC.SweepOnsets + swin; % matrix expansion
 data = app.Runtime.mapInputBuffer.Data(samps);
 if nSweeps == 1, data = data'; end
 
-% update plots
-tvec = 1000 .* swin ./ app.ABR.ADC.SampleRate;
-app.abr_live_plot(data,tvec);
 
 if nSweeps > 1
     % compute inter-sweep correlation coefficient
@@ -63,28 +59,40 @@ if nSweeps > 1
     
     pre = app.Runtime.mapInputBuffer.Data(bsamps);
     
-    pre = abs(pre);  data = abs(data);
-
-    tic
-    i = randperm(nSweeps,min(nSweeps,100));
-    R = corrcoef([pre(i,:)' data(i,:)']);
-    R(logical(eye(size(R,1)))) = nan;
     
-    k = length(i);
-    Rpre   = R(1:k,1:k); 
-    Rcross = R(k+1:k*2,1:k);
-    Rpost  = R(k+1:end,k+1:end);
-
+    % TESTING ***********
+    post = abs(data);
+    % TESTING ***********
     
-    Rpre   = mean(Rpre(~isnan(Rpre)));
-    Rcross = mean(Rcross(~isnan(Rcross)));
-    Rpost  = mean(Rpost(~isnan(Rpost)));
+    n = size(pre,1);
+    m = round(n/2);
+    i = randperm(n);
+    preMean1  = mean(pre(i(1:m),:))';
+    preMean2  = mean(pre((i(m+1:end)),:))';
+    postMean1 = mean(post(i(1:m),:))';
+    postMean2 = mean(post(i(m+1:end),:))';
     
-    t= toc;
+    X = [preMean1 preMean2 postMean1 postMean2];
     
-    fprintf('# Sweeps = % 4d:\tPre % 4.3f\tCross % 4.3f\tPost % 4.3f\t%.3f ms\n', ...
-        nSweeps,Rpre,Rcross,Rpost,t*1000)
+    
+    % compute auto and cross correlation between pre and post stimulus
+    R = corrcoef(X);
+    
+    
+    R(1:length(R)+1:end) = nan;
+    
+    Rpre   = R(2,1); 
+    Rcross = mean(R(sub2ind([4 4],[3 3 4 4],[1 2 1 2])));
+    Rpost  = R(4,3);
+        
+    R = abs([Rpre Rcross Rpost]);
+else
+    R = [0 0 0];
 end
+
+% update plots
+tvec = 1000 .* swin ./ app.ABR.ADC.SampleRate;
+app.abr_live_plot(data,tvec,R);
 
 % update GUI
 app.ControlSweepCountGauge.Value = length(app.ABR.ADC.SweepOnsets);
