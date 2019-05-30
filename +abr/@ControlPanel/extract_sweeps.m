@@ -38,8 +38,7 @@ app.ABR.ADC.SweepOnsets = [app.ABR.ADC.SweepOnsets; idx];
 
 
 % split signal into resampled windows
-swin  = round(app.ABR.DAC.SampleRate.*app.ABR.adcWindow);
-swin  = swin(1):app.ABR.adcDecimationFactor:swin(2);
+swin  = round(app.ABR.ADC.SampleRate*app.ABR.adcWindowTVec);
 samps = app.ABR.ADC.SweepOnsets + swin; % matrix expansion
 
 % make sure we do not exceed buffer head position
