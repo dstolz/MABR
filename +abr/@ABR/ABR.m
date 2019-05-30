@@ -6,10 +6,6 @@ classdef ABR < abr.Universal & handle
         DAC           (1,1) abr.Buffer
         ADC           (1,1) abr.Buffer
         
-        DACtiming     (1,1) abr.Buffer
-        ADCtiming     (1,1) abr.Buffer
-        
-%         Calibration   (1,1) abr.AcousticCalibration
         SIG           (1,1) % abr.sigdef.sigs....
                 
         adcDecimationFactor (1,1) {mustBeInteger,mustBePositive} = 1;
@@ -37,22 +33,11 @@ classdef ABR < abr.Universal & handle
         DACsignalCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 1;
         DACtimingCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 2;
         
-        
-        DACfilename = fullfile(abr.Universal.root,'current_ABR_stimulus.wav');
-        ADCfilename = fullfile(abr.Universal.root,'current_ABR_acquisition.wav');
-        
-        
-        
     end
     
     properties (SetAccess = private)
         adcFilterDesign;
         adcNotchFilterDesign
-        
-        adcWindowSamps
-        
-        runningMean = [];
-        timingCursor
     end
     
     properties (SetAccess = private, Dependent)
@@ -62,10 +47,8 @@ classdef ABR < abr.Universal & handle
     
     
     methods   
-        %obj = playrec(obj,app,ax,varargin);
         obj = selectAudioDevice(obj,deviceString);
         setupAudioChannels(obj);
-        %obj = prepareSweep(obj);
         r = analysis(obj,type,varargin);
         
         % Constructor
@@ -129,11 +112,6 @@ classdef ABR < abr.Universal & handle
 %             assert(win(1) <= 0 & win(2) >= obj.DAC.SweepDuration, ...
 %                 'adcWindow must be at least the duration of the dac buffer'); %#ok<MCSUP>
             obj.adcWindow = win;
-        end
-        
-        function s = get.adcWindowSamps(obj)
-            bFs = obj.ADC.SampleRate;
-            s = floor(bFs.*obj.adcWindow(1)):ceil(bFs.*obj.adcWindow(2));
         end
         
         function set.adcFilterHP(obj,f)
