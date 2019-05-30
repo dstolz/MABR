@@ -84,6 +84,15 @@ switch lower(K)
         obj.GroupIdx(tidx) = max(obj.GroupIdx) + 1;
         plot(obj);
         
+    case {'h','hide'} % toggle hiding labels
+        h = [obj.Traces.LabelHandle];
+        if isempty(tidx), tidx = obj.TraceIdx; end
+        if isequal(h(tidx(1)).Visible,'on')
+            set(h(tidx),'visible','off');
+        else
+            set(h(tidx),'visible','on');
+        end
+        
     case 'j' % increase trace amp
         obj.YScaling = obj.YScaling * 1.1;
         plot(obj);
