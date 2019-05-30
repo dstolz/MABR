@@ -801,6 +801,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             end
                         end
                         
+                        % make sure the sweep gauge reflects current value
+                        app.ControlSweepCountGauge.Limits = [1 app.Config.Control.numSweeps];
+                        
                         
                         % update status
                         app.AcquisitionStateLabel.Text = 'Advancing';
@@ -810,7 +813,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         
                         % update Schedule table selection                        
-%                         app.Schedule.sigArray(app.scheduleIdx).update;
                         app.Schedule.update_highlight(app.scheduleIdx,[.6 1 .2]);
                         
                         % convert to signal

@@ -19,7 +19,6 @@ if isempty(lastBufferIdx) || lastBufferIdx > bufferHead, lastBufferIdx = 1; end
 LB = double(lastBufferIdx);
 BH = double(bufferHead);
 
-lastBufferIdx = bufferHead;
 
 mTB = app.Runtime.mapTimingBuffer;
 
@@ -27,14 +26,13 @@ mTB = app.Runtime.mapTimingBuffer;
 ind = mTB.Data(LB:BH-1) > mTB.Data(LB+1:BH); % rising edge
 ind = ind & mTB.Data(LB:BH-1) >= 0.5; % threshold
 
-if ~any(ind), return; end % no new data
+if ~any(ind), return; end % no new post
 
 idx = LB + find(ind);
 
 % append newly found detected sweep timing impulses
 app.ABR.ADC.SweepOnsets = [app.ABR.ADC.SweepOnsets; idx];
 
-nSweeps = length(app.ABR.ADC.SweepOnsets);
 
 
 % split signal into resampled windows
@@ -42,18 +40,26 @@ swin  = round(app.ABR.DAC.SampleRate.*app.ABR.adcWindow);
 swin  = swin(1):app.ABR.adcDecimationFactor:swin(2);
 samps = app.ABR.ADC.SweepOnsets + swin; % matrix expansion
 
+% make sure we do not exceed buffer head position
+samps(any(samps<1,2) | any(samps>bufferHead,2),:) = []; 
+
+if isempty(samps), return; end
 
 
 % organize incoming signal
 data = app.Runtime.mapInputBuffer.Data(samps);
-if nSweeps == 1, data = data'; end
+if app.ABR.sweepCount == 1, data = data'; end
 
 
-if nSweeps > 1
-    % compute inter-sweep correlation coefficient
+% Compute Pearson's correlation in a similar fashion to Arnold et al, 1985
+% Arnold, S.A., et al (1985). Objective versus visual detection of the
+% auditory brain stem response. Ear and Hearing, 6(3), 144–150.
+if app.ABR.sweepCount > 1
+    % extract signal preceding sweep onsets
     bsamps = -1:-1:-size(samps,2);
     bsamps = app.ABR.ADC.SweepOnsets + bsamps;
-    bsamps(any(bsamps < 1,2),:) = [];
+    bsamps(any(bsamps < 1,2) | any(bsamps>bufferHead,2),:) = [];
+
     
     pre = app.Runtime.mapInputBuffer.Data(bsamps);
     
@@ -62,23 +68,20 @@ if nSweeps > 1
     post = abs(data);
     % TESTING ***********
     
-    n = size(pre,1);
+    
+    % partition the sweeps into two random subsamples
+    n = min([size(pre,1) size(post,1)]);
     m = round(n/2);
     i = randperm(n);
+    
     preMean1  = mean(pre(i(1:m),:))';
     preMean2  = mean(pre((i(m+1:end)),:))';
     postMean1 = mean(post(i(1:m),:))';
     postMean2 = mean(post(i(m+1:end),:))';
-    
-    X = [preMean1 preMean2 postMean1 postMean2];
-    
-    
-    % compute auto and cross correlation between pre and post stimulus
-    R = corrcoef(X);
-    
-    
-    R(1:length(R)+1:end) = nan;
-    
+        
+    % compute auto and cross correlation between pre and post stimulus means
+    R = corrcoef([preMean1 preMean2 postMean1 postMean2]);
+        
     Rpre   = R(2,1); 
     Rcross = mean(R(sub2ind([4 4],[3 3 4 4],[1 2 1 2])));
     Rpost  = R(4,3);
@@ -96,6 +99,10 @@ app.abr_live_plot(data,tvec,R);
 app.ControlSweepCountGauge.Value = length(app.ABR.ADC.SweepOnsets);
 
 drawnow limitrate
+
+
+% update this last
+lastBufferIdx = bufferHead;
 
 
 % make sure the background process is still running

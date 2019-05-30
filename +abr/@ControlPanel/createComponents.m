@@ -454,8 +454,8 @@ app.SweepCountDD = uidropdown(G);
 app.SweepCountDD.Layout.Row = R;
 app.SweepCountDD.Layout.Column = 2;
 app.SweepCountDD.Editable = 'on';
-app.SweepCountDD.Items = cellstr(num2str(2.^(6:11)'));
-app.SweepCountDD.ItemsData = num2cell(2.^(6:11)');
+app.SweepCountDD.Items = cellstr(num2str(2.^(6:13)'));
+app.SweepCountDD.ItemsData = num2cell(2.^(6:13)');
 app.SweepCountDD.Value = 1024;
 app.SweepCountDD.ValueChangedFcn = createCallbackFcn(app, @update_sweep_count, true);
 
