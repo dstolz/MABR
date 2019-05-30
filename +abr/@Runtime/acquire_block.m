@@ -6,7 +6,7 @@ function r = acquire_block(obj)
 r = 0;
 
 C = obj.mapCom;
-M = obj.mapInputBuffer;
+M = obj.mapSignalBuffer;
 T = obj.mapTimingBuffer;
 
 

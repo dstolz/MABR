@@ -49,7 +49,7 @@ if isempty(samps), return; end
 
 
 % organize incoming signal
-postSweep = app.Runtime.mapInputBuffer.Data(samps);
+postSweep = app.Runtime.mapSignalBuffer.Data(samps);
 if app.ABR.sweepCount == 1, postSweep = postSweep'; end
 
 
@@ -60,7 +60,7 @@ bsamps = app.ABR.ADC.SweepOnsets + bsamps;
 bsamps(any(bsamps < 1,2) | any(bsamps>bufferHead,2),:) = [];
 
 
-preSweep = app.Runtime.mapInputBuffer.Data(bsamps);
+preSweep = app.Runtime.mapSignalBuffer.Data(bsamps);
 
 
 % update this last
