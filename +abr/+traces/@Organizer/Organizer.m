@@ -51,7 +51,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
         % Constructor
         function obj = Organizer(traces)
             if isempty(obj.mainFigTag)
-                obj.mainFigTag = sprintf('BUFFERORGTAG_%d',round(rand(1)*1e9));
+                obj.mainFigTag = sprintf('TRACEORGANIZER_%d',round(rand(1)*1e9));
             end
             
             if nargin == 0, return; end
@@ -73,6 +73,9 @@ classdef (ConstructOnLoad = true) Organizer < handle
         
         function add_trace(obj,data,props,firstTimepoint,Fs)
             narginchk(3,5);
+            
+            vprintf(2,'Adding trace to Organizer')
+            
             if nargin < 4 || isempty(firstTimepoint), firstTimepoint = 0; end
             if nargin < 5 || isempty(Fs), Fs = 1; end
             if isempty(obj.Traces) || obj.N == 1 && obj.Traces.ID == -1
@@ -90,7 +93,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             plot(obj);
         end
                 
-        function deleteTrace(obj,idx)
+        function delete_trace(obj,idx)
             obj.YPosition(idx) = [];
             obj.Labels(idx) = [];
             obj.TraceSelection(ismember(obj.TraceSelection,idx)) = [];
@@ -282,7 +285,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
         
         function figure(obj)
             if isempty(obj.mainFigTag)
-                obj.mainFigTag = sprintf('BUFFERORGTAG_%d',round(rand(1)*1e9));
+                obj.mainFigTag = sprintf('TRACEORGANIZER_%d',round(rand(1)*1e9));
             end
             f = findobj('tag',obj.mainFigTag);
             if isempty(f)
@@ -435,30 +438,34 @@ classdef (ConstructOnLoad = true) Organizer < handle
     methods (Static)
         key_processor(hFig,KeyData,obj,Cmd);
         move_trace(hFig,event,obj);
+        window_click(hFig,event,obj);
         trace_clicked(h,event,obj,traceIdx);
-
         
         function trace_label_clicked(h,event,obj,traceIdx) 
-%             fprintf('Clicked Label: %s\n',h.String)
+            vprintf(2,'Clicked Label: %s',h.String)
             abr.traces.Organizer.trace_clicked(h,event,obj,traceIdx); % FOR NOW
         end
             
-            
         function axes_clicked(h,event,obj) %#ok<INUSL>
             % deselect all traces
+            vprintf(2,'Deselected all traces')
             obj.TraceSelection = [];
             set([obj.Traces.LineHandle],'LineWidth',obj.defaultTraceWidth);
         end
         
         function L = button_state_left
-            if ~libisloaded('user32')
-%                 loadlibrary('user32.dll', 'user32.h');
-%                 loadlibrary('C:\WINDOWS\system32\user32.dll','user32.h');
-
+            if ispc
+                if ~libisloaded('user32')
+                    loadlibrary('user32.dll', 'user32.h');
+                    % loadlibrary('C:\WINDOWS\system32\user32.dll','user32.h');
+                end
+                L = calllib('user32', 'GetAsyncKeyState', int32(1)) ~= 0;
+                %             R = calllib('user32', 'GetAsyncKeyState', int32(2)) ~= 0;
+                %             M = calllib('user32', 'GetAsyncKeyState', int32(4)) ~= 0;
+            else
+                vprintf(3,1,'No support yet for non-Windows operating systems!')
+                L = 0;
             end
-            L = calllib('user32', 'GetAsyncKeyState', int32(1)) ~= 0;
-%             R = calllib('user32', 'GetAsyncKeyState', int32(2)) ~= 0;
-%             M = calllib('user32', 'GetAsyncKeyState', int32(4)) ~= 0;
         end
         
     end

@@ -16,6 +16,7 @@ L = abr.traces.Organizer.button_state_left;
 
 if ~L, LAST_STATE = 0; return; end
 
+
 if  isempty(LAST_COORD) || LAST_STATE == 0, LAST_COORD = C; end
 
 LAST_STATE = 1;
