@@ -6,7 +6,7 @@ classdef Buffer
         Data         (:,1) single
         
         % in samples
-        SweepOnsets  (:,1) double {mustBeNonnegative,mustBeInteger} = 0;
+        SweepOnsets  (:,1) double {mustBeNonnegative,mustBeInteger} = [];
         SweepLength  (1,1) double {mustBePositive,mustBeInteger} = 1;
         
         SweepValue   

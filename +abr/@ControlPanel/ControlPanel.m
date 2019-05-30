@@ -349,7 +349,12 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             app.Config.Control.advCriteria = app.ControlAdvCriteriaDD.Value;
 %             app.Config.Control.numSweeps   = app.SweepCountSpinner.Value;
-            app.Config.Control.numSweeps   = str2double(app.SweepCountDD.Value);
+            n = app.SweepCountDD.Value;
+            if ischar(n)
+                app.Config.Control.numSweeps = str2double(n);
+            else
+                app.Config.Control.numSweeps = n;
+            end
             app.Config.Control.sweepRate   = app.SweepRateHzSpinner.Value;
             app.Config.Control.numReps     = app.NumRepetitionsSpinner.Value;
             app.Config.Control.sweepDuration = app.SweepDurationSpinner.Value;
@@ -806,7 +811,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         % update Schedule table selection                        
 %                         app.Schedule.sigArray(app.scheduleIdx).update;
-                        app.Schedule.update_highlight(app.scheduleIdx);
+                        app.Schedule.update_highlight(app.scheduleIdx,[.6 1 .2]);
                         
                         % convert to signal
                         app.ABR.DAC.SampleRate = app.SIG.Fs;
@@ -1043,6 +1048,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                     app.ControlPauseButton.BackgroundColor = [0.96 0.96 0.96];
                     app.ControlPauseButton.Tooltip = 'Click to Pause';
                     
+                    app.Schedule.update_highlight(app.scheduleIdx);
+                    
                     app.stateProgram = abr.stateProgram.USER_IDLE;
                     app.StateMachine;
             end
@@ -1148,20 +1155,26 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         
         function update_sweep_count(app,event)
+            global stateAcq
+            
             v = event.Value;
             if ischar(v), v = str2double(v); end
             if isnan(v) || ~isreal(v)
+                event.Source.FontColor       = [1 1 1];
                 event.Source.BackgroundColor = [1 0 0];
-                event.Source.FontColor = [1 1 1];
                 pause(0.5)
                 event.Source.Value = event.PreviousValue;
-                event.Source.FontColor = [0 0 0];
+                event.Source.FontColor       = [0 0 0];
                 event.Source.BackgroundColor = [1 1 1];
                 return 
             else
-                event.Source.FontColor = [0 0 0];
+                event.Source.FontColor       = [0 0 0];
                 event.Source.BackgroundColor = [1 1 1];
             end
+            
+            % don't update gauge during a block
+            if stateAcq == abr.stateAcq.ACQUIRE, return; end
+                
             app.ControlSweepCountGauge.Limits = double([0 v]);
             drawnow
         end
@@ -1176,13 +1189,13 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             if nReps == -1
                 app.ControlStimInfoLabel.Text = sprintf( ...
-                    'Index %d (%d of %d)  |  Repetition %d < REPEATING >', ...
-                    app.scheduleIdx,m,n, ...
+                    'Block %d of %d  | Schedule Row %d | Repetition %d < REPEATING >', ...
+                    m,n,app.scheduleIdx, ...
                     app.scheduleRunCount(app.scheduleIdx)+1);
             else
                 app.ControlStimInfoLabel.Text = sprintf( ...
-                    'Index %d (%d of %d)  |  Repetition %d of %d', ...
-                    app.scheduleIdx,m,n, ...
+                    'Block %d of %d  | Schedule Row %d | Repetition %d of %d', ...
+                    m,n,app.scheduleIdx, ...
                     app.scheduleRunCount(app.scheduleIdx)+1,nReps);
             end
         end

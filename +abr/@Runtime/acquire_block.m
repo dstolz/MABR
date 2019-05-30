@@ -28,17 +28,13 @@ while ~isDone(obj.AFR)
     if C.Data.CommandToBg ~= int8(abr.Cmd.Run), break; end
 
     % read current frame
-    audioOut = obj.AFR();
+    [audioDAC,eof] = obj.AFR();
+    if eof, break; end
     
     % play/record current frame
-    [audioIn,nu,no] = obj.APR(audioOut);
-    if nu
-        fprintf('# Underruns = %d\n',nu)
-    end
-    
-    if no
-        fprintf('# Overruns = %d\n',no)
-    end
+    [audioADC,nu,no] = obj.APR(audioDAC);
+    if nu, vprintf(0,'# Underruns = %d\n',nu); end
+    if no, vprintf(0,'# Overruns = %d\n',no);  end
     
     idx = C.Data.BufferIndex(2)+1;
 
@@ -52,14 +48,14 @@ while ~isDone(obj.AFR)
 %     end
 
     % TESTING WITH FAKE LOOP-BACK AND SIGNAL **********************
-    audioIn(:,1) = audioOut(:,1) + randn(frameLength,1)/10;
-    audioIn(:,2) = audioOut(:,2);
+    audioADC(:,1) = audioDAC(:,1) + randn(frameLength,1)/10;
 
-    M.Data(idx:k) = audioIn(:,1);
-    T.Data(idx:k) = audioIn(:,2);
+    M.Data(idx:k) = audioADC(:,1);
+    T.Data(idx:k) = audioADC(:,2);
 
     % update the latest buffer index
     C.Data.BufferIndex = uint32([idx k]);
 end
 
 obj.BackgroundState = abr.stateAcq.COMPLETED;
+vprintf(1,'Acqusition complete')

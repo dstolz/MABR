@@ -233,6 +233,7 @@ classdef Schedule < matlab.apps.AppBase
         end
         
         function update_highlight(app,row,highlightColor)
+            if nargin < 2, row = []; end
             if nargin < 3 || isempty(highlightColor), highlightColor = [0.2 0.6 1]; end
             n = size(app.ScheduleTable.Data,1);
             c = repmat([1 1 1; 0.9 0.9 0.9],ceil(n/2),1);

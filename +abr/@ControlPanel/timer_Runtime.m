@@ -1,47 +1,45 @@
 function timer_Runtime(T,event,app)
 
-persistent bufferHead lastCheckedIdx
+persistent bufferHead lastBufferIdx
 
 if isempty(bufferHead), bufferHead = 1; end
 
+
+
+
 % look for updated buffer index
-if isequal(app.Runtime.mapCom.Data.BufferIndex(2),bufferHead), return; end
+if app.Runtime.mapCom.Data.BufferIndex(2) == bufferHead, return; end
 
 bufferHead = app.Runtime.mapCom.Data.BufferIndex(2);
 
 
-if isempty(lastCheckedIdx) || lastCheckedIdx > bufferHead, lastCheckedIdx = 1; end
+if isempty(lastBufferIdx) || lastBufferIdx > bufferHead, lastBufferIdx = 1; end
 
 
-
-LC = double(lastCheckedIdx);
+LB = double(lastBufferIdx);
 BH = double(bufferHead);
 
+lastBufferIdx = bufferHead;
+
+mTB = app.Runtime.mapTimingBuffer;
 
 % find stimulus onsets in timing signal
-ind = app.Runtime.mapTimingBuffer.Data(LC:BH-1) > app.Runtime.mapTimingBuffer.Data(LC+1:BH);
-ind = ind & app.Runtime.mapTimingBuffer.Data(LC:BH-1) >= 0.5; % threshold
+ind = mTB.Data(LB:BH-1) > mTB.Data(LB+1:BH); % rising edge
+ind = ind & mTB.Data(LB:BH-1) >= 0.5; % threshold
 
+if ~any(ind), return; end % no new data
 
-if ~any(ind), return; end
+idx = LB + find(ind);
 
-idx = LC + find(ind)-1;
-
-
-
-
-% append new foundly detected sweep timing impulses
-app.ABR.ADC.SweepOnsets(app.ABR.ADC.SweepOnsets<1) = []; % move to init
+% append newly found detected sweep timing impulses
 app.ABR.ADC.SweepOnsets = [app.ABR.ADC.SweepOnsets; idx];
 
 nSweeps = length(app.ABR.ADC.SweepOnsets);
 
-lastCheckedIdx = bufferHead;
 
-
-% split signal into downsampled windows
-swin = round(app.ABR.DAC.SampleRate.*app.ABR.adcWindow);
-swin = swin(1):app.ABR.adcDecimationFactor:swin(2);
+% split signal into resampled windows
+swin  = round(app.ABR.DAC.SampleRate.*app.ABR.adcWindow);
+swin  = swin(1):app.ABR.adcDecimationFactor:swin(2);
 samps = app.ABR.ADC.SweepOnsets + swin; % matrix expansion
 
 
@@ -104,7 +102,7 @@ drawnow limitrate
 if ~app.Runtime.BgIsRunning
     app.stateProgram = abr.stateProgram.ACQ_ERROR;
     app.StateMachine;
-    stop(app.Runtime.mapTimingBuffer);
+    stop(T);
 end
 
 
@@ -113,11 +111,10 @@ switch app.Runtime.BackgroundState
     case abr.stateAcq.COMPLETED
         app.stateProgram = abr.stateProgram.BLOCK_COMPLETE;
         app.StateMachine;
-%         stop(app.Timer);
         
     case abr.stateAcq.ERROR
         app.stateProgram = abr.stateProgram.ACQ_ERROR;
         app.StateMachine;
-        stop(app.Timer);
+        stop(T);
 end
 
