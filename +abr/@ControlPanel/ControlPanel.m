@@ -1345,7 +1345,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             abr.Universal.startup;
             
-            fprintf('\nStarting ABR Control Panel ...\n')
+            fprintf('\nStarting MABR Control Panel ...\n')
 
             stateAcq = abr.stateAcq.IDLE;
             
