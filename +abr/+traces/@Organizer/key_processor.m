@@ -12,7 +12,6 @@ if isempty(K) || ismember(K,{'control','shift'}), return; end
 
 tidx = obj.TraceSelection;
 
-vprintf(4,'Received: modifier = %s;\tkey = %s',M,K)
 
 if isequal(M,{'shift','control'})
     

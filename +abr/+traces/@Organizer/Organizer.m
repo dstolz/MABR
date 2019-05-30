@@ -161,15 +161,20 @@ classdef (ConstructOnLoad = true) Organizer < handle
             if isempty(n), return; end
                 
             for i = 1:obj.N
-                s{i} = '';
-%                 s{i} = sprintf('\\color[rgb]{%0.3f,%0.3f,%0.3f}',obj.Traces(i).Color);
-                %for j = 1:length(b)
-                    %s{i} = sprintf('%s%0.1f,',s{i},m(i,j));
                 for j = 1:length(n)
-                    s{i} = sprintf('%s%0.1f|',s{i},obj.Traces(i).Props.(n{j}));
+                    s{i,j} = sprintf('%0.1f',obj.Traces(i).Props.(n{j}));
                 end
-                s{i}(end) = [];
             end
+%             for i = 1:obj.N
+%                 s{i} = '';
+% %                 s{i} = sprintf('\\color[rgb]{%0.3f,%0.3f,%0.3f}',obj.Traces(i).Color);
+%                 %for j = 1:length(b)
+%                     %s{i} = sprintf('%s%0.1f,',s{i},m(i,j));
+%                 for j = 1:length(n)
+%                     s{i} = sprintf('%s%0.1f|',s{i},obj.Traces(i).Props.(n{j}));
+%                 end
+%                 s{i}(end) = [];
+%             end
         end
         
         function i = get.PlotOrder(obj)
@@ -315,7 +320,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 obj.mainAx = axes(f, ...
                     'Color',[1 1 1], ...
                     'Units','normalized', ...
-                    'Position',[0.02 0.15 0.96 0.8], ...
+                    'Position',[0.1 0.15 0.88 0.8], ...
                     'YTick',[], ...
                     'GridColor',[0.2 0.2 0.2], ...
                     'XGrid','on','YGrid','on', ...
@@ -354,7 +359,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             obj.TraceIdx = [];
             for k = pidx
                 obj.Traces(k).Color     = obj.groupColors(obj.GroupIdx(k),:);
-                obj.Traces(k).LabelText = obj.Labels{k};
+                obj.Traces(k).LabelText = obj.Labels(k,:);
 
                 obj.Traces(k).plot(obj.mainAx);
                 obj.Traces(k).LineHandle.YData = D{k} + obj.YPosition(k);

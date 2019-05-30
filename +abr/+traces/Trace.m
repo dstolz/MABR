@@ -11,7 +11,7 @@ classdef Trace < handle &  matlab.mixin.SetGet
         LineWidth       (1,1) double {mustBePositive,mustBeFinite} = 1;
         
         Marker          (:,1) abr.traces.Marker
-        LabelText       (1,:) char = '';
+        LabelText       (1,:)
         
         TimeUnit        (1,:) char {mustBeMember(TimeUnit,{'auto','s','ms','us','ns'})} = 'auto';
     end
@@ -135,15 +135,19 @@ classdef Trace < handle &  matlab.mixin.SetGet
                 % label
                 x = h.XData(1);
                 
-                y = max(kobj.LineHandle.YData) * 0.8;
+                x = x - 1;
+                y = max(kobj.Data) + mean(kobj.LineHandle.YData);
                 if kobj.LabelHandleIsValid
                     t = kobj.LabelHandle;
                 else
                     t = text(ax,x,y,kobj.LabelText);
                 end
-                t.Color = kobj.Color;
+                t.Position = [x y];
+                t.String = kobj.LabelText;
+                t.Color = max(kobj.Color-.2,0);
                 t.FontWeight = 'bold';
-                t.BackgroundColor = [ax.Color 0.9];
+%                 t.BackgroundColor = [ax.Color 0.9];
+                t.BackgroundColor = 'none';
                 t.Margin = 0.1;
                 t.HorizontalAlignment = 'left';
                 t.VerticalAlignment   = 'baseline';
