@@ -58,7 +58,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             
             if isa(traces,'abr.traces.Trace')
                 for i = 1:length(traces)
-                    obj.addTrace(traces(i).Data,traces(i).Props,traces(i).FirstTimepoint,traces(i).SampleRate);
+                    obj.add_trace(traces(i).Data,traces(i).Props,traces(i).FirstTimepoint,traces(i).SampleRate);
                 end
             end
         end
@@ -71,7 +71,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
         end
         
         
-        function addTrace(obj,data,props,firstTimepoint,Fs)
+        function add_trace(obj,data,props,firstTimepoint,Fs)
             narginchk(3,5);
             if nargin < 4 || isempty(firstTimepoint), firstTimepoint = 0; end
             if nargin < 5 || isempty(Fs), Fs = 1; end

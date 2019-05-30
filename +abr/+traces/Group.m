@@ -29,7 +29,7 @@ classdef Group < handle
             obj.Name = name;
         end
         
-        function addTrace(obj,trace)
+        function add_trace(obj,trace)
             obj.Traces(end+1) = trace;
         end
         
