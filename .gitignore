@@ -1,3 +1,4 @@
 *.asv
 *.abr
 .runtime_data/
+.vscode/
