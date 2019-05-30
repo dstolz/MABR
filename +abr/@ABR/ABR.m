@@ -42,9 +42,8 @@ classdef ABR < abr.Universal & handle
     
     properties (SetAccess = private, Dependent)
         sweepCount
-        
+        adcWindowTVec
     end
-    
     
     methods   
         obj = selectAudioDevice(obj,deviceString);
@@ -112,6 +111,11 @@ classdef ABR < abr.Universal & handle
 %             assert(win(1) <= 0 & win(2) >= obj.DAC.SweepDuration, ...
 %                 'adcWindow must be at least the duration of the dac buffer'); %#ok<MCSUP>
             obj.adcWindow = win;
+        end
+        
+        
+        function tvec = get.adcWindowTVec(obj)
+            tvec = obj.adcWindow(1):1/obj.ADC.SampleRate:obj.adcWindow(2);
         end
         
         function set.adcFilterHP(obj,f)

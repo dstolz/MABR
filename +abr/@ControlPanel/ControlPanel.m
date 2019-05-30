@@ -726,7 +726,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         vprintf(3,'Reloading schedule file')
                         app.load_schedule_file;
                         
-%                         app.TrcOrg.figure;
+                        % launch trace organizer
+                        app.TrcOrg.figure;
                         
                         app.Schedule.DO_NOT_DELETE = true;
                         app.scheduleIdx  = find(app.Schedule.selectedData,1,'first');
@@ -934,11 +935,19 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                     case abr.stateProgram.BLOCK_COMPLETE
                         app.scheduleRunCount(app.scheduleIdx) = app.scheduleRunCount(app.scheduleIdx) + 1;
                         
+                        % extract sweep-based data and plot one last time
+                        tic
+                        [preSweep,postSweep] = app.extract_sweeps;
+                        R = app.partition_corr(preSweep,postSweep);
+                        app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R)
+                        toc
+                        
                         % Add buffer to traces.Organizer
-%                         app.TrcOrg.add_trace(app.ABR.ADC.SweepMean, ...
-%                             app.SIG.dataParams, ...
-%                             app.ABR.ADC.TimeVector(1), ...
-%                             app.ABR.ADC.SampleRate);
+                        app.TrcOrg.add_trace( ...
+                            mean(postSweep), ...
+                            app.SIG.dataParams, ...
+                            app.ABR.adcWindow(1), ...
+                            app.ABR.ADC.SampleRate);
                         
                         %%%% TESTING
 %                         R = app.ABR.analysis('peaks');
@@ -1327,7 +1336,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     
     methods (Access = public)
         live_plotting(app);
+        [preSweep,postSweep] = extract_sweeps(app);
         abr_live_plot(app,sweeps,tvec,R);
+        
         
         % Constructor
         function app = ControlPanel(configFile)
@@ -1424,6 +1435,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     end
     
     methods (Static)
+        R = partition_corr(preSweep,postSweep);
         timer_Start(T,event,obj);
         timer_Runtime(T,event,obj);
         timer_Stop(T,event,obj);

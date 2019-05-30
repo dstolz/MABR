@@ -15,10 +15,6 @@ end
 % check status of recording
 switch app.Runtime.BackgroundState
     case abr.stateAcq.COMPLETED
-        % update once more
-        pause(0.25);
-        app.live_plotting;
-
         app.stateProgram = abr.stateProgram.BLOCK_COMPLETE;
         app.StateMachine;
         
