@@ -50,6 +50,9 @@ classdef (ConstructOnLoad = true) Organizer < handle
         
         % Constructor
         function obj = Organizer(traces)
+            
+            abr.Universal.addpaths;
+            
             if isempty(obj.mainFigTag)
                 obj.mainFigTag = sprintf('TRACEORGANIZER_%d',round(rand(1)*1e9));
             end
@@ -60,6 +63,9 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 for i = 1:length(traces)
                     obj.add_trace(traces(i).Data,traces(i).Props,traces(i).FirstTimepoint,traces(i).SampleRate);
                 end
+                
+            elseif ischar(traces) && exist(traces,'file')
+                load(traces,'-mat');
             end
         end
         
@@ -245,7 +251,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 % hObj is provided as a filename
                 ffn = hObj;
             
-            elseif nargin < 2 || isempty(ffn)
+            elseif nargin < 2
                 % ... load buffer data from file
                 dfltpn = getpref('TraceOrganizer','dfltpath',cd);
                 
@@ -377,9 +383,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
         
         function create_toolbar(obj)
             obj.tbh.toolbar = uitoolbar(obj.mainFig);
-            
-            
-    
+                
             A = abr.Universal;
             
             obj.tbh.Clear = uipushtool(obj.tbh.toolbar);
@@ -456,8 +460,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
         function L = button_state_left
             if ispc
                 if ~libisloaded('user32')
-                    loadlibrary('user32.dll', 'user32.h');
-                    % loadlibrary('C:\WINDOWS\system32\user32.dll','user32.h');
+                    loadlibrary('C:\WINDOWS\system32\user32.dll','user32.h');
                 end
                 L = calllib('user32', 'GetAsyncKeyState', int32(1)) ~= 0;
                 %             R = calllib('user32', 'GetAsyncKeyState', int32(2)) ~= 0;
