@@ -65,7 +65,6 @@ classdef Runtime < handle
                 
                 abr.Runtime.print_do_not_close;
 
-                                
                 % Make sure MATLAB is running at full steam
                 wmicStr = sprintf('wmic process where processid=''%d'' CALL setpriority 128',obj.infoData.Background_ProcessID);
                 [s,w] = dos(wmicStr); % 128 = High
@@ -117,7 +116,6 @@ classdef Runtime < handle
             end
             
             if obj.isBackground
-                vprintf(1,'Seppuku')
                 seppuku;
             end
         end

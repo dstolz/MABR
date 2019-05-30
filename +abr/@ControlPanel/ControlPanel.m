@@ -936,11 +936,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.scheduleRunCount(app.scheduleIdx) = app.scheduleRunCount(app.scheduleIdx) + 1;
                         
                         % extract sweep-based data and plot one last time
-                        tic
                         [preSweep,postSweep] = app.extract_sweeps;
                         R = app.partition_corr(preSweep,postSweep);
                         app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R)
-                        toc
+                        
                         
                         % Add buffer to traces.Organizer
                         app.TrcOrg.add_trace( ...
