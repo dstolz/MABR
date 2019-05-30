@@ -28,11 +28,9 @@ classdef Runtime < handle
         
         infoData
         
-        
         timer_RuntimeFcn (1,1) = @abr.Runtime.timer_runtime; % function handle
         timer_StopFcn    (1,1) = @abr.Runtime.timer_stop; % function handle
         timer_ErrorFcn   (1,1) = @abr.Runtime.timer_error; % function handle
-        
         
         lastReceivedCmd     abr.Cmd
     end

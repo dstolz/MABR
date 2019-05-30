@@ -2,6 +2,11 @@ function timer_runtime(T,event,obj)
 
 if obj.isBackground
     
+    if ~obj.FgIsRunning % shutdown if foreground is gone
+        vprintf(0,'Foreground process disappeared!  Goodbye!')
+        seppuku;
+    end
+    
     if obj.lastReceivedCmd == obj.CommandToBg, return; end
     obj.lastReceivedCmd = abr.Cmd(obj.CommandToBg);
     
