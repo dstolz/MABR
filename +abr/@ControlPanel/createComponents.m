@@ -40,13 +40,6 @@ app.StayonTopMenu.Separator = 'on';
 app.StayonTopMenu.Checked = 'off';
 app.StayonTopMenu.MenuSelectedFcn = createCallbackFcn(app, @always_on_top,false);
 
-% % Create OptionShowTimingStats
-% app.OptionShowTimingStats = uimenu(app.OptionsMenu);
-% app.OptionShowTimingStats.Text = 'Show Timing Stats';
-% app.OptionShowTimingStats.Separator = 'on';
-% app.OptionShowTimingStats.Checked = 'off';
-% app.OptionShowTimingStats.MenuSelectedFcn = createCallbackFcn(app, @menu_option_processor,true);
-
 % Create ASIOSettingsMenu
 app.ASIOSettingsMenu = uimenu(app.OptionsMenu);
 app.ASIOSettingsMenu.Text = 'ASIO Settings';
@@ -459,18 +452,6 @@ app.SweepCountDD.ItemsData = num2cell(2.^(6:13)');
 app.SweepCountDD.Value = 1024;
 app.SweepCountDD.ValueChangedFcn = createCallbackFcn(app, @update_sweep_count, true);
 
-% % Create SweepCountSpinner
-% app.SweepCountSpinner = uispinner(G);
-% app.SweepCountSpinner.Limits = [1 inf];
-% app.SweepCountSpinner.RoundFractionalValues = 'on';
-% app.SweepCountSpinner.ValueDisplayFormat = '%d';
-% app.SweepCountSpinner.HorizontalAlignment = 'center';
-% app.SweepCountSpinner.Layout.Row = R;
-% app.SweepCountSpinner.Layout.Column = 2;
-% app.SweepCountSpinner.Value = 128;
-% app.SweepCountSpinner.ValueChangedFcn = createCallbackFcn(app, @update_sweep_count, true);
-% app.SweepCountSpinner.CreateFcn = createCallbackFcn(app, @update_sweep_count, true);
-
 R = R + 1;
 % Create SweepRateHzSpinnerLabel
 app.SweepRateHzSpinnerLabel = uilabel(G);
@@ -506,6 +487,7 @@ app.NumRepetitionsSpinner.HorizontalAlignment = 'center';
 app.NumRepetitionsSpinner.Layout.Row = R;
 app.NumRepetitionsSpinner.Layout.Column = 2;
 app.NumRepetitionsSpinner.Value = 1;
+app.NumRepetitionsSpinner.ValueChangedFcn = createCallbackFcn(app, @update_num_reps, true);
 
 R = R + 1;
 % Create SweepDurationLabel
@@ -523,6 +505,8 @@ app.SweepDurationSpinner.HorizontalAlignment = 'center';
 app.SweepDurationSpinner.Layout.Row = R;
 app.SweepDurationSpinner.Layout.Column = 2;
 app.SweepDurationSpinner.Value = 10;
+app.SweepDurationSpinner.ValueChangedFcn = createCallbackFcn(app, @update_sweep_duration, true);
+
 
 R = R + 1;
 % Create ControlAdvCriteriaDDLabel

@@ -31,6 +31,7 @@ y = y-mod(y,10)+10;
 y = y./10;
 if isnan(y), y = 1; end
 h.ax.YAxis.Limits = [-1 1] * y;
+h.ax.XAxis.Limits = app.ABR.adcWindow*1000;
 
 h.ax.Title.String = sprintf('%d / %d sweeps',size(sweeps,1),app.ABR.numSweeps);
 
@@ -65,7 +66,7 @@ ax.XAxis.Limits = app.ABR.adcWindow * 1000; % s -> ms
 ax.Toolbar.Visible = 'off'; % disable zoom/pan options
 ax.HitTest = 'off';
 
-h.zeroLine   = line(ax,app.ABR.adcWindow,[0 0],'linewidth',2,'color',[0.6 0.6 0.6]);
+h.zeroLine   = line(ax,[0 1000],[0 0],'linewidth',2,'color',[0.6 0.6 0.6]);
 h.meanLine   = line(ax,nan,nan,'linewidth',2,'color',[0 0 0]);
 h.recentLine = line(ax,nan,nan,'linewidth',1,'color',[0.2 0.6 1]);
 
@@ -86,9 +87,7 @@ h.corrBar = bar([1 2 3],[nan nan nan],1, ...
 
 axCorr.YAxisLocation = 'right';
 grid(axCorr,'on');
-% axCorr.YAxis.Limits = [0 1];
 axCorr.YAxis.Label.String = 'correlation';
-% axCorr.YLimMode = 'manual';
 axCorr.XAxis.TickValues = [1 2 3];
 axCorr.XAxis.TickLabels = {'Pre'; 'Cross'; 'Post'};
 axCorr.XAxis.TickLabelRotation = 45;

@@ -95,7 +95,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         ControlAdvCriteriaDDLabel      matlab.ui.control.Label
         ControlAdvCriteriaDD           matlab.ui.control.DropDown
         SweepsSpinnerLabel             matlab.ui.control.Label
-        SweepCountSpinner              matlab.ui.control.Spinner
         SweepCountDD                   matlab.ui.control.DropDown
         SweepRateHzSpinnerLabel        matlab.ui.control.Label
         SweepRateHzSpinner             matlab.ui.control.Spinner
@@ -348,7 +347,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             app.Config.outputFile      = app.outputFile;
             
             app.Config.Control.advCriteria = app.ControlAdvCriteriaDD.Value;
-%             app.Config.Control.numSweeps   = app.SweepCountSpinner.Value;
             n = app.SweepCountDD.Value;
             if ischar(n)
                 app.Config.Control.numSweeps = str2double(n);
@@ -370,7 +368,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         function apply_config_parameters(app)
             
             app.ControlAdvCriteriaDD.Value = app.Config.Control.advCriteria;
-%             app.SweepCountSpinner.Value          = app.Config.Control.numSweeps;
             app.SweepCountDD.Value               = num2str(app.Config.Control.numSweeps,'%d');
             app.SweepRateHzSpinner.Value         = app.Config.Control.sweepRate;
             app.NumRepetitionsSpinner.Value      = app.Config.Control.numReps;
@@ -802,7 +799,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         end
                         
                         % make sure the sweep gauge reflects current value
-                        app.ControlSweepCountGauge.Limits = [1 app.Config.Control.numSweeps];
+                        app.ControlSweepCountGauge.Limits = [0 app.Config.Control.numSweeps];
                         
                         
                         % update status
@@ -822,10 +819,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         % reset the ADC buffer
                         app.ABR.ADC = abr.Buffer;
                         
-                        app.ABR.ADC.FrameSize = abr.Universal.frameLength;
-                        app.ABR.ADC.SampleRate = abr.Universal.ADCSampleRate; % TO DO: make app.ABR.ADC.SampleRate user settable?
+                        app.ABR.ADC.FrameSize       = abr.Universal.frameLength;
+                        app.ABR.ADC.SampleRate      = abr.Universal.ADCSampleRate; % TO DO: make app.ABR.ADC.SampleRate user settable?
                         app.ABR.adcDecimationFactor = max([1 floor(app.SIG.Fs ./ app.ABR.ADC.SampleRate)]);
-                        app.ABR.ADC.SampleRate = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;
+                        app.ABR.ADC.SampleRate      = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;
 
                         % generate signal based on its parameters
                         app.SIG = app.Schedule.sigArray(app.scheduleIdx);
@@ -878,14 +875,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         end
                         
                         app.ABR.createADCfilt;
-                        
-                        
-%                         % reset pause button
-%                         app.ControlPauseButton.Value           = 0;
-%                         app.ControlPauseButton.Text            = 'Pause ';
-%                         app.ControlPauseButton.Tooltip         = 'Click to Pause';
-%                         app.ControlPauseButton.BackgroundColor = [0.96 0.96 0.96];
-                        
                                                 
                         % update status
                         app.AcquisitionStateLabel.Text    = 'Acquire';
@@ -1124,13 +1113,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
 
             if stateAcq == abr.stateAcq.IDLE, return; end
             
-
-            % TO DO: SHOULD BE ABLE TO ADVANCE TO THE NEXT STATE EVEN IF
-            % NOT CURRENTLY ACQUIRING.  WHAT TrcOrg DO WITH 'PAUSED' STATE?
-            
-            % Updating stateAcq should be detected by ABR.playrec function
-            % and stop the current acqusition, which returns control to the
-            % StateMachine
+            vprintf(2,'Advancing to next block')
             stateAcq = abr.stateAcq.ADVANCED;
             app.Runtime.CommandToBg = abr.Cmd.Stop;
         end
@@ -1153,6 +1136,17 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             end
 
             drawnow
+        end
+        
+        
+        function update_num_reps(app,event)
+            vprintf(3,'Updated Number of Reps: %d',event.Value)
+            app.update_ControlStimInfoLabel(event.Value);
+        end
+        
+        function update_sweep_duration(app,event)
+            vprintf(3,'Updated Sweep Duration: %.3f ms',event.Value/1000)
+            app.ABR.adcWindow = [0 event.Value/1000];
         end
         
         
@@ -1332,6 +1326,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     
     
     methods (Access = public)
+        live_plotting(app);
         abr_live_plot(app,sweeps,tvec,R);
         
         % Constructor
