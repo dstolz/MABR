@@ -102,17 +102,18 @@ classdef Runtime < handle
         
         % Destructor
         function delete(obj)
-            try
-                if obj.isBackground
-                    obj.mapCom.Data.BackgroundState = int8(abr.stateAcq.DELETED);
-                else
-                    obj.ForegroundState = int8(abr.stateAcq.DELETED);
-                end
-            end
             
             try
                 stop(obj.Timer);
                 delete(obj.Timer);
+            end
+            
+            try
+                if obj.isBackground
+                    obj.BackgroundState = abr.stateAcq.DELETED;
+                else
+                    obj.ForegroundState = abr.stateAcq.DELETED;
+                end
             end
             
             if obj.isBackground
