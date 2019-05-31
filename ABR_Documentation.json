@@ -200,7 +200,7 @@
             "tag": "ScheduleDesign",
             "type": "figure",
             "title": "Stimulus Schedule Design",
-            "description": "",
+            "description": "The Stimulus Schedule Design utility is used to parameterize sound stimuli to be used during an ABR recording.  The result will be a new Schedule that will be used for controlling stimulus presentation during an ABR recording.\n\n1) Set the sampling rate to be used by your system (generally higher is better if your system supports it) by clicking the Options -> Stimulus Sampling Rate menu.\n\n2) Select the signal type you would like to generate.  Select from Tone, Noise, Click, or File.\n\n3) Modify the parameter values by entering individual numbers or a valid Matlab expression.  Note the units specified in the Property column.  A valid Matlab expression is one that will result in a row vector (1xN).  All of the following will have the same results: [1 2 3 4 5]; 1:5;  linspace(1,5,5);  Another useful function is octaves (see help octaves).\n\n4) Click the Compile button to generate a schedule.  This will launch the Schedule utility with all of the defined stimulus parameters that will be used for controlling stimulus presentation during an ABR recording.\n\n The Schedule Design can be saved or reloaded using the File menu.",
             "components": {}
         },
         "schedule": {
