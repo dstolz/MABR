@@ -7,8 +7,9 @@ global GVerbosity
 
 % Create ControlPanelUIFigure
 app.ControlPanelUIFigure = uifigure;
-app.ControlPanelUIFigure.Position = [50 400 550 275];
-app.ControlPanelUIFigure.Name = 'ABR Control Panel';
+app.ControlPanelUIFigure.Position = [50 400 550 325];
+app.ControlPanelUIFigure.Name = 'MABR Control Panel';
+app.ControlPanelUIFigure.Tag  = 'MABR_FIG';
 app.ControlPanelUIFigure.CloseRequestFcn = createCallbackFcn(app, @close_request, true);
 
 
@@ -67,11 +68,22 @@ app.VerbosityMenu.Separator = 'on';
 app.VerbosityMenu.MenuSelectedFcn = createCallbackFcn(app, @update_verbosity, false);
 
 
+% Create ResetBackgroundProcessMenu
+app.ResetBackgroundProcessMenu = uimenu(app.OptionsMenu);
+app.ResetBackgroundProcessMenu.Text = 'Reset Background Process';
+app.ResetBackgroundProcessMenu.Tooltip = 'Click to reset the background process if you are having techinical issues';
+app.ResetBackgroundProcessMenu.Separator = 'on';
+app.ResetBackgroundProcessMenu.MenuSelectedFcn = createCallbackFcn(app, @reset_bg_process, false);
+
+
+
+
+CPpos = app.ControlPanelUIFigure.Position;
 
 %% Create TabGroup --------------------------------------------------------
 app.TabGroup = uitabgroup(app.ControlPanelUIFigure);
 app.TabGroup.SelectionChangedFcn = createCallbackFcn(app, @TabGroup_selection_changed, true);
-app.TabGroup.Position = [1 1 550 273];
+app.TabGroup.Position = [1 1 CPpos(3) CPpos(4)-1];
 app.TabGroup.TabLocation = 'left';
 
 
@@ -79,7 +91,7 @@ app.TabGroup.TabLocation = 'left';
 
 % Create AcquisitionStateLamp
 app.AcquisitionStateLamp = uilamp(app.ControlPanelUIFigure);
-app.AcquisitionStateLamp.Position = [530 250 20 20];
+app.AcquisitionStateLamp.Position = [CPpos(3)-25 CPpos(4)-25 20 20];
 app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
 
 p = app.AcquisitionStateLamp.Position;
@@ -87,17 +99,34 @@ p = app.AcquisitionStateLamp.Position;
 % Create AcquisitionStateLabel
 app.AcquisitionStateLabel = uilabel(app.ControlPanelUIFigure);
 app.AcquisitionStateLabel.HorizontalAlignment = 'right';
-app.AcquisitionStateLabel.Position = [p(1)-102 p(2) 100 22];
+app.AcquisitionStateLabel.Position = [p(1)-105 p(2) 100 22];
 app.AcquisitionStateLabel.FontSize = 14;
 app.AcquisitionStateLabel.FontWeight = 'bold';
 app.AcquisitionStateLabel.Text = 'Ready';
 
+% Create HelpButton
 app.HelpButton = uibutton(app.ControlPanelUIFigure, 'push');
-app.HelpButton.Icon = 'helpicon.gif';
+app.HelpButton.Icon = fullfile(app.iconPath,'helpicon.gif');
 app.HelpButton.IconAlignment = 'center';
-app.HelpButton.Position = [100 250 20 20];
+app.HelpButton.Position = [100 CPpos(4)-25 20 20];
 app.HelpButton.Text = '';
-app.HelpButton.ButtonPushedFcn = createCallbackFcn(app, @cp_docbox, true);
+app.HelpButton.Tooltip = 'Control Panel Help';
+app.HelpButton.ButtonPushedFcn = createCallbackFcn(app, @cp_docbox, false);
+
+% Create LocateFigures
+app.LocateFiguresButton = uibutton(app.ControlPanelUIFigure, 'push');
+app.LocateFiguresButton.Icon = fullfile(app.iconPath,'figureicon.gif');
+app.LocateFiguresButton.IconAlignment = 'center';
+app.LocateFiguresButton.Position = [130 CPpos(4)-25 20 20];
+app.LocateFiguresButton.Text = '';
+app.LocateFiguresButton.Tooltip = 'Locate open figures';
+app.LocateFiguresButton.ButtonPushedFcn = createCallbackFcn(app, @locate_figures, false);
+
+
+
+
+
+
 
 %% CONFIG TAB -------------------------------------------------------------
 % Create ConfigTab
@@ -430,7 +459,7 @@ app.ControlTab.Title = 'Control';
 nRows = 8; nCols = 4;
 G = uigridlayout(app.ControlTab,[nRows nCols]);
 G.RowHeight = [repmat({'1x'},1,nRows-1) 40];
-G.ColumnWidth = {120 100 '1x' 180}; 
+G.ColumnWidth = {140 80 10 195}; 
     
 R = 2;
 
@@ -439,6 +468,8 @@ app.SweepsSpinnerLabel = uilabel(G);
 app.SweepsSpinnerLabel.HorizontalAlignment = 'right';
 app.SweepsSpinnerLabel.Layout.Row = R;
 app.SweepsSpinnerLabel.Layout.Column = 1;
+app.SweepsSpinnerLabel.FontSize = 14;
+app.SweepsSpinnerLabel.FontWeight = 'normal';
 app.SweepsSpinnerLabel.Text = '# Sweeps';
 app.SweepsSpinnerLabel.Tooltip = 'Number of sweeps, i.e. stimulus presentations, per schedule row.';
 
@@ -450,6 +481,8 @@ app.SweepCountDD.Editable = 'on';
 app.SweepCountDD.Items = cellstr(num2str(2.^(6:13)'));
 app.SweepCountDD.ItemsData = num2cell(2.^(6:13)');
 app.SweepCountDD.Value = 1024;
+app.SweepCountDD.FontSize = 16;
+app.SweepCountDD.FontWeight = 'normal';
 app.SweepCountDD.ValueChangedFcn = createCallbackFcn(app, @update_sweep_count, true);
 
 R = R + 1;
@@ -458,6 +491,8 @@ app.SweepRateHzSpinnerLabel = uilabel(G);
 app.SweepRateHzSpinnerLabel.HorizontalAlignment = 'right';
 app.SweepRateHzSpinnerLabel.Layout.Row = R;
 app.SweepRateHzSpinnerLabel.Layout.Column = 1;
+app.SweepRateHzSpinnerLabel.FontSize = 14;
+app.SweepRateHzSpinnerLabel.FontWeight = 'normal';
 app.SweepRateHzSpinnerLabel.Text = 'Sweep Rate (Hz)';
 app.SweepRateHzSpinnerLabel.Tooltip = 'Stimulus presentation rate in Hz';
 
@@ -467,6 +502,8 @@ app.SweepRateHzSpinner.Limits = [0.001 100];
 app.SweepRateHzSpinner.HorizontalAlignment = 'center';
 app.SweepRateHzSpinner.Layout.Row = R;
 app.SweepRateHzSpinner.Layout.Column = 2;
+app.SweepRateHzSpinner.FontSize = 16;
+app.SweepRateHzSpinner.FontWeight = 'normal';
 app.SweepRateHzSpinner.Value = 21.1;
 
 R = R + 1;
@@ -475,6 +512,8 @@ app.NumRepetitionsLabel = uilabel(G);
 app.NumRepetitionsLabel.HorizontalAlignment = 'right';
 app.NumRepetitionsLabel.Layout.Row = R;
 app.NumRepetitionsLabel.Layout.Column = 1;
+app.NumRepetitionsLabel.FontSize = 14;
+app.NumRepetitionsLabel.FontWeight = 'normal';
 app.NumRepetitionsLabel.Text = '# Repetitions';
 app.NumRepetitionsLabel.Tooltip = 'Number of repetitions per schedule row';
 
@@ -484,6 +523,8 @@ app.NumRepetitionsSpinner.Limits = [1 Inf];
 app.NumRepetitionsSpinner.RoundFractionalValues = 'on';
 app.NumRepetitionsSpinner.ValueDisplayFormat = '%d';
 app.NumRepetitionsSpinner.HorizontalAlignment = 'center';
+app.NumRepetitionsSpinner.FontSize = 16;
+app.NumRepetitionsSpinner.FontWeight = 'normal';
 app.NumRepetitionsSpinner.Layout.Row = R;
 app.NumRepetitionsSpinner.Layout.Column = 2;
 app.NumRepetitionsSpinner.Value = 1;
@@ -495,6 +536,8 @@ app.SweepDurationLabel = uilabel(G);
 app.SweepDurationLabel.HorizontalAlignment = 'right';
 app.SweepDurationLabel.Layout.Row = R;
 app.SweepDurationLabel.Layout.Column = 1;
+app.SweepDurationLabel.FontSize = 14;
+app.SweepDurationLabel.FontWeight = 'normal';
 app.SweepDurationLabel.Text = 'Sweep Duration (ms)';
 app.SweepDurationLabel.Tooltip = 'ABR acquisition duration in milliseconds';
 
@@ -504,6 +547,8 @@ app.SweepDurationSpinner.Limits = [0.1 1000];
 app.SweepDurationSpinner.HorizontalAlignment = 'center';
 app.SweepDurationSpinner.Layout.Row = R;
 app.SweepDurationSpinner.Layout.Column = 2;
+app.SweepDurationSpinner.FontSize = 16;
+app.SweepDurationSpinner.FontWeight = 'normal';
 app.SweepDurationSpinner.Value = 10;
 app.SweepDurationSpinner.ValueChangedFcn = createCallbackFcn(app, @update_sweep_duration, true);
 
@@ -514,6 +559,8 @@ app.ControlAdvCriteriaDDLabel = uilabel(G);
 app.ControlAdvCriteriaDDLabel.HorizontalAlignment = 'right';
 app.ControlAdvCriteriaDDLabel.Layout.Row = R;
 app.ControlAdvCriteriaDDLabel.Layout.Column = 1;
+app.ControlAdvCriteriaDDLabel.FontSize = 14;
+app.ControlAdvCriteriaDDLabel.FontWeight = 'normal';
 app.ControlAdvCriteriaDDLabel.Text = 'Advance on...';
 app.ControlAdvCriteriaDDLabel.Tooltip = 'Criterion function used to advance to the next schedule row';
 
@@ -521,6 +568,8 @@ app.ControlAdvCriteriaDDLabel.Tooltip = 'Criterion function used to advance to t
 app.ControlAdvCriteriaDD = uidropdown(G);
 app.ControlAdvCriteriaDD.Layout.Row = R;
 app.ControlAdvCriteriaDD.Layout.Column = 2;
+app.ControlAdvCriteriaDD.FontSize = 16;
+app.ControlAdvCriteriaDD.FontWeight = 'normal';
 app.ControlAdvCriteriaDD.Items = {'# Sweeps', 'Correlation Threshold', '< Define >'};
 app.ControlAdvCriteriaDD.ItemsData = {'# Sweeps', @abr_corr_threshold, '< Define >'};
 app.ControlAdvCriteriaDD.Value = '# Sweeps';
@@ -532,17 +581,17 @@ app.Panel_2.Layout.Row = [2 6];
 app.Panel_2.Layout.Column = 4;
 
 
-
 nRows = 3; nCols = 2;
 Gpanel = uigridlayout(app.Panel_2,[nRows nCols]);
 Gpanel.RowHeight = repmat({'1x'},1,nRows);
-Gpanel.ColumnWidth = {'1x' '1x'}; 
+Gpanel.ColumnWidth = {'2x' '1x'}; 
     
 R = 1;
 % Create ControlAdvanceButton
 app.ControlAdvanceButton = uibutton(Gpanel, 'push');
 app.ControlAdvanceButton.Layout.Row = R;
 app.ControlAdvanceButton.Layout.Column = 1;
+app.ControlAdvanceButton.FontSize = 16;
 app.ControlAdvanceButton.Text = 'Advance';
 app.ControlAdvanceButton.Icon = fullfile(app.iconPath,'advance.gif');
 app.ControlAdvanceButton.IconAlignment = 'right';
@@ -554,6 +603,7 @@ app.ControlRepeatButton = uibutton(Gpanel, 'state');
 app.ControlRepeatButton.Text = 'Repeat';
 app.ControlRepeatButton.Layout.Row = R;
 app.ControlRepeatButton.Layout.Column = 1;
+app.ControlRepeatButton.FontSize = 16;
 app.ControlRepeatButton.Icon = fullfile(app.iconPath,'repeat.gif');
 app.ControlRepeatButton.IconAlignment = 'right';
 app.ControlRepeatButton.ValueChangedFcn = createCallbackFcn(app, @repeat_schedule_idx,true);
@@ -565,6 +615,7 @@ app.ControlPauseButton = uibutton(Gpanel, 'state');
 app.ControlPauseButton.Text = 'Pause';
 app.ControlPauseButton.Layout.Row = R;
 app.ControlPauseButton.Layout.Column = 1;
+app.ControlPauseButton.FontSize = 16;
 app.ControlPauseButton.Icon = fullfile(app.iconPath,'pause.gif');
 app.ControlPauseButton.IconAlignment = 'right';
 app.ControlPauseButton.ValueChangedFcn = createCallbackFcn(app, @pause_button,false);
@@ -588,6 +639,7 @@ app.ControlStimInfoLabel.Layout.Column = [1 length(G.ColumnWidth)];
 app.ControlStimInfoLabel.HorizontalAlignment = 'center';
 app.ControlStimInfoLabel.VerticalAlignment = 'bottom';
 app.ControlStimInfoLabel.FontSize = 14;
+app.ControlStimInfoLabel.FontWeight = 'bold';
 app.ControlStimInfoLabel.Text = '';
 
 

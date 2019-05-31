@@ -52,6 +52,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         SelectAudioDeviceMenu          matlab.ui.container.Menu
         SetupAudioChannelsMenu         matlab.ui.container.Menu
         VerbosityMenu                  matlab.ui.container.Menu
+        ResetBackgroundProcessMenu     matlab.ui.container.Menu
         TabGroup                       matlab.ui.container.TabGroup
         ConfigTab                      matlab.ui.container.Tab
         AcqFilterTab                   matlab.ui.container.Tab
@@ -123,6 +124,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         UtilityABRDataViewerButton     matlab.ui.control.Button
         UtilityOnlineAnalysisButton    matlab.ui.control.Button
         HelpButton                     matlab.ui.control.Button
+        LocateFiguresButton            matlab.ui.control.Button
         
         SubjectNode     matlab.ui.container.TreeNode
         
@@ -1407,12 +1409,33 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     
     methods (Access = private)
         
-        function cp_docbox(app,event)
+        function cp_docbox(app)
             c = strrep(lower(app.selectedTab.Title),' ','_');
             abr.Universal.docbox('control_panel','components',c);
         end
         
+        function locate_figures(app)
+            f = findall(0,'tag','MABR_FIG');
+            if ~isempty(f), figure(f); end
+            
+            f = findobj('-regexp','Tag','TRACEORGANIZER*');
+            if ~isempty(f), figure(f); end
+        end
         
+        function reset_bg_process(app)
+            r = uiconfirm(app.ControlPanelUIFigure, ...
+                'Are you certain you want to reset the background process?', ...
+                'Reset Background Process','Icon','warning', ...
+                'Options',{'Reset','Nevermind'},'DefaultOption','Nevermind', ...
+                'CancelOption','Nevermind');
+            if isequal(r,'Nevermind'), return; end
+            vprintf(1,1,'User reset background process')
+            app.Runtime.CommandToBg = abr.Cmd.Kill;
+            pause(0.5);
+            app.Runtime.CommandToBg = abr.Cmd.Idle;
+            vprintf(0,1,'Attempting to relaunch background process')
+            abr.Runtime.launch_bg_process;
+        end
         
         function close_request(app,event)
             global stateAcq
