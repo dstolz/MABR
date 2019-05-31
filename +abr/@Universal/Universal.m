@@ -212,8 +212,13 @@ classdef Universal < handle
         end
         
         function docbox(varargin)
+            fs = 12;
+            if isnumeric(varargin{1})
+                fs = varargin{1};
+                varargin(1) = [];
+            end
             msg = abr.Universal.get_doc_description(varargin{:});
-            msg = ['\fontsize{12}' msg];
+            msg = sprintf('\\fontsize{%d}%s',fs,msg);
             opt.WindowStyle = 'modal';
             opt.Interpreter = 'tex';
             h = msgbox(msg,'Info','help',opt);

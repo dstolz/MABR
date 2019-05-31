@@ -221,8 +221,7 @@
             "tag": "TraceOrganizer",
             "type": "figure",
             "title": "Trace Organizer",
-            "description": "",
-            "components": {}
+            "description": "Trace Organizer Commands\n\nLeft-Click:    Select a trace - Click background to deselect all traces\nCtrl+Left-Click:    Select one or more traces\nShift+Left-Click:    Select range of traces\nCtrl+Shift+Left-Click:    Select all traces within a group\n\n\na:   Select all traces\ns:   Save current Trace Organizer\no:   Open a Trace Organizer\nf:    Export figure as an image (jpg,tif,etc.) or vector file (pdf,eps,etc.)\n\n\nk/m:   Increase/Decrease trace spacing\nj/n:     Increase/Decrease trace amplitude\n\n\nc:     Clear all traces\nd:     Delete selected traces\ne:     Export selected traces to the workspace\ng/u:  Group/Ungroup selected traces\np:     Open selected traces in new Trace Organizer Window\nv:     Overlap selected traces\nq:     Change the color of the selected traces\nh:     Toggle visibility of selected or all trace labels"
         }
     }
 }
