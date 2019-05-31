@@ -568,6 +568,7 @@ classdef Schedule < matlab.apps.AppBase
             app.ScheduleFigure = uifigure;
             app.ScheduleFigure.Position = [245 230 925 430];
             app.ScheduleFigure.Name = 'Schedule';
+            app.ScheduleFigure.Tag  = 'MABR_FIG';
             app.ScheduleFigure.CloseRequestFcn = createCallbackFcn(app, @ScheduleFigureCloseRequest, true);
 
             % Create FileMenu

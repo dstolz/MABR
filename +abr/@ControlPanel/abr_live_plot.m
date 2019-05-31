@@ -49,7 +49,8 @@ f = findobj('type','figure','-and','name','MABR Live Plot');
 if isempty(f)
     p = app.ControlPanelUIFigure.Position;
     f = figure('name','MABR Live Plot','color','w','NumberTitle','off', ...
-        'Position',[p(1)+p(3)+20 p(2)+p(4)-280 600 250]);
+        'Position',[p(1)+p(3)+20 p(2)+p(4)-280 600 250], ...
+        'tag','MABR_FIG');
 end
 
 clf(f);
