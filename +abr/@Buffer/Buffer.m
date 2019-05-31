@@ -14,7 +14,7 @@ classdef Buffer
         FrameSize    (1,1) double {mustBePositive,mustBeInteger} = 2048;
         
         PadValue     (1,1) = 0; % data type cast to obj.Data type
-        PadToFrameSize matlab.lang.OnOffSwitchState = 'on';
+        PadToFrameSize matlab.lang.OnOffSwitchState = 'off';
         
         FFTOptions = struct('windowFcn',@hanning,'inDecibels',true);
     end
