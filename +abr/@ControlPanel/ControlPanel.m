@@ -845,10 +845,18 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         % calibrate stimulus data
                         if isvalid(app.Calibration)
-                            %TO DO: GENERALIZE FOR ANY STIMULUS SIGNAL!!!
-                            f  = app.SIG.frequency.realValue;
+                            switch app.SIG.Type
+                                case 'Tone'
+                                    v  = app.SIG.frequency.realValue;
+                                case 'Noise'
+                                    v = app.SIG.HPfreq.realValue;
+                                case 'Click'
+                                    v = app.SIG.duration.realValue;
+                                case 'File'
+                                    
+                            end
                             sl = app.SIG.soundLevel.realValue;
-                            A  = app.Calibration.estimateCalibratedV(f,sl);
+                            A  = app.Calibration.estimateCalibratedV(v,sl);
                             app.ABR.DAC.Data = A .* app.ABR.DAC.Data;
                         else
                             r = questdlg('Invalid Calibration!','ABR','Continue','Cancel','Cancel');
