@@ -104,13 +104,13 @@ classdef ScheduleDesign < matlab.apps.AppBase
         
         function update_sampling_rate(app,Fs)
             AllFs = [44100,48000,64000,88200,96000,128000,176400,192000];
+            Fs = getpref('ScheduleDesign','Fs',44100);
             if nargin == 2 && ~isempty(AllFs)
                 mustBeMember(Fs,AllFs);
                 app.SIG.Fs = Fs;
             else
-                
                 SRs = cellfun(@(a) sprintf('%d Hz',a),num2cell(AllFs),'uni',0);
-                i = find(AllFs == app.SIG.Fs);
+                i = find(AllFs == Fs,1);
                 if isempty(i), i = length(AllFs); end
                 [sel,ok] = listdlg('ListString',SRs,'InitialValue',i, ...
                     'Name','Sampling Rate','PromptString','Select Stimulus Sampling Rate:', ...
@@ -120,7 +120,7 @@ classdef ScheduleDesign < matlab.apps.AppBase
                 app.SIG.Fs = AllFs(sel);
             end
             app.AudioSamplingRateMenu.Text = sprintf('Stimulus Sampling Rate = %d Hz',app.SIG.Fs);
-            
+            setpref('ScheduleDesign','Fs',app.SIG.Fs);
         end
         
         % Code that executes after component creation
@@ -135,7 +135,7 @@ classdef ScheduleDesign < matlab.apps.AppBase
                     app.loadSIG;
                 end
             else
-                app.SignalTypeDropDownValueChanged;
+                app.signal_type_changed;
             end
             
             if nargin == 3 && ~isempty(MODE)
@@ -145,7 +145,7 @@ classdef ScheduleDesign < matlab.apps.AppBase
         end
 
         % Value changed function: SignalTypeDropDown
-        function SignalTypeDropDownValueChanged(app, event)
+        function signal_type_changed(app, event)
             sigType = app.SignalTypeDropDown.Value;
             app.SIG = abr.sigdef.sigs.(sigType);
             app.loadSIG;
@@ -310,7 +310,7 @@ classdef ScheduleDesign < matlab.apps.AppBase
         end
 
         % Button pushed function: CompileButton
-        function CompileButtonPushed(app, event)
+        function compile_parameters(app, event)
             
             props = app.SigDefTable.UserData;
             data  = app.SigDefTable.Data;
@@ -359,10 +359,10 @@ classdef ScheduleDesign < matlab.apps.AppBase
         function LoadScheduleDesignMenuSelected(app, event)
             app.load_sig_file;
         end
-    end
 
-    % App initialization and construction
-    methods (Access = private)
+        function sd_docbox(app)
+            abr.Universal.docbox('schedule_design');
+        end
 
         % Create UIFigure and components
         function createComponents(app)
@@ -370,6 +370,7 @@ classdef ScheduleDesign < matlab.apps.AppBase
             % Create ScheduleDesignFigure
             app.ScheduleDesignFigure = uifigure;
             app.ScheduleDesignFigure.Position = [100 100 608 435];
+            app.ScheduleDesignFigure.Tag  = 'MABR_FIG';
             app.ScheduleDesignFigure.Name = 'Schedule Design';
 
             % Create FileMenu
@@ -393,8 +394,9 @@ classdef ScheduleDesign < matlab.apps.AppBase
             app.OptionsMenu.Text = 'Options';
             
             % Create AudioSamplingRateMenu
+            Fs = getpref('ScheduleDesign','Fs',44100);
             app.AudioSamplingRateMenu = uimenu(app.OptionsMenu);
-            app.AudioSamplingRateMenu.Text = 'Stimulus Sampling Rate';
+            app.AudioSamplingRateMenu.Text = sprintf('Stimulus Sampling Rate = %d Hz',Fs);
             app.AudioSamplingRateMenu.Tooltip = 'Set the DAC sampling rate';
             app.AudioSamplingRateMenu.MenuSelectedFcn = createCallbackFcn(app, @update_sampling_rate, false);
 
@@ -419,14 +421,14 @@ classdef ScheduleDesign < matlab.apps.AppBase
             % Create SignalTypeDropDown
             app.SignalTypeDropDown = uidropdown(app.ScheduleDesignFigure);
             app.SignalTypeDropDown.Items = {'Tone', 'Noise', 'Click', 'File'};
-            app.SignalTypeDropDown.ValueChangedFcn = createCallbackFcn(app, @SignalTypeDropDownValueChanged, true);
+            app.SignalTypeDropDown.ValueChangedFcn = createCallbackFcn(app, @signal_type_changed, true);
             app.SignalTypeDropDown.FontSize = 18;
             app.SignalTypeDropDown.Position = [152 396 100 32];
             app.SignalTypeDropDown.Value = 'Tone';
 
             % Create CompileButton
             app.CompileButton = uibutton(app.ScheduleDesignFigure, 'push');
-            app.CompileButton.ButtonPushedFcn = createCallbackFcn(app, @CompileButtonPushed, true);
+            app.CompileButton.ButtonPushedFcn = createCallbackFcn(app, @compile_parameters, true);
             app.CompileButton.FontSize = 16;
             app.CompileButton.FontWeight = 'bold';
             app.CompileButton.Position = [353 397 100 30];
@@ -446,6 +448,7 @@ classdef ScheduleDesign < matlab.apps.AppBase
             app.ScheduleDesignInfoButton.IconAlignment = 'center';
             app.ScheduleDesignInfoButton.Position = [10 405 20 23];
             app.ScheduleDesignInfoButton.Text = '';
+            app.ScheduleDesignInfoButton.ButtonPushedFcn = createCallbackFcn(app, @sd_docbox, false);
         end
     end
 
