@@ -11,11 +11,12 @@ classdef Universal < handle
         commitDate
         meta
         
-        helpFile
+        availableSignals (1,:) cell
         
         matlabExePath   (1,:) char = fullfile(matlabroot,'bin','matlab.exe');
-
         runtimePath     (1,:) char
+        signalPath         (1,:) char
+        errorLogPath    (1,:) char
 
         comFile         (1,:) char
         inputBufferFile (1,:) char
@@ -23,7 +24,6 @@ classdef Universal < handle
         dacFile         (1,:) char
         infoFile        (1,:) char
         
-        errorLogPath    (1,:) char
     end
     
     properties (Access = private)
@@ -53,6 +53,8 @@ classdef Universal < handle
             obj.runtimePath = fullfile(fileparts(obj.root),'.runtime_data');
             if ~isdir(obj.runtimePath); mkdir(obj.runtimePath); end
 
+            obj.signalPath = fullfile(obj.root,'+sigdef','+sigs');
+            
             obj.dacFile         = fullfile(obj.runtimePath,'dac.wav');
             obj.comFile         = fullfile(obj.runtimePath,'com.dat');
             obj.inputBufferFile = fullfile(obj.runtimePath,'input_buffer.dat');
@@ -103,8 +105,11 @@ classdef Universal < handle
             m = orderfields(m);
         end
         
-        function h = get.helpFile(obj)
-            h = which(obj.HelpFile);
+        function s = get.availableSignals(obj)
+            d = dir(obj.signalPath);
+            s = {d.name};
+            ind = startsWith(s,'@');
+            s = cellfun(@(a) a(2:end),s(ind),'uni',0);
         end
         
         function p = get.iconPath(obj)
@@ -170,7 +175,7 @@ classdef Universal < handle
         
         function r = root
             r = fileparts(fileparts(which('abr.Universal')));
-        end        
+        end 
         
         function startup
             U = abr.Universal;
