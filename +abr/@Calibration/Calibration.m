@@ -1,7 +1,7 @@
 classdef Calibration < matlab.apps.AppBase
 
     % Properties that correspond to app components
-    properties (Access = public)
+    properties (Access = private)
         CalibrationFigure              matlab.ui.Figure
         FileMenu                       matlab.ui.container.Menu
         SaveCalibrationDataMenu        matlab.ui.container.Menu
@@ -543,7 +543,7 @@ classdef Calibration < matlab.apps.AppBase
                 app.update_reference_plot;
                 
                 % Measure signal power and update field
-                app.MeasuredVoltagemVEditField.Value = app.AC.ADC.RMS.*1000;
+                app.MeasuredVoltagemVEditField.Value = double(app.AC.ADC.RMS).*1000;
                 
                 app.STATE = 'postrun';
                 
@@ -681,8 +681,9 @@ classdef Calibration < matlab.apps.AppBase
             app.TypeDropDownLabel.Text = 'Type';
 
             % Create TypeDropDown
+            U = abr.Universal;
             app.TypeDropDown = uidropdown(app.StimulusPanel);
-            app.TypeDropDown.Items = {'Tone', 'Noise', 'Click', 'File'};
+            app.TypeDropDown.Items = U.availableSignals;
             app.TypeDropDown.ValueChangedFcn = createCallbackFcn(app, @TypeDropDownValueChanged, true);
             app.TypeDropDown.Position = [97 34 72 22];
             app.TypeDropDown.Value = 'Tone';
