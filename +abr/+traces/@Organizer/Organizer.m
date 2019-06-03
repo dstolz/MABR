@@ -1,4 +1,4 @@
-classdef Organizer < handle
+classdef (ConstructOnLoad = true) Organizer < handle
     
     properties
         SortBy          (:,1) cell
@@ -53,18 +53,20 @@ classdef Organizer < handle
             
             abr.Universal.addpaths;
             
+            if nargin == 0
+            end
+            
+            
             if isempty(obj.mainFigTag)
                 obj.mainFigTag = sprintf('TRACEORGANIZER_%d',round(rand(1)*1e9));
             end
             
-            if nargin == 0, return; end
-            
-            if isa(traces,'abr.traces.Trace')
+            if nargin == 2 && isa(traces,'abr.traces.Trace')
                 for i = 1:length(traces)
                     obj.add_trace(traces(i).Data,traces(i).Props,traces(i).FirstTimepoint,traces(i).SampleRate);
                 end
                 
-            elseif ischar(traces) && exist(traces,'file')
+            elseif nargin == 2 && ischar(traces) && exist(traces,'file')
                 load(traces,'-mat');
                 obj = TO;
                 plot(obj);
