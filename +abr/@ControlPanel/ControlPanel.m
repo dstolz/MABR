@@ -1053,9 +1053,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                     app.AcquisitionStateLamp.Tooltip = 'User cancelled acquisition';
                     
                     app.ControlPauseButton.Value = 0;
-                    app.ControlPauseButton.Text = 'Pause';
-                    app.ControlPauseButton.BackgroundColor = [0.96 0.96 0.96];
-                    app.ControlPauseButton.Tooltip = 'Click to Pause';
+                    app.pause_button;
                     
                     app.Schedule.update_highlight(app.scheduleIdx);
                     

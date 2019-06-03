@@ -20,8 +20,9 @@ obj.BackgroundState = abr.stateAcq.ACQUIRE;
 while ~isDone(obj.AFR)
 
     % pause on command
-    while C.Data.CommandToBg == int8(abr.Cmd.Pause)
+    if C.Data.CommandToBg == int8(abr.Cmd.Pause)
         pause(0.01); % don't lock up matlab
+        continue
     end
 
     % break on Stop command
