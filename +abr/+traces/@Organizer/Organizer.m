@@ -1,4 +1,4 @@
-classdef (ConstructOnLoad = true) Organizer < handle
+classdef Organizer < handle
     
     properties
         SortBy          (:,1) cell
@@ -10,7 +10,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
         
         Traces          (1,:) abr.traces.Trace
         
-        groupColors     (:,3) double {mustBeNonnegative,mustBeLessThanOrEqual(groupColors,1)} = lines;
+        groupColors     (:,3) double {mustBeNonnegative,mustBeLessThanOrEqual(groupColors,1)} = [0 0 0; lines];
 
         defaultTraceWidth  (1,1) double {mustBeNonnegative,mustBeFinite} = 1;
         selectedTraceWidth (1,1) double {mustBeNonnegative,mustBeFinite} = 3;
@@ -66,6 +66,8 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 
             elseif ischar(traces) && exist(traces,'file')
                 load(traces,'-mat');
+                obj = TO;
+                plot(obj);
             end
         end
         
@@ -256,7 +258,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 % hObj is provided as a filename
                 ffn = hObj;
             
-            elseif nargin < 2
+            else
                 % ... load buffer data from file
                 dfltpn = getpref('TraceOrganizer','dfltpath',cd);
                 
@@ -266,6 +268,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 if isequal(pn,0), return; end
                 
                 ffn = fullfile(pn,fn);
+
             end
             load(ffn,'TO','-mat');
             
