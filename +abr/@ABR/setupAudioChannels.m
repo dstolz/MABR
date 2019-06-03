@@ -17,11 +17,13 @@ ch = inputdlg({'Stimulus Output','Recording Input','Loop-Back Output','Loop-Back
 
 if isempty(ch), return; end
 
-info = obj.APR.info;
-
-maxIn  = info.MaximumRecorderChannels;
-maxOut = info.MaximumPlayerChannels;
-
+% info = obj.APR.info;
+% 
+% maxIn  = info.MaximumRecorderChannels;
+% maxOut = info.MaximumPlayerChannels;
+% TO DO: FIX ME
+maxIn = 6;
+maxOut = 8;
 ch = cellfun(@str2double,ch);
 
 if any(ch < 1) || any(ch([1 3]) > maxIn) || any(ch([2 4]) > maxOut)
