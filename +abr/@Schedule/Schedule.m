@@ -542,6 +542,9 @@ classdef Schedule < matlab.apps.AppBase
                         return;
                 end
             end
+            
+            setpref('abr_Schedule','figpos',app.ScheduleFigure.Position);
+            
             delete(app)
             
         end
@@ -563,10 +566,11 @@ classdef Schedule < matlab.apps.AppBase
 
         % Create UIFigure and components
         function createComponents(app)
-
+            pos = getpref('abr_Schedule','figpos',[400 150 1000 800]);
+            
             % Create ScheduleFigure
             app.ScheduleFigure = uifigure;
-            app.ScheduleFigure.Position = [245 230 925 430];
+            app.ScheduleFigure.Position = pos;
             app.ScheduleFigure.Name = 'Schedule';
             app.ScheduleFigure.Tag  = 'MABR_FIG';
             app.ScheduleFigure.CloseRequestFcn = createCallbackFcn(app, @ScheduleFigureCloseRequest, true);
@@ -642,12 +646,12 @@ classdef Schedule < matlab.apps.AppBase
             app.ScheduleTable.ColumnEditable = false;
             app.ScheduleTable.CellEditCallback = createCallbackFcn(app, @ScheduleTableCellEdit, true);
             app.ScheduleTable.CellSelectionCallback = createCallbackFcn(app, @ScheduleTableCellSelection, true);
-            app.ScheduleTable.Position = [1 1 925 401];
+            app.ScheduleTable.Position = [1 1 pos(3) pos(4)-30];
 
             % Create ButtonPanel
             app.ButtonPanel = uipanel(app.ScheduleFigure);
             app.ButtonPanel.BorderType = 'none';
-            app.ButtonPanel.Position = [1 401 925 30];
+            app.ButtonPanel.Position = [1 pos(4)-30 pos(3) 30];
 
             % Create SortonColumnButton
             app.SortonColumnButton = uibutton(app.ButtonPanel, 'push');
