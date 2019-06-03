@@ -86,6 +86,8 @@ switch lower(K)
             '.eps','epsc (*.eps)'; ...
             '.svg','svg (*.svg)'}, ...
             'Export as Image',dfltpn);
+
+        if isequal(pn,0), return; end
         
         f = {'jpeg','png','tiff','tiffn','pdf','eps','epsc','svg'};
         
