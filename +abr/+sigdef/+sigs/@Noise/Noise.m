@@ -23,8 +23,8 @@ classdef Noise < abr.sigdef.Signal
         % Constructor
         function obj = Noise(HPfreq,LPfreq,filterOrder)
             
-            if nargin < 1 || isempty(HPfreq),       HPfreq = 0.004; end
-            if nargin < 2 || isempty(LPfreq),       LPfreq = 12; end
+            if nargin < 1 || isempty(HPfreq),       HPfreq = 4;       end
+            if nargin < 2 || isempty(LPfreq),       LPfreq = 20;      end
             if nargin < 3 || isempty(filterOrder),  filterOrder = 20; end
             
             
@@ -44,11 +44,12 @@ classdef Noise < abr.sigdef.Signal
             obj.seed.Alias = 'Seed';
             
             obj.defaultSortProperty = 'HPfreq';
-
+            
         end
         
         function update(obj)
-            obj.filterDesign = designfilt('bandpassfir', ...
+            obj.filterDesign = designfilt( ...
+                'bandpassfir', ...
                 'FilterOrder',     obj.filterOrder.realValue, ...
                 'CutoffFrequency1',obj.HPfreq.realValue, ...
                 'CutoffFrequency2',obj.LPfreq.realValue, ...
