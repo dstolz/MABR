@@ -946,18 +946,18 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.scheduleRunCount(app.scheduleIdx) = app.scheduleRunCount(app.scheduleIdx) + 1;
                         
                         % extract sweep-based data and plot one last time
-                        [preSweep,postSweep] = app.extract_sweeps;
-                        R = app.partition_corr(preSweep,postSweep);
-                        app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R)
-                        
-                        
-                        % Add buffer to traces.Organizer
-                        app.TrcOrg.add_trace( ...
-                            mean(postSweep), ...
-                            app.SIG.dataParams, ...
-                            app.ABR.adcWindow(1), ...
-                            app.ABR.ADC.SampleRate);
-                        
+                        [preSweep,postSweep] = app.extract_sweeps(true);
+                        if ~isnan(postSweep)
+                            R = app.partition_corr(preSweep,postSweep);
+                            app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R)
+                            
+                            % Add buffer to traces.Organizer
+                            app.TrcOrg.add_trace( ...
+                                mean(postSweep), ...
+                                app.SIG.dataParams, ...
+                                app.ABR.adcWindow(1), ...
+                                app.ABR.ADC.SampleRate);
+                        end
                         %%%% TESTING
 %                         R = app.ABR.analysis('peaks');
                         
@@ -1343,7 +1343,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     
     methods (Access = public)
         live_plotting(app);
-        [preSweep,postSweep] = extract_sweeps(app);
+        [preSweep,postSweep] = extract_sweeps(app,doAll);
         abr_live_plot(app,sweeps,tvec,R);
         
         

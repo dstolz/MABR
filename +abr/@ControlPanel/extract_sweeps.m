@@ -1,16 +1,17 @@
-function [preSweep,postSweep] = extract_sweeps(app)
+function [preSweep,postSweep] = extract_sweeps(app,doAll)
 
 persistent bufferHead lastBufferIdx
 
 if isempty(bufferHead), bufferHead = 1; end
 
+if nargin < 2 || isempty(doAll), doAll = false; end
 
 preSweep = nan;
 postSweep = nan;
 
 
 % look for updated buffer index
-if app.Runtime.mapCom.Data.BufferIndex(2) == bufferHead, return; end
+% if app.Runtime.mapCom.Data.BufferIndex(2) == bufferHead, return; end
 
 bufferHead = app.Runtime.mapCom.Data.BufferIndex(2);
 
@@ -22,6 +23,10 @@ LB = double(lastBufferIdx);
 BH = double(bufferHead);
 
 
+if doAll
+    LB = 1;
+end
+
 mTB = app.Runtime.mapTimingBuffer;
 
 % find stimulus onsets in timing signal
@@ -32,9 +37,13 @@ if ~any(ind), return; end % no new post
 
 idx = LB + find(ind);
 
-% append newly found detected sweep timing impulses
-app.ABR.ADC.SweepOnsets = [app.ABR.ADC.SweepOnsets; idx];
-
+if LB == 1
+    app.ABR.ADC.SweepOnsets = idx-1; 
+else
+    
+    % append newly found detected sweep timing impulses
+    app.ABR.ADC.SweepOnsets = [app.ABR.ADC.SweepOnsets; idx];
+end
 
 
 % split signal into resampled windows

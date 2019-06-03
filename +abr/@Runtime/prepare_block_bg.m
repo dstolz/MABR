@@ -22,3 +22,4 @@ obj.APR = audioPlayerRecorder( ...
     'RecorderChannelMapping',[obj.infoData.ADCsignalCh obj.infoData.ADCtimingCh]);
 
 
+obj.mapCom.Data.BufferIndex = uint32([1 2]);

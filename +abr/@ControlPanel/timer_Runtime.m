@@ -14,9 +14,10 @@ app.live_analysis;
 
 % check status of recording
 switch app.Runtime.BackgroundState
-    case abr.stateAcq.COMPLETED
+    case {abr.stateAcq.COMPLETED, abr.stateAcq.ADVANCED}
         app.stateProgram = abr.stateProgram.BLOCK_COMPLETE;
         app.StateMachine;
+        
         
     case abr.stateAcq.ERROR
         app.stateProgram = abr.stateProgram.ACQ_ERROR;
