@@ -731,7 +731,7 @@ app.UtilitiesTab = uitab(app.TabGroup);
 app.UtilitiesTab.Title = 'Utilities';
 
 
-nRows = 5; nCols = 3;
+nRows = 5; nCols = 2;
 G = uigridlayout(app.UtilitiesTab,[nRows nCols]);
 G.RowHeight = repmat({'1x'},1,nRows);
 G.ColumnWidth = repmat({'1x'},1,nCols);
@@ -743,6 +743,8 @@ app.UtilityScheduleDesignButton = uibutton(G, 'push');
 app.UtilityScheduleDesignButton.Layout.Row = R;
 app.UtilityScheduleDesignButton.Layout.Column = 1;
 app.UtilityScheduleDesignButton.Text = 'Schedule Design';
+app.UtilityScheduleDesignButton.FontSize = 16;
+% app.UtilityScheduleDesignButton.FontWeight = 'bold';
 app.UtilityScheduleDesignButton.ButtonPushedFcn = createCallbackFcn(app,@abr.ScheduleDesign,false);
 
 R = R + 1;
@@ -751,6 +753,8 @@ app.UtilitySoundCalibrationButton = uibutton(G, 'push');
 app.UtilitySoundCalibrationButton.Layout.Row = R;
 app.UtilitySoundCalibrationButton.Layout.Column = 1;
 app.UtilitySoundCalibrationButton.Text = 'Sound Calibration';
+app.UtilitySoundCalibrationButton.FontSize = 16;
+% app.UtilitySoundCalibrationButton.FontWeight = 'bold';
 app.UtilitySoundCalibrationButton.ButtonPushedFcn = createCallbackFcn(app,@abr.Calibration,false);
 
 R = R + 1;
@@ -759,6 +763,8 @@ app.UtilityABRDataViewerButton = uibutton(G, 'push');
 app.UtilityABRDataViewerButton.Layout.Row = R;
 app.UtilityABRDataViewerButton.Layout.Column = 1;
 app.UtilityABRDataViewerButton.Text = 'ABR Trace Organizer';
+app.UtilityABRDataViewerButton.FontSize = 16;
+% app.UtilityABRDataViewerButton.FontWeight = 'bold';
 app.UtilityABRDataViewerButton.ButtonPushedFcn = createCallbackFcn(app,@abr.traces.Organizer,false);
 
 R = R + 1;
@@ -766,6 +772,8 @@ R = R + 1;
 app.UtilityOnlineAnalysisButton = uibutton(G, 'push');
 app.UtilityOnlineAnalysisButton.Layout.Row = R;
 app.UtilityOnlineAnalysisButton.Layout.Column = 1;
+app.UtilityOnlineAnalysisButton.FontSize = 16;
+% app.UtilityOnlineAnalysisButton.FontWeight = 'bold';
 app.UtilityOnlineAnalysisButton.Text = 'Online Analysis';
 
 
