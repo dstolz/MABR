@@ -51,8 +51,23 @@ switch lower(K)
         
     case {'e','export'} % export selected trace(s)
         if isempty(tidx), return; end
-        assignin('base','TraceData',obj.Traces(tidx));
-        evalin('base','whos TraceData')
+        ev = evalin('base','whos(''TraceData*'')');
+        if isempty(ev)
+            id = 1;
+        else
+            id = max(cellfun(@(a) str2double(a(find(a=='_',1,'last')+1:end)),{ev.name}))+1;
+        end
+        
+        for i = 1:length(tidx)
+            T(i).Time = obj.Traces(tidx(i)).TimeVector;
+            T(i).Data = obj.Traces(tidx(i)).Data;
+            T(i).SampleRate = obj.Traces(tidx(i)).SampleRate;
+            T(i).Color = obj.Traces(tidx(i)).Color;
+            T(i).LineWidth = obj.Traces(tidx(i)).LineWidth;
+            T(i).LabelText = obj.Traces(tidx(i)).LabelText;
+        end
+        assignin('base',sprintf('TraceData_%d',id),T);
+        evalin('base',sprintf('whos TraceData_%d',id))
         commandwindow;
         
     case {'f','savefig'}
