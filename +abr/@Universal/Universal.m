@@ -33,7 +33,8 @@ classdef Universal < handle
     properties (Constant)
         ADCSampleRate = 48000;
         frameLength = 2048;
-        
+        maxInputBufferLength = 2^26; % should be power of 2 enough for at least a minute of data at 192kHz sampling rate
+
         SoftwareVersion = '0.1 beta';
         DataVersion     = '0.1 beta';
         Author          = 'Daniel Stolzberg';
@@ -189,7 +190,9 @@ classdef Universal < handle
             ind = cellfun(@exist,ffn) ~= 2;
             if all(ind), return; end
             ffn(ind) = [];
+            warning('off','MATLAB:DELETE:Permission');
             cellfun(@delete,ffn);
+            warning('on','MATLAB:DELETE:Permission');
         end
         
         function addpaths
