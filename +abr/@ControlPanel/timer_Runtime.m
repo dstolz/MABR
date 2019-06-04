@@ -1,6 +1,6 @@
 function timer_Runtime(T,event,app)
 
-
+try
 % extrace sweeps relative to timing signal
 [preSweep,postSweep] = app.extract_sweeps;
 
@@ -22,6 +22,9 @@ app.ControlSweepCountGauge.Value = app.ABR.sweepCount;
 
 drawnow limitrate
 
-
+catch me
+    disp('here')
+    
+end
 
 

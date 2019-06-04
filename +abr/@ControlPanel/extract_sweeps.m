@@ -54,7 +54,7 @@ if isempty(samps), return; end
 
 % organize incoming signal
 postSweep = app.Runtime.mapSignalBuffer.Data(samps);
-if size(postSweep,1) == 1, postSweep = postSweep'; end
+if size(postSweep,2) == 1, postSweep = postSweep'; end
 
 
 % extract signal preceding sweep onsets
@@ -63,7 +63,7 @@ bsamps = app.ABR.ADC.SweepOnsets + bsamps;
 bsamps(any(bsamps < 1,2) | any(bsamps>bufferHead,2),:) = [];
 
 preSweep = app.Runtime.mapSignalBuffer.Data(bsamps);
-if size(preSweep,1) == 1, preSweep = preSweep'; end
+if size(preSweep,2) == 1, preSweep = preSweep'; end
 
 
 % update signal amplitude by InputAmpGain

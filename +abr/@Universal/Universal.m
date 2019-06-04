@@ -182,17 +182,6 @@ classdef Universal < handle
             U = abr.Universal;
             U.banner;
             U.addpaths;
-            
-            % remove .dat files which will be rewritten
-            d = dir(fullfile(U.runtimePath,'*.dat'));
-            if isempty(d), return; end
-            ffn = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
-            ind = cellfun(@exist,ffn) ~= 2;
-            if all(ind), return; end
-            ffn(ind) = [];
-            warning('off','MATLAB:DELETE:Permission');
-            cellfun(@delete,ffn);
-            warning('on','MATLAB:DELETE:Permission');
         end
         
         function addpaths

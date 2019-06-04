@@ -1121,7 +1121,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 case abr.stateAcq.ERROR
                     app.stateProgram = abr.stateProgram.ACQ_ERROR;
                     app.StateMachine;
-                    stop(T);
+                    stop(app.Timer);
             end
         end
 

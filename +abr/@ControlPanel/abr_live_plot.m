@@ -12,7 +12,7 @@ if isempty(postSweep)
     h.meanLine.XData   = nan;
     h.recentLine.YData = nan;
     h.recentLine.XData = nan;
-    drawnow limitrate
+    h.axCorr.YData = nan(1,3);
     return
 end
 
@@ -57,8 +57,11 @@ f = findobj('type','figure','-and','name','MABR Live Plot');
 
 if isempty(f)
     p = app.ControlPanelUIFigure.Position;
+    pos = [p(1)+p(3)+20 p(2)+p(4)-280 600 250];
+    pos = getpref('ABRControlPanel','abr_live_plot_fig_pos',pos);
     f = figure('name','MABR Live Plot','color','w','NumberTitle','off', ...
-        'Position',[p(1)+p(3)+20 p(2)+p(4)-280 600 250], ...
+        'Position',pos, ...
+        'CloseRequestFcn','setpref(''ABRControlPanel'',''abr_live_plot_fig_pos'',get(gcf,''Position''))', ...
         'tag','MABR_FIG');
 end
 

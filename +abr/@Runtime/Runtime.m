@@ -141,6 +141,17 @@ classdef Runtime < handle
             % Create the communications file
             % This needs to be done for all involved instances of matlab.
             
+            % remove .dat files which will be rewritten
+            d = dir(fullfile(obj.Universal.runtimePath,'*.dat'));
+            if isempty(d), return; end
+            ffn = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
+            ind = cellfun(@exist,ffn) ~= 2;
+            if all(ind), return; end
+            ffn(ind) = [];
+            warning('off','MATLAB:DELETE:Permission');
+            cellfun(@delete,ffn);
+            warning('on','MATLAB:DELETE:Permission');
+            
             % NOTE memmapfile does not support char, but can simply convert using char(m.Data)
             if ~exist(obj.Universal.comFile, 'file')
                 [f, msg] = fopen(obj.Universal.comFile, 'wb');
@@ -165,7 +176,7 @@ classdef Runtime < handle
                     error('abr:Runtime:create_memmapfile:cannotOpenFile', ...
                         'Cannot open file "%s": %s.', obj.Universal.inputBufferFile, msg);
                 end
-                fwrite(f, zeros(obj.maxInputBufferLength,1,'single'), 'single'); % Buffer
+                fwrite(f, zeros(obj.Universal.maxInputBufferLength,1,'single'), 'single'); % Buffer
                 fclose(f);
             end
             
@@ -176,7 +187,7 @@ classdef Runtime < handle
                     error('abr:Runtime:create_memmapfile:cannotOpenFile', ...
                         'Cannot open file "%s": %s.', obj.Universal.inputTimingFile, msg);
                 end
-                fwrite(f, zeros(obj.maxInputBufferLength,1,'single'), 'single'); % Buffer
+                fwrite(f, zeros(obj.Universal.maxInputBufferLength,1,'single'), 'single'); % Buffer
                 fclose(f);
             end
             
