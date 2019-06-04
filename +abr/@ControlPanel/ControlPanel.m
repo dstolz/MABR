@@ -1350,10 +1350,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     
     
     methods (Access = public)
-        live_plotting(app);
         [preSweep,postSweep] = extract_sweeps(app,doAll);
         abr_live_plot(app,sweeps,tvec,R);
-        
         
         % Constructor
         function app = ControlPanel(configFile)
