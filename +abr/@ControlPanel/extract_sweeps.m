@@ -27,20 +27,13 @@ if doAll
     LB = 1;
 end
 
-mTB = app.Runtime.mapTimingBuffer;
+idx = app.find_timing_onsets(LB,BH);
 
-% find stimulus onsets in timing signal
-ind = mTB.Data(LB:BH-1) > mTB.Data(LB+1:BH); % rising edge
-ind = ind & mTB.Data(LB:BH-1) >= 0.5; % threshold
-
-if ~any(ind), return; end % no new post
-
-idx = LB + find(ind);
+if isempty(idx), return; end % no new data
 
 if LB == 1
     app.ABR.ADC.SweepOnsets = idx-1; 
 else
-    
     % append newly found detected sweep timing impulses
     app.ABR.ADC.SweepOnsets = [app.ABR.ADC.SweepOnsets; idx];
 end
