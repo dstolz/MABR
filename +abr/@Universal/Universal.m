@@ -5,17 +5,17 @@ classdef Universal < handle
     end
     
     properties (SetAccess = private)
-        iconPath
-        hash
-        shortHash
-        commitDate
-        meta
+        iconPath        (1,:) char
+        hash            (1,:) char
+        shortHash       (1,:) char
+        commitDate      (1,:) char
+        meta            (1,1) struct
         
         availableSignals (1,:) cell
         
         matlabExePath   (1,:) char = fullfile(matlabroot,'bin','matlab.exe');
         runtimePath     (1,:) char
-        signalPath         (1,:) char
+        signalPath      (1,:) char
         errorLogPath    (1,:) char
 
         comFile         (1,:) char
@@ -35,7 +35,7 @@ classdef Universal < handle
         frameLength = 2048;
         
         SoftwareVersion = '0.1 beta';
-        DataVersion     = '0.1 beta';    
+        DataVersion     = '0.1 beta';
         Author          = 'Daniel Stolzberg';
         AuthorEmail     = 'daniel.stolzberg@gmail.com';
         GithubRepository= 'https://github.com/dstolz/abr';
@@ -181,6 +181,15 @@ classdef Universal < handle
             U = abr.Universal;
             U.banner;
             U.addpaths;
+            
+            % remove .dat files which will be rewritten
+            d = dir(fullfile(U.runtimePath,'*.dat'));
+            if isempty(d), return; end
+            ffn = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
+            ind = cellfun(@exist,ffn) ~= 2;
+            if all(ind), return; end
+            ffn(ind) = [];
+            cellfun(@delete,ffn);
         end
         
         function addpaths
