@@ -2,7 +2,7 @@ function abr_live_plot(app,postSweep,tvec,R)
 
 persistent h
 
-if nargin < 2 || isempty(h) || ~all(structfun(@isvalid,h))
+if nargin < 2 || isempty(h) || ~isfield(h,'axMean') || ~isvalid(h.axMean)
     h = setup(app); 
     return
 end
@@ -22,24 +22,30 @@ tvec = tvec * 1000; % s -> ms
 meanSweeps = mean(postSweep); % mean
 h.meanLine.XData = tvec;
 h.meanLine.YData = meanSweeps * 1000; % V -> mV
+h.axMean.Title.String = sprintf('%d / %d postSweep',size(postSweep,1),app.ABR.numSweeps);
 
 h.recentLine.XData = tvec;
 h.recentLine.YData = postSweep(end,:) * 1000; % V -> mV
 
-y = max(abs(postSweep(:)))*1000;
-y = ceil(y.*10);
-y = y-mod(y,10)+10;
-y = y./10;
-if isnan(y), y = 1; end
-h.ax.YAxis.Limits = [-1 1] * y;
-h.ax.XAxis.Limits = app.ABR.adcWindow*1000;
+m = logspace(-3,5,20);
 
-h.ax.Title.String = sprintf('%d / %d postSweep',size(postSweep,1),app.ABR.numSweeps);
+may = max(abs(h.meanLine.YData));
+s = m(find(m>may,1,'first'));
+if isempty(s), s = may; end
+h.axMean.YAxis.Limits = [-1 1] * s;
+h.axMean.XAxis.Limits = app.ABR.adcWindow*1000;
+
+
+may = max(abs(h.recentLine.YData));
+s = m(find(m>may,1,'first'));
+if isempty(s), s = may; end
+h.axRecent.YAxis.Limits = [-1 1] * s;
+h.axRecent.XAxis.Limits = h.axMean.XAxis.Limits;
 
 h.corrBar.YData = R;
 
-x = h.axCorr.YAxis.Limits;
-h.axCorr.YAxis.Limits = [0 max([x(2) .25])];
+m = h.axCorr.YAxis.Limits;
+h.axCorr.YAxis.Limits = [0 max([m(2) .25])];
 
 
 
@@ -56,33 +62,41 @@ end
 clf(f);
 
 
-ax = subplot(1,5,[1 4],'parent',f);
+axMean = subplot(1,3,[1 2],'parent',f);
+axRecent = axes(f,'position',axMean.Position,'Color','none');
+axCorr = subplot(1,3,3,'parent',f);
 
-grid(ax,'on');
-box(ax,'on');
 
-ax.XAxis.Label.String = 'time (ms)';
-ax.YAxis.Label.String = 'amplitude (mV)';
+grid(axMean,'on');
+box(axMean,'on');
 
-ax.XAxis.Limits = app.ABR.adcWindow * 1000; % s -> ms
+axMean.XAxis.Label.String = 'time (ms)';
+axMean.YAxis.Label.String = 'amplitude (mV)';
 
-ax.Toolbar.Visible = 'off'; % disable zoom/pan options
-ax.HitTest = 'off';
 
-h.zeroLine   = line(ax,[0 1000],[0 0],'linewidth',2,'color',[0.6 0.6 0.6]);
-h.meanLine   = line(ax,nan,nan,'linewidth',2,'color',[0 0 0]);
-h.recentLine = line(ax,nan,nan,'linewidth',1,'color',[0.2 0.6 1]);
 
-h.abrLegend = legend(ax, ...
+axMean.XAxis.Limits   = app.ABR.adcWindow * 1000; % s -> ms
+axRecent.XAxis.Limits = app.ABR.adcWindow * 1000;
+
+axRecent.YAxisLocation = 'right';
+axRecent.YColor = [0.2 0.6 1];
+
+% axMean.Toolbar.Visible = 'off'; % disable zoom/pan options
+axMean.HitTest = 'off';
+
+h.zeroLine   = line(axMean,[0 1000],[0 0],'linewidth',2,'color',[0.6 0.6 0.6]);
+h.meanLine   = line(axMean,nan,nan,'linewidth',2,'color',[0 0 0]);
+h.recentLine = line(axRecent,nan,nan,'linewidth',1,'color',[0.2 0.6 1]);
+
+h.abrLegend = legend(axMean, ...
     [h.recentLine, h.meanLine], ...
-    'labels',{'Latest Sweep','Block Avg'}, ...
+    'labels',{'Latest Sweep','Mean Response'}, ...
     'Location','southeast', ...
     'Orientation','vertical', ...
     'Box','off', ...
     'AutoUpdate','off');
 
 
-axCorr = subplot(1,5,5,'parent',f);
 
 h.corrBar = bar(axCorr, ...
     [1 2 3],[nan nan nan],1, ...
@@ -96,9 +110,9 @@ axCorr.XAxis.TickValues = [1 2 3];
 axCorr.XAxis.TickLabels = {'Pre'; 'Cross'; 'Post'};
 axCorr.XAxis.TickLabelRotation = 45;
 
-
-h.ax = ax;
-h.axCorr = axCorr;
+h.axMean   = axMean;
+h.axRecent = axRecent;
+h.axCorr   = axCorr;
 h.fig = f;
 
 figure(f);
