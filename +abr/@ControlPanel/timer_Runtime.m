@@ -1,27 +1,27 @@
 function timer_Runtime(T,event,app)
 
 
-app.live_analysis;
+% extrace sweeps relative to timing signal
+[preSweep,postSweep] = app.extract_sweeps;
 
-
-% % make sure the background process is still running
-% if ~app.Runtime.BgIsRunning
-%     app.stateProgram = abr.stateProgram.ACQ_ERROR;
-%     app.StateMachine;
-%     stop(T);
-% end
-
-
-% check status of recording
-switch app.Runtime.BackgroundState
-    case {abr.stateAcq.COMPLETED, abr.stateAcq.ADVANCED}
-        app.stateProgram = abr.stateProgram.BLOCK_COMPLETE;
-        app.StateMachine;
-        
-        
-    case abr.stateAcq.ERROR
-        app.stateProgram = abr.stateProgram.ACQ_ERROR;
-        app.StateMachine;
-        stop(T);
+if isnan(postSweep(1))
+    app.check_rec_status;
+    return
 end
+
+% do online analysis
+R = app.live_analysis(preSweep,postSweep);
+
+if isnan(R), return; end
+
+% update plots
+app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R);
+
+% update GUI
+app.ControlSweepCountGauge.Value = app.ABR.sweepCount;
+
+drawnow limitrate
+
+
+
 

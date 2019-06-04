@@ -1,6 +1,7 @@
 function timer_error(T,event,obj)
 % wtf
 errorString = sprintf('%s\n%s',event.Data.messageID,event.Data.message);
+errorString = strrep(errorString,'\','\\');
 vprintf(0,errorString);
 if obj.isBackground
     obj.BackgroundState = abr.stateAcq.ERROR;

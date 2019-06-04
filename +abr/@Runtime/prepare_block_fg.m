@@ -29,6 +29,10 @@ if r > 0, y(end+fl-r,2) = 0; end
 % pad onset/offset with some silence
 y = [zeros(Fs,2); y; zeros(Fs,2)];
 
+if size(y,1) > obj.Universal.maxInputBufferLength
+    error('abr:Runtime:prepare_block_fg','Stimulus too long, increase abr.Universal.maxInputBufferLength');
+end
+
 % write wav file to disk
 afw = dsp.AudioFileWriter( ...
     obj.Universal.dacFile, ...

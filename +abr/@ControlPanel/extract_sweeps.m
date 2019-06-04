@@ -1,8 +1,7 @@
 function [preSweep,postSweep] = extract_sweeps(app,doAll)
 
-persistent bufferHead lastBufferIdx
+persistent lastBufferIdx
 
-if isempty(bufferHead), bufferHead = 1; end
 
 if nargin < 2 || isempty(doAll), doAll = false; end
 
@@ -23,13 +22,17 @@ LB = double(lastBufferIdx);
 BH = double(bufferHead);
 
 
-if doAll
-    LB = 1;
-end
+if doAll, LB = 1; end
+
+vprintf(4,'lastBufferIdx = %d',LB)
+vprintf(4,'bufferHead = %d',BH)
 
 idx = app.find_timing_onsets(LB,BH);
 
 if isempty(idx), return; end % no new data
+
+vprintf(4,'size(app.ABR.ADC.SweepOnsets) = %s',mat2str(size(app.ABR.ADC.SweepOnsets)))
+vprintf(4,'# new sweeps = %s',mat2str(size(idx)))
 
 if LB == 1
     app.ABR.ADC.SweepOnsets = idx-1; 
@@ -51,8 +54,7 @@ if isempty(samps), return; end
 
 % organize incoming signal
 postSweep = app.Runtime.mapSignalBuffer.Data(samps);
-if app.ABR.sweepCount == 1, postSweep = postSweep'; end
-
+if size(postSweep,1) == 1, postSweep = postSweep'; end
 
 
 % extract signal preceding sweep onsets
@@ -60,9 +62,19 @@ bsamps = -1:-1:-size(samps,2);
 bsamps = app.ABR.ADC.SweepOnsets + bsamps;
 bsamps(any(bsamps < 1,2) | any(bsamps>bufferHead,2),:) = [];
 
-
 preSweep = app.Runtime.mapSignalBuffer.Data(bsamps);
+if size(preSweep,1) == 1, preSweep = preSweep'; end
 
+
+% update signal amplitude by InputAmpGain
+A = app.Config.Parameters.InputAmpGain;
+preSweep  = preSweep ./ A;
+postSweep = postSweep ./ A;
+
+vprintf(4,'size(preSweep) = %s',mat2str(size(preSweep)))
+vprintf(4,'size(postSweep) = %s',mat2str(size(postSweep)))
 
 % update this last
 lastBufferIdx = bufferHead;
+
+
