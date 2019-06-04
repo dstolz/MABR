@@ -11,6 +11,8 @@ classdef Runtime < handle
         
         BackgroundState (1,1) abr.stateAcq
         ForegroundState (1,1) abr.stateAcq
+        
+        InputAmpGain    (1,1) double = 1;
     end
     
     properties (SetAccess = private)
@@ -24,7 +26,7 @@ classdef Runtime < handle
         
         Timer % timer object
         
-        Universal = abr.Universal;
+        Universal   (1,1) abr.Universal = abr.Universal;
         
         infoData
         
@@ -42,8 +44,7 @@ classdef Runtime < handle
     end
     
     properties (Constant)
-        timerPeriod = 0.01;
-        maxInputBufferLength = 2^26; % should be power of 2 enough for at least a minute of data at 192kHz sampling rate
+        timerPeriod = 0.02;
     end
     
     methods
@@ -55,12 +56,13 @@ classdef Runtime < handle
             
             obj.update_infoData(sprintf('%s_ProcessID',obj.Role),feature('getpid'));
             
-            obj.create_memmapfile;
             
             if obj.isBackground
                 
                 abr.Universal.startup;
-                
+
+                obj.create_memmapfile;
+
                 abr.Runtime.print_do_not_close;
 
                 % Make sure MATLAB is running at full steam
@@ -82,6 +84,8 @@ classdef Runtime < handle
 %                 com.mathworks.mde.desk.MLDesktop.getInstance.getMainFrame.hide;
                 
             else
+                obj.create_memmapfile;
+
                 wmicStr = sprintf('wmic process where processid=''%d'' CALL setpriority 32768',obj.infoData.Foreground_ProcessID);
                 [s,w] = dos(wmicStr); % 32768 = Above Normal
                 if s ~= 0
@@ -185,15 +189,10 @@ classdef Runtime < handle
                 'int8',     [1,1], 'BackgroundState'; ...
                 'int8',     [1,1], 'CommandToFg'; ...
                 'int8',     [1,1], 'CommandToBg'; ...
-                'uint32',   [1 2], 'BufferIndex';}, ...
+                'uint32',   [1 2], 'BufferIndex'}, ...
                 'Repeat',1);
             
             % Writeable for the Background process only
-%             obj.mapSignalBuffer = memmapfile(obj.Universal.inputBufferFile, ...
-%                 'Writable', obj.isBackground, ...
-%                 'Format', { ...
-%                 'single' [1 2] 'InputBuffer'}, ...
-%                 'Repeat',obj.maxInputBufferLength);
             obj.mapSignalBuffer = memmapfile(obj.Universal.inputBufferFile, ...
                 'Writable', obj.isBackground, ...
                 'Format', 'single', ...
@@ -351,30 +350,21 @@ classdef Runtime < handle
             
             U = abr.Universal;
             
-            d = which('abr.Runtime.timer_runtime');
-            d = strrep(d,'\','\\');
-%             
-% %             % setup Background process
-%             cmdStr = sprintf('addpath(''%s''); dbstop in ''%s'' at 10; H = abr.Runtime(''Background'');', ...
-%                 fileparts(U.root),d);
-
             % setup Background process
             cmdStr = sprintf('addpath(''%s''); H = abr.Runtime(''Background'');', ...
                 fileparts(U.root));
             
             vprintf(3,'Launching background process; cmdStr = %s',cmdStr)
-
+            
             [s,w] = system(sprintf('"%s" -sd "%s" -logfile "%s" -nodesktop -minimize -noFigureWindows -nosplash -r "%s"', ...
                 U.matlabExePath,U.runtimePath,fullfile(U.runtimePath,'Background_process_log.txt'),cmdStr));
             
-            vprintf(3,'Launched background process; message: %s',w)
+            if s
+                vprintf(0,1,'FAILED TO LAUNCH BACKGROUND PROCESS!  OH SHIT!\nTry restarting Matlab')
+            else
+                vprintf(3,'Launched background process; message: %s',w)
+            end
 
-%             % testing
-%             cmdStr = sprintf('addpath(''%s''); H = abr.Runtime(''Background'')', ...
-%                 fileparts(obj.root));
-
-%             [s,w] = system(sprintf('"%s" -nosplash -r "%s"', ...
-%                 obj.matlabExePath,cmdStr));
         end
         
         
