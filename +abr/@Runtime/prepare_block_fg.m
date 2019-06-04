@@ -1,6 +1,7 @@
 function prepare_block_fg(obj,sweep,Fs,nReps,sweepRate,altPolarity)
 % Daniel Stolzberg (c) 2019
 
+
 r = round(Fs/sweepRate);
 
 y = [sweep(:); zeros(r-length(sweep),1,'like',sweep)];
@@ -25,12 +26,10 @@ fl = obj.Universal.frameLength;
 r = rem(length(y),fl);
 if r > 0, y(end+fl-r,2) = 0; end
 
-% % write wav file to disk
-% audiowrite( ...
-%     obj.Universal.dacFile, ...
-%     y,Fs, ...
-%     'BitsPerSample',32, ...
-%     'Title','ABR Stimulus');
+% pad onset/offset with some silence
+y = [zeros(Fs,2); y; zeros(Fs,2)];
+
+% write wav file to disk
 afw = dsp.AudioFileWriter( ...
     obj.Universal.dacFile, ...
     'FileFormat','WAV', ...
