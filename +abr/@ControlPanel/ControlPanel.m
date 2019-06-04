@@ -144,7 +144,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     % Set/Get Properties
     methods
         createComponents(app);
-        
+        idx = find_timing_onsets(app,varargin);
+
         function ffn = get.outputFile(app)
             fn = app.OutputFileDD.Value;
             pn = app.OutputPathDD.Value;
@@ -806,7 +807,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         
                         % update status
-                        app.AcquisitionStateLabel.Text = 'Advancing';
+                        if app.scheduleIdx == 1
+                            app.AcquisitionStateLabel.Text = 'Starting';
+                        else
+                            app.AcquisitionStateLabel.Text = 'Advancing';
+                        end
                         app.AcquisitionStateLabel.Tooltip = 'Advancing to next block';
                         app.AcquisitionStateLamp.Color = [0 0.4 0.8];
                         drawnow
@@ -819,12 +824,12 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ABR.DAC.SampleRate = app.SIG.Fs;
                         app.ABR.DAC.FrameSize  = abr.Universal.frameLength;
                         
-                        % reset the ADC buffer
+                        % reset the d buffer
                         app.ABR.ADC = abr.Buffer;
                         
                         app.ABR.ADC.FrameSize       = abr.Universal.frameLength;
                         app.ABR.ADC.SampleRate      = abr.Universal.ADCSampleRate; % TO DO: make app.ABR.ADC.SampleRate user settable?
-                        app.ABR.adcDecimationFactor = max([1 floor(app.SIG.Fs ./ app.ABR.ADC.SampleRate)]);
+                        app.ABR.adcDecimationFactor = round(max([1 floor(app.SIG.Fs ./ app.ABR.ADC.SampleRate)]));
                         app.ABR.ADC.SampleRate      = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;
 
                         % generate signal based on its parameters
@@ -950,6 +955,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         if ~isnan(postSweep)
                             R = app.partition_corr(preSweep,postSweep);
                             app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R)
+                            
+%                             app.ABR.ADC.Data = app.Runtime.mapSignalBuffer.Data;
+%                             app.ABR.ADC.SweepOnsets = app.find_timing_onsets;
                             
                             % Add buffer to traces.Organizer
                             app.TrcOrg.add_trace( ...

@@ -81,13 +81,16 @@ classdef (ConstructOnLoad = true) Organizer < handle
         end
         
         
-        function add_trace(obj,data,props,firstTimepoint,Fs)
-            narginchk(3,5);
+        function add_trace(obj,data,props,firstTimepoint,Fs,rawData)
+            narginchk(3,6);
             
             vprintf(2,'Adding trace to Organizer')
             
             if nargin < 4 || isempty(firstTimepoint), firstTimepoint = 0; end
             if nargin < 5 || isempty(Fs), Fs = 1; end
+            
+            if nargin < 6, rawData = abr.Buffer; end
+            
             if isempty(obj.Traces) || obj.N == 1 && obj.Traces.ID == -1
                 obj.Traces = abr.traces.Trace(data,props,firstTimepoint,Fs);
                 obj.YPosition = 0;
@@ -100,6 +103,8 @@ classdef (ConstructOnLoad = true) Organizer < handle
             
             obj.Traces(end).Color = obj.groupColors(obj.GroupIdx(end),:);
 
+            obj.Traces(end).RawData = rawData;
+            
             plot(obj);
         end
                 

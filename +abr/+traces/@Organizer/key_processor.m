@@ -62,6 +62,7 @@ switch lower(K)
             T(i).Time = obj.Traces(tidx(i)).TimeVector;
             T(i).Data = obj.Traces(tidx(i)).Data;
             T(i).SampleRate = obj.Traces(tidx(i)).SampleRate;
+%             T(i).RawData = obj.Traces(tidx(i)).RawData;
             T(i).Color = obj.Traces(tidx(i)).Color;
             T(i).LineWidth = obj.Traces(tidx(i)).LineWidth;
             T(i).LabelText = obj.Traces(tidx(i)).LabelText;
@@ -149,7 +150,6 @@ switch lower(K)
         
         figure(T);
         plot(T);
-        
         
     case {'s', 'save'} % save trace organizer
         save(obj);

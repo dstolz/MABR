@@ -14,6 +14,8 @@ classdef Trace < handle &  matlab.mixin.SetGet
         LabelText       (1,:)
         
         TimeUnit        (1,:) char {mustBeMember(TimeUnit,{'auto','s','ms','us','ns'})} = 'auto';
+        
+        RawData         (1,1) abr.Buffer
     end
     
     properties (SetAccess = private)
