@@ -19,7 +19,7 @@ end
 tvec = cast(tvec,'like',postSweep);
 tvec = tvec * 1000; % s -> ms
 
-meanSweeps = mean(postSweep); % mean
+meanSweeps = mean(postSweep,1); % mean
 h.meanLine.XData = tvec;
 h.meanLine.YData = meanSweeps * 1000; % V -> mV
 h.axMean.Title.String = sprintf('%d / %d postSweep',size(postSweep,1),app.ABR.numSweeps);
@@ -27,6 +27,7 @@ h.axMean.Title.String = sprintf('%d / %d postSweep',size(postSweep,1),app.ABR.nu
 h.recentLine.XData = tvec;
 h.recentLine.YData = postSweep(end,:) * 1000; % V -> mV
 
+% control y axis scaling
 m = logspace(-3,5,20);
 
 may = max(abs(h.meanLine.YData));
@@ -45,7 +46,7 @@ h.axRecent.XAxis.Limits = h.axMean.XAxis.Limits;
 h.corrBar.YData = R;
 
 m = h.axCorr.YAxis.Limits;
-h.axCorr.YAxis.Limits = [0 max([m(2) .25])];
+h.axCorr.YAxis.Limits = [0 max([m(2) .5])];
 
 
 
