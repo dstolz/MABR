@@ -45,12 +45,14 @@ h.axRecent.XAxis.Limits = h.axMean.XAxis.Limits;
 
 h.corrBar.YData = R;
 
-m = h.axCorr.YAxis.Limits;
-h.axCorr.YAxis.Limits = [0 max([m(2) .5])];
+m = .5:.25:1;
+m = m(find(m>max(R),1,'first'));
+h.axCorr.YAxis.Limits = [0 m];
 
 
 
 function h = setup(app)
+vprintf(3,'Setting up abr_live_plot')
 f = findobj('type','figure','-and','name','MABR Live Plot');
 
 if isempty(f)
@@ -98,7 +100,6 @@ h.abrLegend = legend(axMean, ...
     'AutoUpdate','off');
 
 
-
 h.corrBar = bar(axCorr, ...
     [1 2 3],[nan nan nan],1, ...
     'FaceColor','Flat','EdgeColor','none', ...
@@ -110,6 +111,7 @@ axCorr.YAxis.Label.String = 'correlation';
 axCorr.XAxis.TickValues = [1 2 3];
 axCorr.XAxis.TickLabels = {'Pre'; 'Cross'; 'Post'};
 axCorr.XAxis.TickLabelRotation = 45;
+axCorr.XAxis.Limits = [0.5 3.5];
 
 h.axMean   = axMean;
 h.axRecent = axRecent;
