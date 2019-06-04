@@ -995,7 +995,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         % SAVE ABR DATA
                         app.AcquisitionStateLabel.Text      = 'Saving Data';
-                        app.auto_save_abr_data;
+%                         app.auto_save_abr_data;
                         drawnow                        
                         
                         app.AcquisitionStateLabel.Text      = 'Finished';
@@ -1009,7 +1009,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.AcquisitionStateLabel.Text      = 'Saving Data';
                         app.AcquisitionStateLamp.Color      = [0.2 0.8 1];
                         drawnow
-                        app.auto_save_abr_data;
+%                         app.auto_save_abr_data;
                                                 
                         
                         app.Schedule.DO_NOT_DELETE = false;
@@ -1032,7 +1032,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         stateAcq = abr.stateAcq.CANCELLED;
                         
                         % SAVE ABR DATA
-                        app.auto_save_abr_data;
+%                         app.auto_save_abr_data;
                         
                         drawnow
                 end
