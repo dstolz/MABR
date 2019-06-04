@@ -30,6 +30,21 @@ app.SaveConfigurationMenu.Text = 'Save Configuration ...';
 app.SaveConfigurationMenu.Accelerator = 's';
 app.SaveConfigurationMenu.Callback = createCallbackFcn(app, @save_config_file, false);
 
+
+
+
+% Create ParametersMenu
+app.ParametersMenu = uimenu(app.ControlPanelUIFigure);
+app.ParametersMenu.Text = 'Parameters';
+
+% Create UpdateInputGainMenu
+g = getpref('ABRControlPanel','AmpGain',1);
+app.UpdateInputGainMenu = uimenu(app.ParametersMenu);
+app.UpdateInputGainMenu.Text = sprintf('Amplifier Gain = %gx',g);
+app.UpdateInputGainMenu.Callback = createCallbackFcn(app, @update_amplifier_gain, false);
+
+
+
 % Create OptionsMenu
 app.OptionsMenu = uimenu(app.ControlPanelUIFigure);
 app.OptionsMenu.Text = 'Options';

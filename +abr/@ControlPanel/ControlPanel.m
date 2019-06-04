@@ -53,6 +53,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         SetupAudioChannelsMenu         matlab.ui.container.Menu
         VerbosityMenu                  matlab.ui.container.Menu
         ResetBackgroundProcessMenu     matlab.ui.container.Menu
+        ParametersMenu                 matlab.ui.container.Menu
+        UpdateInputGainMenu            matlab.ui.container.Menu
         TabGroup                       matlab.ui.container.TabGroup
         ConfigTab                      matlab.ui.container.Tab
         AcqFilterTab                   matlab.ui.container.Tab
@@ -145,7 +147,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     methods
         createComponents(app);
         idx = find_timing_onsets(app,varargin);
-
+        R = live_analysis(app,preSweep,postSweep);
+        [preSweep,postSweep] = extract_sweeps(app,doAll);
+        abr_live_plot(app,sweeps,tvec,R);
+        
         function ffn = get.outputFile(app)
             fn = app.OutputFileDD.Value;
             pn = app.OutputPathDD.Value;
@@ -366,6 +371,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             app.Config.Filter.adcFilterHP  = app.FilterHPFcEditField.Value;
             app.Config.Filter.adcFilterLP  = app.FilterLPFcEditField.Value;
             app.Config.Filter.Notch.Freq   = app.FilterNotchFilterKnob.Value;
+            
+            app.Config.Parameters = app.Runtime.infoData;
         end
         
         function apply_config_parameters(app)
@@ -380,6 +387,13 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             app.FilterHPFcEditField.Value        = app.Config.Filter.adcFilterHP;
             app.FilterLPFcEditField.Value        = app.Config.Filter.adcFilterLP;
             app.FilterNotchFilterKnob.Value      = app.Config.Filter.Notch.Freq;
+            
+            P = app.Config.Parameters;
+            app.UpdateInputGainMenu.Text = sprintf('Amplifier Gain = %gx',P.InputAmpGain);
+            fn = fieldnames(P);
+            for i = 1:length(fn)
+                app.Runtime.update_infoData(fn{i},P.(fn{i}));
+            end
             
             if isequal(app.FilterEnableSwitch.Value,'Enabled')
                 app.FilterEnabledLamp.Color = [0 1 0];
@@ -952,7 +966,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         % extract sweep-based data and plot one last time
                         [preSweep,postSweep] = app.extract_sweeps(true);
-                        if ~isnan(postSweep)
+                        if ~isnan(postSweep(1))
                             R = app.partition_corr(preSweep,postSweep);
                             app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R)
                             
@@ -1096,7 +1110,21 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         end           
         
         
-        
+        function check_rec_status(app)
+            % check status of recording
+            switch app.Runtime.BackgroundState
+                case {abr.stateAcq.COMPLETED, abr.stateAcq.ADVANCED}
+                    app.stateProgram = abr.stateProgram.BLOCK_COMPLETE;
+                    app.StateMachine;
+                    
+                    
+                case abr.stateAcq.ERROR
+                    app.stateProgram = abr.stateProgram.ACQ_ERROR;
+                    app.StateMachine;
+                    stop(T);
+            end
+        end
+
         function pause_button(app)
             global stateAcq
             
@@ -1350,8 +1378,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     
     
     methods (Access = public)
-        [preSweep,postSweep] = extract_sweeps(app,doAll);
-        abr_live_plot(app,sweeps,tvec,R);
         
         % Constructor
         function app = ControlPanel(configFile)
@@ -1420,6 +1446,20 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     
     
     methods (Access = private)
+        function update_amplifier_gain(app)
+            g = getpref('ABRControlPanel','AmpGain',1);
+            i = inputdlg('Enter input amplifier gain:','Amp Gain', ...
+                1,{num2str(g)});
+            if isempty(i), return; end
+            g = str2double(i{1});
+            if isnan(g) || ~isreal(g) || isinf(g) || ~isscalar(g) || g <= 0
+                vprintf(0,1,'Invalid value for input gain: %s',i{1})
+                return
+            end
+            vprintf(1,'Amplifier gain set to: %g',g);
+            app.UpdateInputGainMenu.Text = sprintf('Amplifier Gain = %gx',g);
+            setpref('ABRControlPanel','AmpGain',g);
+        end
         
         function cp_docbox(app)
             c = strrep(lower(app.selectedTab.Title),' ','_');
