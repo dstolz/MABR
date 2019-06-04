@@ -12,8 +12,6 @@ T = obj.mapTimingBuffer;
 
 frameLength = obj.Universal.frameLength;
 
-info = obj.infoData;
-
 
 % reset latest input buffer index
 C.Data.BufferIndex = uint32([1 frameLength]);
@@ -50,9 +48,6 @@ while ~isDone(obj.AFR)
 %         idx = 1;
 %         k = frameLength;
 %     end
-
-    % apply adjustment for input amplifier gain
-    audioADC = audioADC ./ info.InputAmpGain;
 
     % TESTING WITH FAKE LOOP-BACK AND SIGNAL **********************
     audioADC(:,1) = audioDAC(:,1) + randn(frameLength,1)/10;
