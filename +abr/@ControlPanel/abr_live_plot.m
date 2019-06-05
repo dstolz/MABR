@@ -16,39 +16,55 @@ if isempty(postSweep)
     return
 end
 
+
+
+
 tvec = cast(tvec,'like',postSweep);
 tvec = tvec * 1000; % s -> ms
 
+
+
+% mean trace
 meanSweeps = mean(postSweep,1); % mean
+
+may = max(abs(meanSweeps));
+[unit,yscale] = abr.Universal.voltage_gauge(may);
+
 h.meanLine.XData = tvec;
-h.meanLine.YData = meanSweeps * 1000; % V -> mV
+h.meanLine.YData = meanSweeps * yscale; % V -> unit
 h.axMean.Title.String = sprintf('%d / %d postSweep',size(postSweep,1),app.ABR.numSweeps);
 
-h.recentLine.XData = tvec;
-h.recentLine.YData = postSweep(end,:) * 1000; % V -> mV
-
 % control y axis scaling
-m = logspace(-3,5,20);
-
-may = max(abs(h.meanLine.YData));
+m = [0:.125:.25 .5:.25:.75 1:10];
+may = may * yscale;
 s = m(find(m>may,1,'first'));
 if isempty(s), s = may; end
 h.axMean.YAxis.Limits = [-1 1] * s;
-h.axMean.XAxis.Limits = app.ABR.adcWindow*1000;
+h.axMean.XAxis.Limits = tvec([1 end]);
+h.axMean.YAxis.TickLabelFormat = sprintf('%%3.2f %s',unit);
 
+% most recent trace
+n = min([size(postSweep,1)-1 16]);
+may = max(abs(postSweep(end-n:end,:)),[],'all');
+[unit,yscale] = abr.Universal.voltage_gauge(may);
+may = may * yscale;
 
-may = max(abs(h.recentLine.YData));
+h.recentLine.XData = tvec;
+h.recentLine.YData = postSweep(end,:) * yscale; % V -> unit
+
 s = m(find(m>may,1,'first'));
 if isempty(s), s = may; end
 h.axRecent.YAxis.Limits = [-1 1] * s;
 h.axRecent.XAxis.Limits = h.axMean.XAxis.Limits;
+h.axRecent.YAxis.TickLabelFormat = sprintf('%%3.2f %s',unit);
+
 
 h.corrBar.YData = R;
 
 m = .5:.25:1;
 m = m(find(m>max(R),1,'first'));
 h.axCorr.YAxis.Limits = [0 m];
-
+h.axCorr.YAxis.TickLabelFormat = '%2.1f';
 
 
 function h = setup(app)
@@ -61,24 +77,23 @@ if isempty(f)
     pos = getpref('ABRControlPanel','abr_live_plot_fig_pos',pos);
     f = figure('name','MABR Live Plot','color','w','NumberTitle','off', ...
         'Position',pos, ...
-        'CloseRequestFcn','setpref(''ABRControlPanel'',''abr_live_plot_fig_pos'',get(gcf,''Position''))', ...
+        'CloseRequestFcn','setpref(''ABRControlPanel'',''abr_live_plot_fig_pos'',get(gcf,''Position'')); delete(gcf);', ...
         'tag','MABR_FIG');
 end
 
 clf(f);
 
 
-axMean = subplot(1,3,[1 2],'parent',f);
-axRecent = axes(f,'position',axMean.Position,'Color','none');
-axCorr = subplot(1,3,3,'parent',f);
+axRecent = subplot(1,3,[1 2],'parent',f);
+axMean   = axes(f,'position',axRecent.Position,'Color','none');
+axCorr   = subplot(1,3,3,'parent',f);
 
 
 grid(axMean,'on');
 box(axMean,'on');
 
 axMean.XAxis.Label.String = 'time (ms)';
-axMean.YAxis.Label.String = 'amplitude (mV)';
-
+axMean.YAxis.Label.String = '';
 
 
 axMean.XAxis.Limits   = app.ABR.adcWindow * 1000; % s -> ms

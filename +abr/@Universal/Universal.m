@@ -315,9 +315,15 @@ classdef Universal < handle
         
         function [unit,multiplier] = voltage_gauge(V)
             U = {'pV','nV','\muV','mV','V','KV','MV','GV'};
-            G = 10.^(-12:3:9);
+            U = [U; U; U];
+            U = U(:);
+            G = [10.^(-13:3:8); 10.^(-12:3:9); 10.^(-11:3:10)];
+            G = G(:);
+            M = 10.^(-12:3:9);
+            M = [M; M; M];
+            M = M(:);
             i = find(G < V*10,1,'last');
-            multiplier = 1/G(i);
+            multiplier = 1/M(i);
             unit = U{i};
         end
         
