@@ -784,7 +784,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.gather_config_parameters; % in case user updates guis
                         
                         if app.ControlRepeatButton.Value % 1 == depressed 
-                            nReps = -1; 
+                            nReps = inf; 
 
                             % update gui info
                             app.update_ControlStimInfoLabel(nReps);
@@ -1178,7 +1178,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             hObj = event.Source;
             if event.Value % depressed
                 hObj.BackgroundColor = [0.8 0.8 1];
-                app.update_ControlStimInfoLabel(-1);
+                app.update_ControlStimInfoLabel(inf);
                 hObj.FontWeight = 'bold';
                 
             else
@@ -1235,19 +1235,12 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             n = sum(selData);
             m = find(find(selData) == app.scheduleIdx);
             
-            if nReps == -1
-                app.ControlStimInfoLabel.Text = sprintf( ...
-                    'Block %d of %d  | Schedule Row %d | Repetition %d < REPEATING >', ...
-                    m,n,app.scheduleIdx, ...
-                    app.scheduleRunCount(app.scheduleIdx)+1);
-            else
-                app.ControlStimInfoLabel.Text = sprintf( ...
-                    'Block %d of %d  | Schedule Row %d | Repetition %d of %d', ...
-                    m,n,app.scheduleIdx, ...
-                    app.scheduleRunCount(app.scheduleIdx)+1,nReps);
-            end
+            app.ControlStimInfoLabel.Text = sprintf( ...
+                'Block %d of %d  | Schedule Row %d | Repetition %d of %d', ...
+                m,n,app.scheduleIdx, ...
+                app.scheduleRunCount(app.scheduleIdx)+1,nReps);
         end
-                        
+        
         
         
         
