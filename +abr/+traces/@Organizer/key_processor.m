@@ -146,7 +146,7 @@ switch lower(K)
         
     case {'p','popout'} % popout selected traces
         if isempty(tidx), return; end
-        T = traces.Organizer(obj.Traces(tidx));
+        T = abr.traces.Organizer(obj.Traces(tidx));
         
         figure(T);
         plot(T);

@@ -37,6 +37,9 @@ classdef (ConstructOnLoad = true) Organizer < handle
         mainFig          (1,1) %matlab.ui.Figure
         mainAx           (1,1) %matlab.graphics.axis.Axes
         
+        ampScaleLineHandle (1,1) %line handle
+        ampScaleLabelHandle (1,1) % text object handle
+        
         ContextMenu
         
         tbh % structure with toolbar handles
@@ -362,8 +365,10 @@ classdef (ConstructOnLoad = true) Organizer < handle
             D = {obj.Traces.Data};
             
             % normalize trace data
-            my = max(cellfun(@(a) max(abs(a)),D));
-            D = cellfun(@(a) a./ my .* obj.YScaling,D,'uni',0);
+%             my = obj.max_data;
+%             D = cellfun(@(a) a./ my .* obj.YScaling,D,'uni',0);
+            D = cellfun(@obj.v2yscale,D,'uni',0);
+            D = cellfun(@(a) a.*1000,D,'uni',0); % V -> mV
             
             pidx = obj.PlotOrder';
             
@@ -389,13 +394,65 @@ classdef (ConstructOnLoad = true) Organizer < handle
             if isempty(x), x = [0 1]; end
             obj.mainAx.XLim = [min(x) max(x)];
             
+            obj.plot_amp_scale;
+        end
+        
+        
+        function plot_amp_scale(obj)            
+            if isempty(obj.ampScaleLineHandle) || isequal(obj.ampScaleLineHandle,0) || ~isvalid(obj.ampScaleLineHandle)
+                obj.ampScaleLineHandle = line(obj.mainAx,nan,nan,'color',[0.4 0.4 0.4], ...
+                    'linewidth',3);
+            end
             
+            
+            if isempty(obj.ampScaleLabelHandle) || isequal(obj.ampScaleLabelHandle,0) || ~isvalid(obj.ampScaleLabelHandle)
+                obj.ampScaleLabelHandle = text(obj.mainAx,nan,nan,'mV');
+            end
+                        
+            
+
+            y = obj.mainAx.YLim;
+            dy = diff(y);
+            y = y(1) + 0.02*dy;
+%             y(2) = y(1) + 0.1*dy;
+            yval = 1;
+            y(2) = y(1) + obj.v2yscale(yval);
+            
+            x = 0.98*[1 1]*obj.mainAx.XLim(2);
+            
+            obj.ampScaleLineHandle.XData = x;
+            obj.ampScaleLineHandle.YData = y;
+            
+            obj.ampScaleLabelHandle.Position    = [x(1) y(1)];
+            obj.ampScaleLabelHandle.String      = sprintf('%.1f mV',yval); % V->mV
+            obj.ampScaleLabelHandle.FontSize    = 8;
+            obj.ampScaleLabelHandle.Color       = [0.4 0.4 0.4];
+            obj.ampScaleLabelHandle.BackgroundColor = [1 1 1 0.5];
+            obj.ampScaleLabelHandle.Margin      = 0.1;
+            obj.ampScaleLabelHandle.HorizontalAlignment = 'right';
+            obj.ampScaleLabelHandle.VerticalAlignment   = 'cap';
+            
+            
+            drawnow
         end
         
         
     end
     
     methods (Access = private)
+        
+        function v = max_data(obj)
+            D = {obj.Traces.Data};
+            v = max(cellfun(@(a) max(abs(a)),D));
+        end
+        
+        function mv = yscale2v(obj,y)
+            mv = y*obj.max_data/obj.YScaling;
+        end
+        
+        function y = v2yscale(obj,mv)
+            y = mv./ obj.max_data .* obj.YScaling;
+        end
         
         function create_toolbar(obj)
             obj.tbh.toolbar = uitoolbar(obj.mainFig);

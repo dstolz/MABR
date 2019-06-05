@@ -27,7 +27,7 @@ if ~any(DC), return; end
 
 LAST_COORD = C;
 
-m = 10; % movement multiplier
+m = 0.05; % movement multiplier
 obj.YPosition(tidx) = obj.YPosition(tidx) + DC(2)*m;
 
 h = [obj.Traces(tidx).LineHandle];
@@ -36,4 +36,7 @@ for i = 1:length(h)
     h(i).YData = h(i).YData + DC(2)*m;
     k(i).Position(2) = obj.YPosition(tidx(i));
 end
+
+obj.plot_amp_scale;
+
 drawnow limitrate
