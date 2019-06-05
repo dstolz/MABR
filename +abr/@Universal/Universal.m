@@ -291,6 +291,8 @@ classdef Universal < handle
             %
             % No errors or warnings are thrown if for some reason this function is
             % unable to keep hFig on top.
+            %
+            % Not likely to work with uifigure objects
                         
             narginchk(2,2);
             assert(ishandle(hFig),'The first input (hFig) must be a valid figure handle');
@@ -309,6 +311,14 @@ classdef Universal < handle
                 end
                 warning('on','MATLAB:HandleGraphics:ObsoletedProperty:JavaFrame');
             end
+        end
+        
+        function [unit,multiplier] = voltage_gauge(V)
+            U = {'pV','nV','\muV','mV','V','KV','MV','GV'};
+            G = 10.^(-12:3:9);
+            i = find(G < V*10,1,'last');
+            multiplier = 1/G(i);
+            unit = U{i};
         end
         
     end
