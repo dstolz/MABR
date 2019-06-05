@@ -17,7 +17,7 @@ postMean2 = mean(postSweep(i(m+1:end),:),1)';
 R = corrcoef([preMean1 preMean2 postMean1 postMean2]);
 
 Rpre   = R(2,1);
-Rcross = mean(R(sub2ind([4 4],[3 3 4 4],[1 2 1 2])),1);
+Rcross = mean(R(sub2ind([4 4],[3 3 4 4],[1 2 1 2])));
 Rpost  = R(4,3);
 
 R = abs([Rpre Rcross Rpost]);
