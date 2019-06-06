@@ -110,13 +110,19 @@ switch lower(K)
             set(h(tidx),'visible','on');
         end
         
+    case {'i','equal'}
+        if length(tidx) < 2, tidx = obj.TraceIdx; end
+        y = obj.YPosition(tidx);
+        obj.YPosition(tidx) = linspace(min(y),max(y),length(tidx));
+        plot(obj);
+        
+        
     case 'j' % increase trace amp
         obj.YScaling = obj.YScaling * 1.1;
         plot(obj);
 
     case 'k' % increase trace spacing
-        if obj.N < 2, return; end
-        if isempty(tidx), tidx = obj.TraceIdx; end
+        if length(tidx) < 2, return; end
         y = obj.YPosition(tidx);
         [y,i] = sort(y,'ascend');
         tidx = tidx(i);
@@ -126,9 +132,7 @@ switch lower(K)
         plot(obj);
         
     case 'm' % decrease trace spacing
-        if obj.N < 2, return; end
-        if length(tidx) == 1, return; end
-        if isempty(tidx), tidx = obj.TraceIdx; end
+        if length(tidx) < 2, return; end
         y = obj.YPosition(tidx);
         [y,i] = sort(y,'ascend');
         tidx = tidx(i);

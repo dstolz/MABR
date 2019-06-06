@@ -343,7 +343,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
                     'Box','on', ...
                     'ButtonDownFcn',{'abr.traces.Organizer.axes_clicked',obj}, ...
                     'HandleVisibility','off', ...
-                    'YTickLabelRotation',30);
+                    'YLimMode','manual');
                 
                 
                 
@@ -364,11 +364,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             
             D = {obj.Traces.Data};
             
-            % normalize trace data
-%             my = obj.max_data;
-%             D = cellfun(@(a) a./ my .* obj.YScaling,D,'uni',0);
             D = cellfun(@obj.v2yscale,D,'uni',0);
-            D = cellfun(@(a) a.*1000,D,'uni',0); % V -> mV
             
             pidx = obj.PlotOrder';
             
@@ -385,16 +381,22 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 
                 obj.Traces(k).LabelHandle.Position(2) = obj.YPosition(k);
                 
-                obj.Traces(k).LineHandle.UIContextMenu = obj.ContextMenu;
+                obj.Traces(k).LineHandle.UIContextMenu  = obj.ContextMenu;
                 obj.Traces(k).LabelHandle.UIContextMenu = obj.ContextMenu;
             end
             
             
             x = [obj.Traces(k).LineHandle.XData];
             if isempty(x), x = [0 1]; end
-            obj.mainAx.XLim = [min(x) max(x)];
+            obj.mainAx.XLim = [min(x(:)) max(x(:))];
             
             obj.plot_amp_scale;
+            
+            ch = findobj(obj.mainAx,'type','line');
+            y = [ch.YData];
+            yl = [0.8 1.1] .* [min(y) max(y)];
+            obj.mainAx.YLim = yl;
+            
         end
         
         
@@ -408,24 +410,25 @@ classdef (ConstructOnLoad = true) Organizer < handle
             if isempty(obj.ampScaleLabelHandle) || isequal(obj.ampScaleLabelHandle,0) || ~isvalid(obj.ampScaleLabelHandle)
                 obj.ampScaleLabelHandle = text(obj.mainAx,nan,nan,'mV');
             end
-                        
+               
             
+            y(1) = min(obj.YPosition);
+            
+            yval = .5e-3;
+            
+            y(2) = y(1) - obj.v2yscale(yval);
+            y = y - diff(y)/2;
+            
+            [unit,multiplier] = abr.Universal.voltage_gauge(yval);
 
-            y = obj.mainAx.YLim;
-            dy = diff(y);
-            y = y(1) + 0.02*dy;
-%             y(2) = y(1) + 0.1*dy;
-            yval = 1;
-            y(2) = y(1) + obj.v2yscale(yval);
-            
             x = 0.98*[1 1]*obj.mainAx.XLim(2);
             
             obj.ampScaleLineHandle.XData = x;
             obj.ampScaleLineHandle.YData = y;
             
-            obj.ampScaleLabelHandle.Position    = [x(1) y(1)];
-            obj.ampScaleLabelHandle.String      = sprintf('%.1f mV',yval); % V->mV
-            obj.ampScaleLabelHandle.FontSize    = 8;
+            obj.ampScaleLabelHandle.Position    = [x(1) y(2)];
+            obj.ampScaleLabelHandle.String      = sprintf('%.1f %s',yval*multiplier,unit);
+            obj.ampScaleLabelHandle.FontSize    = 8;    
             obj.ampScaleLabelHandle.Color       = [0.4 0.4 0.4];
             obj.ampScaleLabelHandle.BackgroundColor = [1 1 1 0.5];
             obj.ampScaleLabelHandle.Margin      = 0.1;
@@ -446,12 +449,17 @@ classdef (ConstructOnLoad = true) Organizer < handle
             v = max(cellfun(@(a) max(abs(a)),D));
         end
         
-        function mv = yscale2v(obj,y)
-            mv = y*obj.max_data/obj.YScaling;
+        function v = min_data(obj)
+            D = {obj.Traces.Data};
+            v = min(cellfun(@(a) max(abs(a)),D));
         end
         
-        function y = v2yscale(obj,mv)
-            y = mv./ obj.max_data .* obj.YScaling;
+        function V = yscale2v(obj,y)
+            V = y*obj.max_data/obj.YScaling;
+        end
+        
+        function y = v2yscale(obj,V)
+            y = V./ obj.max_data .* obj.YScaling;
         end
         
         function create_toolbar(obj)

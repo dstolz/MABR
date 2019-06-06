@@ -313,11 +313,30 @@ classdef Universal < handle
             end
         end
         
-        function [unit,multiplier] = voltage_gauge(V)
-            U = {'pV','nV','\muV','mV','V','KV','MV','GV'};
+        function [unit,multiplier] = time_gauge(S)
+            if S >= 1
+                unit = 's';
+                multiplier = 1;
+                return
+            end
+            U = {'ps','ns','ms','us','ms','s'};
             U = [U; U; U];
             U = U(:);
-            G = [10.^(-13:3:8); 10.^(-12:3:9); 10.^(-11:3:10)];
+            G = [.1; 1; 10] * 10.^(-12:3:3);
+            G = G(:);
+            M = 10.^(-12:3:3);
+            M = [M; M; M];
+            M = M(:);
+            i = find(G < S*10,1,'last');
+            multiplier = 1/M(i);
+            unit = U{i};
+        end
+        
+        function [unit,multiplier] = voltage_gauge(V)
+            U = {'pV','nV','uV','mV','V','KV','MV','GV'};
+            U = [U; U; U];
+            U = U(:);
+            G = [.1; 1; 10] * 10.^(-12:3:9);
             G = G(:);
             M = 10.^(-12:3:9);
             M = [M; M; M];

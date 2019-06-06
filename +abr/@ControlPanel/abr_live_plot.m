@@ -35,13 +35,14 @@ h.meanLine.YData = meanSweeps * yscale; % V -> unit
 h.axMean.Title.String = sprintf('%d / %d postSweep',size(postSweep,1),app.ABR.numSweeps);
 
 % control y axis scaling
-m = [0:.125:.25 .5:.25:.75 1:10];
+m = [0:0.01:0.09 0.1:.1:.4 .5:.25:.75 1:10];
 may = may * yscale;
 s = m(find(m>may,1,'first'));
 if isempty(s), s = may; end
 h.axMean.YAxis.Limits = [-1 1] * s;
 h.axMean.XAxis.Limits = tvec([1 end]);
 h.axMean.YAxis.TickLabelFormat = sprintf('%%3.2f %s',unit);
+h.axMean.YAxis.TickValues = linspace(-s,s,5);
 
 % most recent trace
 n = min([size(postSweep,1)-1 16]);
@@ -57,7 +58,7 @@ if isempty(s), s = may; end
 h.axRecent.YAxis.Limits = [-1 1] * s;
 h.axRecent.XAxis.Limits = h.axMean.XAxis.Limits;
 h.axRecent.YAxis.TickLabelFormat = sprintf('%%3.2f %s',unit);
-
+h.axRecent.YAxis.TickValues = linspace(-s,s,5);
 
 h.corrBar.YData = R;
 
@@ -87,7 +88,8 @@ clf(f);
 axRecent = subplot(1,3,[1 2],'parent',f);
 axMean   = axes(f,'position',axRecent.Position,'Color','none');
 axCorr   = subplot(1,3,3,'parent',f);
-
+axCorr.Position(1) = 0.75;
+axCorr.Position(3) = 0.15;
 
 grid(axMean,'on');
 box(axMean,'on');
