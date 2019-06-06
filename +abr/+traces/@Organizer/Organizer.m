@@ -64,12 +64,12 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 obj.mainFigTag = sprintf('TRACEORGANIZER_%d',round(rand(1)*1e9));
             end
             
-            if nargin == 2 && isa(traces,'abr.traces.Trace')
+            if nargin == 1 && isa(traces,'abr.traces.Trace')
                 for i = 1:length(traces)
                     obj.add_trace(traces(i).Data,traces(i).Props,traces(i).FirstTimepoint,traces(i).SampleRate);
                 end
                 
-            elseif nargin == 2 && ischar(traces) && exist(traces,'file')
+            elseif nargin == 1 && ischar(traces) && exist(traces,'file')
                 load(traces,'-mat');
                 obj = TO;
                 plot(obj);
@@ -394,8 +394,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             
             ch = findobj(obj.mainAx,'type','line');
             y = [ch.YData];
-            yl = [0.8 1.1] .* [min(y) max(y)];
-            obj.mainAx.YLim = yl;
+            obj.mainAx.YLim(1) = 0.9*min(y);
             
         end
         
@@ -406,28 +405,30 @@ classdef (ConstructOnLoad = true) Organizer < handle
                     'linewidth',3);
             end
             
-            
             if isempty(obj.ampScaleLabelHandle) || isequal(obj.ampScaleLabelHandle,0) || ~isvalid(obj.ampScaleLabelHandle)
                 obj.ampScaleLabelHandle = text(obj.mainAx,nan,nan,'mV');
             end
-               
             
             y(1) = min(obj.YPosition);
             
-            yval = .5e-3;
+            my = obj.max_data * 2;
+            [unit,multiplier] = abr.Universal.voltage_gauge(my);
+            yval = my * multiplier;
+            m = 0:0.1:10;
+            i = find(yval <= m,1,'first');
+            yval = m(i);
             
-            y(2) = y(1) - obj.v2yscale(yval);
+            y(2) = y(1) - obj.v2yscale(yval/multiplier);
             y = y - diff(y)/2;
             
-            [unit,multiplier] = abr.Universal.voltage_gauge(yval);
-
+            
             x = 0.98*[1 1]*obj.mainAx.XLim(2);
             
             obj.ampScaleLineHandle.XData = x;
             obj.ampScaleLineHandle.YData = y;
             
             obj.ampScaleLabelHandle.Position    = [x(1) y(2)];
-            obj.ampScaleLabelHandle.String      = sprintf('%.1f %s',yval*multiplier,unit);
+            obj.ampScaleLabelHandle.String      = sprintf('%.1f %s',yval,unit);
             obj.ampScaleLabelHandle.FontSize    = 8;    
             obj.ampScaleLabelHandle.Color       = [0.4 0.4 0.4];
             obj.ampScaleLabelHandle.BackgroundColor = [1 1 1 0.5];

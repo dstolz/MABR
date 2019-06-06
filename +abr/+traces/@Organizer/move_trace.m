@@ -11,23 +11,25 @@ tidx = obj.TraceSelection;
 if isempty(tidx), return; end
 
 % C = hFig.CurrentPoint;
-C = figxy2axisxy(obj.mainAx);
+XY = figxy2axisxy(obj.mainAx);
+
+if XY(2) < min(obj.mainAx.YLim) || XY(2) > max(obj.mainAx.YLim), return; end
 
 L = abr.traces.Organizer.button_state_left;
 
 if ~L, LAST_STATE = 0; return; end
 
-
-if  isempty(LAST_COORD) || LAST_STATE == 0, LAST_COORD = C; end
+if  isempty(LAST_COORD) || LAST_STATE == 0, LAST_COORD = XY; end
 
 LAST_STATE = 1;
 
 
-DC = C - LAST_COORD;
+DC = XY - LAST_COORD;
 
 if ~any(DC), return; end
 
-LAST_COORD = C;
+
+LAST_COORD = XY;
 
 % m = 0.05; % movement multiplier
 % obj.YPosition(tidx) = obj.YPosition(tidx) + DC(2)*m;

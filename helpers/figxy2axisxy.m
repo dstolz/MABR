@@ -28,8 +28,7 @@ axXn = diff(axX) ./ axWidth;
 axYn = diff(axY) ./ axHeight;
 
 
-xy = [axXn axYn] .* [fXY - [axLeft axBottom]];
-
+xy = [axXn axYn] .* (fXY - [axLeft axBottom]);
 
 f.Units  = origFigUnits;
 ax.Units = origAxUnits;

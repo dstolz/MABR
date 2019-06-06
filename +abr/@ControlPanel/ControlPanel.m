@@ -994,9 +994,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.AcquisitionStateLamp.Color      = [0.6 0.6 0.6];
                         
                         % SAVE ABR DATA
-                        app.AcquisitionStateLabel.Text      = 'Saving Data';
+%                         app.AcquisitionStateLabel.Text      = 'Saving Data';
 %                         app.auto_save_abr_data;
-                        drawnow                        
+%                         drawnow                        
                         
                         app.AcquisitionStateLabel.Text      = 'Finished';
                         app.AcquisitionStateLamp.Tooltip    = 'Finished';
@@ -1006,9 +1006,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                     case abr.stateProgram.USER_IDLE
                         % SAVE ABR DATA
-                        app.AcquisitionStateLabel.Text      = 'Saving Data';
-                        app.AcquisitionStateLamp.Color      = [0.2 0.8 1];
-                        drawnow
+%                         app.AcquisitionStateLabel.Text      = 'Saving Data';
+%                         app.AcquisitionStateLamp.Color      = [0.2 0.8 1];
+%                         drawnow
 %                         app.auto_save_abr_data;
                                                 
                         
@@ -1018,6 +1018,22 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
                         app.AcquisitionStateLamp.Tooltip    = 'Idle';
                         stateAcq = abr.stateAcq.CANCELLED;
+                        
+                        [preSweep,postSweep] = app.extract_sweeps(true);
+                        if ~isnan(postSweep(1))
+                            R = app.partition_corr(preSweep,postSweep);
+                            app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R)
+                            
+%                             app.ABR.ADC.Data = app.Runtime.mapSignalBuffer.Data;
+%                             app.ABR.ADC.SweepOnsets = app.find_timing_onsets;
+                            
+                            % Add buffer to traces.Organizer
+                            app.TrcOrg.add_trace( ...
+                                mean(postSweep), ...
+                                app.SIG.dataParams, ...
+                                app.ABR.adcWindow(1), ...
+                                app.ABR.ADC.SampleRate);
+                        end
                         
                         drawnow
                         
