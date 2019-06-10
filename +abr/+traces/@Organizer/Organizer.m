@@ -47,6 +47,9 @@ classdef (ConstructOnLoad = true) Organizer < handle
         traceTimer timer
     end
     
+    properties (SetAccess = immutable)
+        TimeStamp = datestr(now);
+    end
     
     
     methods
@@ -84,7 +87,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
         end
         
         
-        function add_trace(obj,data,props,firstTimepoint,Fs,rawData)
+        function add_trace(obj,data,SIG,firstTimepoint,Fs,rawData)
             narginchk(3,6);
             
             vprintf(2,'Adding trace to Organizer')
@@ -94,12 +97,13 @@ classdef (ConstructOnLoad = true) Organizer < handle
             
             if nargin < 6, rawData = abr.Buffer; end
             
+                        
             if isempty(obj.Traces) || obj.N == 1 && obj.Traces.ID == -1
-                obj.Traces = abr.traces.Trace(data,props,firstTimepoint,Fs);
+                obj.Traces = abr.traces.Trace(data,SIG,firstTimepoint,Fs);
                 obj.YPosition = 0;
                 obj.GroupIdx  = 1; % default group
             else
-                obj.Traces(end+1) = abr.traces.Trace(data,props,firstTimepoint,Fs);
+                obj.Traces(end+1) = abr.traces.Trace(data,SIG,firstTimepoint,Fs);
                 obj.YPosition(end+1) = min(obj.YPosition) - obj.YSpacing;
                 obj.GroupIdx(end+1) = 1; % default group
             end
@@ -166,17 +170,17 @@ classdef (ConstructOnLoad = true) Organizer < handle
         end
         
         function s = get.Labels(obj)
-            s = {};
+%             s = {};
 %             b = obj.SortBy;
 %             m = obj.PropertyMatrix;
-            n = obj.informativeProps;
-            if isempty(n), return; end
-                
-            for i = 1:obj.N
-                for j = 1:length(n)
-                    s{i,j} = sprintf('%0.1f',obj.Traces(i).Props.(n{j}));
-                end
-            end
+%             n = obj.informativeProps;
+%             if isempty(n), return; end
+%                 
+%             for i = 1:obj.N
+%                 for j = 1:length(n)
+%                     s{i,j} = sprintf('%0.1f',obj.Traces(i).Props.(n{j}));
+%                 end
+%             end
 %             for i = 1:obj.N
 %                 s{i} = '';
 % %                 s{i} = sprintf('\\color[rgb]{%0.3f,%0.3f,%0.3f}',obj.Traces(i).Color);
@@ -335,7 +339,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 obj.mainAx = axes(f, ...
                     'Color',[1 1 1], ...
                     'Units','normalized', ...
-                    'Position',[0.1 0.1 0.88 0.85], ...
+                    'Position',[0.1 0.1 0.88 0.8], ...
                     'YTick',[], ...
                     'GridColor',[0.2 0.2 0.2], ...
                     'XGrid','on','YGrid','on', ...
@@ -371,7 +375,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             obj.TraceIdx = [];
             for k = pidx
                 obj.Traces(k).Color     = obj.groupColors(obj.GroupIdx(k),:);
-                obj.Traces(k).LabelText = obj.Labels(k,:);
+%                 obj.Traces(k).LabelText = obj.Labels(k,:);
 
                 obj.Traces(k).plot(obj.mainAx);
                 obj.Traces(k).LineHandle.YData = D{k} + obj.YPosition(k);
@@ -394,8 +398,13 @@ classdef (ConstructOnLoad = true) Organizer < handle
             
             ch = findobj(obj.mainAx,'type','line');
             y = [ch.YData];
-            obj.mainAx.YLim(1) = 0.9*min(y);
-            
+            yl = obj.mainAx.YLim;
+            if isequal(yl,[0 1])
+                obj.mainAx.YLimMode = 'auto';
+            else
+                obj.mainAx.YLimMode = 'manual';
+                obj.mainAx.YLim = [0.9*min(y) max(y)];
+            end
         end
         
         
@@ -422,7 +431,8 @@ classdef (ConstructOnLoad = true) Organizer < handle
             y = y - diff(y)/2;
             
             
-            x = 0.98*[1 1]*obj.mainAx.XLim(2);
+%             x = 0.98*[1 1]*obj.mainAx.XLim(2);
+            x = 1.1*[1 1]*obj.mainAx.XLim(2);
             
             obj.ampScaleLineHandle.XData = x;
             obj.ampScaleLineHandle.YData = y;

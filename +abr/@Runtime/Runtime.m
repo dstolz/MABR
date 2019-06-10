@@ -48,9 +48,13 @@ classdef Runtime < handle
     end
     
     methods
-        
+        [preSweep,postSweep] = extract_sweeps(obj,timeWindow,doAll);
+        idx = find_timing_onsets(obj,varargin);
+
         % Constructor
         function obj = Runtime(Role)
+            abr.Universal.addpaths;
+
             if nargin == 0 || isempty(Role), Role = 'Foreground'; end
             obj.Role = Role;
             

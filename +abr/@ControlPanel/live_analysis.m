@@ -9,3 +9,7 @@ if app.ABR.sweepCount > 1
 else
     R = [0 0 0];
 end
+
+% % Fischer's Z-transform
+% Z = 0.5*(log(1+R) - log(1-R)); % z’ = .5[ln(1+r) – ln(1-r)]
+

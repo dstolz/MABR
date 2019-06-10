@@ -52,10 +52,12 @@ while ~isDone(obj.AFR)
         k = frameLength;
     end
 
-    % TESTING WITH FAKE LOOP-BACK AND SIGNAL **********************
-    audioADC(:,1) = audioDAC(:,1) + randn(frameLength,1)/10;
-    audioADC(:,2) = audioDAC(:,2); % loop-back
-
+    if isequal(obj.Universal.MODE,'testing')
+        % TESTING WITH FAKE LOOP-BACK AND SIGNAL **********************
+        audioADC(:,1) = audioDAC(:,1) + randn(frameLength,1)/10;
+        audioADC(:,2) = audioDAC(:,2); % loop-back
+    end
+    
     M.Data(idx:k) = audioADC(:,1);
     T.Data(idx:k) = audioADC(:,2);
 

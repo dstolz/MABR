@@ -3,7 +3,6 @@ classdef Trace < handle &  matlab.mixin.SetGet
     properties
         SampleRate      (1,1) {mustBePositive,mustBeFinite} = 1;
         Data            (1,:) double
-        Props           (1,1) struct
         FirstTimepoint  (1,1) double {mustBeFinite,mustBeNonempty,mustBeNonNan} = 0;
         
         Color           (1,3) double {mustBeNonnegative,mustBeLessThanOrEqual(Color,1)} = [0 0 0];
@@ -11,16 +10,26 @@ classdef Trace < handle &  matlab.mixin.SetGet
         LineWidth       (1,1) double {mustBePositive,mustBeFinite} = 1;
         
         Marker          (:,1) abr.traces.Marker
-        LabelText       (1,:)
+%         LabelText       (1,:)
         
         TimeUnit        (1,:) char {mustBeMember(TimeUnit,{'auto','s','ms','us','ns'})} = 'auto';
         
+        
+        SIG             (1,1) % abr.sigdef.sigs
+        
+        
         RawData         (1,1) abr.Buffer
+        
+        Analysis        (1,1) % abr.analysis
     end
     
     properties (SetAccess = private)
-        ID  (1,1) int32
-        RMS (1,1) double
+        Props   (1,1) struct
+        LabelText (1,:)
+    end
+    
+    properties (SetAccess = immutable)
+        ID = fix(rand(1)*1e9);
     end
     
     properties (SetAccess = private, Dependent)
@@ -28,6 +37,7 @@ classdef Trace < handle &  matlab.mixin.SetGet
         N
         LineHandleIsValid  = false;
         LabelHandleIsValid = false;
+        Units (1,1) struct % same fields as props
     end
     
     properties (SetAccess = private, Transient)
@@ -42,7 +52,7 @@ classdef Trace < handle &  matlab.mixin.SetGet
     
     methods
         % Constructor
-        function obj = Trace(data,props,firstTimepoint,Fs)
+        function obj = Trace(data,SIG,firstTimepoint,Fs)
             if nargin == 0
                 obj.ID = -1;
                 return
@@ -50,11 +60,9 @@ classdef Trace < handle &  matlab.mixin.SetGet
             narginchk(2,4);
             if nargin >= 3 && ~isempty(firstTimepoint), obj.FirstTimepoint = firstTimepoint; end
             if nargin == 4 && ~isempty(Fs),             obj.SampleRate = Fs; end
-
-            obj.ID = fix(rand(1)*1e9);
             
             obj.Data  = data(:);
-            obj.Props = props;
+            obj.SIG   = SIG;
         end
         
         % Destructor
@@ -70,6 +78,13 @@ classdef Trace < handle &  matlab.mixin.SetGet
 %             try
 %                 delete(obj);
 %             end
+        end
+        
+        function str = get.LabelText(obj)
+            fn = fieldnames(obj.SIG.dataParams);
+            for i = 1:length(fn)
+                str{i,1} = obj.SIG.(fn{i}).unitValueString;
+            end
         end
         
         function t = get.TimeVector(obj)
@@ -112,11 +127,6 @@ classdef Trace < handle &  matlab.mixin.SetGet
         function h = get.MarkerLabelHandles(obj)
             h = [obj.Marker.LabelHandle];
         end
-        
-        function v = get.RMS(obj)
-            v = rms(obj.Data);
-        end
-        
         
         % Overloaded Functions --------------------------------------------
         function plot(obj,ax)

@@ -86,6 +86,7 @@ classdef Buffer
         
         function s = get.SweepData(obj)
             idx = obj.sweepIdx;
+            if isempty(idx), s = []; return; end
             ind = any(idx > obj.N | idx < 1);
             s = obj.Data(idx(:,~ind));
         end 
@@ -111,6 +112,10 @@ classdef Buffer
         
         function obj = appendData(obj,data)
             obj.Data(end+1:end+length(data)) = data;
+        end
+        
+        function obj = appendSweepOnsets(obj,sweepOnsets)
+            obj.SweepOnsets = [obj.SweepOnsets; sweepOnsets];
         end
         
         function obj = preallocate(obj,n,val)

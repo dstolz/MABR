@@ -21,3 +21,4 @@ Rcross = mean(R(sub2ind([4 4],[3 3 4 4],[1 2 1 2])));
 Rpost  = R(4,3);
 
 R = abs([Rpre Rcross Rpost]);
+

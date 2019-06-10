@@ -279,15 +279,17 @@ app.CalibrationNew.Layout.Column = 5;
 app.CalibrationNew.Text = 'new';
 app.CalibrationNew.Icon = fullfile(app.iconPath,'file_new.png');
 app.CalibrationNew.VerticalAlignment = 'top';
-app.CalibrationNew.ButtonPushedFcn = createCallbackFcn(app, @abr.Calibration, false);
+app.CalibrationNew.ButtonPushedFcn = createCallbackFcn(app, @abr.CalibrationUtility, false);
 
 R = R + 2; % allow some extra space
+
 
 app.OutputPanel = uipanel('Parent',G,'Title','ABR Data Output');
 app.OutputPanel.Layout.Row = [R R+3];
 app.OutputPanel.Layout.Column = [1 nCols];
 
-nRows = 2; nCols = 3;
+
+nRows = 3; nCols = 3;
 G = uigridlayout(app.OutputPanel,[nRows nCols]);
 G.RowHeight = repmat({24},1,nRows);
 G.ColumnWidth = {80 '1x' 60};
@@ -352,7 +354,6 @@ app.OutputPathSelectButton.Layout.Column = nCols;
 e.Value = app.OutputFileDD.Value;
 e.Source = app.OutputFileDD;
 app.output_path_changed(e);
-
 
 
 
@@ -770,7 +771,7 @@ app.UtilitySoundCalibrationButton.Layout.Column = 1;
 app.UtilitySoundCalibrationButton.Text = 'Sound Calibration';
 app.UtilitySoundCalibrationButton.FontSize = 16;
 % app.UtilitySoundCalibrationButton.FontWeight = 'bold';
-app.UtilitySoundCalibrationButton.ButtonPushedFcn = createCallbackFcn(app,@abr.Calibration,false);
+app.UtilitySoundCalibrationButton.ButtonPushedFcn = createCallbackFcn(app,@abr.CalibrationUtility,false);
 
 R = R + 1;
 % Create UtilityABRDataViewerButton

@@ -36,7 +36,7 @@
                     "tag": "ConfigTab",
                     "type": "tab",
                     "title": "Configuration Panel",
-                    "description": "Select the files to run an experiment.  Save/Load a Config file to quickly access the current experiment setup.\n\nAll file paths and parameter values will be restored when loading a configuration file.",
+                    "description": "Select the files to run an experiment.  Save/Load a Config file to quickly access the current experiment setup.\n\nchar(176) All file paths and parameter values will be restored when loading a configuration file.",
                     "config_file": {
                         "tag": "ConfigFileDD",
                         "title": "Config File",
@@ -174,7 +174,7 @@
                     "tag": "HardwarePanel",
                     "type": "panel",
                     "title": "Hardware Setup",
-                    "description": "Select your audio device and sampling rate.  The audio device and sampling rate will be the same used to run the ABR.  The sound card will typically be some version of ASIO.  You will most likely set the sampling rate to its maximum value, unless this results in program crashes or other instability"
+                    "description": "Select your audio device and sampling rate.\n\nchar(176) The audio device and sampling rate will be the same used to run the ABR.\n\nchar(176) The sound card will typically be some version of ASIO.\n\nchar(176) You will most likely set the sampling rate to its maximum value, unless this results in program crashes or other instability"
                 },
                 "micsensitivity": {
                     "tag": "MicSensitivityPanel",
@@ -186,13 +186,13 @@
                     "tag": "StimulusPanel",
                     "type": "panel",
                     "title": "Stimulus Selection",
-                    "description": "Select the stimulus type from the dropdown list and click Modify to adjust the stimulus parameters to your needs.  Tone stimuli are calibrated using interpolation of frequency so you will need to set the frequency parameter to characterize your speaker's transfer function.  Typically, you will set the parameter to cover the range from the lowest frequency you want to present to just below the Nyquist rate = Sampling Rate/2.  Other stimulus types are calibrated using a look-up table, so you will need to enter the parameters of stimuli you will be using."
+                    "description": "Select the stimulus type from the dropdown list and click Modify to adjust the stimulus parameters to your needs.\n\nchar(176) Tone stimuli are calibrated using interpolation of frequency so you will need to set the frequency parameter to characterize your speaker's transfer function.\n\nchar(176) Typically, you will set the parameter to cover the range from the lowest frequency you want to present to just below the Nyquist rate = Sampling Rate/2.\n\nchar(176) Other stimulus types are calibrated using a look-up table, so you will need to enter the parameters of stimuli you will be using."
                 },
                 "calibrate": {
                     "tag": "CalibratePanel",
                     "type": "panel",
                     "title": "Run Calibration",
-                    "description": "First, specify a sound level, the Norm Level, as a target for the calibrated stimulus.  This is often the maximum sound level you intend to present.  It is possible that the voltage required to produce this sound level will be too high for your sound card to produce (>1 V).  If this is the case, then you will need to provide additional amplification and recalibrate.\n\nClick Run to begin.\n\nThe stimuli will be played through entirely and once finished the results will be plotted.  The stimuli will then be played through a second time at the calibrated voltage.  The results will be plotted again and should be flat on the Norm Level line.\n\nYou will be prompted to save the calibration file once the calibration procedure has completed."
+                    "description": "First, specify a sound level, the Norm Level, as a target for the calibrated stimulus.  This is often the maximum sound level you intend to present.  It is possible that the voltage required to produce this sound level will be too high for your sound card to produce (>1 V).  If this is the case, then you will need to provide additional amplification and recalibrate.\n\nchar(176) Click Run to begin.\n\nchar(176) The stimuli will be played through entirely and once finished the results will be plotted.  The stimuli will then be played through a second time at the calibrated voltage.  The results will be plotted again and should be flat on the Norm Level line.\n\nchar(176) You will be prompted to save the calibration file once the calibration procedure has completed."
                 }
             }
         },
@@ -200,7 +200,7 @@
             "tag": "ScheduleDesign",
             "type": "figure",
             "title": "Stimulus Schedule Design",
-            "description": "The Stimulus Schedule Design utility is used to parameterize sound stimuli to be used during an ABR recording.  The result will be a new Schedule that will be used for controlling stimulus presentation during an ABR recording.\n\n1) Set the sampling rate to be used by your system (generally higher is better if your system supports it) by clicking the Options -> Stimulus Sampling Rate menu.\n\n2) Select the signal type you would like to generate.  Select from Tone, Noise, Click, or File.\n\n3) Modify the parameter values by entering individual numbers or a valid Matlab expression.  Note the units specified in the Property column.  A valid Matlab expression is one that will result in a row vector (1xN).  All of the following will have the same results: [1 2 3 4 5]; 1:5;  linspace(1,5,5);  Another useful function is octaves (see help octaves).\n\n4) Click the Compile button to generate a schedule.  This will launch the Schedule utility with all of the defined stimulus parameters that will be used for controlling stimulus presentation during an ABR recording.\n\n The Schedule Design can be saved or reloaded using the File menu.",
+            "description": "The Stimulus Schedule Design utility is used to parameterize sound stimuli to be used during an ABR recording.  The result will be a new Schedule that will be used for controlling stimulus presentation during an ABR recording.\n\n1) Set the sampling rate to be used by your system (generally higher is better if your system supports it) by clicking the Options -> Stimulus Sampling Rate menu.\n\n2) Select the signal type you would like to generate.  Select from Tone, Noise, Click, or File.\n\n3) Modify the parameter values by entering individual numbers or a valid Matlab expression.  Note the units specified in the Property column.  A valid Matlab expression is one that will result in a row vector (1xN).  All of the following will have the same results: [1 2 3 4 5]; 1:5;  linspace(1,5,5);  Another useful function is octaves (see help octaves).\n\n4) Click the Compile button to generate a schedule.  This will launch the Schedule utility with all of the defined stimulus parameters that will be used for controlling stimulus presentation during an ABR recording.\n\nchar(176)  The Schedule Design can be saved or reloaded using the File menu.",
             "components": {}
         },
         "schedule": {

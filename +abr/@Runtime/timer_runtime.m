@@ -35,6 +35,10 @@ if obj.isBackground
             vprintf(1,'Received Kill command')
             obj.BackgroundState = abr.stateAcq.KILLED;
             seppuku;
+            
+        case abr.Cmd.TestMode
+            vprintf(1,'Received TestMode command')
+            obj.Universal.MODE = 'testing';
     end
     
     

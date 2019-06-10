@@ -10,6 +10,7 @@ classdef Click < abr.sigdef.Signal
         
         % Constructor
         function obj = Click(duration)
+            obj.ignoreProcessUpdate = true;
             
             if nargin < 1 || isempty(duration), duration = 0.01; end
             
@@ -22,11 +23,14 @@ classdef Click < abr.sigdef.Signal
             
             obj.soundLevel.Value = '0:10:80';
             
-            obj.defaultSortProperty = 'duration';
-
+            obj.SortProperty = 'duration';
+            
+            obj.informativeParams = {'duration'};
+            
+            obj.ignoreProcessUpdate = false;
         end
         
-        function update(obj)
+        function obj = update(obj)
             obj.data = ones(1,obj.N);
         end
     end

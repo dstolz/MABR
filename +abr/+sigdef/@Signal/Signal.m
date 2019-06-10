@@ -1,12 +1,11 @@
-classdef (Abstract) Signal
+classdef (Abstract) Signal < abr.SoundCalibration
     % Signal
     %
     % Daniel Stolzberg, PhD (c) 2019
     
     
     properties
-        Fs              (1,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 48000; % Hz
-        
+        Fs           (1,1) double {mustBeNonempty,mustBePositive,mustBeFinite} = 48000; % Hz
         Channel      (1,1) uint8  {mustBeNonempty,mustBePositive,mustBeFinite} = 1;
         
         % COMMON SIGNAL PROPERTIES
@@ -18,9 +17,6 @@ classdef (Abstract) Signal
         windowFcn       (1,1) abr.sigdef.sigProp
         windowOpts      (1,1) abr.sigdef.sigProp
         windowRFTime    (1,1) abr.sigdef.sigProp
-        
-        CalibrationType (1,:) char {mustBeMember(CalibrationType,{'lut','interp'})} = 'lut';
-        
     end
     
     
@@ -33,8 +29,8 @@ classdef (Abstract) Signal
     properties (SetAccess = protected)
         data % waveform data
         dataParams
-        
-        defaultSortProperty (1,:) char = 'soundLevel';
+        informativeParams
+        SortProperty (1,:) char = 'soundLevel';
     end
     
     properties (Access = protected, Hidden = true, Transient)
@@ -269,7 +265,7 @@ classdef (Abstract) Signal
         end
         
         function obj = sort(obj,prop,sortDir)
-            if nargin < 2, prop = obj.defaultSortProperty; end
+            if nargin < 2, prop = obj.SortProperty; end
             if nargin < 3, sortDir = 'ascend'; end
             
             mustBeMember(sortDir,{'ascend','descend'});

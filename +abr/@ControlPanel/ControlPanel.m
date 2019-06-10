@@ -10,7 +10,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
 
 %         Subject             (1,1) abr.Subject
         Schedule            (1,1) %abr.Schedule
-        Calibration         (1,1) abr.AcousticCalibration
+        Calibration         (1,1) abr.SoundCalibration
         
         configFile          (1,:) char
         scheduleFile        (1,:) char
@@ -146,10 +146,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     % Set/Get Properties
     methods
         createComponents(app);
-        idx = find_timing_onsets(app,varargin);
         R = live_analysis(app,preSweep,postSweep);
-        [preSweep,postSweep] = extract_sweeps(app,doAll);
         abr_live_plot(app,sweeps,tvec,R);
+        r = summary_analysis(data,type,options);
         
         function ffn = get.outputFile(app)
             fn = app.OutputFileDD.Value;
@@ -664,7 +663,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 app.CalibrationDDLabel.Tooltip    = fileparts(app.calibrationFile);
                 app.CalibrationDD.Tooltip = app.last_modified_str(app.calibrationFile);
             else
-                app.Calibration = abr.AcousticCalibration; % blank calibration
+                app.Calibration = abr.SoundCalibration; % blank calibration
                 app.CalibrationDDLabel.Tooltip    = 'No Calibration File Loaded';
                 app.CalibrationDD.Tooltip = 'No Calibration File Loaded';
             end
@@ -769,9 +768,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.Runtime.CommandToBg = abr.Cmd.Idle;
                         
                         % wait for the background process to load
-                        while ~app.Runtime.BgIsRunning
-                            pause(0.01);
-                        end
+                        while ~app.Runtime.BgIsRunning, pause(0.01); end
                         
                         app.stateProgram = abr.stateProgram.ADVANCE_BLOCK; % to first trial
                         
@@ -810,7 +807,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                                     % update gui info
                                     app.update_ControlStimInfoLabel(nReps);
                                 case '< Define >'
-
+                                    % TO DO: ADD CUSTOM FUNCTION SUPPORT
                                 otherwise
                                     app.scheduleIdx = feval(app.ControlAdvCriteriaDD.ItemsData,app);
                             end
@@ -842,7 +839,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ABR.ADC = abr.Buffer;
                         
                         app.ABR.ADC.FrameSize       = abr.Universal.frameLength;
-                        app.ABR.ADC.SampleRate      = abr.Universal.ADCSampleRate; % TO DO: make app.ABR.ADC.SampleRate user settable?
+                        app.ABR.ADC.SampleRate      = abr.Universal.ADCSampleRate;
                         app.ABR.adcDecimationFactor = round(max([1 floor(app.SIG.Fs ./ app.ABR.ADC.SampleRate)]));
                         app.ABR.ADC.SampleRate      = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;
 
@@ -864,6 +861,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         % calibrate stimulus data
                         if isvalid(app.Calibration)
+                            v = app.SIG.(app.SIG.calibrationProperty).realValue;
+                            %{
                             switch app.SIG.Type
                                 case 'Tone'
                                     v  = app.SIG.frequency.realValue;
@@ -872,10 +871,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                                 case 'Click'
                                     v = app.SIG.duration.realValue;
                                 case 'File'
-                                    
+                                    %???
                             end
+                            %}
                             sl = app.SIG.soundLevel.realValue;
-                            A  = app.Calibration.estimateCalibratedV(v,sl);
+                            A  = app.Calibration.estimate_calibrated_voltage(v,sl);
                             app.ABR.DAC.Data = A .* app.ABR.DAC.Data;
                         else
                             r = questdlg('Invalid Calibration!','ABR','Continue','Cancel','Cancel');
@@ -910,7 +910,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.AcquisitionStateLabel.Text    = 'Acquire';
                         app.AcquisitionStateLabel.Tooltip = 'Aquiring block';
                         app.AcquisitionStateLamp.Color    = [0 1 0];
-                        
                         drawnow
                         
                         
@@ -925,7 +924,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             app.ABR.DAC.SampleRate,app.ABR.numSweeps, ...
                             app.ABR.sweepRate,app.ABR.altPolarity);
                         
-                        % tell background process to prep
+                        % tell background process to prep for acquisition
                         app.Runtime.CommandToBg = abr.Cmd.Prep;
                         
                         % wait for state of background process to update
@@ -965,8 +964,15 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.scheduleRunCount(app.scheduleIdx) = app.scheduleRunCount(app.scheduleIdx) + 1;
                         
                         % extract sweep-based data and plot one last time
-                        [preSweep,postSweep] = app.extract_sweeps(true);
+                        [preSweep,postSweep] = app.Runtime.extract_sweeps(app.ABR.adcWindowTVec,true);
+                        
                         if ~isnan(postSweep(1))
+                                                        
+                            % update signal amplitude by InputAmpGain
+                            A = app.Config.Parameters.InputAmpGain;
+                            preSweep  = preSweep ./ A;
+                            postSweep = postSweep ./ A;
+
                             R = app.partition_corr(preSweep,postSweep);
                             app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R)
                             
@@ -976,7 +982,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             % Add buffer to traces.Organizer
                             app.TrcOrg.add_trace( ...
                                 mean(postSweep), ...
-                                app.SIG.dataParams, ...
+                                app.SIG, ...
                                 app.ABR.adcWindow(1), ...
                                 app.ABR.ADC.SampleRate);
                         end
@@ -1015,12 +1021,17 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.Schedule.DO_NOT_DELETE = false;
                         app.AcquisitionStateLabel.Text      = 'Ready';
                         app.ControlAcquisitionSwitch.Value  = 'Idle';
-                        app.AcquisitionStateLamp.Color = [0.6 0.6 0.6];
+                        app.AcquisitionStateLamp.Color      = [0.6 0.6 0.6];
                         app.AcquisitionStateLamp.Tooltip    = 'Idle';
                         stateAcq = abr.stateAcq.CANCELLED;
                         
-                        [preSweep,postSweep] = app.extract_sweeps(true);
+                        [preSweep,postSweep] = app.Runtime.extract_sweeps(app.ABR.adcWindowTVec,true);
                         if ~isnan(postSweep(1))
+                            % update signal amplitude by InputAmpGain
+                            A = app.Config.Parameters.InputAmpGain;
+                            preSweep  = preSweep ./ A;
+                            postSweep = postSweep ./ A;
+
                             R = app.partition_corr(preSweep,postSweep);
                             app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R)
                             
@@ -1030,7 +1041,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             % Add buffer to traces.Organizer
                             app.TrcOrg.add_trace( ...
                                 mean(postSweep), ...
-                                app.SIG.dataParams, ...
+                                app.SIG, ...
                                 app.ABR.adcWindow(1), ...
                                 app.ABR.ADC.SampleRate);
                         end
@@ -1350,7 +1361,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             grid(ax,'on');
             box(ax,'on');
             % Correct???
-            ax.XAxis.Label.String = app.ABR.SIG.defaultSortProperty;
+            ax.XAxis.Label.String = app.ABR.SIG.SortProperty;
             ax.YAxis.Label.String = 'amplitude (mV)';
             
             ax.Toolbar.Visible = 'off'; % disable zoom/pan options

@@ -22,7 +22,8 @@ classdef Noise < abr.sigdef.Signal
         
         % Constructor
         function obj = Noise(HPfreq,LPfreq,filterOrder)
-            
+            obj.ignoreProcessUpdate = true;
+
             if nargin < 1 || isempty(HPfreq),       HPfreq = 4;       end
             if nargin < 2 || isempty(LPfreq),       LPfreq = 20;      end
             if nargin < 3 || isempty(filterOrder),  filterOrder = 20; end
@@ -43,11 +44,15 @@ classdef Noise < abr.sigdef.Signal
             obj.seed       = abr.sigdef.sigProp(0,'Seed#; 0 = "shuffle"');
             obj.seed.Alias = 'Seed';
             
-            obj.defaultSortProperty = 'HPfreq';
+            obj.SortProperty = 'HPfreq';
             
+            obj.informativeParams = {'HPfreq','LPfreq','soundLevel'};
+
+            obj.ignoreProcessUpdate = false;
+
         end
         
-        function update(obj)
+        function obj = update(obj)
             obj.filterDesign = designfilt( ...
                 'bandpassfir', ...
                 'FilterOrder',     obj.filterOrder.realValue, ...
@@ -55,7 +60,7 @@ classdef Noise < abr.sigdef.Signal
                 'CutoffFrequency2',obj.LPfreq.realValue, ...
                 'SampleRate',      obj.Fs);      
             
-            if obj.seed == 0
+            if obj.seed.realValue == 0
                 rng('shuffle');
             else
                 rng(obj.seed);
@@ -66,6 +71,8 @@ classdef Noise < abr.sigdef.Signal
             
             obj.data = filter(obj.filterDesign,y);
             
+            A = obj.soundLevel.realValue;
+            Adb = CALVOLT.*10.^((A(a)-CALVAL)./20);
             obj.applyGate; % superclass function
         end
         

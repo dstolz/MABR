@@ -2,6 +2,7 @@ classdef Universal < handle
     % class contains general inormation for the ABR software
     
     properties
+        MODE (1,:) char {mustBeMember(MODE,{'normal','testing'})} = 'normal';
     end
     
     properties (SetAccess = private)
@@ -32,7 +33,7 @@ classdef Universal < handle
     
     properties (Constant)
         ADCSampleRate = 48000;
-        frameLength = 2048;
+        frameLength   = 2048;
         maxInputBufferLength = 2^26; % should be power of 2 enough for at least a minute of data at 192kHz sampling rate
 
         SoftwareVersion = '0.1 beta';
@@ -84,12 +85,16 @@ classdef Universal < handle
             
 %             banner{end+1} = '';
 %             banner{end+1} = sprintf('\t-> <a href="matlab: abr.ControlPanel;">Control Panel</a>');
-%             banner{end+1} = sprintf('\t-> <a href="matlab: abr.Calibration;">Audio Calibration</a>');
+%             banner{end+1} = sprintf('\t-> <a href="matlab: abr.CalibrationUtility;">Audio Calibration</a>');
 %             banner{end+1} = sprintf('\t-> <a href="matlab: abr.ScheduleDesign;">Stimulus Design</a>');
             
             disp(char(banner))
         end
         
+        function set.MODE(obj,newMode)
+            obj.MODE = newMode;
+            vprintf(0,1,'PROGRAM MODE = %s',newMode)
+        end
         
         function m = get.meta(obj)
             m.Author      = obj.Author;
@@ -225,6 +230,7 @@ classdef Universal < handle
             end
             msg = abr.Universal.get_doc_description(varargin{:});
             msg = sprintf('\\fontsize{%d}%s',fs,msg);
+            msg = replace(msg,'char(176)',char(176));
             opt.WindowStyle = 'modal';
             opt.Interpreter = 'tex';
             h = msgbox(msg,'Info','help',opt);
@@ -342,6 +348,7 @@ classdef Universal < handle
             M = [M; M; M];
             M = M(:);
             i = find(G < V*10,1,'last');
+            if isempty(i), i = 1; end
             multiplier = 1/M(i);
             unit = U{i};
         end

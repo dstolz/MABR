@@ -17,7 +17,7 @@ else
     y = repmat(y,nReps,1);
 end
 
-
+% add timing signal to secound output channel
 timingSignal = [1; zeros(r-1,1)];
 y = [y repmat(timingSignal,nReps,1)];
 

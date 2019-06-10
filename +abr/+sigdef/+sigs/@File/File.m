@@ -21,7 +21,8 @@ classdef File < abr.sigdef.Signal
         
         % Constructor
         function obj = File(fullFilename)
-            
+            obj.ignoreProcessUpdate = true;
+
             if nargin < 1 || isempty(fullFilename), fullFilename = ''; end
 
             obj.fullFilename = abr.sigdef.sigProp(fullFilename,'Audio Files');
@@ -29,9 +30,13 @@ classdef File < abr.sigdef.Signal
             obj.fullFilename.Type     = 'File';
             obj.fullFilename.Function = @sigdef.Signal.selectAudioFiles;
             
+            obj.informativeParams = {'filename','soundLevel'};
+            
+            obj.ignoreProcessUpdate = false;
+
         end
         
-        function update(obj)
+        function obj = update(obj)
             ffn = obj.fullFilename.Value;
         
             fnex = cellfun(@(a) exist(a,'file')==2,ffn);
