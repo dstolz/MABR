@@ -1,7 +1,7 @@
 function obj = plot_calibration(obj,phase)
     if nargin < 2 || isempty(phase), phase = 2; end
 
-    n = sprintf('Calibration (%s)',datestr(obj.Timestamp,'dd-mmm-yyyy HH:MM PM'));
+    n = sprintf('Calibration [%s]',datestr(obj.Timestamp,'dd-mmm-yyyy HH:MM PM'));
 
     obj.FigCalibration = findobj('type','figure','-and','name',n);
     if isempty(obj.FigCalibration)
@@ -99,7 +99,7 @@ function obj = plot_calibration(obj,phase)
     % Time Domain Plot
     x = obj.ADC.TimeVector .* 1000;
     y = obj.dataParams.(obj.CalibratedParameter);
-    z = obj.ADC.SweepData .* 1000;
+    z = obj.ADC.SweepData;
     
     [~,y] = meshgrid(x,y);
     
@@ -112,10 +112,11 @@ function obj = plot_calibration(obj,phase)
         % Time Domain Plot
         for i = 1:n
             H.tdlh(i).XData = x;
-            H.tdlh(i).YData = y(i,:);
+            H.tdlh(i).YData = y(i,:)./1000;
             H.tdlh(i).ZData = mz(:,i);
         end
         uistack(H.tdlh(n),'top');
+        obj.axTD.YAxis.Label.String = sprintf('%s (kHz)',obj.CalibratedParameter);
         obj.axTD.ZAxis.Label.String = sprintf('amplitude (%s)',unit);
         obj.axTD.ZLim = [-1.1 1.1] * max(abs(mz(:)));
         
@@ -131,7 +132,7 @@ function obj = plot_calibration(obj,phase)
             M = P2(1:L/2+1);
             M(2:end-1) = 2*M(2:end-1);
             M = 20.*log10(M);
-            f = obj.CalFs*(0:(L/2))/L;
+            f = obj.ADC.SampleRate*(0:(L/2))/L;
             H.fdlh(i).XData = f./1000;
             H.fdlh(i).YData = M;
         end

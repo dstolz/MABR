@@ -287,6 +287,11 @@ classdef (Abstract) Signal < abr.SoundCalibration
                 obj.dataParams.(dp{i}) = obj.dataParams.(dp{i})(idx);
             end
         end
+
+        function tf = isvalid(obj)
+            obj.update;
+            tf = ~isempty(obj.data);
+        end
         
     end
     

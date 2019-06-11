@@ -860,30 +860,14 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ABR.adcWindow = [0 app.Config.Control.sweepDuration]/1000; % ms -> s
                         
                         % calibrate stimulus data
-                        if isvalid(app.Calibration)
-                            v = app.SIG.(app.SIG.calibrationProperty).realValue;
-                            %{
-                            switch app.SIG.Type
-                                case 'Tone'
-                                    v  = app.SIG.frequency.realValue;
-                                case 'Noise'
-                                    v = app.SIG.HPfreq.realValue;
-                                case 'Click'
-                                    v = app.SIG.duration.realValue;
-                                case 'File'
-                                    %???
-                            end
-                            %}
-                            sl = app.SIG.soundLevel.realValue;
-                            A  = app.Calibration.estimate_calibrated_voltage(v,sl);
-                            app.ABR.DAC.Data = A .* app.ABR.DAC.Data;
-                        else
+                        if ~app.SIG.calibration_is_valid
                             r = questdlg('Invalid Calibration!','ABR','Continue','Cancel','Cancel');
                             if isequal(r,'Cancel')
                                 app.stateProgram = abr.stateProgram.USER_IDLE;
                                 stateAcq = abr.stateAcq.CANCELLED;
                                 return
                             end
+                            vprintf(0,1,'Continuing with invalid calibration!')
                         end
                         
                         % alternate polarity flag

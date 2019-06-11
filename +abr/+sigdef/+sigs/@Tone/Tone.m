@@ -56,20 +56,20 @@ classdef Tone < abr.sigdef.Signal
                     time{i}(end)-time{i}(1),obj.windowRFTime.realValue);
             end
             
-            
-            % % TO DO: ADJUST TO CALIBRATED VALUE (DOUBLE CHECK THIS)
-            % CALVOLT = 1; % V @ CALVAL dB SPL
-            % CALVAL = 80; % dB SPL
-            
+
             k = 1;
             for i = 1:numel(time)
                     for m = 1:numel(freq)
                         for n = 1:numel(phi)
                             for a = 1:numel(A)
-                                % Adb = CALVOLT.*10.^((A(a)-CALVAL)./20);
-                                
-                                % obj.data{k,1} = Adb.*sin(2*pi*freq(m)*time{i}+phi(n));
-                                obj.data{k,1} = sin(2*pi*freq(m)*time{i}+phi(n));
+                                if obj.calibration_is_valid
+                                    A_V = obj.estimate_calibrated_voltage(freq(m),A(a));
+                                else
+                                    A_V = 1;
+                                end
+                                % first check if calibration has been done
+                                obj.data{k,1} = A_V.*sin(2*pi*freq(m)*time{i}+phi(n));
+
                                 obj.dataParams.frequency(k,1)  = freq(m);
                                 obj.dataParams.soundLevel(k,1) = A(a);
                                 obj.dataParams.startPhase(k,1) = phi(n);

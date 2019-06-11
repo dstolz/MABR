@@ -75,6 +75,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
         CalibrationPhase (1,1) uint8 = 0;
 
         Timer (1,1) timer
+        
+        Universal abr.Universal = abr.Universal;
     end
     
     methods
@@ -200,10 +202,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 app.SIG.StimulusVoltage = repmat(app.stimulusV,app.SIG.signalCount,1);
                 stimData = cellfun(@times,num2cell(app.SIG.StimulusVoltage),app.SIG.data,'uni',0);
             else
-                % multiply full signal by calibrated value
-                x = app.SIG.(app.SIG.CalibratedParameter).realValue;
-                v = app.SIG.estimate_calibrated_voltage(x,app.SIG.NormDB);
-                stimData = cellfun(@times,num2cell(v(:)),app.SIG.data(:),'uni',0);
+                stimData = app.SIG.data;
             end
             
             sweepInterval = 1./app.sweepRate;
@@ -232,9 +231,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.SIG.DAC.SweepLength = app.SIG.N;
                         
             % write wav file to disk
-            U = abr.Universal;
             afw = dsp.AudioFileWriter( ...
-                U.dacFile, ...
+                app.Universal.dacFile, ...
                 'FileFormat','WAV', ...
                 'SampleRate',app.SIG.DAC.SampleRate, ...
                 'Compressor','None (uncompressed)', ...
@@ -325,7 +323,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
             end
             
             dur = app.SIG.duration.realValue;
-            rf = app.SIG.windowRFtime.realValue;
+            rf  = app.SIG.windowRFTime.realValue;
             
             app.SIG.CalcWindow = [rf dur-rf];
             
@@ -442,36 +440,42 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 
                 app.STATE = 'setup';
                 
+                app.setup_playrec(true);
+                
                 Fs = str2double(app.SamplingRateDropDown.Value);
                 
-                FL = abr.Universal.frameLength;
-                deviceReader = audioDeviceReader(Fs,FL, ...
-                    'Driver','ASIO','BitDepth','24-bit integer', ...
-                    'NumChannels',1);
-                
-                setup(deviceReader);
-                
-                acqDuration = 2; % seconds
-                
-                NSamples = ceil(Fs*acqDuration);
+                Duration = 2; % seconds
+                Y = zeros(round(Fs.*Duration),2,'single');
+                Y(1,2) = 1;
 
-                Y(NSamples,1) = 0; % preallocate
+                % write blank wav file to disk
+                afw = dsp.AudioFileWriter( ...
+                    app.Universal.dacFile, ...
+                    'FileFormat','WAV', ...
+                    'SampleRate',Fs, ...
+                    'Compressor','None (uncompressed)', ...
+                    'DataType','Single');
+                afw(Y);
+                release(afw);
+                delete(afw);
+                
+                % tell background process to prep for acquisition
+                app.Runtime.CommandToBg = abr.Cmd.Prep;
+                pause(0.5);
                 
                 app.STATE = 'running';
-                
-                bidx = 1:FL:NSamples-FL;
-                for i = bidx
-                    Y(i:i+FL-1) = deviceReader();
-                end
-                
-                release(deviceReader);
+                app.Runtime.CommandToBg = abr.Cmd.Run;
+                pause(0.5);
+                while app.Runtime.CommandToFg ~= abr.Cmd.Completed, pause(0.05); end
+                pause(0.5);
+                Y = app.Runtime.mapSignalBuffer.Data(1:app.Runtime.mapCom.Data.BufferIndex(2));
                 
                 % discard first second of audio in case of recording onset
                 % artifact
                 Y(1:round(Fs)) = [];
                 
                 if all(Y==0)
-                    uialert(app.CalibrationFigure,'Something is wrong.  Unable to read data from sound card.','Mic Sensitivity');
+                    errordlg('Something is wrong.  Unable to read data from sound card.','Mic Sensitivity','modal');
                     app.STATE = 'error';
                     return
                 end
@@ -558,7 +562,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 
                 
                 % Measure signal power and update field
-                app.MeasuredVoltagemVEditField.Value = Yrms.*1000;
+                app.MeasuredVoltagemVEditField.Value = double(Yrms).*1000;
                 
                 app.STATE = 'postrun';
                 
@@ -594,17 +598,13 @@ classdef CalibrationUtility < matlab.apps.AppBase
 
         % Menu selected function: SaveCalibrationDataMenu
         function SaveCalibrationDataMenuSelected(app)
-            if ~isvalid(app.SIG)
+            if ~app.SIG.calibration_is_valid
                 h = msgbox('No calibration data to save.  Please run calibration.', ...
-                    'Acoustic Calibration','help','modal');
+                    'Sound Calibration','help','modal');
                 waitfor(h);
                 return
             end
-            
-            
-            % TESTING 
-            return
-            
+                        
             dfltpn = getpref('SoundCalibration','dataPath',cd);
             [fn,pn] = uiputfile({'*.cal','Calibration (*.cal)'}, ...
                 'Save Calibration Data',dfltpn);
@@ -614,9 +614,6 @@ classdef CalibrationUtility < matlab.apps.AppBase
             ffn = fullfile(pn,fn);
             
             CalibrationData = app.SIG;
-            
-            CalibrationData.Timestamp = datestr(now);
-            CalibrationData.Filename  = ffn;
             
             save(ffn,'CalibrationData','-mat');
             
@@ -654,7 +651,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
 
         % Button pushed function: LocatePlotButton
         function LocatePlotButtonPushed(app)
-            f = findobj('type','figure','-and','name','Response');
+            f = findobj('type','figure','-and','-regexp','name','Calibration*');
             if ~isempty(f), figure(f); end
         end
 
@@ -769,7 +766,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     
                     
                 case abr.stateAcq.ERROR
-                    uialert(app.CalibrationFigure,'Dang it! Background Process Threw an Error!','Error');
+                    errordlg('Dang it! Background Process Threw an Error!','Error','modal');
                     stop(T);
                     return
             end
@@ -790,8 +787,6 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 if any(ind)
                     errordlg(sprintf('%d stimuli have an adjusted voltage <= 0 or > 1!',sum(ind)));
                     app.STATE = 'error';
-                    % TESTING
-                    adjV(adjV>1) = 1;
                 end
                 app.SIG.NormalizedVoltage = adjV;
                 app.SIG.StimulusVoltage = app.SIG.NormalizedVoltage;

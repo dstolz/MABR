@@ -30,14 +30,10 @@ classdef SoundCalibration
         InterpMethod  (1,:) char {mustBeMember(InterpMethod,{'linear','nearest','next','previous','pchip','cubic','v5cubic','makima','spline'})} = 'nearest';
         CalcWindow    (1,2) double {mustBeNonnegative,mustBeFinite} = [0 1];
         
-        %SIG           (1,1) % abr.sigdef.sigs....
-
         DAC           (1,1) abr.Buffer
         ADC           (1,1) abr.Buffer
-        
-        CalFs         (1,1) double {mustBePositive,mustBeFinite} = 1;
-        
-        Note
+                
+        Note          (1,:) char
     end
     
     properties (SetAccess = private)
@@ -118,7 +114,6 @@ classdef SoundCalibration
         function S = get.CalStats(obj)
             
             S.CalibratedParameter = obj.CalibratedParameter;
-            % S.CalibratedValues    = obj.SIG.(obj.CalibratedParameter).realValue;
             S.CalibratedValues    = obj.CalibratedValues;
 
             S.MeasuredSPL = obj.MeasuredSPL;
@@ -147,8 +142,8 @@ classdef SoundCalibration
 
 
         
-        function r = isvalid(obj)
-            r = ~isempty(obj.Timestamp);
+        function r = calibration_is_valid(obj)
+            r = ~isnan(obj.MeasuredVoltage);
         end
 
 
