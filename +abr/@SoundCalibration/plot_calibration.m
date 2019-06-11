@@ -91,7 +91,9 @@ function obj = plot_calibration(obj,phase)
     H.sh.YData = y;
 
     obj.axSL.XAxis.Limits = x([1 end]);
-    obj.axSL.YLim = [0 max([obj.axSL.YLim 120])];
+    obj.axSL.YLim = [0 max([y(:); obj.NormDB+40])];
+    obj.axSL.XAxis.Label.String = obj.CalibratedParameter;
+    obj.axSL.YAxis.Label.String = 'Sound Level (dB SPL)';
     grid(obj.axSL,'on');
 
     % Time Domain Plot
