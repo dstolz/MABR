@@ -54,7 +54,8 @@ while ~isDone(obj.AFR)
 
     if isequal(obj.Universal.MODE,'testing')
         % TESTING WITH FAKE LOOP-BACK AND SIGNAL **********************
-        audioADC(:,1) = audioDAC(:,1) + randn(frameLength,1)/10;
+        audioADC(:,1) = audioDAC(:,1) + randn(frameLength,1)/1000;
+        % audioADC(:,1) = audioDAC(:,1);
         audioADC(:,2) = audioDAC(:,2); % loop-back
     end
     

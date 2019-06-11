@@ -202,7 +202,12 @@ classdef (Abstract) Signal < abr.SoundCalibration
         end
         
         
-        
+        function cal = export_calibration(obj)
+            assert(obj.calibration_is_valid,'abr.sigdef.Signal:export_calibration', ...
+                'Calibration invalid');
+
+            cal = copy(abr.SoundCalibration);
+        end
         
         
         % Overloaded methods ----------------------------------------------
@@ -288,7 +293,7 @@ classdef (Abstract) Signal < abr.SoundCalibration
             end
         end
 
-        function tf = isvalid(obj)
+        function tf = signal_is_valid(obj)
             obj.update;
             tf = ~isempty(obj.data);
         end

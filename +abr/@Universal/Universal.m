@@ -347,7 +347,7 @@ classdef Universal < handle
             M = 10.^(-12:3:9);
             M = [M; M; M];
             M = M(:);
-            i = find(G < V*10,1,'last');
+            i = find(G < V,1,'last');
             if isempty(i), i = 1; end
             multiplier = 1/M(i);
             unit = U{i};

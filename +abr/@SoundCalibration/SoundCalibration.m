@@ -1,9 +1,7 @@
-classdef SoundCalibration
+classdef SoundCalibration < matlab.mixin.Copyable
     
     
-    properties
-        Filename      (1,:) char
-        
+    properties        
         Device        (1,:) char
         DeviceInfo
 
@@ -21,7 +19,7 @@ classdef SoundCalibration
         MeasuredSPL       (:,1) double {mustBeFinite}
         
         CalibratedValues  (:,1) 
-        CalibratedVoltage (:,1) double {mustBePositive,mustBeLessThanOrEqual(CalibratedVoltage,1)}
+        CalibratedVoltage (:,1) double {mustBePositive} %,mustBeLessThanOrEqual(CalibratedVoltage,1)}
         
         
         NormDB            (1,1) double {mustBePositive,mustBeFinite} = 80; % dB SPL
@@ -35,16 +33,17 @@ classdef SoundCalibration
                 
         Note          (1,:) char
     end
-    
-    properties (SetAccess = private)
+
+    properties (NonCopyable, Transient)
         FigCalibration
     end
+    
     
     properties (SetAccess = private,Dependent)
         CalStats
     end
 
-    properties (Access = private)
+    properties (Access = private, NonCopyable, Transient)
         axSL
         axTD
         axFD 
@@ -143,7 +142,7 @@ classdef SoundCalibration
 
         
         function r = calibration_is_valid(obj)
-            r = ~isnan(obj.MeasuredVoltage);
+            r = ~(all(isnan(obj.MeasuredVoltage)) || isempty(obj.CalibratedVoltage));
         end
 
 

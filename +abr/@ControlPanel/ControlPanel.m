@@ -761,6 +761,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.Runtime.CommandToBg = abr.Cmd.Idle;
                         
                         if ~app.Runtime.BgIsRunning
+                            D = uiprogressdlg(app.CalibrationFigure, ...
+                                'Title','Starting',...
+                                'Indeterminate','on','icon','info',...
+                                'Message','Please wait ...');
                             abr.Runtime.launch_bg_process;
                         end
                         
@@ -769,6 +773,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         % wait for the background process to load
                         while ~app.Runtime.BgIsRunning, pause(0.01); end
+                        if exist('D','var'), close(D); end
                         
                         app.stateProgram = abr.stateProgram.ADVANCE_BLOCK; % to first trial
                         

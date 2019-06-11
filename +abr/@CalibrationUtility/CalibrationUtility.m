@@ -86,41 +86,50 @@ classdef CalibrationUtility < matlab.apps.AppBase
             h = app.thisOne;
             
             h.Color = [0.8 0.8 0.8];
-            
+            e = findobj(app.CalibrationFigure,'-property','Enable');
             switch newState
                 case 'setup'
                     h.Tooltip = 'Starting';
                     h.Color = [1 1 0];
-                    app.SampleButton.Enable = 'on';
-                    
+                    set(e,'Enable','off');
+
                 case 'idle'
-                    h.Tooltip = '';
-                    app.SampleButton.Enable = 'on';
+                    h.Tooltip = 'Idle';
+                    set(e,'Enable','on');
                     
                 case 'prerun'
                     h.Tooltip = 'Prepping';
                     h.Color = [1 1 0];
-                    app.SampleButton.Enable = 'off';
+                    set(e,'Enable','off');
                     
                 case 'running'
                     h.Tooltip = 'Running';
                     h.Color = [0.2 1 0.2];
-                    app.SampleButton.Enable = 'off';
+                    set(e,'Enable','off');
+                    app.RunCalibrationSwitch.Enable = 'on';
                     
                 case 'postrun'
                     h.Tooltip = 'Done';
-                    app.SampleButton.Enable = 'on';
                     app.RunCalibrationSwitch.Value = 'Idle';
+                    set(e,'Enable','on');
                     
                 case 'error'
                     % vprintf(0,1,app.lastError.message)
+                    h.Tooltip = 'An Error Occurred';
                     h.Color = [1 0 0];
-                    app.SampleButton.Enable = 'on';
                     app.RunCalibrationSwitch.Value = 'Idle';
+                    set(e,'Enable','on');
                     
                 case 'usercancelled'
                     h.Tooltip = 'Cancelled';
                     app.RunCalibrationSwitch.Value = 'Idle';
+                    set(e,'Enable','on');
+            end
+            
+            h.Enable = 'on';
+            
+            if isequal(app.SIG,0)
+                app.RunCalibrationSwitch.Enable = 'off';
             end
             
             drawnow
@@ -139,7 +148,6 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.SIG.Device        = app.AudioDeviceDropDown.Value;
             app.SIG.Fs            = str2double(app.SamplingRateDropDown.Value);
             
-            
             app.SIG.ReferenceFreq = app.FrequencyHzEditField.Value;
             app.SIG.ReferenceSPL  = app.SoundLeveldBSPLEditField.Value;
             app.SIG.ReferenceVoltage = app.MeasuredVoltagemVEditField.Value./1000;
@@ -149,7 +157,12 @@ classdef CalibrationUtility < matlab.apps.AppBase
         
         
         
-        function setup_playrec(app,waitForBG) 
+        function setup_playrec(app,waitForBG)
+            D = uiprogressdlg(app.CalibrationFigure, ...
+                'Title','Starting',...
+                'Indeterminate','on','icon','info',...
+                'Message','Please wait ...');
+            
             if nargin < 2 || isempty(waitForBG), waitForBG = true; end
 
             % setup as foreground process and launch background process
@@ -167,10 +180,11 @@ classdef CalibrationUtility < matlab.apps.AppBase
             % reset background process
             app.Runtime.CommandToBg = abr.Cmd.Idle;
             
-            % wait for the background process to load
-            while waitForBG && ~app.Runtime.BgIsRunning, pause(0.1); end
+            while waitForBG && ~app.Runtime.BgIsRunning
+                pause(0.1); 
+            end
             
-            if isequal(app.SIG,0), return; end
+            if isequal(app.SIG,0), close(D); return; end
             
             
             % tell background process to prep for acquisition
@@ -184,13 +198,19 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     return
                 end
             end
+            
+            close(D);
 
         end
         
         function setup_stimulus(app)
-                        
             app.SIG.DAC.SampleRate = app.SIG.Fs;
             app.SIG.ADC.SampleRate = app.SIG.Fs;
+            
+            if app.CalibrationPhase < 2
+                app.SIG.CalibratedVoltage = [];
+                app.SIG.ADC.Data = [];
+            end
             
             % generate stimulus from SIG obj
             app.SIG = app.SIG.update;
@@ -339,7 +359,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
         function startupFcn(app)
             app.STATE = 'setup';
             
-            app.setup_playrec(false);
+            app.setup_playrec(true);
             
             APR = audioPlayerRecorder;
             devices = APR.getAudioDevices;
@@ -412,9 +432,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                         stop(app.Timer);
                         delete(app.Timer);
                     end
-                    
-                    app.SampleButton.Enable = 'on';
-                    
+                                        
                     app.STATE = 'usercancelled';
             end
             
@@ -437,14 +455,17 @@ classdef CalibrationUtility < matlab.apps.AppBase
         function SampleButtonPushed(app)
             app.thisOne = app.ReferenceLamp;
             try
-                
-                app.STATE = 'setup';
+                app.STATE = 'prerun';
                 
                 app.setup_playrec(true);
                 
                 Fs = str2double(app.SamplingRateDropDown.Value);
                 
-                Duration = 2; % seconds
+                Duration = 1; % seconds
+                
+                % add a second to be removed after acquisition
+                Duration = Duration + 1;
+                
                 Y = zeros(round(Fs.*Duration),2,'single');
                 Y(1,2) = 1;
 
@@ -461,32 +482,52 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 
                 % tell background process to prep for acquisition
                 app.Runtime.CommandToBg = abr.Cmd.Prep;
-                pause(0.5);
+                pause(1);
                 
                 app.STATE = 'running';
                 app.Runtime.CommandToBg = abr.Cmd.Run;
-                pause(0.5);
-                while app.Runtime.CommandToFg ~= abr.Cmd.Completed, pause(0.05); end
+                
+                timeout(Duration+5);
+                while ~timeout && app.Runtime.BackgroundState ~= abr.stateAcq.ACQUIRE, pause(0.1); end
+                while ~timeout && app.Runtime.BackgroundState == abr.stateAcq.ACQUIRE
+                    pause(0.1);
+                end
+                
+                if app.Runtime.BackgroundState == abr.stateAcq.ERROR
+                    errordlg('An error was reported by the background process. You may need to restart Matlab and try again.', ...
+                        'Mic Sensitivity','modal');
+                    app.STATE = 'error';
+                    return
+                end
+                
+                if timeout
+                    errordlg('The background process never completed acquiring data. You may need to restart Matlab and try again.', ...
+                        'Mic Sensitivity','modal');
+                    app.STATE = 'error';
+                    return
+                end
+
+                
                 pause(0.5);
                 Y = app.Runtime.mapSignalBuffer.Data(1:app.Runtime.mapCom.Data.BufferIndex(2));
                 
                 % discard first second of audio in case of recording onset
                 % artifact
-                Y(1:round(Fs)) = [];
-                
-                if all(Y==0)
-                    errordlg('Something is wrong.  Unable to read data from sound card.','Mic Sensitivity','modal');
+                n = round(Fs);
+                if length(Y) <= n || all(Y==0)
+                    errordlg(sprintf('Something is wrong.\n\nUnable to read data from sound card.\n\nPlease try again.'),'Mic Sensitivity','modal');
                     app.STATE = 'error';
                     return
                 end
-                
+                Y(1:n) = [];
+
                 Yrms = rms(Y);
                 
                 % plot time & freq representations of ADC
                 f = findobj('type','figure','-and','name','Reference');
                 if isempty(f)
                     f = figure('name','Reference','IntegerHandle','off', ...
-                        'Color','w','Position',[200 150 500 300]);
+                        'Color','w','Position',[500 150 500 300]);
                 end
                 figure(f);
                 clf(f);
@@ -500,10 +541,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 plot(ax,tvec*1000,Y*multiplier);
                 hold(ax,'off');
                 
-                yl = [-1.1 1.1] .* max(abs(Y)) * multiplier;
-                if yl(1) == yl(2), yl(2) = yl(1) + 1; end
-                ax.YAxis.Limits = yl;
-                
+                axis(ax,'tight');
                 ax.XAxis.Label.String = 'time (ms)';
                 ax.YAxis.Label.String = sprintf('amplitude (%s)',unit);
                 
@@ -533,8 +571,9 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     'color',[.6 1 .2]);
                 uistack(h,'top');
                 
-                ax.XScale = 'log';
+                ax.XScale = 'linear';
                 ax.XAxis.Exponent = 0;
+                ax.XAxis.TickLabelFormat = '%.1f kHz';
                 ax.XAxis.Label.String = 'frequency (kHz)';
                 ax.YAxis.Label.String = 'Magnitude (dB)';
                 
@@ -542,10 +581,10 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 grid(ax,'on');
                 
                 
-                % zoomed
+                % zoomed freq plot
                 ax = subplot(2,4,8,'Parent',f);
                 
-                fb = rFreq .* 2.^([-1 1]);
+                fb = rFreq .* 2.^([-.5 .5]);
                 ind = freq >= fb(1) & freq <= fb(2);
                 
                 h = line(ax,freq(ind),M(ind));
@@ -556,6 +595,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 ax.XScale = 'log';
                 ax.XAxis.Exponent = 0;
                 ax.XAxis.Label.String = 'frequency (kHz)';
+                axis(ax,'tight');
                 
                 box(ax,'on');
                 grid(ax,'on');
@@ -563,6 +603,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 
                 % Measure signal power and update field
                 app.MeasuredVoltagemVEditField.Value = double(Yrms).*1000;
+                app.MeasuredVoltagemVEditField.BackgroundColor = [.6 1 .2];
                 
                 app.STATE = 'postrun';
                 
@@ -716,7 +757,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.setup_stimulus;
             
             app.setup_playrec;
-            
+
             % TEST MODE!!!! *****
             app.Runtime.CommandToBg = abr.Cmd.TestMode;
 
@@ -733,7 +774,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
             vprintf(4,'time_Runtime:Calibration Phase = %d',app.CalibrationPhase)
             if app.CalibrationPhase == 0, return; end
             
-            mC = app.Runtime.mapCom;
+            mC  = app.Runtime.mapCom;
             mSB = app.Runtime.mapSignalBuffer;
             mTB = app.Runtime.mapTimingBuffer;
             
@@ -789,7 +830,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.STATE = 'error';
                 end
                 app.SIG.NormalizedVoltage = adjV;
-                app.SIG.StimulusVoltage = app.SIG.NormalizedVoltage;
+                app.SIG.CalibratedVoltage = adjV;
+                app.SIG.StimulusVoltage   = adjV;
 
                 app.start_timer; % start second phase
             else
@@ -797,8 +839,10 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 app.STATE = 'postrun';
 
                 app.SIG.CalibratedVoltage = app.SIG.NormalizedVoltage;
-                app.SaveCalibrationDataMenuSelected;
                 
+                if ~isequal(app.STATE,'error')
+                    app.SaveCalibrationDataMenuSelected;
+                end
             end
         end
 
@@ -806,6 +850,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.Runtime.CommandToBg = abr.Cmd.Error;
             app.CalibrationPhase = 0;
             app.STATE = 'error';
+            vprintf(1,0,sprintf('messageID: %s;\tmessage: %s', ...
+                event.Data.messageID,event.Data.message))
         end
     end
 

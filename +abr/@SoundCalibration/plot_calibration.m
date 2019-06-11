@@ -11,31 +11,28 @@ function obj = plot_calibration(obj,phase)
 
         % Sound level plot
         obj.axSL = subplot(3,2,[1 2],'Parent',obj.FigCalibration,'Units','pixels');
-
+        obj.axSL.XAxis.Label.String = obj.CalibratedParameter;
+        obj.axSL.YAxis.Label.String = 'Sound Level (dB SPL)';
+        grid(obj.axSL,'on');
+        
         % time domain plot
         obj.axTD = subplot(3,2,[3 5],'Parent',obj.FigCalibration);
-        
         obj.axTD.XAxis.TickLabelFormat = '%.1f';
         obj.axTD.YAxis.TickLabelFormat = '%.1f';
         obj.axTD.ZAxis.TickLabelFormat = '%.1f';
-        
         obj.axTD.XAxis.Label.String = 'time (ms)';
         obj.axTD.YAxis.Label.String = obj.CalibratedParameter;
         obj.axTD.ZAxis.Label.String = 'amplitude (mV)';
-        
         obj.axTD.YAxis.Exponent = 0;
-        
         box(obj.axTD,'on');
         grid(obj.axTD,'on');
         view(obj.axTD,3);
         
         % freq domain plot
         obj.axFD = subplot(3,2,[4 6],'Parent',obj.FigCalibration);
-        
         box(obj.axFD,'on');
         grid(obj.axFD,'on');
         axis(obj.axFD,'tight');
-        
         obj.axFD.XAxis.Label.String = 'frequency (kHz)';
         obj.axFD.YAxis.Label.String = 'magnitude (dB)';
     end
@@ -95,6 +92,7 @@ function obj = plot_calibration(obj,phase)
 
     obj.axSL.XAxis.Limits = x([1 end]);
     obj.axSL.YLim = [0 max([obj.axSL.YLim 120])];
+    grid(obj.axSL,'on');
 
     % Time Domain Plot
     x = obj.ADC.TimeVector .* 1000;
