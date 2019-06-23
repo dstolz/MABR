@@ -6,6 +6,7 @@ classdef Universal < handle
     end
     
     properties (SetAccess = private)
+        
         iconPath        (1,:) char
         hash            (1,:) char
         shortHash       (1,:) char
@@ -25,6 +26,8 @@ classdef Universal < handle
         dacFile         (1,:) char
         infoFile        (1,:) char
         
+        hasAllToolboxes (1,1) logical = false;
+                
     end
     
     properties (Access = private)
@@ -41,6 +44,11 @@ classdef Universal < handle
         Author          = 'Daniel Stolzberg';
         AuthorEmail     = 'daniel.stolzberg@gmail.com';
         GithubRepository= 'https://github.com/dstolz/abr';
+        
+        RequiredToolboxes = {'MATLAB',9.5; ...
+                             'Signal Processing Toolbox',8.1; ...
+                             'Audio System Toolbox',1.5; ...
+                             'DSP System Toolbox',9.7};
                 
         DocumentationFile = 'ABR_Documentation.json'; % must be on Matlab's path
     end
@@ -89,6 +97,8 @@ classdef Universal < handle
 %             banner{end+1} = sprintf('\t-> <a href="matlab: abr.ScheduleDesign;">Stimulus Design</a>');
             
             disp(char(banner))
+            
+            obj.hasAllToolboxes;
         end
         
         function set.MODE(obj,newMode)
@@ -100,16 +110,21 @@ classdef Universal < handle
             m.Author      = obj.Author;
             m.AuthorEmail = obj.AuthorEmail;
             m.Copyright   = 'Copyright to Daniel Stolzberg, 2019';
-            m.SoftwareVersion = obj.SoftwareVersion;
+            m.VersionSoftware = obj.SoftwareVersion;
             m.GithubRepository = obj.GithubRepository;
-            m.DataVersion = obj.DataVersion;
+            m.VersionData = obj.DataVersion;
             m.Checksum    = obj.hash;
             m.CommitDate  = obj.commitDate;
             m.SmileyFace  = ':)';
             m.CurrentTimestamp = datestr(now);
+            m.HostComputerType = computer;
+            [~,n] = dos('hostname');
+            m.HostComputerName = n;
+            m.MatlabToolboxes = ver;
             
             m = orderfields(m);
         end
+        
         
         function s = get.availableSignals(obj)
             d = dir(obj.signalPath);
@@ -150,6 +165,25 @@ classdef Universal < handle
             fn = fullfile(obj.gitPath,'.git','logs','HEAD');
             d  = dir(fn);
             c  = d.date;
+        end
+        
+        
+        function tf = get.hasAllToolboxes(obj)
+            v = ver;
+            t = false(1,size(obj.RequiredToolboxes,1));
+            for i = 1:length(v)
+                ind = ismember(obj.RequiredToolboxes(:,1),v(i).Name);
+                if ~any(ind), continue; end
+                t(i) = str2double(v(i).Version) >= obj.RequiredToolboxes{ind,2};
+            end
+            tf = all(t);
+            if ~tf
+                rtstr = '';
+                for i = 1:size(obj.RequiredToolboxes,1)
+                    rtstr = sprintf('%s\t> %s, v%02.1f\n',rtstr,obj.RequiredToolboxes{i,1},obj.RequiredToolboxes{i,2});
+                end
+                error('The MABR toolbox requires the following toolboxes: \n%s',rtstr)
+            end
         end
         
         function img = icon_img(obj,type)
@@ -194,6 +228,8 @@ classdef Universal < handle
             addpath(fullfile(r,'helpers'));
             addpath(fullfile(r,'external'));
         end
+        
+        
         
         
         function j = get_documentation(obj)
