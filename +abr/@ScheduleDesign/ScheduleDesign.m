@@ -402,7 +402,7 @@ classdef ScheduleDesign < matlab.apps.AppBase
 
             % Create SigDefTable
             app.SigDefTable = uitable(app.ScheduleDesignFigure);
-            app.SigDefTable.ColumnName = {'Property'; 'Alternate'; 'Value/Expression'};
+            app.SigDefTable.ColumnName = {'Parameter'; 'Alternate'; 'Value/Expression'};
             app.SigDefTable.ColumnWidth = {200, 50, 320};
             app.SigDefTable.RowName = {};
             app.SigDefTable.ColumnEditable = [false true true];
