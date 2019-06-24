@@ -50,7 +50,8 @@ classdef Universal < handle
                              'Audio System Toolbox',1.5; ...
                              'DSP System Toolbox',9.7};
                 
-        DocumentationFile = 'ABR_Documentation.json'; % must be on Matlab's path
+        DocumentationFile = 'MABR_Help.json'; % must be on Matlab's path
+        DocumentationPDF  = 'MABR_Documentation.pdf'; % must be on Matlab's path
     end
     
     methods
