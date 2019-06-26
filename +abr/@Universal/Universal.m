@@ -39,8 +39,8 @@ classdef Universal < handle
         frameLength   = 2048;
         maxInputBufferLength = 2^26; % should be power of 2 enough for at least a minute of data at 192kHz sampling rate
 
-        SoftwareVersion = '0.1 beta';
-        DataVersion     = '0.1 beta';
+        SoftwareVersion = '19A';
+        DataVersion     = '19A';
         Author          = 'Daniel Stolzberg';
         AuthorEmail     = 'daniel.stolzberg@gmail.com';
         GithubRepository= 'https://github.com/dstolz/abr';
