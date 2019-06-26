@@ -764,6 +764,16 @@ app.UtilityScheduleDesignButton.FontSize = 16;
 app.UtilityScheduleDesignButton.ButtonPushedFcn = createCallbackFcn(app,@abr.ScheduleDesign,false);
 
 R = R + 1;
+% Create UtilityScheduleButton
+app.UtilityScheduleButton = uibutton(G, 'push');
+app.UtilityScheduleButton.Layout.Row = R;
+app.UtilityScheduleButton.Layout.Column = 1;
+app.UtilityScheduleButton.FontSize = 16;
+% app.UtilityScheduleButton.FontWeight = 'bold';
+app.UtilityScheduleButton.Text = 'Schedule';
+app.UtilityScheduleButton.ButtonPushedFcn = createCallbackFcn(app,@abr.Schedule,false);
+
+R = R + 1;
 % Create UtilitySoundCalibrationButton
 app.UtilitySoundCalibrationButton = uibutton(G, 'push');
 app.UtilitySoundCalibrationButton.Layout.Row = R;
@@ -783,13 +793,5 @@ app.UtilityABRDataViewerButton.FontSize = 16;
 % app.UtilityABRDataViewerButton.FontWeight = 'bold';
 app.UtilityABRDataViewerButton.ButtonPushedFcn = createCallbackFcn(app,@abr.traces.Organizer,false);
 
-R = R + 1;
-% Create UtilityOnlineAnalysisButton
-app.UtilityOnlineAnalysisButton = uibutton(G, 'push');
-app.UtilityOnlineAnalysisButton.Layout.Row = R;
-app.UtilityOnlineAnalysisButton.Layout.Column = 1;
-app.UtilityOnlineAnalysisButton.FontSize = 16;
-% app.UtilityOnlineAnalysisButton.FontWeight = 'bold';
-app.UtilityOnlineAnalysisButton.Text = 'Online Analysis';
 
 

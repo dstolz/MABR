@@ -124,7 +124,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         UtilityScheduleDesignButton    matlab.ui.control.Button
         UtilitySoundCalibrationButton  matlab.ui.control.Button
         UtilityABRDataViewerButton     matlab.ui.control.Button
-        UtilityOnlineAnalysisButton    matlab.ui.control.Button
+        UtilityScheduleButton    matlab.ui.control.Button
         HelpButton                     matlab.ui.control.Button
         LocateFiguresButton            matlab.ui.control.Button
         

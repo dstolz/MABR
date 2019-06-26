@@ -439,7 +439,7 @@ classdef Schedule < matlab.apps.AppBase
         function startupFcn(app, filename)
             app.ScheduleTable.RowName = 'numbered';
             
-            if nargin == 2 && ~isempty(filename)
+            if nargin == 2 && ~isempty(filename) && ischar(filename)
                 app.filename = filename;
                 app.load_schedule(filename);
             end
