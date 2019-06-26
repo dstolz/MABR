@@ -47,7 +47,7 @@ function createComponents(app)
 
     % Create StimulusInfoButton
     app.StimulusInfoButton = uibutton(app.StimulusPanel, 'push');
-    app.StimulusInfoButton.ButtonPushedFcn = createCallbackFcn(app, @docbox, false);
+    app.StimulusInfoButton.ButtonPushedFcn = createCallbackFcn(app, @docbox, true);
     app.StimulusInfoButton.Icon = 'helpicon.gif';
     app.StimulusInfoButton.IconAlignment = 'center';
     app.StimulusInfoButton.Position = [5 34 20 23];
@@ -95,7 +95,7 @@ function createComponents(app)
 
     % Create HardwareInfoButton
     app.HardwareInfoButton = uibutton(app.HardwarePanel, 'push');
-    app.HardwareInfoButton.ButtonPushedFcn = createCallbackFcn(app, @docbox, false);
+    app.HardwareInfoButton.ButtonPushedFcn = createCallbackFcn(app, @docbox, true);
     app.HardwareInfoButton.Icon = 'helpicon.gif';
     app.HardwareInfoButton.IconAlignment = 'center';
     app.HardwareInfoButton.Position = [6 45 20 23];
@@ -153,7 +153,7 @@ function createComponents(app)
 
     % Create CalibrationInfoPanel
     app.CalibrationInfoPanel = uibutton(app.CalibrationPanel, 'push');
-    app.CalibrationInfoPanel.ButtonPushedFcn = createCallbackFcn(app, @docbox, false);
+    app.CalibrationInfoPanel.ButtonPushedFcn = createCallbackFcn(app, @docbox, true);
     app.CalibrationInfoPanel.Icon = 'helpicon.gif';
     app.CalibrationInfoPanel.IconAlignment = 'center';
     app.CalibrationInfoPanel.Position = [6 112 20 23];
@@ -219,7 +219,7 @@ function createComponents(app)
 
     % Create MicSensitivityInfoButton
     app.MicSensitivityInfoButton = uibutton(app.MicSensitivityPanel, 'push');
-    app.MicSensitivityInfoButton.ButtonPushedFcn = createCallbackFcn(app, @docbox, false);
+    app.MicSensitivityInfoButton.ButtonPushedFcn = createCallbackFcn(app, @docbox, true);
     app.MicSensitivityInfoButton.Icon = 'helpicon.gif';
     app.MicSensitivityInfoButton.IconAlignment = 'center';
     app.MicSensitivityInfoButton.Position = [6 110 20 23];
