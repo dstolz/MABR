@@ -148,7 +148,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         createComponents(app);
         R = live_analysis(app,preSweep,postSweep);
         abr_live_plot(app,sweeps,tvec,R);
-        r = summary_analysis(data,type,options);
         
         function ffn = get.outputFile(app)
             fn = app.OutputFileDD.Value;
@@ -1398,6 +1397,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
 
             stateAcq = abr.stateAcq.IDLE;
             
+            
+            
             % setup as foreground process and launch background process
             if isempty(app.Runtime) || isstruct(app.Runtime) || ~isvalid(app.Runtime) || ~app.Runtime.FgIsRunning
                 app.Runtime = abr.Runtime;
@@ -1519,6 +1520,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     
     methods (Static)
         R = partition_corr(preSweep,postSweep);
+        r = summary_analysis(data,type,options);
         timer_Start(T,event,obj);
         timer_Runtime(T,event,obj);
         timer_Stop(T,event,obj);
