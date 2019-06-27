@@ -324,6 +324,8 @@ classdef Schedule < matlab.apps.AppBase
                     
                     if isempty(r), return; end
                     
+                    D = app.ScheduleTable.Data;
+                    
                     t = false(M,1);
                     try
                         eval(sprintf('t(%s) = true;',char(r)));
