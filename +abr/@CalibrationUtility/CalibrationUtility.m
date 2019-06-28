@@ -148,11 +148,11 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.SIG.Device        = app.AudioDeviceDropDown.Value;
             app.SIG.Fs            = str2double(app.SamplingRateDropDown.Value);
             
-            app.SIG.ReferenceFreq = app.FrequencyHzEditField.Value;
-            app.SIG.ReferenceSPL  = app.SoundLeveldBSPLEditField.Value;
-            app.SIG.ReferenceVoltage = app.MeasuredVoltagemVEditField.Value./1000;
+            app.SIG.Calibration.ReferenceFreq = app.FrequencyHzEditField.Value;
+            app.SIG.Calibration.ReferenceSPL  = app.SoundLeveldBSPLEditField.Value;
+            app.SIG.Calibration.ReferenceVoltage = app.MeasuredVoltagemVEditField.Value./1000;
             
-            app.SIG.Note = app.NoteTextArea.Value;
+            app.SIG.Calibration.Note = app.NoteTextArea.Value;
         end
         
         
@@ -204,12 +204,9 @@ classdef CalibrationUtility < matlab.apps.AppBase
         end
         
         function setup_stimulus(app)
-            app.SIG.DAC.SampleRate = app.SIG.Fs;
-            app.SIG.ADC.SampleRate = app.SIG.Fs;
-            
             if app.CalibrationPhase < 2
-                app.SIG.CalibratedVoltage = [];
-                app.SIG.ADC.Data = [];
+                app.SIG.Calibration.CalibratedVoltage = [];
+                app.SIG.Calibration.ADC.Data = [];
             end
             
             % generate stimulus from SIG obj
@@ -219,14 +216,14 @@ classdef CalibrationUtility < matlab.apps.AppBase
             
             
             if app.CalibrationPhase < 2
-                app.SIG.StimulusVoltage = repmat(app.stimulusV,app.SIG.signalCount,1);
-                stimData = cellfun(@times,num2cell(app.SIG.StimulusVoltage),app.SIG.data,'uni',0);
+                app.SIG.Calibration.StimulusVoltage = repmat(app.stimulusV,app.SIG.signalCount,1);
+                stimData = cellfun(@times,num2cell(app.SIG.Calibration.StimulusVoltage),app.SIG.data,'uni',0);
             else
                 stimData = app.SIG.data;
             end
             
             sweepInterval = 1./app.sweepRate;
-            sweepIntervalSamps = app.SIG.DAC.SampleRate*sweepInterval;
+            sweepIntervalSamps = app.SIG.Fs*sweepInterval;
             app.sweepOnsets = 0:sweepInterval:sweepInterval*(app.SIG.signalCount-1);
                         
             % initialize Buffers
@@ -239,22 +236,22 @@ classdef CalibrationUtility < matlab.apps.AppBase
             data = [data(:) timingSignal];
             
             % pad onset/offset with some silence
-            data = [zeros(app.SIG.DAC.SampleRate,2); data; zeros(app.SIG.DAC.SampleRate,2)];
+            data = [zeros(app.SIG.Fs,2); data; zeros(app.SIG.Calibration.DAC.SampleRate,2)];
             
-            app.SIG.DAC.Data = data(:,1);
-            app.SIG.ADC.Data = [];
+            app.SIG.Calibration.DAC.Data = data(:,1);
+            app.SIG.Calibration.ADC.Data = [];
             
-            app.SIG.DAC.SweepOnsets = find(data(:,2));
-            app.SIG.ADC.SweepOnsets = [];
+            app.SIG.Calibration.DAC.SweepOnsets = find(data(:,2));
+            app.SIG.Calibration.ADC.SweepOnsets = [];
             
-            app.SIG.ADC.SweepLength = app.SIG.N;
-            app.SIG.DAC.SweepLength = app.SIG.N;
+            app.SIG.Calibration.ADC.SweepLength = app.SIG.N;
+            app.SIG.Calibration.DAC.SweepLength = app.SIG.N;
                         
             % write wav file to disk
             afw = dsp.AudioFileWriter( ...
                 app.Universal.dacFile, ...
                 'FileFormat','WAV', ...
-                'SampleRate',app.SIG.DAC.SampleRate, ...
+                'SampleRate',app.SIG.Calibration.DAC.SampleRate, ...
                 'Compressor','None (uncompressed)', ...
                 'DataType','Single');
             
@@ -318,7 +315,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.SIG.windowFcn.Value  = 'blackmanharris';
                     app.SIG.windowRFTime.Value = 1000.*4./app.F1; % ramp over at least one cycle
                     
-                    app.SIG.CalibratedParameter = 'frequency';
+                    app.SIG.Calibration.CalibratedParameter = 'frequency';
                     
                 case 'Noise'
                     app.SIG.HPfreq.Value     = app.FHp/1000;
@@ -327,12 +324,12 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.SIG.windowFcn.Value  = 'blackmanharris';
                     app.SIG.windowRFTime.Value = 1000.*2./app.FHp; % ramp over at least one cycle
                     
-                    app.SIG.CalibratedParameter = 'HPFreq';
+                    app.SIG.Calibration.CalibratedParameter = 'HPFreq';
                     
                 case 'Click'
                     app.SIG.duration.Value   = 0.01; % ms
                     
-                    app.SIG.CalibratedParameter = 'duration';
+                    app.SIG.Calibration.CalibratedParameter = 'duration';
                     
                 case 'File'
                     uiconfirm(app.ScheduleFigure, ...
@@ -345,11 +342,11 @@ classdef CalibrationUtility < matlab.apps.AppBase
             dur = app.SIG.duration.realValue;
             rf  = app.SIG.windowRFTime.realValue;
             
-            app.SIG.CalcWindow = [rf dur-rf];
+            app.SIG.Calibration.CalcWindow = [rf dur-rf];
             
             w = app.SIG.windowRFTime.realValue;
             d = app.SIG.duration.realValue;
-            app.SIG.CalcWindow = [w d-w];
+            app.SIG.Calibration.CalcWindow = [w d-w];
             
             app.RunCalibrationSwitch.Enable = 'on';
         end
@@ -488,10 +485,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 app.Runtime.CommandToBg = abr.Cmd.Run;
                 
                 timeout(Duration+5);
-                while ~timeout && app.Runtime.BackgroundState ~= abr.stateAcq.ACQUIRE, pause(0.1); end
-                while ~timeout && app.Runtime.BackgroundState == abr.stateAcq.ACQUIRE
-                    pause(0.1);
-                end
+                while ~timeout && app.Runtime.BackgroundState <= abr.stateAcq.ACQUIRE, pause(0.1); end
                 
                 if app.Runtime.BackgroundState == abr.stateAcq.ERROR
                     errordlg('An error was reported by the background process. You may need to restart Matlab and try again.', ...
@@ -779,17 +773,17 @@ classdef CalibrationUtility < matlab.apps.AppBase
             mTB = app.Runtime.mapTimingBuffer;
             
             BH = double(mC.Data.BufferIndex(2));
-            LB = app.SIG.ADC.N;
+            LB = app.SIG.Calibration.ADC.N;
             if LB == 0, LB = 1; end
                     
             % gather data from background process
             switch app.Runtime.BackgroundState
                 case abr.stateAcq.COMPLETED
                     %[~,postSweep] = app.Runtime.extract_sweeps([0 app.SIG.duration.realValue],true);
-                    app.SIG.ADC.Data = mSB.Data(1:BH);
+                    app.SIG.Calibration.ADC.Data = mSB.Data(1:BH);
                     ind = mTB.Data(1:BH-1) > mTB.Data(2:BH);
                     ind = ind & mTB.Data(1:BH-1) >= 0.5;
-                    app.SIG.ADC.SweepOnsets = find(ind);
+                    app.SIG.Calibration.ADC.SweepOnsets = find(ind);
                     stop(T);
                     return
                     
@@ -797,13 +791,13 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     %[~,postSweep] = app.Runtime.extract_sweeps([0 app.SIG.duration.realValue],false);
                     
                     data = mSB.Data(LB:BH);
-                    app.SIG.ADC = app.SIG.ADC.appendData(data);
+                    app.SIG.Calibration.ADC = app.SIG.Calibration.ADC.appendData(data);
                     
                     % find stimulus onsets in timing signal
                     ind = mTB.Data(LB:BH-1) > mTB.Data(LB+1:BH); % rising edge
                     ind = ind & mTB.Data(LB:BH-1) >= 0.5; % threshold
                     if ~any(ind), return; end
-                    app.SIG.ADC.SweepOnsets(end+1:end+sum(ind)) = LB+find(ind);
+                    app.SIG.Calibration.ADC.SweepOnsets(end+1:end+sum(ind)) = LB+find(ind);
                     
                     
                 case abr.stateAcq.ERROR
@@ -812,7 +806,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     return
             end
             
-            vprintf(4,'# sweeps acquired = %d',app.SIG.ADC.NumSweeps)
+            vprintf(4,'# sweeps acquired = %d',app.SIG.Calibration.ADC.NumSweeps)
             
             
             app.SIG = app.SIG.plot_calibration(app.CalibrationPhase);
@@ -830,15 +824,15 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.STATE = 'error';
                 end
                 app.SIG.NormalizedVoltage = adjV;
-                app.SIG.CalibratedVoltage = adjV;
-                app.SIG.StimulusVoltage   = adjV;
+                app.SIG.Calibration.CalibratedVoltage = adjV;
+                app.SIG.Calibration.StimulusVoltage   = adjV;
 
                 app.start_timer; % start second phase
             else
                 vprintf(1,'Completed calibration')
                 app.STATE = 'postrun';
 
-                app.SIG.CalibratedVoltage = app.SIG.NormalizedVoltage;
+                app.SIG.Calibration.CalibratedVoltage = app.SIG.NormalizedVoltage;
                 
                 if ~isequal(app.STATE,'error')
                     app.SaveCalibrationDataMenuSelected;

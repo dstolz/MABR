@@ -760,7 +760,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.Runtime.CommandToBg = abr.Cmd.Idle;
                         
                         if ~app.Runtime.BgIsRunning
-                            D = uiprogressdlg(app.CalibrationFigure, ...
+                            D = uiprogressdlg(app.ControlPanelUIFigure, ...
                                 'Title','Starting',...
                                 'Indeterminate','on','icon','info',...
                                 'Message','Please wait ...');
@@ -864,7 +864,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ABR.adcWindow = [0 app.Config.Control.sweepDuration]/1000; % ms -> s
                         
                         % calibrate stimulus data
-                        if ~app.SIG.calibration_is_valid
+                        if ~app.SIG.Calibration.calibration_is_valid
                             r = questdlg('Invalid Calibration!','ABR','Continue','Cancel','Cancel');
                             if isequal(r,'Cancel')
                                 app.stateProgram = abr.stateProgram.USER_IDLE;

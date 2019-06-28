@@ -1,4 +1,4 @@
-classdef (Abstract) Signal < abr.SoundCalibration
+classdef (Abstract) Signal
     % Signal
     %
     % Daniel Stolzberg, PhD (c) 2019
@@ -17,6 +17,8 @@ classdef (Abstract) Signal < abr.SoundCalibration
         windowFcn       (1,1) abr.sigdef.sigProp
         windowOpts      (1,1) abr.sigdef.sigProp
         windowRFTime    (1,1) abr.sigdef.sigProp
+        
+        Calibration     (1,1) % abr.SoundCalibration
     end
     
     
@@ -45,7 +47,8 @@ classdef (Abstract) Signal < abr.SoundCalibration
             
             % Note that all time parameters should be specified in second and
             % converted before updating the property.
-            obj.soundLevel  = abr.sigdef.sigProp(60,'Sound Level','dB');
+            obj.soundLevel  = abr.sigdef.sigProp(-20:10:80,'Sound Level','dB');
+            obj.soundLevel.ValueFormat = '%0.2f';
             obj.soundLevel.Alias = 'Level';
             
             obj.duration    = abr.sigdef.sigProp(5,'Duration','ms',0.001);
@@ -103,6 +106,14 @@ classdef (Abstract) Signal < abr.SoundCalibration
         
         
         % Get/Set Properties
+        function fs = get.Fs(obj)
+            fs = obj.Calibration.Fs;
+        end
+        
+        function obj = set.Fs(obj,Fs)
+            obj.Calibration.Fs = Fs;
+        end
+        
         function t = get.timeVector(obj)
             d = obj.duration.realValue;
             t = cell(size(d));
@@ -206,7 +217,7 @@ classdef (Abstract) Signal < abr.SoundCalibration
             assert(obj.calibration_is_valid,'abr.sigdef.Signal:export_calibration', ...
                 'Calibration invalid');
 
-            cal = copy(abr.SoundCalibration);
+            cal = copy(obj.Calibration);
         end
         
         
@@ -249,25 +260,25 @@ classdef (Abstract) Signal < abr.SoundCalibration
             
         end
         
-        function disp(obj)
-            props = properties(obj);
-            props = sort(props);
-            n = max(cellfun(@length,props)) + 1;
-            d = '';
-            
-            for i = 1:length(props)
-                v = obj.(props{i});
-                if isnumeric(v)
-                    d = sprintf('%s%+*s: %g\n',d,n,props{i},v);
-                elseif ischar(v)
-                    d = sprintf('%s%+*s: ''%s''\n',d,n,props{i},v);
-                elseif isa(v,'abr.sigdef.sigProp')
-                    d = sprintf('%s%+*s: %s\n',d,n,props{i},v.info_text);
-                end
-            end
-            
-            disp(d)
-        end
+%         function disp(obj)
+%             props = properties(obj);
+%             props = sort(props);
+%             n = max(cellfun(@length,props)) + 1;
+%             d = '';
+%             
+%             for i = 1:length(props)
+%                 v = obj.(props{i});
+%                 if isnumeric(v)
+%                     d = sprintf('%s%+*s: %g\n',d,n,props{i},v);
+%                 elseif ischar(v)
+%                     d = sprintf('%s%+*s: ''%s''\n',d,n,props{i},v);
+%                 elseif isa(v,'abr.sigdef.sigProp')
+%                     d = sprintf('%s%+*s: %s\n',d,n,props{i},v.info_text);
+%                 end
+%             end
+%             
+%             disp(d)
+%         end
         
         function obj = sort(obj,prop,sortDir)
             if nargin < 2, prop = obj.SortProperty; end

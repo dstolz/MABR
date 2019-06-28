@@ -17,12 +17,10 @@ classdef Click < abr.sigdef.Signal
             obj.duration.Value = duration;
             
             % deactivate some default parametes
-            obj.windowFcn.Active = false;
-            obj.windowOpts.Active = false;
+            obj.windowFcn.Active    = false;
+            obj.windowOpts.Active   = false;
             obj.windowRFTime.Active = false;
-            
-            obj.soundLevel.Value = '0:10:80';
-            
+                        
             obj.SortProperty = 'duration';
             
             obj.informativeParams = {'duration'};
@@ -31,7 +29,29 @@ classdef Click < abr.sigdef.Signal
         end
         
         function obj = update(obj)
-            obj.data = ones(1,obj.N);
+
+            A = obj.soundLevel.realValue;
+            D = obj.duration.realValue;
+
+            k = 1;
+
+            for a = 1:length(A)
+                 % first check if calibration has been done
+                 if obj.calibration_is_valid
+                    A_V = obj.calibration.estimate_calibrated_voltage(freq(m),A(a));
+                else
+                    A_V = 1;
+                end
+
+                for d = 1:length(D)
+                    y = A_V .* ones(1,round(obj.Fs*D(d)));
+                    obj.data{k,1} = y;
+                    obj.dataParams.soundLevel = A(a);
+                    obj.dataParams.duration   = D(d);
+                end
+            end
+            
+            % no gating
         end
     end
     

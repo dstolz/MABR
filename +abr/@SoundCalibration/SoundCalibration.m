@@ -61,6 +61,11 @@ classdef SoundCalibration < matlab.mixin.Copyable
             
         end
         
+        function fs = set.Fs(obj,Fs)
+            obj.Fs = Fs;
+            obj.DAC.SampleRate = Fs;
+            obj.ADC.SampleRate = Fs;
+        end
         
         function v = get.MeasuredVoltage(obj)
             v = nan;

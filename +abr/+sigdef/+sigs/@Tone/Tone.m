@@ -20,13 +20,12 @@ classdef Tone < abr.sigdef.Signal
             if nargin < 2 || isempty(soundLevel), soundLevel = '0:10:80'; end
             if nargin < 3 || isempty(startPhase), startPhase = 0;  end
             
+            obj.soundLevel.Value = soundLevel;
+
             obj.frequency       = abr.sigdef.sigProp(frequency,'Frequency','kHz',1000);            
             obj.frequency.Alias = 'Frequency';
             obj.frequency.ValueFormat = '%0.3f';
-            
-            obj.soundLevel.Value = soundLevel;
-            obj.soundLevel.ValueFormat = '%0.2f';
-            
+                        
             obj.startPhase       = abr.sigdef.sigProp(startPhase,'Start Phase','deg');
             obj.startPhase.Alias = 'Start Phase';
                         
@@ -62,12 +61,13 @@ classdef Tone < abr.sigdef.Signal
                     for m = 1:numel(freq)
                         for n = 1:numel(phi)
                             for a = 1:numel(A)
+                                % first check if calibration has been done
                                 if obj.calibration_is_valid
-                                    A_V = obj.estimate_calibrated_voltage(freq(m),A(a));
+                                    A_V = obj.calibration.estimate_calibrated_voltage(freq(m),A(a));
                                 else
                                     A_V = 1;
                                 end
-                                % first check if calibration has been done
+                                
                                 obj.data{k,1} = A_V.*sin(2*pi*freq(m)*time{i}+phi(n));
 
                                 obj.dataParams.frequency(k,1)  = freq(m);

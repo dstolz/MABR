@@ -68,11 +68,32 @@ classdef Noise < abr.sigdef.Signal
             
             y = randn(1,obj.N);
             y = y ./ max(abs(y));
-            
-            obj.data = filter(obj.filterDesign,y);
+            y = filter(obj.filterDesign,y);
             
             A = obj.soundLevel.realValue;
-            Adb = CALVOLT.*10.^((A(a)-CALVAL)./20);
+            H = obj.HPfreq.realValue;
+            L = obj.LPfreq.realValue;
+
+            k = 1;
+            for a = 1:length(A)
+                % first check if calibration has been done
+                if obj.calibration_is_valid
+                    A_V = obj.calibration.estimate_calibrated_voltage(freq,A);
+                else
+                    A_V = 1;
+                end
+
+                for h = 1:length(H)
+                    % for l = 1:length(L)
+                        obj.data{k,1} = A_V .* y;
+                        obj.dataParams.soundLevel(k,1) = A(a);
+                        obj.dataParams.HPfreq(k,1) = H(h);
+                        obj.dataParams.LPfreq(k,1) = L(h); % HP and LP freq are paired for now
+                        k = k + 1;
+                    % end
+                end
+            end
+            
             obj.applyGate; % superclass function
         end
         
