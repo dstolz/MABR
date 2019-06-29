@@ -390,6 +390,19 @@ classdef Universal < handle
             unit = U{i};
         end
         
+        function estr = stack_str(idx)
+            d = dbstack;
+            dc = dbstack('-completenames');
+            if nargin == 0 || isempty(idx), idx = 1; end
+            idx = idx + 1;
+            if idx > length(d), idx = length(d); end
+            estr = sprintf(['\tfile:\t<a href="matlab: opentoline(''%s'',%d);">%s (%s)</a>', ...
+                '\n\tname:\t%s', ...
+                '\n\tline:\t%d'], ...
+                dc(idx).file,d(idx).line,d(idx).file,dc(idx).file,d(idx).name,d(idx).line);
+            
+        end
+        
     end
     
     
