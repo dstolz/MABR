@@ -394,8 +394,8 @@ classdef Universal < handle
             d = dbstack;
             dc = dbstack('-completenames');
             if nargin == 0 || isempty(idx), idx = 1; end
-            idx = idx + 1;
-            if idx > length(d), idx = length(d); end
+            idx = idx + 1; % relative to calling function
+            idx(idx > length(d)) = length(d); 
             estr = sprintf(['\tfile:\t<a href="matlab: opentoline(''%s'',%d);">%s (%s)</a>', ...
                 '\n\tname:\t%s', ...
                 '\n\tline:\t%d'], ...
