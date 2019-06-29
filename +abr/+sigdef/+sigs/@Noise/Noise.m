@@ -77,7 +77,7 @@ classdef Noise < abr.sigdef.Signal
             k = 1;
             for a = 1:length(A)
                 % first check if calibration has been done
-                if obj.calibration_is_valid
+                if obj.Calibration.calibration_is_valid
                     A_V = obj.calibration.estimate_calibrated_voltage(freq,A);
                 else
                     A_V = 1;

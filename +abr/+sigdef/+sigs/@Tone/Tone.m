@@ -31,7 +31,7 @@ classdef Tone < abr.sigdef.Signal
                         
             obj.SortProperty = 'frequency';
             
-            obj.InterpMethod = 'makima';
+            obj.Calibration.InterpMethod = 'makima';
             
             obj.informativeParams = {'frequency','soundLevel'};
 
@@ -62,7 +62,7 @@ classdef Tone < abr.sigdef.Signal
                         for n = 1:numel(phi)
                             for a = 1:numel(A)
                                 % first check if calibration has been done
-                                if obj.calibration_is_valid
+                                if obj.Calibration.calibration_is_valid
                                     A_V = obj.calibration.estimate_calibrated_voltage(freq(m),A(a));
                                 else
                                     A_V = 1;

@@ -43,20 +43,32 @@ classdef File < abr.sigdef.Signal
             
             assert(all(fnex==true),sprintf('%d of %d files do not exist!',sum(fnex),numel(fnex)));
             
-            dur  = ones(size(ffn));
-            data = cell(size(ffn));
+            A    = obj.soundLevel.realValue;
             
+            k = 1;
+
             % assume audio file
-            for i = 1:numel(ffn)
-                ainfo = audioinfo(ffn{i});
-                [y,obj.Fs] = audioread(ffn{i});
-                data{i} = y';
-                dur(i) = ainfo.Duration;
+            for a = 1:numel(A)
+                for f = 1:numel(ffn)
+                    
+                    % first check if calibration has been done
+                    if obj.Calibration.calibration_is_valid
+                        A_V = obj.calibration.estimate_calibrated_voltage(ffn{f},A(a));
+                    else
+                        A_V = 1;
+                    end
+
+                    ainfo = audioinfo(ffn{f});
+                    [y,obj.Fs] = audioread(ffn{f});
+                    
+                    obj.dataParams.fullFilename = ffn;
+                    obj.dataParams.duration     = ainfo.Duration;
+                    obj.data{k,1}               = y'; 
+
+                    k = k + 1;
+                end
             end
-            
-            obj.fullFilename.Value = ffn;
-            obj.duration.Value     = dur./obj.duration.ScalingFactor;
-            obj.data               = data; 
+
         end
         
         function obj = set.fullFilename(obj,value)

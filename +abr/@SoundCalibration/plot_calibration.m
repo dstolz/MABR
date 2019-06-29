@@ -1,10 +1,10 @@
-function obj = plot_calibration(obj,phase)
+function obj = plot_calibration(obj,SIG,phase)
     if nargin < 2 || isempty(phase), phase = 2; end
 
     n = sprintf('Calibration [%s]',datestr(obj.Timestamp,'dd-mmm-yyyy HH:MM PM'));
 
     obj.FigCalibration = findobj('type','figure','-and','name',n);
-    if isempty(obj.FigCalibration)
+    if isempty(obj.FigCalibration) || isempty(obj.axSL)
         obj.FigCalibration = figure('name',n,'IntegerHandle','off', ...
             'Color','w','Position',[300 60 860 590]);
         figure(obj.FigCalibration);
@@ -39,8 +39,8 @@ function obj = plot_calibration(obj,phase)
     
     H = obj.axSL.UserData;
     
-    if isempty(H) || length(H.tdlh) ~= obj.signalCount
-        n = obj.signalCount;
+    if isempty(H) || length(H.tdlh) ~= SIG.signalCount
+        n = SIG.signalCount;
         c = hsv(n);
 
         m = nan(1,n);
@@ -53,7 +53,7 @@ function obj = plot_calibration(obj,phase)
         uistack(H.sh,'top');
         
 
-        for i = 1:obj.signalCount
+        for i = 1:SIG.signalCount
             H.tdlh(i) = line(obj.axTD,nan,nan,'linestyle','-','marker','none','color',c(i,:));
             H.fdlh(i) = line(obj.axFD,nan,nan,'linestyle','-','marker','none','color',c(i,:));
         end        
@@ -61,7 +61,7 @@ function obj = plot_calibration(obj,phase)
     end
 
     % Sound Level Plot
-    x = obj.dataParams.(obj.CalibratedParameter) ./ obj.(obj.CalibratedParameter).ScalingFactor;
+    x = SIG.dataParams.(obj.CalibratedParameter) ./ SIG.(obj.CalibratedParameter).ScalingFactor;
     y = obj.MeasuredSPL;
     
     x = x(:)';
@@ -90,7 +90,9 @@ function obj = plot_calibration(obj,phase)
     H.sh.XData = x;
     H.sh.YData = y;
 
-    obj.axSL.XAxis.Limits = x([1 end]);
+    xl = [min(x) max(x)];
+    if xl(1) == xl(2), xl = [0.8 1.2] .* xl; end
+    obj.axSL.XAxis.Limits = xl;
     obj.axSL.YLim = [0 max([y(:); obj.NormDB+40])];
     obj.axSL.XAxis.Label.String = obj.CalibratedParameter;
     obj.axSL.YAxis.Label.String = 'Sound Level (dB SPL)';
@@ -98,7 +100,7 @@ function obj = plot_calibration(obj,phase)
 
     % Time Domain Plot
     x = obj.ADC.TimeVector .* 1000;
-    y = obj.dataParams.(obj.CalibratedParameter);
+    y = SIG.dataParams.(obj.CalibratedParameter);
     z = obj.ADC.SweepData;
     
     [~,y] = meshgrid(x,y);

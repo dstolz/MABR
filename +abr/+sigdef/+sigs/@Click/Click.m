@@ -3,7 +3,7 @@ classdef Click < abr.sigdef.Signal
     
     
     properties (Constant)
-        type = 'Click';
+        Type = 'Click';
     end
     
     methods
@@ -37,21 +37,21 @@ classdef Click < abr.sigdef.Signal
 
             for a = 1:length(A)
                  % first check if calibration has been done
-                 if obj.calibration_is_valid
+                 if obj.Calibration.calibration_is_valid
                     A_V = obj.calibration.estimate_calibrated_voltage(freq(m),A(a));
                 else
                     A_V = 1;
                 end
 
                 for d = 1:length(D)
-                    y = A_V .* ones(1,round(obj.Fs*D(d)));
+                    y = A_V .* ones(round(obj.Fs*D(d)),1);
                     obj.data{k,1} = y;
                     obj.dataParams.soundLevel = A(a);
                     obj.dataParams.duration   = D(d);
                 end
             end
             
-            % no gating
+            % no gating on click stimuli
         end
     end
     

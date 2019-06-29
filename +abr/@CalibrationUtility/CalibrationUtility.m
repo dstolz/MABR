@@ -47,7 +47,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
         lastError   % me
         
         
-        thisOne
+        thisLamp
         
         %
         stimulusV       (1,1) double {mustBePositive,mustBeLessThanOrEqual(stimulusV,1)} = 1;
@@ -72,6 +72,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
 
         Runtime (1,1) abr.Runtime
 
+        Calibration      (1,1) abr.SoundCalibration;
         CalibrationPhase (1,1) uint8 = 0;
 
         Timer (1,1) timer
@@ -83,7 +84,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
         
         function set.STATE(app,newState)
             
-            h = app.thisOne;
+            h = app.thisLamp;
             
             h.Color = [0.8 0.8 0.8];
             e = findobj(app.CalibrationFigure,'-property','Enable');
@@ -143,16 +144,16 @@ classdef CalibrationUtility < matlab.apps.AppBase
         createComponents(app)
 
         function gather_parameters(app)
-            app.SIG.NormDB        = app.NormLeveldBEditField.Value;
+            app.Calibration.NormDB = app.NormLeveldBEditField.Value;
             
-            app.SIG.Device        = app.AudioDeviceDropDown.Value;
-            app.SIG.Fs            = str2double(app.SamplingRateDropDown.Value);
+            app.Calibration.Device        = app.AudioDeviceDropDown.Value;
+            app.Calibration.Fs            = str2double(app.SamplingRateDropDown.Value);
             
-            app.SIG.Calibration.ReferenceFreq = app.FrequencyHzEditField.Value;
-            app.SIG.Calibration.ReferenceSPL  = app.SoundLeveldBSPLEditField.Value;
-            app.SIG.Calibration.ReferenceVoltage = app.MeasuredVoltagemVEditField.Value./1000;
+            app.Calibration.ReferenceFreq = app.FrequencyHzEditField.Value;
+            app.Calibration.ReferenceSPL  = app.SoundLeveldBSPLEditField.Value;
+            app.Calibration.ReferenceVoltage = app.MeasuredVoltagemVEditField.Value./1000;
             
-            app.SIG.Calibration.Note = app.NoteTextArea.Value;
+            app.Calibration.Note = app.NoteTextArea.Value;
         end
         
         
@@ -205,8 +206,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
         
         function setup_stimulus(app)
             if app.CalibrationPhase < 2
-                app.SIG.Calibration.CalibratedVoltage = [];
-                app.SIG.Calibration.ADC.Data = [];
+                app.Calibration.CalibratedVoltage = [];
+                app.Calibration.ADC.Data = [];
             end
             
             % generate stimulus from SIG obj
@@ -216,10 +217,11 @@ classdef CalibrationUtility < matlab.apps.AppBase
             
             
             if app.CalibrationPhase < 2
-                app.SIG.Calibration.StimulusVoltage = repmat(app.stimulusV,app.SIG.signalCount,1);
-                stimData = cellfun(@times,num2cell(app.SIG.Calibration.StimulusVoltage),app.SIG.data,'uni',0);
+                app.Calibration.StimulusVoltage = repmat(app.stimulusV,app.SIG.signalCount,1);
+                stimData = cellfun(@times,num2cell(app.Calibration.StimulusVoltage),app.SIG.data,'uni',0);
             else
                 stimData = app.SIG.data;
+                stimData = cellfun(@times,stimData,num2cell(app.Calibration.CalibratedVoltage),'uni',0);
             end
             
             sweepInterval = 1./app.sweepRate;
@@ -236,22 +238,22 @@ classdef CalibrationUtility < matlab.apps.AppBase
             data = [data(:) timingSignal];
             
             % pad onset/offset with some silence
-            data = [zeros(app.SIG.Fs,2); data; zeros(app.SIG.Calibration.DAC.SampleRate,2)];
+            data = [zeros(app.SIG.Fs,2); data; zeros(app.Calibration.DAC.SampleRate,2)];
             
-            app.SIG.Calibration.DAC.Data = data(:,1);
-            app.SIG.Calibration.ADC.Data = [];
+            app.Calibration.DAC.Data = data(:,1);
+            app.Calibration.ADC.Data = [];
             
-            app.SIG.Calibration.DAC.SweepOnsets = find(data(:,2));
-            app.SIG.Calibration.ADC.SweepOnsets = [];
+            app.Calibration.DAC.SweepOnsets = find(data(:,2));
+            app.Calibration.ADC.SweepOnsets = [];
             
-            app.SIG.Calibration.ADC.SweepLength = app.SIG.N;
-            app.SIG.Calibration.DAC.SweepLength = app.SIG.N;
+            app.Calibration.ADC.SweepLength = sweepIntervalSamps;
+            app.Calibration.DAC.SweepLength = sweepIntervalSamps;
                         
             % write wav file to disk
             afw = dsp.AudioFileWriter( ...
                 app.Universal.dacFile, ...
                 'FileFormat','WAV', ...
-                'SampleRate',app.SIG.Calibration.DAC.SampleRate, ...
+                'SampleRate',app.Calibration.DAC.SampleRate, ...
                 'Compressor','None (uncompressed)', ...
                 'DataType','Single');
             
@@ -300,13 +302,14 @@ classdef CalibrationUtility < matlab.apps.AppBase
             end
             
             app.SIG = abr.sigdef.sigs.(sigtype);
-            app.SIG.Fs = str2double(app.SamplingRateDropDown.Value);
+            app.SIG.Fs = app.Calibration.Fs;
             
             
             
             % defaults
             app.SIG.soundLevel.Value = app.NormLeveldBEditField.Value; % db
             
+            app.Calibration.Method = 'rms';
             switch app.SIG.Type
                 case 'Tone'
                     app.F2 = round(app.SIG.Fs*0.45,-2);
@@ -315,7 +318,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.SIG.windowFcn.Value  = 'blackmanharris';
                     app.SIG.windowRFTime.Value = 1000.*4./app.F1; % ramp over at least one cycle
                     
-                    app.SIG.Calibration.CalibratedParameter = 'frequency';
+                    app.Calibration.CalibratedParameter = 'frequency';
+                    
                     
                 case 'Noise'
                     app.SIG.HPfreq.Value     = app.FHp/1000;
@@ -324,12 +328,12 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.SIG.windowFcn.Value  = 'blackmanharris';
                     app.SIG.windowRFTime.Value = 1000.*2./app.FHp; % ramp over at least one cycle
                     
-                    app.SIG.Calibration.CalibratedParameter = 'HPFreq';
+                    app.Calibration.CalibratedParameter = 'HPFreq';
                     
                 case 'Click'
-                    app.SIG.duration.Value   = 0.01; % ms
-                    
-                    app.SIG.Calibration.CalibratedParameter = 'duration';
+                    app.SIG.duration.Value   = 0.1; % ms
+                    app.Calibration.CalibratedParameter = 'duration';
+                    app.Calibration.Method = 'peak';
                     
                 case 'File'
                     uiconfirm(app.ScheduleFigure, ...
@@ -340,13 +344,12 @@ classdef CalibrationUtility < matlab.apps.AppBase
             end
             
             dur = app.SIG.duration.realValue;
-            rf  = app.SIG.windowRFTime.realValue;
-            
-            app.SIG.Calibration.CalcWindow = [rf dur-rf];
-            
-            w = app.SIG.windowRFTime.realValue;
-            d = app.SIG.duration.realValue;
-            app.SIG.Calibration.CalcWindow = [w d-w];
+            if isequal(app.Calibration.Method,'rms')
+                rf  = app.SIG.windowRFTime.realValue;
+                app.Calibration.CalcWindow = [rf dur-rf];
+            else
+                app.Calibration.CalcWindow = [1/app.Calibration.ADC.SampleRate 1/app.sweepRate];
+            end
             
             app.RunCalibrationSwitch.Enable = 'on';
         end
@@ -387,7 +390,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.AudioDeviceDropDown.Items = devices;
             app.AudioDeviceDropDown.Value = lastused;
             
-            lastused = getpref('SoundCalibration','samplingRate','44100');
+            lastused = getpref('SoundCalibration','samplingRate','48000');
             app.SamplingRateDropDown.Value = lastused;
             
             app.STATE = 'idle';
@@ -407,7 +410,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
 
         % Value changed function: RunCalibrationSwitch
         function RunCalibrationSwitchValueChanged(app,event)
-            app.thisOne = app.CalibrationStateLamp;
+            app.thisLamp = app.CalibrationStateLamp;
             
             switch app.RunCalibrationSwitch.Value
                 case 'Run'
@@ -450,7 +453,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
 
         % Button pushed function: SampleButton
         function SampleButtonPushed(app)
-            app.thisOne = app.ReferenceLamp;
+            app.thisLamp = app.ReferenceLamp;
             try
                 app.STATE = 'prerun';
                 
@@ -633,7 +636,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
 
         % Menu selected function: SaveCalibrationDataMenu
         function SaveCalibrationDataMenuSelected(app)
-            if ~app.SIG.calibration_is_valid
+            if ~app.Calibration.calibration_is_valid
                 h = msgbox('No calibration data to save.  Please run calibration.', ...
                     'Sound Calibration','help','modal');
                 waitfor(h);
@@ -743,22 +746,22 @@ classdef CalibrationUtility < matlab.apps.AppBase
     
     methods (Static)
         function timer_Start(T,event,app)
-            
             app.CalibrationPhase = app.CalibrationPhase + 1;
             
-            vprintf(4,'time_Start:Calibration Phase = %d',app.CalibrationPhase)
+            vprintf(3,'time_Start:Calibration Phase = %d',app.CalibrationPhase)
 
             app.setup_stimulus;
             
             app.setup_playrec;
 
-            % TEST MODE!!!! *****
+            % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
             app.Runtime.CommandToBg = abr.Cmd.TestMode;
-
+            % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
+            
             % get the plot ready
-            app.SIG = app.SIG.plot_calibration(app.CalibrationPhase);
+            app.Calibration = app.Calibration.plot_calibration(app.SIG,app.CalibrationPhase);
 
-            figure(app.SIG.FigCalibration);
+            figure(app.Calibration.FigCalibration);
             
             app.STATE = 'running';
             app.Runtime.CommandToBg = abr.Cmd.Run;
@@ -773,17 +776,17 @@ classdef CalibrationUtility < matlab.apps.AppBase
             mTB = app.Runtime.mapTimingBuffer;
             
             BH = double(mC.Data.BufferIndex(2));
-            LB = app.SIG.Calibration.ADC.N;
+            LB = app.Calibration.ADC.N;
             if LB == 0, LB = 1; end
                     
             % gather data from background process
             switch app.Runtime.BackgroundState
                 case abr.stateAcq.COMPLETED
                     %[~,postSweep] = app.Runtime.extract_sweeps([0 app.SIG.duration.realValue],true);
-                    app.SIG.Calibration.ADC.Data = mSB.Data(1:BH);
+                    app.Calibration.ADC.Data = mSB.Data(1:BH);
                     ind = mTB.Data(1:BH-1) > mTB.Data(2:BH);
                     ind = ind & mTB.Data(1:BH-1) >= 0.5;
-                    app.SIG.Calibration.ADC.SweepOnsets = find(ind);
+                    app.Calibration.ADC.SweepOnsets = find(ind);
                     stop(T);
                     return
                     
@@ -791,13 +794,13 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     %[~,postSweep] = app.Runtime.extract_sweeps([0 app.SIG.duration.realValue],false);
                     
                     data = mSB.Data(LB:BH);
-                    app.SIG.Calibration.ADC = app.SIG.Calibration.ADC.appendData(data);
+                    app.Calibration.ADC = app.Calibration.ADC.appendData(data);
                     
                     % find stimulus onsets in timing signal
                     ind = mTB.Data(LB:BH-1) > mTB.Data(LB+1:BH); % rising edge
                     ind = ind & mTB.Data(LB:BH-1) >= 0.5; % threshold
                     if ~any(ind), return; end
-                    app.SIG.Calibration.ADC.SweepOnsets(end+1:end+sum(ind)) = LB+find(ind);
+                    app.Calibration.ADC.SweepOnsets(end+1:end+sum(ind)) = LB+find(ind);
                     
                     
                 case abr.stateAcq.ERROR
@@ -806,33 +809,35 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     return
             end
             
-            vprintf(4,'# sweeps acquired = %d',app.SIG.Calibration.ADC.NumSweeps)
+            vprintf(4,'# sweeps acquired = %d',app.Calibration.ADC.NumSweeps)
             
             
-            app.SIG = app.SIG.plot_calibration(app.CalibrationPhase);
+            app.Calibration = app.Calibration.plot_calibration(app.SIG,app.CalibrationPhase);
 
         end
 
         function timer_Stop(T,event,app)
             vprintf(4,'time_Stop:Calibration Phase = %d',app.CalibrationPhase)
 
+            app.Calibration = app.Calibration.plot_calibration(app.SIG,app.CalibrationPhase);
+
             if app.CalibrationPhase == 1
-                adjV = app.SIG.compute_adjusted_voltage;
+                adjV = app.Calibration.compute_adjusted_voltage;
                 ind = adjV > 1 | adjV <= 0;
                 if any(ind)
                     errordlg(sprintf('%d stimuli have an adjusted voltage <= 0 or > 1!',sum(ind)));
                     app.STATE = 'error';
                 end
-                app.SIG.NormalizedVoltage = adjV;
-                app.SIG.Calibration.CalibratedVoltage = adjV;
-                app.SIG.Calibration.StimulusVoltage   = adjV;
+                app.Calibration.NormVoltage       = adjV;
+                app.Calibration.CalibratedVoltage = adjV;
+                app.Calibration.StimulusVoltage   = adjV;
 
                 app.start_timer; % start second phase
             else
                 vprintf(1,'Completed calibration')
                 app.STATE = 'postrun';
 
-                app.SIG.Calibration.CalibratedVoltage = app.SIG.NormalizedVoltage;
+                app.Calibration.CalibratedVoltage = app.Calibration.NormVoltage;
                 
                 if ~isequal(app.STATE,'error')
                     app.SaveCalibrationDataMenuSelected;
@@ -844,8 +849,10 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.Runtime.CommandToBg = abr.Cmd.Error;
             app.CalibrationPhase = 0;
             app.STATE = 'error';
-            vprintf(1,0,sprintf('messageID: %s;\tmessage: %s', ...
-                event.Data.messageID,event.Data.message))
+            s = abr.Universal.stack_str(5);
+            s = strrep(s,'\','\\');
+            vprintf(1,1,sprintf('Calibration Error Occurred\n%s\n\tmessageID: %s\n\tmessage: %s', ...
+                s,event.Data.messageID,event.Data.message))
         end
     end
 

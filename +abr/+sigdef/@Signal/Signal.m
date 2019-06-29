@@ -18,7 +18,8 @@ classdef (Abstract) Signal
         windowOpts      (1,1) abr.sigdef.sigProp
         windowRFTime    (1,1) abr.sigdef.sigProp
         
-        Calibration     (1,1) % abr.SoundCalibration
+        Calibration         (1,1) % abr.SoundCalibration
+        UseCalibration      (1,1) = true;
     end
     
     
@@ -45,9 +46,11 @@ classdef (Abstract) Signal
         function obj = Signal(duration,onsetDelay,soundLevelDB)
             obj.ignoreProcessUpdate = true;
             
+            obj.Calibration = abr.SoundCalibration;
+            
             % Note that all time parameters should be specified in second and
             % converted before updating the property.
-            obj.soundLevel  = abr.sigdef.sigProp(-20:10:80,'Sound Level','dB');
+            obj.soundLevel  = abr.sigdef.sigProp(80,'Sound Level','dB');
             obj.soundLevel.ValueFormat = '%0.2f';
             obj.soundLevel.Alias = 'Level';
             
@@ -214,7 +217,7 @@ classdef (Abstract) Signal
         
         
         function cal = export_calibration(obj)
-            assert(obj.calibration_is_valid,'abr.sigdef.Signal:export_calibration', ...
+            assert(obj.Calibration.calibration_is_valid,'abr.sigdef.Signal:export_calibration', ...
                 'Calibration invalid');
 
             cal = copy(obj.Calibration);

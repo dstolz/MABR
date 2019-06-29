@@ -1,4 +1,4 @@
-classdef SoundCalibration < matlab.mixin.Copyable
+classdef SoundCalibration %< matlab.mixin.Copyable
     
     
     properties        
@@ -10,6 +10,8 @@ classdef SoundCalibration < matlab.mixin.Copyable
         ReferenceFreq (1,1) double {mustBePositive,mustBeFinite} = 1000; % Hz
         ReferenceSPL  (1,1) double {mustBePositive,mustBeFinite} = 114; % dB SPL
         ReferenceVoltage  (1,1) double {mustBePositive,mustBeFinite} = 0.1;
+        
+        Method (1,:) char {mustBeMember(Method,{'rms','peak','peak2peak'})} = 'rms';
         
         CalibratedParameter (1,:) char
         
@@ -23,7 +25,7 @@ classdef SoundCalibration < matlab.mixin.Copyable
         
         
         NormDB            (1,1) double {mustBePositive,mustBeFinite} = 80; % dB SPL
-        NormalizedVoltage (:,1) double {mustBeFinite,mustBePositive}
+        NormVoltage (:,1) double {mustBeFinite,mustBePositive}
         
         InterpMethod  (1,:) char {mustBeMember(InterpMethod,{'linear','nearest','next','previous','pchip','cubic','v5cubic','makima','spline'})} = 'nearest';
         CalcWindow    (1,2) double {mustBeNonnegative,mustBeFinite} = [0 1];
@@ -32,10 +34,8 @@ classdef SoundCalibration < matlab.mixin.Copyable
         ADC           (1,1) abr.Buffer
                 
         Note          (1,:) char
-    end
-
-    properties (NonCopyable, Transient)
-        FigCalibration
+        
+        Fs            (1,1) double = 48000;
     end
     
     
@@ -43,7 +43,12 @@ classdef SoundCalibration < matlab.mixin.Copyable
         CalStats
     end
 
-    properties (Access = private, NonCopyable, Transient)
+
+    properties (SetAccess = private, Transient)
+        FigCalibration
+    end
+    
+    properties (Access = private, Transient)
         axSL
         axTD
         axFD 
@@ -54,14 +59,14 @@ classdef SoundCalibration < matlab.mixin.Copyable
     end
     
     methods
-        obj = plot_calibration(obj,phase);
+        obj = plot_calibration(obj,SIG,phase);
 
         % Constructor
         function obj = SoundCalibration
             
         end
         
-        function fs = set.Fs(obj,Fs)
+        function obj = set.Fs(obj,Fs)
             obj.Fs = Fs;
             obj.DAC.SampleRate = Fs;
             obj.ADC.SampleRate = Fs;
@@ -73,8 +78,18 @@ classdef SoundCalibration < matlab.mixin.Copyable
             if isempty(y), return; end
             idx = obj.analysis_idx;
             if isequal(idx(1),0), return; end
-            v = rms(y(idx,:));
+            
+            switch obj.Method
+                case 'rms'
+                    v = rms(y(idx,:));
+                case 'peak'
+                    v = max(abs(y(idx,:)));
+                case 'peak2peak'
+                    v = max(y(idx,:)) - min(y(idx,:));
+            end
         end
+        
+        
         
         function dB = get.MeasuredSPL(obj)
             % compute calibrated SPL of recorded stimuli
@@ -150,9 +165,7 @@ classdef SoundCalibration < matlab.mixin.Copyable
             r = ~(all(isnan(obj.MeasuredVoltage)) || isempty(obj.CalibratedVoltage));
         end
 
-
-
-    
+        
         
     end
     
