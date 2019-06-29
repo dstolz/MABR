@@ -44,7 +44,7 @@ classdef Runtime < handle
     end
     
     properties (Constant)
-        timerPeriod = 0.02;
+        timerPeriod = 0.01;
     end
     
     methods
@@ -314,6 +314,9 @@ classdef Runtime < handle
         function set.CommandToBg(obj,cmd)
             vprintf(3,'CommandToBg set to %s',cmd);
             obj.mapCom.Data.CommandToBg = int8(cmd);
+            if cmd == abr.Cmd.TestMode
+                vprintf(0,1,'TEST MODE ENABLED!!!!\n%s',obj.Universal.stack_str(2));
+            end
         end
         
         function cmd = get.CommandToBg(obj)
