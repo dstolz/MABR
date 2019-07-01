@@ -1,24 +1,28 @@
-classdef sigProp
+classdef sigProp < matlab.mixin.SetGet
 % obj = sigProp(value,description,unit,scalingFactor,alternate,type,func)
 % 
 % Daniel Stolzberg, PhD (c) 2019
 
     properties
-        Value
+        Value % variable size and type
         
         Alias         (1,:) char
         Description   (1,:) char
         Unit          (1,:) char
         ScalingFactor (1,1) double {mustBeFinite,mustBeNonempty} = 1;
-        Function      (1,:) char = '';
+        Function      (1,:) char
         FunctionParams(1,:) cell
         Type          (1,:) char {mustBeMember(Type,{'Numeric','String','File'})} = 'Numeric';
         Alternate     (1,1) logical {mustBeNonempty} = false;
         Active        (1,1) logical {mustBeNonempty} = true;
         Validation    (1,:) char
-        
-        
+        MaxLength     (1,1) double {mustBePositive} = inf;
+        MinValue      (1,1) double = -inf; % in real units
+        MaxValue      (1,1) double = inf;  % in real units
         ValueFormat   (1,:) char = '%g';
+        Dependency    (1,:) char {mustBeMember(Dependency,{'Nyquist','Duration','None'})} = 'None';
+        
+        Pairing       (1,:) char % not yet implemented, but should be used in the future to define parameter pairs
     end
     
     properties (SetAccess = private, Dependent)
@@ -49,7 +53,30 @@ classdef sigProp
             if isnumeric(v) && ~isempty(obj.Validation) %#ok<MCSUP>
                 eval(sprintf(obj.Validation,repmat(v,1,sum(obj.Validation=='%')))); %#ok<MCSUP>
             end
+                
+            oldVal = obj.Value;
             obj.Value = v;
+            
+            e = obj.Evaluated;
+            if length(e) > obj.MaxLength
+                obj.Value = oldVal;
+                error('abr:sigProp:tooManyValues', ...
+                    'Signal Property Value Too Long. Must be less than or equal to %d',obj.MaxLength);
+            end
+            
+            if ~isnumeric(e), return; end
+            try
+                assert(~any(e * obj.ScalingFactor < obj.MinValue), 'abr:sigProp:belowMinValue', ...
+                    ['Values must be greater than or equal to ' obj.ValueFormat obj.Unit], ...
+                    obj.MinValue / obj.ScalingFactor);
+                
+                assert(~any(e * obj.ScalingFactor > obj.MaxValue), 'abr:sigProp:exceedMaxValue', ...
+                    ['Values must be less than or equal to ' obj.ValueFormat obj.Unit], ...
+                    obj.MaxValue / obj.ScalingFactor);
+            catch me
+                obj.Value = oldVal;
+                rethrow(me);
+            end
         end
         
         function v = get.Value(obj)
@@ -70,11 +97,18 @@ classdef sigProp
         end
         
         function s = get.unitValueString(obj)
-            if isnumeric(obj.Value)
-                s = sprintf([obj.ValueFormat ' %s'],obj.Value,obj.Unit);
-            else
+            try
+                v = obj.Evaluated;
+            catch
                 s = obj.Value;
+                return
             end
+            s = '';
+            for i = 1:length(v)
+                s = sprintf(['%s' obj.ValueFormat ' %s,'],s,v(i),obj.Unit);
+            end
+            s(end) = [];
+            
         end
         
         function s = get.DescriptionWithUnit(obj)
@@ -86,7 +120,8 @@ classdef sigProp
         end
         
         function v = get.Evaluated(obj)
-            v = obj.Value;
+            ov = obj.Value;
+            v = ov;
             if ~isempty(obj.Function) || isnumeric(v), return; end
             
             if iscellstr(v), v = char(v); end
@@ -96,7 +131,8 @@ classdef sigProp
             try
                 v = eval(v);
             catch me
-                rethrow(me)
+                v = ov;
+                %rethrow(me)
             end
         end
         

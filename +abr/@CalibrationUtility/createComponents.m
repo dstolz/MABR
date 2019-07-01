@@ -31,20 +31,6 @@ function createComponents(app)
     app.StimulusPanel.FontSize = 14;
     app.StimulusPanel.Position = [12 182 210 82];
 
-    % Create TypeDropDownLabel
-    app.TypeDropDownLabel = uilabel(app.StimulusPanel);
-    app.TypeDropDownLabel.HorizontalAlignment = 'right';
-    app.TypeDropDownLabel.Position = [50 34 32 22];
-    app.TypeDropDownLabel.Text = 'Type';
-
-    % Create TypeDropDown
-    U = abr.Universal;
-    app.TypeDropDown = uidropdown(app.StimulusPanel);
-    app.TypeDropDown.Items = U.availableSignals;
-    app.TypeDropDown.ValueChangedFcn = createCallbackFcn(app, @TypeDropDownValueChanged, true);
-    app.TypeDropDown.Position = [97 34 72 22];
-    app.TypeDropDown.Value = 'Tone';
-
     % Create StimulusInfoButton
     app.StimulusInfoButton = uibutton(app.StimulusPanel, 'push');
     app.StimulusInfoButton.ButtonPushedFcn = createCallbackFcn(app, @docbox, true);
@@ -53,12 +39,36 @@ function createComponents(app)
     app.StimulusInfoButton.Position = [5 34 20 23];
     app.StimulusInfoButton.Text = '';
 
+    % Create TypeDropDownLabel
+    app.TypeDropDownLabel = uilabel(app.StimulusPanel);
+    app.TypeDropDownLabel.HorizontalAlignment = 'right';
+    app.TypeDropDownLabel.Position = [30 34 32 22];
+    app.TypeDropDownLabel.Text = 'Type';
+
+    % Create TypeDropDown
+    U = abr.Universal;
+    app.TypeDropDown = uidropdown(app.StimulusPanel);
+    app.TypeDropDown.Items = U.availableSignals;
+    app.TypeDropDown.ValueChangedFcn = createCallbackFcn(app, @TypeDropDownValueChanged, true);
+    app.TypeDropDown.Position = [65 34 70 22];
+    app.TypeDropDown.Value = 'Tone';
+
     % Create ModifyButton
     app.ModifyButton = uibutton(app.StimulusPanel, 'push');
     app.ModifyButton.ButtonPushedFcn = createCallbackFcn(app, @ModifyButtonPushed, false);
-    app.ModifyButton.Position = [40 5 130 22];
+    app.ModifyButton.Position = [140 34 65 22];
     app.ModifyButton.FontWeight = 'bold';
-    app.ModifyButton.Text = 'Modify Stimulus';
+    app.ModifyButton.Text = 'Modify';
+    
+    % Create ViewParameterEditField
+    app.ViewParameterEditField = uieditfield(app.StimulusPanel);
+    app.ViewParameterEditField.HorizontalAlignment = 'left';
+    app.ViewParameterEditField.FontSize = 9;
+    app.ViewParameterEditField.Editable = 'off';
+    app.ViewParameterEditField.Position = [5 2 198 29];
+    app.ViewParameterEditField.Tooltip = '';
+    app.ViewParameterEditField.Value = '** Select Stimulus Type **';
+    
 
     % Create HardwarePanel
     app.HardwarePanel = uipanel(app.CalibrationFigure);

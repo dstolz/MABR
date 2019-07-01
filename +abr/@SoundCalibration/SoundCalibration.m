@@ -45,7 +45,7 @@ classdef SoundCalibration %< matlab.mixin.Copyable
 
 
     properties (SetAccess = private, Transient)
-        FigCalibration
+        hFig
     end
     
     properties (Access = private, Transient)
@@ -59,7 +59,7 @@ classdef SoundCalibration %< matlab.mixin.Copyable
     end
     
     methods
-        obj = plot_calibration(obj,SIG,phase);
+        obj = plot(obj,SIG,phase);
 
         % Constructor
         function obj = SoundCalibration

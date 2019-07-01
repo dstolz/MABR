@@ -36,6 +36,7 @@ classdef (Abstract) Signal
         SortProperty (1,:) char = 'soundLevel';
     end
     
+    
     properties (Access = protected, Hidden = true, Transient)
         ignoreProcessUpdate = false;
     end
@@ -56,6 +57,7 @@ classdef (Abstract) Signal
             
             obj.duration    = abr.sigdef.sigProp(5,'Duration','ms',0.001);
             obj.duration.Alias = 'Duration';
+            obj.duration.Dependency = 'Duration';
             
             obj.onsetDelay  = abr.sigdef.sigProp(0, 'Onset Delay','ms',0.001);
             obj.onsetDelay.Alias = 'Onset Delay';
@@ -115,7 +117,18 @@ classdef (Abstract) Signal
         
         function obj = set.Fs(obj,Fs)
             obj.Calibration.Fs = Fs;
+            
+            p = properties(obj);
+            ind = cellfun(@(a) isa(obj.(a),'abr.sigdef.sigProp'),p);
+            p(~ind) = [];
+            
+            ind = cellfun(@(a) isequal(obj.(a).Dependency,'Nyquist'),p);
+            cellfun(@(a) set(obj.(a),'MaxValue',Fs/2),p(ind));
+            
+            ind = cellfun(@(a) isequal(obj.(a).Dependency,'Duration'),p);
+            cellfun(@(a) set(obj.(a),'MinValue',1/Fs),p(ind));
         end
+        
         
         function t = get.timeVector(obj)
             d = obj.duration.realValue;
@@ -295,7 +308,9 @@ classdef (Abstract) Signal
             
             assert(ischar(prop) && ismember(prop,P),'Invalid property.');
             
-            obj = obj.update;
+            if isempty(obj.data)
+                obj = obj.update;
+            end
             
             [~,idx] = sort(obj.dataParams.(prop),sortDir);
             

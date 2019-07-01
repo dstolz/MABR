@@ -17,14 +17,16 @@ classdef Tone < abr.sigdef.Signal
             obj.ignoreProcessUpdate = true;
             
             if nargin < 1 || isempty(frequency),  frequency = 'octaves(1,32,6)'; end
-            if nargin < 2 || isempty(soundLevel), soundLevel = '0:10:80'; end
+            if nargin < 2 || isempty(soundLevel), soundLevel = '-20:10:80'; end
             if nargin < 3 || isempty(startPhase), startPhase = 0;  end
             
             obj.soundLevel.Value = soundLevel;
 
-            obj.frequency       = abr.sigdef.sigProp(frequency,'Frequency','kHz',1000);            
+            obj.frequency       = abr.sigdef.sigProp(frequency,'Frequency','kHz',1000);     
             obj.frequency.Alias = 'Frequency';
-            obj.frequency.ValueFormat = '%0.3f';
+            obj.frequency.ValueFormat = '%0.2f';
+            obj.frequency.Dependency = 'Nyquist';
+            obj.frequency.MinValue = 1e-6;
                         
             obj.startPhase       = abr.sigdef.sigProp(startPhase,'Start Phase','deg');
             obj.startPhase.Alias = 'Start Phase';

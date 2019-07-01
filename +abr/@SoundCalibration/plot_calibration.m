@@ -1,22 +1,22 @@
-function obj = plot_calibration(obj,SIG,phase)
+function obj = plot(obj,SIG,phase)
     if nargin < 2 || isempty(phase), phase = 2; end
 
     n = sprintf('Calibration [%s]',datestr(obj.Timestamp,'dd-mmm-yyyy HH:MM PM'));
 
-    obj.FigCalibration = findobj('type','figure','-and','name',n);
-    if isempty(obj.FigCalibration) || isempty(obj.axSL)
-        obj.FigCalibration = figure('name',n,'IntegerHandle','off', ...
+    obj.hFig = findobj('type','figure','-and','name',n);
+    if isempty(obj.hFig) || isempty(obj.axSL)
+        obj.hFig = figure('name',n,'IntegerHandle','off', ...
             'Color','w','Position',[300 60 860 590]);
-        figure(obj.FigCalibration);
+        figure(obj.hFig);
 
         % Sound level plot
-        obj.axSL = subplot(3,2,[1 2],'Parent',obj.FigCalibration,'Units','pixels');
+        obj.axSL = subplot(3,2,[1 2],'Parent',obj.hFig,'Units','pixels');
         obj.axSL.XAxis.Label.String = obj.CalibratedParameter;
         obj.axSL.YAxis.Label.String = 'Sound Level (dB SPL)';
         grid(obj.axSL,'on');
         
         % time domain plot
-        obj.axTD = subplot(3,2,[3 5],'Parent',obj.FigCalibration);
+        obj.axTD = subplot(3,2,[3 5],'Parent',obj.hFig);
         obj.axTD.XAxis.TickLabelFormat = '%.1f';
         obj.axTD.YAxis.TickLabelFormat = '%.1f';
         obj.axTD.ZAxis.TickLabelFormat = '%.1f';
@@ -29,7 +29,7 @@ function obj = plot_calibration(obj,SIG,phase)
         view(obj.axTD,3);
         
         % freq domain plot
-        obj.axFD = subplot(3,2,[4 6],'Parent',obj.FigCalibration);
+        obj.axFD = subplot(3,2,[4 6],'Parent',obj.hFig);
         box(obj.axFD,'on');
         grid(obj.axFD,'on');
         axis(obj.axFD,'tight');
@@ -127,7 +127,7 @@ function obj = plot_calibration(obj,SIG,phase)
         for i = 1:n
             Y = z(:,i);
             L = length(Y);
-            w = window('hanning',L);
+            w = window('hann',L);
             Y = Y.*w;
             Y = fft(Y);
             P2 = abs(Y/L);

@@ -11,6 +11,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
         TypeDropDown                   matlab.ui.control.DropDown
         StimulusInfoButton             matlab.ui.control.Button
         ModifyButton                   matlab.ui.control.Button
+        ViewParameterEditField         matlab.ui.control.EditField
         HardwarePanel                  matlab.ui.container.Panel
         AudioDeviceDropDownLabel       matlab.ui.control.Label
         AudioDeviceDropDown            matlab.ui.control.DropDown
@@ -137,7 +138,17 @@ classdef CalibrationUtility < matlab.apps.AppBase
         end
         
         
+        function v = get.FHp(app)
+            app.gather_parameters;
+            v = app.Calibration.Fs*0.45;
+        end
         
+        
+        
+        function v = get.FLp(app)
+            app.gather_parameters;
+            v = 1000;
+        end
     end
     
     methods (Access = private)
@@ -229,11 +240,16 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.sweepOnsets = 0:sweepInterval:sweepInterval*(app.SIG.signalCount-1);
                         
             % initialize Buffers
-            data = cell2mat(stimData'); % assuming all the same duration
-            data(sweepIntervalSamps,end) = 0;
+%             data = cell2mat(stimData'); % assuming all the same duration
+            data = zeros(sweepIntervalSamps,length(stimData),'single');
+            for i = 1:length(stimData)
+                data(1:length(stimData{i}),i) = stimData{i};
+            end
+
             
             % add timing signal to secound output channel
-            timingSignal = [1; zeros(sweepIntervalSamps-1,1)];
+            timingSignal(sweepIntervalSamps,1) = 0;
+            timingSignal(1) = 1;
             timingSignal = repmat(timingSignal,app.SIG.signalCount,1);
             data = [data(:) timingSignal];
             
@@ -285,12 +301,14 @@ classdef CalibrationUtility < matlab.apps.AppBase
             
             app.Timer = T;
             
+            
             start(app.Timer);
 
         end
 
 
         function load_sig(app,SIG)
+            app.gather_parameters;
             
             sigtype = app.TypeDropDown.Value;
             
@@ -310,6 +328,9 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.SIG.soundLevel.Value = app.NormLeveldBEditField.Value; % db
             
             app.Calibration.Method = 'rms';
+            
+            app.SIG.duration.MaxLength = 1;
+            app.SIG.soundLevel.MaxLength = 1;
             switch app.SIG.Type
                 case 'Tone'
                     app.F2 = round(app.SIG.Fs*0.45,-2);
@@ -317,7 +338,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.SIG.duration.Value   = 250; % ms
                     app.SIG.windowFcn.Value  = 'blackmanharris';
                     app.SIG.windowRFTime.Value = 1000.*4./app.F1; % ramp over at least one cycle
-                    
+                                        
                     app.Calibration.CalibratedParameter = 'frequency';
                     
                     
@@ -327,11 +348,12 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.SIG.duration.Value   = 250; % ms
                     app.SIG.windowFcn.Value  = 'blackmanharris';
                     app.SIG.windowRFTime.Value = 1000.*2./app.FHp; % ramp over at least one cycle
-                    
-                    app.Calibration.CalibratedParameter = 'HPFreq';
+                    app.Calibration.CalibratedParameter = 'HPfreq';
                     
                 case 'Click'
                     app.SIG.duration.Value   = 0.1; % ms
+                    app.SIG.duration.MaxLength = inf;
+                    app.SIG.duration.MinValue = 1/app.SIG.Fs;
                     app.Calibration.CalibratedParameter = 'duration';
                     app.Calibration.Method = 'peak';
                     
@@ -350,6 +372,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
             else
                 app.Calibration.CalcWindow = [1/app.Calibration.ADC.SampleRate 1/app.sweepRate];
             end
+            
+            app.update_ViewParameter;
             
             app.RunCalibrationSwitch.Enable = 'on';
         end
@@ -421,6 +445,10 @@ classdef CalibrationUtility < matlab.apps.AppBase
 
                     app.CalibrationPhase = 0;
                 
+                    try
+                        close(app.Calibration.hFig);
+                    end
+                    
                     app.start_timer;
 
                 case 'Idle'
@@ -548,7 +576,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 
                 % Freq-domain plot
                 L = length(Y);
-                w = window('hanning',L);
+                w = window('hann',L);
                 Y = Y.*w;
                 Y = fft(Y);
                 P2 = abs(Y/L);
@@ -615,25 +643,87 @@ classdef CalibrationUtility < matlab.apps.AppBase
 
         % Button pushed function: ModifyButton
         function ModifyButtonPushed(app)
-            app.RunCalibrationSwitch.Enable = 'off'; drawnow
             
             app.load_sig(app.SIG);
             
-            S = abr.ScheduleDesign(app.SIG,1);
+            opts.Resize = 'on';
+            opts.WindowStyle = 'modal';
+            opts.Interpreter = 'none';
             
-            waitfor(S.CompileButton,'UserData'); % Must hit compile button to continue
-            
-            if ~isvalid(S), return; end
-            
-            app.SIG = S.SIG;
-            
-            try
-                close(S.ScheduleDesignFigure);
+            switch app.SIG.Type
+                case 'Tone'
+                    dfltAns = {app.SIG.frequency.Value};
+                    prompt = ['Modify ' app.SIG.frequency.DescriptionWithUnit];
+                case 'Click'
+                    dfltAns = {app.SIG.duration.Value};
+                    prompt = ['Modify ' app.SIG.duration.DescriptionWithUnit];
+                case 'Noise'
+                    dfltAns = {app.SIG.HPfreq.Value; app.SIG.LPfreq.Value};
+                    prompt = {['Modify ' app.SIG.HPfreq.DescriptionWithUnit]; ['Modify ' app.SIG.LPfreq.DescriptionWithUnit]};
+                case 'File'
+                    dfltAns = {app.SIG.filename.Value};
+                    prompt = ['Modify ' app.SIG.filename.DescriptionWithUnit];
             end
             
-            app.RunCalibrationSwitch.Enable = 'on';
+            
+            if isnumeric(dfltAns{1}), dfltAns = cellfun(@num2str,dfltAns,'uni',0); end
+            a = inputdlg(prompt,app.SIG.Type, ...
+                1,dfltAns,opts);
+            
+            if isempty(a), return; end
+            
+            try
+                switch app.SIG.Type
+                    case 'Tone'
+                        app.SIG.frequency.Value = a{1};
+                    case 'Click'
+                        app.SIG.duration.Value = a{1};
+                    case 'Noise'
+                        app.SIG.HPfreq.Value = a{1};
+                        app.SIG.LPfreq.Value = a{2};
+                        
+                    case 'File'
+                        app.SIG.filename.Value = a{1};
+                end
+            catch me
+                h = errordlg(me.message,app.SIG.Type,'modal');
+                uiwait(h);
+            end
+            
+            app.update_ViewParameter;
         end
 
+        function update_ViewParameter(app)
+            
+            switch app.SIG.Type
+                case 'Tone'
+                    app.ViewParameterEditField.Value = app.SIG.frequency.unitValueString;
+                    app.ViewParameterEditField.Tooltip = app.SIG.frequency.Description;
+                case 'Click'
+                    app.ViewParameterEditField.Value = app.SIG.duration.unitValueString;
+                    app.ViewParameterEditField.Tooltip = app.SIG.duration.Description;
+                case 'Noise'
+                    HP = app.SIG.HPfreq.Evaluated; 
+                    LP = app.SIG.LPfreq.Evaluated;
+                    HPs = [app.SIG.HPfreq.ValueFormat ' ' app.SIG.HPfreq.Unit];
+                    LPs = [app.SIG.LPfreq.ValueFormat ' ' app.SIG.LPfreq.Unit];
+                    s = [HPs ' - ' LPs];
+                    s = sprintf([s ','],HP,LP);
+                    s(end) = [];
+                    app.ViewParameterEditField.Value = s;
+                    app.ViewParameterEditField.Tooltip = {app.SIG.HPfreq.Description; app.SIG.LPfreq.Description};
+                    
+                case 'File'
+                    app.ViewParameterEditField.Value = app.SIG.filename.Value;
+                    app.ViewParameterEditField.Tooltip = app.SIG.filename.Description;
+            end
+            
+        end
+        
+        
+        
+        
+        
         % Menu selected function: SaveCalibrationDataMenu
         function SaveCalibrationDataMenuSelected(app)
             if ~app.Calibration.calibration_is_valid
@@ -740,6 +830,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
         end
 
 
+        
 
     end
 
@@ -759,9 +850,9 @@ classdef CalibrationUtility < matlab.apps.AppBase
             % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
             
             % get the plot ready
-            app.Calibration = app.Calibration.plot_calibration(app.SIG,app.CalibrationPhase);
+            app.Calibration = app.Calibration.plot(app.SIG,app.CalibrationPhase);
 
-            figure(app.Calibration.FigCalibration);
+            figure(app.Calibration.hFig);
             
             app.STATE = 'running';
             app.Runtime.CommandToBg = abr.Cmd.Run;
@@ -812,14 +903,14 @@ classdef CalibrationUtility < matlab.apps.AppBase
             vprintf(4,'# sweeps acquired = %d',app.Calibration.ADC.NumSweeps)
             
             
-            app.Calibration = app.Calibration.plot_calibration(app.SIG,app.CalibrationPhase);
+            app.Calibration = app.Calibration.plot(app.SIG,app.CalibrationPhase);
 
         end
 
         function timer_Stop(T,event,app)
             vprintf(4,'time_Stop:Calibration Phase = %d',app.CalibrationPhase)
 
-            app.Calibration = app.Calibration.plot_calibration(app.SIG,app.CalibrationPhase);
+            app.Calibration = app.Calibration.plot(app.SIG,app.CalibrationPhase);
 
             if app.CalibrationPhase == 1
                 adjV = app.Calibration.compute_adjusted_voltage;

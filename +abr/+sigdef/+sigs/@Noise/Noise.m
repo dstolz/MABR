@@ -32,10 +32,12 @@ classdef Noise < abr.sigdef.Signal
             obj.HPfreq       = abr.sigdef.sigProp(HPfreq,'High-Pass Fc','kHz',1000);
             obj.HPfreq.Alias = 'HP Freq';
             obj.HPfreq.ValueFormat = '%.3f';
+            obj.HPfreq.Dependency = 'Nyquist';
             
             obj.LPfreq       = abr.sigdef.sigProp(LPfreq,'Low-Pass Fc','kHz',1000);
             obj.LPfreq.Alias = 'LP Freq';
             obj.LPfreq.ValueFormat = '%.3f';
+            obj.LPfreq.Dependency = 'Nyquist';
             
             obj.filterOrder  = abr.sigdef.sigProp(filterOrder,'Filter order');
             obj.filterOrder.Alias = 'Filt Order';
@@ -60,19 +62,13 @@ classdef Noise < abr.sigdef.Signal
                 'CutoffFrequency2',obj.LPfreq.realValue, ...
                 'SampleRate',      obj.Fs);      
             
-            if obj.seed.realValue == 0
-                rng('shuffle');
-            else
-                rng(obj.seed);
-            end
-            
-            y = randn(1,obj.N);
-            y = y ./ max(abs(y));
-            y = filter(obj.filterDesign,y);
             
             A = obj.soundLevel.realValue;
+            D = obj.duration.realValue;
             H = obj.HPfreq.realValue;
             L = obj.LPfreq.realValue;
+            
+            t = cellfun(@length,obj.timeVector);
 
             k = 1;
             for a = 1:length(A)
@@ -82,14 +78,28 @@ classdef Noise < abr.sigdef.Signal
                 else
                     A_V = 1;
                 end
-
+                
                 for h = 1:length(H)
                     % for l = 1:length(L)
+                    if obj.seed.realValue == 0
+                        rng('shuffle');
+                    else
+                        rng(obj.seed);
+                    end
+                    
+                    for d = 1:length(D)
+
+                        y = randn(t(d),1,'single');
+                        y = y ./ max(abs(y));
+                        y = filter(obj.filterDesign,y);
+                        
                         obj.data{k,1} = A_V .* y;
                         obj.dataParams.soundLevel(k,1) = A(a);
+                        obj.dataParams.duration(k,1) = D(d);
                         obj.dataParams.HPfreq(k,1) = H(h);
                         obj.dataParams.LPfreq(k,1) = L(h); % HP and LP freq are paired for now
                         k = k + 1;
+                    end
                     % end
                 end
             end
