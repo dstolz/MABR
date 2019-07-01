@@ -236,7 +236,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                     d = cellfun(@dir,c);
                     app.ConfigFileDD.Items     = {d.name};
                     app.ConfigFileDD.ItemsData = c;
-                    app.ConfigFileDD.Value     = app.configFile;
+                    if ismember(app.configFile,c)
+                        app.ConfigFileDD.Value = app.configFile;
+                    else
+                        app.ConfigFileDD.Value = c{1};
+                    end
                     app.ConfigFileDD.Tooltip   = app.last_modified_str(app.configFile);
                     app.ConfigFileDD.FontColor = [0 0 0];
                     app.ConfigFileLabel.Tooltip = fileparts(app.configFile);
@@ -259,7 +263,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 ffns = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
                 app.ConfigScheduleDD.Items     = {d.name};
                 app.ConfigScheduleDD.ItemsData = ffns;
-                app.ConfigScheduleDD.Value     = app.scheduleFile;
+                if ismember(app.scheduleFile,ffns)
+                    app.ConfigScheduleDD.Value = app.scheduleFile;
+                else
+                    app.ConfigScheduleDD.Value = ffns{1};
+                end
                 app.ConfigScheduleDD.Tooltip   = app.last_modified_str(app.scheduleFile);
                 app.ConfigScheduleDD.FontColor = [0 0 0];
                 app.ScheduleDDLabel.Tooltip    = fileparts(app.scheduleFile);
@@ -280,7 +288,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                     fns = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
                     app.CalibrationDD.Items     = {d.name};
                     app.CalibrationDD.ItemsData = fns;
-                    app.CalibrationDD.Value     = app.calibrationFile;
+                    if ismember(app.calibrationFile,fns)
+                        app.CalibrationDD.Value = app.calibrationFile;
+                    else
+                        app.CalibrationDD.Value = fns{1};
+                    end
                     app.CalibrationDD.Tooltip   = app.last_modified_str(app.calibrationFile);
                     app.CalibrationDD.FontColor = [0 0 0];
                     app.CalibrationDDLabel.Tooltip = fileparts(app.calibrationFile);
@@ -847,9 +859,23 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ABR.adcDecimationFactor = round(max([1 floor(app.SIG.Fs ./ app.ABR.ADC.SampleRate)]));
                         app.ABR.ADC.SampleRate      = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;
 
+                        
                         % generate signal based on its parameters
                         app.SIG = app.Schedule.sigArray(app.scheduleIdx);
-
+                        
+                        % calibrate stimulus data
+                        if app.Calibration.calibration_is_valid
+                            app.SIG.Calibration = app.Calibration;
+                        else
+                            r = questdlg('Invalid Calibration!','ABR','Continue','Cancel','Cancel');
+                            if isequal(r,'Cancel')
+                                app.stateProgram = abr.stateProgram.USER_IDLE;
+                                stateAcq = abr.stateAcq.CANCELLED;
+                                return
+                            end
+                            vprintf(0,1,'Continuing with invalid calibration!')
+                        end
+                        
                         % compute signal
                         app.SIG = app.SIG.update;
                         
@@ -862,17 +888,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         % sweep duration
                         app.ABR.adcWindow = [0 app.Config.Control.sweepDuration]/1000; % ms -> s
-                        
-                        % calibrate stimulus data
-                        if ~app.SIG.Calibration.calibration_is_valid
-                            r = questdlg('Invalid Calibration!','ABR','Continue','Cancel','Cancel');
-                            if isequal(r,'Cancel')
-                                app.stateProgram = abr.stateProgram.USER_IDLE;
-                                stateAcq = abr.stateAcq.CANCELLED;
-                                return
-                            end
-                            vprintf(0,1,'Continuing with invalid calibration!')
-                        end
                         
                         % alternate polarity flag
                         app.ABR.altPolarity = app.SIG.polarity.Alternate;
