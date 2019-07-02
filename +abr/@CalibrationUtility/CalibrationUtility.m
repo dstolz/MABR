@@ -164,6 +164,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.Calibration.ReferenceSPL  = app.SoundLeveldBSPLEditField.Value;
             app.Calibration.ReferenceVoltage = app.MeasuredVoltagemVEditField.Value./1000;
             
+            app.Calibration.CalibratedValues = app.SIG.(app.Calibration.CalibratedParameter).realValue;
+
             app.Calibration.Note = app.NoteTextArea.Value;
         end
         
@@ -232,7 +234,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 stimData = cellfun(@times,num2cell(app.Calibration.StimulusVoltage),app.SIG.data,'uni',0);
             else
                 stimData = app.SIG.data;
-                stimData = cellfun(@times,stimData,num2cell(app.Calibration.CalibratedVoltage),'uni',0);
+%                 stimData = cellfun(@times,stimData,num2cell(app.Calibration.CalibratedVoltage),'uni',0);
             end
             
             sweepInterval = 1./app.sweepRate;
@@ -333,13 +335,15 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.SIG.soundLevel.MaxLength = 1;
             switch app.SIG.Type
                 case 'Tone'
-                    app.F2 = round(app.SIG.Fs*0.45,-2);
-                    app.SIG.frequency.Value  = sprintf('linspace(%g,%g,%d)',app.F1/1000,app.F2/1000,app.Fn); % kHz
+                    app.F2 = round(app.Calibration.Fs*0.45,-2);
+%                     app.SIG.frequency.Value  = sprintf('linspace(%g,%g,%d)',app.F1/1000,app.F2/1000,app.Fn); % kHz
+                    app.SIG.frequency.Value  = sprintf('%.2f:.25:%.2f',app.F1/1000,app.F2/1000);
                     app.SIG.duration.Value   = 250; % ms
                     app.SIG.windowFcn.Value  = 'blackmanharris';
                     app.SIG.windowRFTime.Value = 1000.*4./app.F1; % ramp over at least one cycle
                                         
                     app.Calibration.CalibratedParameter = 'frequency';
+                    
                     
                     
                 case 'Noise'
@@ -364,6 +368,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.RunCalibrationSwitch.Enable = 'off';
                     return
             end
+            
+            app.Calibration.CalibratedValues = app.SIG.(app.Calibration.CalibratedParameter).realValue;
             
             dur = app.SIG.duration.realValue;
             if isequal(app.Calibration.Method,'rms')
@@ -741,9 +747,9 @@ classdef CalibrationUtility < matlab.apps.AppBase
             
             ffn = fullfile(pn,fn);
             
-            CalibrationData = app.SIG;
+            Calibration = app.SIG.Calibration; %#ok<ADPROP>
             
-            save(ffn,'CalibrationData','-mat');
+            save(ffn,'Calibration','-mat');
             
             setpref('SoundCalibration','dataPath',pn);
         end
@@ -761,10 +767,10 @@ classdef CalibrationUtility < matlab.apps.AppBase
             
             fprintf('Loading %s\n',ffn)
             
-            load(ffn,'CalibrationData','-mat');
+            load(ffn,'Calibration','-mat');
             
-            app.SIG = CalibrationData;
-            %app.SIG = CalibrationData.SIG;
+            app.Calibration = Calibration; %#ok<ADPROP>
+            app.SIG.Calibration = Calibration; %#ok<ADPROP>
             
             fprintf('\tCalibration from: %s\n',app.SIG.Timestamp);
             
@@ -846,7 +852,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.setup_playrec;
 
             % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
-            app.Runtime.CommandToBg = abr.Cmd.TestMode;
+%             app.Runtime.CommandToBg = abr.Cmd.TestMode;
             % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
             
             % get the plot ready
@@ -921,14 +927,16 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 end
                 app.Calibration.NormVoltage       = adjV;
                 app.Calibration.CalibratedVoltage = adjV;
-                app.Calibration.StimulusVoltage   = adjV;
+%                 app.Calibration.StimulusVoltage   = adjV;
 
+                app.SIG.Calibration = app.Calibration;
+                
                 app.start_timer; % start second phase
             else
                 vprintf(1,'Completed calibration')
                 app.STATE = 'postrun';
 
-                app.Calibration.CalibratedVoltage = app.Calibration.NormVoltage;
+                app.SIG.Calibration.CalibratedVoltage = app.SIG.Calibration.NormVoltage;
                 
                 if ~isequal(app.STATE,'error')
                     app.SaveCalibrationDataMenuSelected;

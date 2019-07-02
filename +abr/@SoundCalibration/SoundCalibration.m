@@ -112,16 +112,18 @@ classdef SoundCalibration %< matlab.mixin.Copyable
 
 
         function v = estimate_calibrated_voltage(obj,values,targetSPL)
+            x = obj.CalibratedValues;
             y = obj.compute_calibrated_voltage(targetSPL);
-            x = obj.(obj.CalibratedParameter).realValue;
             
             if ismember(obj.InterpMethod,{'pchip','spline','cubic'}) && length(x) < 4
                 warning('Selected interpolation method is "%s", but there are too few points.\nSwitching to "makima" method.',obj.InterpMethod);
                 obj.InterpMethod = 'makima';
             end
+            
             if any(values > max(x) | values < min(x))
                 warning('Value outside calibrated range.  Extrapolating calibration value!');
             end
+            
             v = interp1(x,y,values,obj.InterpMethod,'extrap');            
         end
         

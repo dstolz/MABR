@@ -9,9 +9,6 @@ if isempty(BH)
     BH = obj.mapCom.Data.BufferIndex(end);
 end
 
-LB = double(LB);
-BH = double(BH);
-
 % find stimulus onsets in timing signal
 ind = mTB.Data(LB:BH-1) > mTB.Data(LB+1:BH); % rising edge
 ind = ind & mTB.Data(LB:BH-1) >= 0.5; % threshold

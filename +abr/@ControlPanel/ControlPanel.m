@@ -669,8 +669,15 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             end
             
             if exist(app.calibrationFile,'file') == 2
-                load(app.calibrationFile,'CalibrationData','-mat');
-                app.Calibration = CalibrationData;
+                vprintf(2,'Loading Calibration file: %s',app.calibrationFile)
+                load(app.calibrationFile,'Calibration','-mat');
+                if ~exist('Calibration','var')
+                    msg = sprintf('Invalid calibration file: %s',app.calibrationFile);
+                    errordlg(msg,'Calibration File','modal');
+                    vprintf(0,1,msg);
+                    return
+                end
+                app.Calibration = Calibration; %#ok<ADPROPLC>
                 app.CalibrationDDLabel.Tooltip    = fileparts(app.calibrationFile);
                 app.CalibrationDD.Tooltip = app.last_modified_str(app.calibrationFile);
             else
@@ -729,7 +736,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             activeState = app.stateProgram;
             
-            vprintf(2,'State Machine incremented; activeState = %s',activeState)
+            vprintf(2,'StateMachine: activeState = %s',activeState)
             
             try
                 switch activeState
@@ -778,6 +785,13 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                                 'Message','Please wait ...');
                             abr.Runtime.launch_bg_process;
                         end
+                        
+                        
+                        % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
+                        app.Runtime.CommandToBg = abr.Cmd.TestMode;
+                        % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
+                        
+                        
                         
                         % reset background process
                         app.Runtime.CommandToBg = abr.Cmd.Idle;
@@ -851,7 +865,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ABR.DAC.SampleRate = app.SIG.Fs;
                         app.ABR.DAC.FrameSize  = abr.Universal.frameLength;
                         
-                        % reset the d buffer
+                        % reset the ADC buffer
                         app.ABR.ADC = abr.Buffer;
                         
                         app.ABR.ADC.FrameSize       = abr.Universal.frameLength;
@@ -938,6 +952,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                                 return
                             end
                         end
+                        
                         
                         stateAcq = abr.stateAcq.READY;
 
@@ -1408,10 +1423,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             abr.Universal.startup;
             
-            fprintf('\nStarting MABR Control Panel ...\n')
+            vprintf(0,'Starting MABR Control Panel ...')
 
             stateAcq = abr.stateAcq.IDLE;
-            
             
             
             % setup as foreground process and launch background process

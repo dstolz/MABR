@@ -2,7 +2,7 @@ function [preSweep,postSweep] = extract_sweeps(obj,timeWindow,doAll)
 
 persistent lastBufferIdx sweepOnsets
 
-if nargin < 2 || (nargin == 3 && isempty(doAll)), doAll = false; end
+if nargin < 3 || isempty(doAll), doAll = false; end
 
 preSweep = nan;
 postSweep = nan;

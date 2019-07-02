@@ -102,10 +102,13 @@ classdef Universal < handle
             obj.hasAllToolboxes;
         end
         
+        
         function set.MODE(obj,newMode)
             obj.MODE = newMode;
             vprintf(0,1,'PROGRAM MODE = %s',newMode)
         end
+        
+        
         
         function m = get.meta(obj)
             m.Author      = obj.Author;
@@ -171,14 +174,13 @@ classdef Universal < handle
         
         function tf = get.hasAllToolboxes(obj)
             v = ver;
-            t = false(1,size(obj.RequiredToolboxes,1));
+            tf = [];
             for i = 1:length(v)
                 ind = ismember(obj.RequiredToolboxes(:,1),v(i).Name);
                 if ~any(ind), continue; end
-                t(i) = str2double(v(i).Version) >= obj.RequiredToolboxes{ind,2};
+                tf(end+1) = str2double(v(i).Version) >= obj.RequiredToolboxes{ind,2};
             end
-            tf = all(t);
-            if ~tf
+            if sum(tf) ~= size(obj.RequiredToolboxes,1)
                 rtstr = '';
                 for i = 1:size(obj.RequiredToolboxes,1)
                     rtstr = sprintf('%s\t> %s, v%02.1f\n',rtstr,obj.RequiredToolboxes{i,1},obj.RequiredToolboxes{i,2});

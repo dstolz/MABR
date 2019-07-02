@@ -5,6 +5,9 @@ function r = acquire_block(obj)
 
 r = 0;
 
+TESTING = isequal(obj.Universal.MODE,'testing');
+vprintf(1,'MODE: %s',obj.Universal.MODE)
+
 C = obj.mapCom;
 M = obj.mapSignalBuffer;
 T = obj.mapTimingBuffer;
@@ -52,15 +55,14 @@ while ~isDone(obj.AFR)
         k = frameLength;
     end
 
-    if isequal(obj.Universal.MODE,'testing')
+    if TESTING
         % TESTING WITH FAKE LOOP-BACK AND SIGNAL **********************
-        audioADC(:,1) = audioDAC(:,1) + randn(frameLength,1)/1000;
-        % audioADC(:,1) = audioDAC(:,1);
-        audioADC(:,2) = audioDAC(:,2); % loop-back
+        M.Data(idx:k) = audioDAC(:,1) + randn(frameLength,1)/1000;
+        T.Data(idx:k) = audioDAC(:,2); % loop-back
+    else
+        M.Data(idx:k) = audioADC(:,1);
+        T.Data(idx:k) = audioADC(:,2);
     end
-    
-    M.Data(idx:k) = audioADC(:,1);
-    T.Data(idx:k) = audioADC(:,2);
 
     % update the latest buffer index
     C.Data.BufferIndex = uint32([idx k]);

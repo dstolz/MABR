@@ -72,12 +72,6 @@ classdef Noise < abr.sigdef.Signal
 
             k = 1;
             for a = 1:length(A)
-                % first check if calibration has been done
-                if obj.Calibration.calibration_is_valid
-                    A_V = obj.calibration.estimate_calibrated_voltage(freq,A);
-                else
-                    A_V = 1;
-                end
                 
                 for h = 1:length(H)
                     % for l = 1:length(L)
@@ -85,6 +79,14 @@ classdef Noise < abr.sigdef.Signal
                         rng('shuffle');
                     else
                         rng(obj.seed);
+                    end
+                    
+                    
+                    % first check if calibration has been done
+                    if obj.Calibration.calibration_is_valid
+                        A_V = obj.Calibration.estimate_calibrated_voltage(H(h),A);
+                    else
+                        A_V = 1;
                     end
                     
                     for d = 1:length(D)

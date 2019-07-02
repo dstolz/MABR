@@ -53,7 +53,7 @@ classdef File < abr.sigdef.Signal
                     
                     % first check if calibration has been done
                     if obj.Calibration.calibration_is_valid
-                        A_V = obj.calibration.estimate_calibrated_voltage(ffn{f},A(a));
+                        A_V = obj.Calibration.estimate_calibrated_voltage(ffn{f},A(a));
                     else
                         A_V = 1;
                     end

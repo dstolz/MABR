@@ -3,16 +3,16 @@ function timer_Runtime(T,event,app)
 % extract sweeps relative to timing signal
 [preSweep,postSweep] = app.Runtime.extract_sweeps(app.ABR.adcWindowTVec);
 
+if isnan(postSweep(1))
+    app.check_rec_status;
+    return
+end
 
 % update signal amplitude by InputAmpGain
 A = app.Config.Parameters.InputAmpGain;
 preSweep  = preSweep ./ A;
 postSweep = postSweep ./ A;
 
-if isnan(postSweep(1))
-    app.check_rec_status;
-    return
-end
 
 % do online analysis
 R = app.live_analysis(preSweep,postSweep);

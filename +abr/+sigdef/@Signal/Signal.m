@@ -18,7 +18,7 @@ classdef (Abstract) Signal
         windowOpts      (1,1) abr.sigdef.sigProp
         windowRFTime    (1,1) abr.sigdef.sigProp
         
-        Calibration         (1,1) % abr.SoundCalibration
+        Calibration         (1,1) abr.SoundCalibration
         UseCalibration      (1,1) = true;
     end
     

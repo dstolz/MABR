@@ -2,12 +2,13 @@ function abr_live_plot(app,postSweep,tvec,R)
 
 persistent h
 
+
 if nargin < 2 || isempty(h) || ~isfield(h,'axMean') || ~isvalid(h.axMean)
     h = setup(app); 
     return
 end
 
-if isempty(postSweep)
+if nargin < 2 || isempty(postSweep)
     h.meanLine.YData   = nan;
     h.meanLine.XData   = nan;
     h.recentLine.YData = nan;
@@ -81,6 +82,7 @@ if isempty(f)
         'CloseRequestFcn','setpref(''ABRControlPanel'',''abr_live_plot_fig_pos'',get(gcf,''Position'')); delete(gcf);', ...
         'tag','MABR_FIG');
 end
+
 
 clf(f);
 
