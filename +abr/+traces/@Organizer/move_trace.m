@@ -11,9 +11,13 @@ tidx = obj.TraceSelection;
 if isempty(tidx), return; end
 
 % C = hFig.CurrentPoint;
+obj.mainAx.Units = 'pixels';
 XY = figxy2axisxy(obj.mainAx);
 
-if XY(2) < min(obj.mainAx.YLim) || XY(2) > max(obj.mainAx.YLim), return; end
+yl = obj.mainAx.YLim;
+% fprintf('XY = [%.3f %.3f];\tYLim = [%.3f %.3f]\n',[XY yl])
+
+% if XY(2) < yl(1) || XY(2) > yl(2), return; end
 
 L = abr.traces.Organizer.button_state_left;
 

@@ -10,7 +10,7 @@ f.Units  = 'pixels';
 ax.Units = 'pixels';
 
 if nargin < 2 || isempty(fXY)
-fXY = f.CurrentPoint;
+    fXY = f.CurrentPoint;
 end
 
 axPos = ax.Position;
