@@ -535,8 +535,10 @@ classdef (ConstructOnLoad = true) Organizer < handle
                     %             R = calllib('user32', 'GetAsyncKeyState', int32(2)) ~= 0;
                     %             M = calllib('user32', 'GetAsyncKeyState', int32(4)) ~= 0;
                 catch me
-%                     if isequal(
-                    disp(me);
+                    vprintf(0,me)
+                    vprintf(0,1,['Unable to load library user32.dll\n', ...
+                    '\t1) Make sure a copy is located in C:\WINDOWS\system32\n', ...
+                    '\t2) Make sure to install "mingw.mlpkginstall" located here -> "%s"'],which('mingw.mlpkginstall'))
                 end
             else
                 vprintf(3,1,'No support yet for non-Windows operating systems!')

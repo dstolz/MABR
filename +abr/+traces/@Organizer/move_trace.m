@@ -11,7 +11,6 @@ tidx = obj.TraceSelection;
 if isempty(tidx), return; end
 
 % C = hFig.CurrentPoint;
-obj.mainAx.Units = 'pixels';
 XY = figxy2axisxy(obj.mainAx);
 
 yl = obj.mainAx.YLim;
