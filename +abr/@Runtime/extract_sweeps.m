@@ -1,4 +1,4 @@
-function [preSweep,postSweep] = extract_sweeps(obj,timeWindow,doAll)
+function [preSweep,postSweep,sweepCount] = extract_sweeps(obj,timeWindow,doAll)
 
 persistent lastBufferIdx sweepOnsets
 
@@ -6,6 +6,7 @@ if nargin < 3 || isempty(doAll), doAll = false; end
 
 preSweep = nan;
 postSweep = nan;
+sweepCount = 0;
 
 
 bufferHead = obj.mapCom.Data.BufferIndex(2);
@@ -16,7 +17,6 @@ if lastBufferIdx == 1, sweepOnsets = []; end
 
 LB = double(lastBufferIdx);
 BH = double(bufferHead);
-
 
 if doAll, LB = 1; end
 
@@ -37,6 +37,7 @@ else
     sweepOnsets = [sweepOnsets; idx];
 end
 
+sweepCount = length(sweepOnsets);
 
 % split signal into resampled windows
 swin  = round(abr.Universal.ADCSampleRate*timeWindow);

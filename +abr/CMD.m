@@ -11,8 +11,8 @@ classdef Cmd < int8
         Pause       (4)
         Stop        (5)
         Completed   (6)
-        NormalMode  (126)
-        TestMode    (127)
+        Normal      (126)
+        Test        (127)
     end
 
 end

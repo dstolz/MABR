@@ -2,7 +2,7 @@ classdef Universal < handle
     % class contains general inormation for the ABR software
     
     properties
-        MODE (1,:) char {mustBeMember(MODE,{'normal','testing'})} = 'normal';
+        MODE (1,1) abr.Cmd {mustBeGreaterThanOrEqual(MODE,126)} = abr.Cmd.Normal;
     end
     
     properties (SetAccess = private)
@@ -105,7 +105,7 @@ classdef Universal < handle
         
         function set.MODE(obj,newMode)
             obj.MODE = newMode;
-            vprintf(0,1,'PROGRAM MODE = %s',newMode)
+            vprintf(1,newMode == abr.Cmd.Test,'PROGRAM MODE = %s',char(newMode))
         end
         
         

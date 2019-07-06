@@ -5,8 +5,8 @@ function r = acquire_block(obj)
 
 r = 0;
 
-TESTING = isequal(obj.Universal.MODE,'testing');
-vprintf(1,'MODE: %s',obj.Universal.MODE)
+TESTING = obj.Universal.MODE == abr.Cmd.Test;
+vprintf(1,'ACQUISITION MODE: %s',obj.Universal.MODE)
 
 C = obj.mapCom;
 M = obj.mapSignalBuffer;
@@ -57,7 +57,7 @@ while ~isDone(obj.AFR)
 
     if TESTING
         % TESTING WITH FAKE LOOP-BACK AND SIGNAL **********************
-        M.Data(idx:k) = audioDAC(:,1) + randn(frameLength,1)/1000;
+        M.Data(idx:k) = audioDAC(:,1) + randn(frameLength,1)/1e6;
         T.Data(idx:k) = audioDAC(:,2); % loop-back
     else
         M.Data(idx:k) = audioADC(:,1);
@@ -69,4 +69,4 @@ while ~isDone(obj.AFR)
 end
 
 obj.BackgroundState = abr.stateAcq.COMPLETED;
-vprintf(1,'Acqusition complete')
+vprintf(1,'Acquisition complete')

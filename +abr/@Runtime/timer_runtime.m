@@ -29,16 +29,16 @@ if obj.isBackground
             
         case abr.Cmd.Stop
             vprintf(1,'Received Stop command')
-            % nothing to do here
+            % nothing to do here; stop is received in acquire_block
             
         case abr.Cmd.Kill
             vprintf(1,'Received Kill command')
             obj.BackgroundState = abr.stateAcq.KILLED;
             seppuku;
             
-        case abr.Cmd.TestMode
-            vprintf(1,'Received TestMode command')
-            obj.Universal.MODE = 'testing';
+        case abr.Cmd.Test
+            vprintf(1,'Received Test Mode command')
+            obj.Universal.MODE = abr.Cmd.Test;
     end
     
     

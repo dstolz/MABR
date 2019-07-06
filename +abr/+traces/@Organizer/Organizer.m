@@ -514,7 +514,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
         trace_clicked(h,event,obj,traceIdx);
         
         function trace_label_clicked(h,event,obj,traceIdx) 
-            vprintf(2,'Clicked Label: %s',h.String)
+            vprintf(2,'Clicked Label: %d',traceIdx)
             abr.traces.Organizer.trace_clicked(h,event,obj,traceIdx); % FOR NOW
         end
             
@@ -527,12 +527,17 @@ classdef (ConstructOnLoad = true) Organizer < handle
         
         function L = button_state_left
             if ispc
-                if ~libisloaded('user32')
-                    loadlibrary('C:\WINDOWS\system32\user32.dll','user32.h');
+                try
+                    if ~libisloaded('user32')
+                        loadlibrary('C:\WINDOWS\system32\user32.dll','user32.h');
+                    end
+                    L = calllib('user32', 'GetAsyncKeyState', int32(1)) ~= 0;
+                    %             R = calllib('user32', 'GetAsyncKeyState', int32(2)) ~= 0;
+                    %             M = calllib('user32', 'GetAsyncKeyState', int32(4)) ~= 0;
+                catch me
+%                     if isequal(
+                    disp(me);
                 end
-                L = calllib('user32', 'GetAsyncKeyState', int32(1)) ~= 0;
-                %             R = calllib('user32', 'GetAsyncKeyState', int32(2)) ~= 0;
-                %             M = calllib('user32', 'GetAsyncKeyState', int32(4)) ~= 0;
             else
                 vprintf(3,1,'No support yet for non-Windows operating systems!')
                 L = 0;

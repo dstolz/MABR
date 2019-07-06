@@ -852,7 +852,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.setup_playrec;
 
             % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
-%             app.Runtime.CommandToBg = abr.Cmd.TestMode;
+%             app.Runtime.CommandToBg = abr.Cmd.Test;
             % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
             
             % get the plot ready
