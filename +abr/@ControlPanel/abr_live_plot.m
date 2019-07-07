@@ -21,15 +21,16 @@ end
 
 
 tvec = cast(tvec,'like',postSweep);
-tvec = tvec * 1000; % s -> ms
-
+[unit,m] = abr.Tools.time_gauge(max(abs(tvec)));
+% tvec = tvec * 1000; % s -> ms
+tvec = tvec * m;
 
 
 % mean trace
 meanSweeps = mean(postSweep,1); % mean
 
 may = max(abs(meanSweeps));
-[unit,yscale] = abr.Universal.voltage_gauge(may);
+[unit,yscale] = abr.Tools.voltage_gauge(may);
 
 h.meanLine.XData = tvec;
 h.meanLine.YData = meanSweeps * yscale; % V -> unit
@@ -48,7 +49,7 @@ h.axMean.YAxis.TickValues = linspace(-s,s,5);
 % most recent trace
 n = min([size(postSweep,1)-1 16]);
 may = max(abs(postSweep(end-n:end,:)),[],'all');
-[unit,yscale] = abr.Universal.voltage_gauge(may);
+[unit,yscale] = abr.Tools.voltage_gauge(may);
 may = may * yscale;
 
 h.recentLine.XData = tvec;

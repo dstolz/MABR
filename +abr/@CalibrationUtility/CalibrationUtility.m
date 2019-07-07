@@ -565,7 +565,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 
                 % Time-domain plot
                 ax = subplot(2,4,[1 4],'Parent',f);
-                [unit,multiplier] = abr.Universal.voltage_gauge(max(abs(Y)));
+                [unit,multiplier] = abr.Tools.voltage_gauge(max(abs(Y)));
                 tvec = 0:1/Fs:length(Y)/Fs-1/Fs;
                 plot(ax,tvec([1 end])*1000,[0 0],'-k','linewidth',2);
                 hold(ax,'on');
@@ -576,7 +576,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 ax.XAxis.Label.String = 'time (ms)';
                 ax.YAxis.Label.String = sprintf('amplitude (%s)',unit);
                 
-                [unit,multiplier] = abr.Universal.voltage_gauge(Yrms);
+                [unit,multiplier] = abr.Tools.voltage_gauge(Yrms);
                 ax.Title.String = sprintf('Reference Tone RMS = %.3f %s RMS',Yrms*multiplier,unit);
                 grid(ax,'on');
                 
@@ -948,7 +948,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.Runtime.CommandToBg = abr.Cmd.Error;
             app.CalibrationPhase = 0;
             app.STATE = 'error';
-            s = abr.Universal.stack_str(5);
+            s = abr.Tools.stack_str(5);
             s = strrep(s,'\','\\');
             vprintf(1,1,sprintf('Calibration Error Occurred\n%s\n\tmessageID: %s\n\tmessage: %s', ...
                 s,event.Data.messageID,event.Data.message))

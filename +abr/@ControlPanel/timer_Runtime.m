@@ -24,12 +24,13 @@ if isnan(R), return; end
 app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R);
 
 % sweep analysis
-% for i = 1:length(app.summaryAnalysisType)
-%     R = app.summary_analysis(postSweep,app.summaryAnalysisType{i},oapp.summaryAnalysisOptions{i});
-% end
+for i = 1:length(app.summaryAnalysisType)
+    R = app.summary_analysis(postSweep,app.summaryAnalysisType{i},app.summaryAnalysisOptions{i});
+end
 
 % update GUI
 app.ControlSweepCountGauge.Value = sweepCount;
+app.ABR.sweepCount = sweepCount;
 
 drawnow limitrate
 

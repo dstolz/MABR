@@ -421,7 +421,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             y(1) = min(obj.YPosition);
             
             my = obj.max_data * 2;
-            [unit,multiplier] = abr.Universal.voltage_gauge(my);
+            [unit,multiplier] = abr.Tools.voltage_gauge(my);
             yval = my * multiplier;
             m = 0:0.1:10;
             i = find(yval <= m,1,'first');

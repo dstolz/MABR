@@ -241,7 +241,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                     else
                         app.ConfigFileDD.Value = c{1};
                     end
-                    app.ConfigFileDD.Tooltip   = app.last_modified_str(app.configFile);
+                    app.ConfigFileDD.Tooltip   = abr.Tools.last_modified_str(app.configFile);
                     app.ConfigFileDD.FontColor = [0 0 0];
                     app.ConfigFileLabel.Tooltip = fileparts(app.configFile);
                     setpref('ABRControlPanel','recentConfigs',c);
@@ -268,7 +268,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 else
                     app.ConfigScheduleDD.Value = ffns{1};
                 end
-                app.ConfigScheduleDD.Tooltip   = app.last_modified_str(app.scheduleFile);
+                app.ConfigScheduleDD.Tooltip   = abr.Tools.last_modified_str(app.scheduleFile);
                 app.ConfigScheduleDD.FontColor = [0 0 0];
                 app.ScheduleDDLabel.Tooltip    = fileparts(app.scheduleFile);
             end
@@ -293,7 +293,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                     else
                         app.CalibrationDD.Value = fns{1};
                     end
-                    app.CalibrationDD.Tooltip   = app.last_modified_str(app.calibrationFile);
+                    app.CalibrationDD.Tooltip   = abr.Tools.last_modified_str(app.calibrationFile);
                     app.CalibrationDD.FontColor = [0 0 0];
                     app.CalibrationDDLabel.Tooltip = fileparts(app.calibrationFile);
                     setpref('ABRControlPanel','calpth',fileparts(app.calibrationFile));
@@ -580,7 +580,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             
             h.ItemsData = recentPaths;
-            h.Items     = app.truncate_str(recentPaths,30);
+            h.Items     = abr.Tools.truncate_str(recentPaths,30);
             h.Value     = pn;
             h.Tooltip   = pn;
             
@@ -608,7 +608,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             nfn = event.Value;
             if ~endsWith(nfn,'.abr'), nfn = [nfn,'.abr']; end
             nffn = fullfile(pn,nfn);
-            if ~app.validate_filename(nffn)
+            if ~abr.Tools.validate_filename(nffn)
                 uialert(app.ControlPanelUIFigure, ...
                     sprintf('Invalid Filename: %s',nffn), ...
                     'Invalid Filename','Icon','error','Modal',true);
@@ -656,7 +656,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 app.Schedule = abr.Schedule(app.scheduleFile);
             end
             
-            app.ConfigScheduleDD.Tooltip = app.last_modified_str(app.scheduleFile);
+            app.ConfigScheduleDD.Tooltip = abr.Tools.last_modified_str(app.scheduleFile);
             app.ScheduleDDLabel.Tooltip    = fileparts(app.scheduleFile);
             app.Schedule.ScheduleFigure.Tag = 'CONTROL_PANEL_SCHEDULE';
             
@@ -680,7 +680,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 end
                 app.Calibration = Calibration; %#ok<ADPROPLC>
                 app.CalibrationDDLabel.Tooltip    = fileparts(app.calibrationFile);
-                app.CalibrationDD.Tooltip = app.last_modified_str(app.calibrationFile);
+                app.CalibrationDD.Tooltip = abr.Tools.last_modified_str(app.calibrationFile);
             else
                 app.Calibration = abr.SoundCalibration; % blank calibration
                 app.CalibrationDDLabel.Tooltip    = 'No Calibration File Loaded';
@@ -1101,7 +1101,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
 
         function run_acq_timer(app)            
-            if isempty(app.Timer) || ~isvalid(app.Timer)
+            if isempty(app.Timer) || ~isvalid(app.Timer) || isempty(app.Timer.TimerFcn)
                 T = timer('Tag','ABR_ControlPanel');
                 
                 T.BusyMode = 'drop';

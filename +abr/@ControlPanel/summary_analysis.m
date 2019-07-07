@@ -14,12 +14,12 @@ function r = summary_analysis(data,type,options)
 
 r = [];
 
-switch lower(type)
+switch type
     case 'corr'
         r = corrcoef(data);
         r = tril(r,-1);
         r = r(r~=0);
-        z = (log(1+r) - log(1-r))./2; % z’ = .5[ln(1+r) – ln(1-r)]
+        z = (log(1+r) - log(1-r))./2; % zï¿½ = .5[ln(1+r) ï¿½ ln(1-r)]
         r = mean(z,'all');
         
     case 'rms'

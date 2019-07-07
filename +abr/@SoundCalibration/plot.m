@@ -66,7 +66,7 @@ z = obj.ADC.SweepData;
 if ~isempty(z)
     n = size(z,2);
     
-    [unit,mult] = abr.Universal.voltage_gauge(max(abs(z(:))));
+    [unit,mult] = abr.Tools.voltage_gauge(max(abs(z(:))));
     mz = z.*mult;
     
     % Time Domain Plot
