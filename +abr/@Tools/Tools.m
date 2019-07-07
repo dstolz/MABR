@@ -129,6 +129,20 @@ classdef Tools
                 '\n\tline:\t%d'], ...
                 dc(idx).file,d(idx).line,d(idx).file,dc(idx).file,d(idx).name,d(idx).line);
         end
+
+        function edit_field_alert(obj,FGcolor,BGcolor)
+            if nargin < 2 || isempty(FGcolor), FGcolor = [1 1 1]; end
+            if nargin < 3 || isempty(BGcolor), BGcolor = [1 .6 .6]; end
+
+            orig.BackgroundColor = obj.BackgroundColor;
+            orig.FontColor       = obj.FontColor;
+
+            obj.BackgroundColor = BGcolor;
+            obj.FontColor = FGcolor;
+            pause(1);
+            obj.BackgroundColor = orig.BackgroundColor;
+            obj.FontColor = orig.FontColor;
+        end
     end
 
 end
