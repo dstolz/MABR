@@ -1,4 +1,4 @@
-classdef ABR < abr.Universal & handle
+classdef ABR < handle % & abr.Universal 
 % ABR
 % 
 % Daniel Stolzberg, PhD (c) 2019
@@ -17,7 +17,7 @@ classdef ABR < abr.Universal & handle
         sweepRate     (1,1) double {mustBePositive, mustBeFinite}   = 21.1; % Hz
         numSweeps     (1,1) double {mustBeInteger,  mustBePositive} = 1024;
         
-        adcWindow     (1,2) double {mustBeFinite} = [0 0.015]; % seconds
+        adcWindow     (1,2) double {mustBeFinite} = [0 0.01]; % seconds
         
         adcFilterOrder (1,1) double {mustBePositive,mustBeInteger} = 10;
         adcFilterHP    (1,1) double {mustBePositive,mustBeFinite}  = 10; % Hz
