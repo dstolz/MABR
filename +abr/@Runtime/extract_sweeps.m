@@ -1,19 +1,21 @@
-function [preSweep,postSweep,sweepCount] = extract_sweeps(obj,timeWindow,doAll)
+function [preSweep,postSweep,sweepOnsets] = extract_sweeps(obj,timeWindow,doAll)
 
-persistent lastBufferIdx sweepOnsets
+persistent lastBufferIdx blockSweepOnsets
 
 if nargin < 3 || isempty(doAll), doAll = false; end
 
+
+
 preSweep = nan;
 postSweep = nan;
-sweepCount = 0;
+sweepOnsets = nan;
 
 
 bufferHead = obj.mapCom.Data.BufferIndex(2);
 
 if isempty(lastBufferIdx) || lastBufferIdx > bufferHead, lastBufferIdx = 1; end
 
-if lastBufferIdx == 1, sweepOnsets = []; end
+if lastBufferIdx == 1, blockSweepOnsets = []; end
 
 LB = double(lastBufferIdx);
 BH = double(bufferHead);
@@ -27,21 +29,20 @@ idx = obj.find_timing_onsets(LB,BH);
 
 if isempty(idx), return; end % no new data
 
-vprintf(4,'size(sweepOnsets) = %s',mat2str(size(sweepOnsets)))
+vprintf(4,'size(sweepOnsets) = %s',mat2str(size(blockSweepOnsets)))
 vprintf(4,'# new sweeps = %s',mat2str(size(idx)))
 
-if LB == 1 || isempty(sweepOnsets)
-    sweepOnsets = idx-1; 
+if LB == 1 || isempty(blockSweepOnsets)
+    blockSweepOnsets = idx-1; 
 else
     % append newly found detected sweep timing impulses
-    sweepOnsets = [sweepOnsets; idx];
+    blockSweepOnsets = [blockSweepOnsets; idx];
 end
 
-sweepCount = length(sweepOnsets);
 
 % split signal into resampled windows
 swin  = round(abr.Universal.ADCSampleRate*timeWindow);
-samps = sweepOnsets + swin; % matrix expansion
+samps = blockSweepOnsets + swin; % matrix expansion
 
 % make sure we do not exceed buffer head position
 samps(any(samps<1,2) | any(samps>bufferHead,2),:) = []; 
@@ -56,7 +57,7 @@ if size(postSweep,2) == 1, postSweep = postSweep'; end
 
 % extract signal preceding sweep onsets
 bsamps = -1:-1:-size(samps,2);
-bsamps = sweepOnsets + bsamps;
+bsamps = blockSweepOnsets + bsamps;
 bsamps(any(bsamps < 1,2) | any(bsamps>bufferHead,2),:) = [];
 
 preSweep = obj.mapSignalBuffer.Data(bsamps);
@@ -70,4 +71,4 @@ vprintf(4,'size(postSweep) = %s',mat2str(size(postSweep)))
 % update this last
 lastBufferIdx = bufferHead;
 
-
+sweepOnsets  = blockSweepOnsets;

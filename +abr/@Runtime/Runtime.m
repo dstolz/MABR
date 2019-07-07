@@ -48,7 +48,7 @@ classdef Runtime < handle
     end
     
     methods
-        [preSweep,postSweep,sweepCount] = extract_sweeps(obj,timeWindow,doAll);
+        [preSweep,postSweep,sweepOnsets] = extract_sweeps(obj,timeWindow,doAll);
         idx = find_timing_onsets(obj,varargin);
 
         % Constructor
@@ -315,7 +315,7 @@ classdef Runtime < handle
             vprintf(3,'CommandToBg set to %s',cmd);
             obj.mapCom.Data.CommandToBg = int8(cmd);
             if cmd == abr.Cmd.Test
-                vprintf(0,1,'TEST MODE ENABLED!!!!\n%s',obj.Tools.stack_str(2));
+                vprintf(0,1,'TEST MODE ENABLED!!!!\n%s',abr.Tools.stack_str(2));
             end
         end
         

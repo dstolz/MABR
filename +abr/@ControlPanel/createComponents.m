@@ -521,6 +521,30 @@ app.SweepRateHzSpinner.Layout.Column = 2;
 app.SweepRateHzSpinner.FontSize = 16;
 app.SweepRateHzSpinner.FontWeight = 'normal';
 app.SweepRateHzSpinner.Value = 21.1;
+app.SweepRateHzSpinner.ValueChangedFcn = createCallbackFcn(app, @update_sweep_rate, true);
+
+R = R + 1;
+% Create SweepDurationLabel
+app.SweepDurationLabel = uilabel(G);
+app.SweepDurationLabel.HorizontalAlignment = 'right';
+app.SweepDurationLabel.Layout.Row = R;
+app.SweepDurationLabel.Layout.Column = 1;
+app.SweepDurationLabel.FontSize = 14;
+app.SweepDurationLabel.FontWeight = 'normal';
+app.SweepDurationLabel.Text = 'Sweep Duration (ms)';
+app.SweepDurationLabel.Tooltip = 'ABR acquisition duration in milliseconds';
+
+% Create SweepDurationSpinner
+app.SweepDurationSpinner = uispinner(G);
+app.SweepDurationSpinner.Limits = [0.1 1000];
+app.SweepDurationSpinner.HorizontalAlignment = 'center';
+app.SweepDurationSpinner.Layout.Row = R;
+app.SweepDurationSpinner.Layout.Column = 2;
+app.SweepDurationSpinner.FontSize = 16;
+app.SweepDurationSpinner.FontWeight = 'normal';
+app.SweepDurationSpinner.Value = 10;
+app.SweepDurationSpinner.ValueChangedFcn = createCallbackFcn(app, @update_sweep_duration, true);
+
 
 R = R + 1;
 % Create RepetitionsLabel
@@ -545,29 +569,6 @@ app.NumRepetitionsSpinner.Layout.Row = R;
 app.NumRepetitionsSpinner.Layout.Column = 2;
 app.NumRepetitionsSpinner.Value = 1;
 app.NumRepetitionsSpinner.ValueChangedFcn = createCallbackFcn(app, @update_num_reps, true);
-
-R = R + 1;
-% Create SweepDurationLabel
-app.SweepDurationLabel = uilabel(G);
-app.SweepDurationLabel.HorizontalAlignment = 'right';
-app.SweepDurationLabel.Layout.Row = R;
-app.SweepDurationLabel.Layout.Column = 1;
-app.SweepDurationLabel.FontSize = 14;
-app.SweepDurationLabel.FontWeight = 'normal';
-app.SweepDurationLabel.Text = 'Sweep Duration (ms)';
-app.SweepDurationLabel.Tooltip = 'ABR acquisition duration in milliseconds';
-
-% Create SweepDurationSpinner
-app.SweepDurationSpinner = uispinner(G);
-app.SweepDurationSpinner.Limits = [0.1 1000];
-app.SweepDurationSpinner.HorizontalAlignment = 'center';
-app.SweepDurationSpinner.Layout.Row = R;
-app.SweepDurationSpinner.Layout.Column = 2;
-app.SweepDurationSpinner.FontSize = 16;
-app.SweepDurationSpinner.FontWeight = 'normal';
-app.SweepDurationSpinner.Value = 10;
-app.SweepDurationSpinner.ValueChangedFcn = createCallbackFcn(app, @update_sweep_duration, true);
-
 
 R = R + 1;
 % Create ControlAdvCriteriaDDLabel

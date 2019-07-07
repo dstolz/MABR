@@ -33,6 +33,10 @@ classdef ABR < handle % & abr.Universal
         DACsignalCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 1;
         DACtimingCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 2;
         
+
+        
+        analysisSettings (2,:) cell = {'rms'; []};
+
     end
     
     properties (SetAccess = private)

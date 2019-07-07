@@ -1218,8 +1218,22 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             vprintf(3,'Updated Number of Reps: %d',event.Value)
             app.update_ControlStimInfoLabel(event.Value);
         end
+
+        function update_sweep_rate(app,event)
+            vprintf(3,'Updated Sweep Rate: %.3f Hz',event.Value)
+            if app.SweepDurationSpinner.Value/1000 > .5/event.Value
+                app.SweepDurationSpinner.Value = 1000*.5/event.Value;
+                abr.Tools.edit_field_alert(app.SweepDurationSpinner);
+            end
+        end
         
         function update_sweep_duration(app,event)
+            sweepRate = app.SweepRateHzSpinner.Value;
+            if event.Value/1000 > .5/sweepRate
+                abr.Tools.edit_field_alert(app.SweepDurationSpinner);
+                app.SweepDurationSpinner.Value = event.PreviousValue;
+                return
+            end
             vprintf(3,'Updated Sweep Duration: %.3f ms',event.Value/1000)
             app.ABR.adcWindow = [0 event.Value/1000];
         end
@@ -1551,10 +1565,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         function locate_figures(app)
             f = findall(0,'tag','MABR_FIG');
-            if ~isempty(f), figure(f); end
+            if ~isempty(f), arrayfun(@figure,f); end
             
             f = findobj('-regexp','Tag','TRACEORGANIZER*');
-            if ~isempty(f), figure(f); end
+            if ~isempty(f), arrayfun(@figure,f); end
         end
         
         function reset_bg_process(app)
