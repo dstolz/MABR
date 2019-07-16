@@ -7,7 +7,7 @@ global GVerbosity
 
 % Create ControlPanelUIFigure
 app.ControlPanelUIFigure = uifigure;
-app.ControlPanelUIFigure.Position = [50 400 550 325];
+app.ControlPanelUIFigure.Position = [50 400 600 325];
 app.ControlPanelUIFigure.Name = 'MABR Control Panel';
 app.ControlPanelUIFigure.Tag  = 'MABR_FIG';
 app.ControlPanelUIFigure.CloseRequestFcn = createCallbackFcn(app, @close_request, true);
@@ -123,7 +123,7 @@ app.AcquisitionStateLabel.Text = 'Ready';
 app.HelpButton = uibutton(app.ControlPanelUIFigure, 'push');
 app.HelpButton.Icon = fullfile(app.iconPath,'helpicon.gif');
 app.HelpButton.IconAlignment = 'center';
-app.HelpButton.Position = [100 CPpos(4)-25 20 20];
+app.HelpButton.Position = [150 CPpos(4)-25 20 20];
 app.HelpButton.Text = '';
 app.HelpButton.Tooltip = 'Control Panel Help';
 app.HelpButton.ButtonPushedFcn = createCallbackFcn(app, @cp_docbox, false);
@@ -132,7 +132,7 @@ app.HelpButton.ButtonPushedFcn = createCallbackFcn(app, @cp_docbox, false);
 app.LocateFiguresButton = uibutton(app.ControlPanelUIFigure, 'push');
 app.LocateFiguresButton.Icon = fullfile(app.iconPath,'figureicon.gif');
 app.LocateFiguresButton.IconAlignment = 'center';
-app.LocateFiguresButton.Position = [130 CPpos(4)-25 20 20];
+app.LocateFiguresButton.Position = [180 CPpos(4)-25 20 20];
 app.LocateFiguresButton.Text = '';
 app.LocateFiguresButton.Tooltip = 'Locate open figures';
 app.LocateFiguresButton.ButtonPushedFcn = createCallbackFcn(app, @locate_figures, false);
@@ -578,19 +578,20 @@ app.ControlAdvCriteriaDDLabel.Layout.Row = R;
 app.ControlAdvCriteriaDDLabel.Layout.Column = 1;
 app.ControlAdvCriteriaDDLabel.FontSize = 14;
 app.ControlAdvCriteriaDDLabel.FontWeight = 'normal';
-app.ControlAdvCriteriaDDLabel.Text = 'Advance on...';
-app.ControlAdvCriteriaDDLabel.Tooltip = 'Criterion function used to advance to the next schedule row';
+app.ControlAdvCriteriaDDLabel.Text = 'Advancement Criteria:';
+app.ControlAdvCriteriaDDLabel.Tooltip = 'Function used to advance to the next schedule row';
 
 % Create ControlAdvCriteriaDD
+g = getpref('ABRControlPanel','AdvanceFcns',{'# Sweeps', 'Correlation Threshold'; 'abr_adv_num_sweeps', 'abr_adv_corr_thr'});
 app.ControlAdvCriteriaDD = uidropdown(G);
 app.ControlAdvCriteriaDD.Layout.Row = R;
 app.ControlAdvCriteriaDD.Layout.Column = 2;
 app.ControlAdvCriteriaDD.FontSize = 16;
 app.ControlAdvCriteriaDD.FontWeight = 'normal';
-app.ControlAdvCriteriaDD.Items = {'# Sweeps', 'Correlation Threshold', '< Define >'};
-app.ControlAdvCriteriaDD.ItemsData = {'# Sweeps', @abr_corr_threshold, '< Define >'};
-app.ControlAdvCriteriaDD.Value = '# Sweeps';
-
+app.ControlAdvCriteriaDD.Items     = [g(1,:), {'< Define >'}];
+app.ControlAdvCriteriaDD.ItemsData = [g(2,:), {'abr.Tools.define_adv_fcn'}];
+app.ControlAdvCriteriaDD.Value = 'abr_adv_num_sweeps';
+app.ControlAdvCriteriaDD.ValueChangedFcn = createCallbackFcn(app, @update_advance_function, true);
 
 % Create Panel_2
 app.Panel_2 = uipanel(G);
@@ -739,6 +740,11 @@ app.FilterNotchFilterLabel.FontSize = 14;
 app.FilterNotchFilterLabel.FontWeight = 'bold';
 app.FilterNotchFilterLabel.Position = [14 74 130 22];
 app.FilterNotchFilterLabel.Text = 'Digital Notch Filter';
+
+
+%% POSTPROCESSING TAB -----------------------------------------------------
+app.PostProcessingTab = uitab(app.TabGroup);
+app.PostProcessingTab.Title = 'Post-Processing';
 
 
 

@@ -120,11 +120,12 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         FilterBandpassFilterLabel      matlab.ui.control.Label
         FilterNotchFilterLabel         matlab.ui.control.Label
         FilterNotchEnabledLamp         matlab.ui.control.Lamp
+        PostProcessingTab              matlab.ui.container.Tab
         UtilitiesTab                   matlab.ui.container.Tab
         UtilityScheduleDesignButton    matlab.ui.control.Button
         UtilitySoundCalibrationButton  matlab.ui.control.Button
         UtilityABRDataViewerButton     matlab.ui.control.Button
-        UtilityScheduleButton    matlab.ui.control.Button
+        UtilityScheduleButton          matlab.ui.control.Button
         HelpButton                     matlab.ui.control.Button
         LocateFiguresButton            matlab.ui.control.Button
         
@@ -387,8 +388,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         end
         
         function apply_config_parameters(app)
-            
-            app.ControlAdvCriteriaDD.Value = app.Config.Control.advCriteria;
+            app.ControlAdvCriteriaDD.Value       = app.Config.Control.advCriteria;
             app.SweepCountDD.Value               = num2str(app.Config.Control.numSweeps,'%d');
             app.SweepRateHzSpinner.Value         = app.Config.Control.sweepRate;
             app.NumRepetitionsSpinner.Value      = app.Config.Control.numReps;
@@ -402,6 +402,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             P = app.Config.Parameters;
             app.UpdateInputGainMenu.Text = sprintf('Amplifier Gain = %gx',P.InputAmpGain);
             fn = fieldnames(P);
+            ind = endsWith(fn,'ProcessID');
+            fn(ind) = [];
             for i = 1:length(fn)
                 app.Runtime.update_infoData(fn{i},P.(fn{i}));
             end
@@ -783,7 +785,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                                 'Title','Starting Background Process',...
                                 'Indeterminate','on','icon','info',...
                                 'Message','Please wait ...');
-                            abr.Runtime.launch_bg_process;
+                            app.Runtime.launch_bg_process;
                         end
                         
                         
@@ -813,31 +815,19 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             % update gui info
                             app.update_ControlStimInfoLabel(nReps);
                         else
+                            nReps = app.NumRepetitionsSpinner.Value;
+
                             % find next trial
-                            switch app.ControlAdvCriteriaDD.Value
-                                case '# Sweeps'
-                                    nReps = app.NumRepetitionsSpinner.Value;
-                                    
-                                    if app.scheduleRunCount(app.scheduleIdx) >= nReps
-                                        ind = app.scheduleRunCount(app.scheduleIdx+1:end) < nReps ...
-                                            & app.Schedule.selectedData(app.scheduleIdx+1:end);
-                                        if any(ind)
-                                            app.scheduleIdx = app.scheduleIdx + find(ind,1,'first');
-                                        else
-                                            % reached end of schedule
-                                            app.stateProgram = abr.stateProgram.SCHED_COMPLETE;
-                                            app.StateMachine;
-                                            return
-                                        end
-                                    end
-                                    
-                                    % update gui info
-                                    app.update_ControlStimInfoLabel(nReps);
-                                case '< Define >'
-                                    % TO DO: ADD CUSTOM FUNCTION SUPPORT
-                                otherwise
-                                    app.scheduleIdx = feval(app.ControlAdvCriteriaDD.ItemsData,app);
-                            end
+                            schAdvFnc = str2func(app.ControlAdvCriteriaDD.Value);
+                            vprintf(2,'Calling advancement function: %s',which(app.ControlAdvCriteriaDD.Value))
+                            app.scheduleIdx = feval(schAdvFnc,app,nReps);
+                            
+                            % reached end of schedule
+                            if isinf(app.scheduleIdx)
+                                app.stateProgram = abr.stateProgram.SCHED_COMPLETE;
+                                app.StateMachine;
+                                return
+                            end                            
                         end
                         
                         % make sure the sweep gauge reflects current value
@@ -1244,17 +1234,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             v = event.Value;
             if ischar(v), v = str2double(v); end
-            if isnan(v) || ~isreal(v)
-                event.Source.FontColor       = [1 1 1];
-                event.Source.BackgroundColor = [1 0 0];
-                pause(0.5)
+            if isnan(v) || ~isreal(v) || v < 1
+                abr.Tools.edit_field_alert(event.Source);
                 event.Source.Value = event.PreviousValue;
-                event.Source.FontColor       = [0 0 0];
-                event.Source.BackgroundColor = [1 1 1];
                 return 
-            else
-                event.Source.FontColor       = [0 0 0];
-                event.Source.BackgroundColor = [1 1 1];
             end
             
             % don't update gauge during a block
@@ -1333,6 +1316,13 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             app.AcquisitionStateLamp.Tooltip = ttip;
 
             drawnow
+        end
+
+        function update_advance_function(app,event)
+            if isequal(event.Value,'< Define >')
+
+            end
+
         end
 
 
@@ -1510,18 +1500,36 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             figure(app.ControlPanelUIFigure);
             
-            
             % Setup Background process AFTER creating GUI
             if ~app.Runtime.BgIsRunning
-                abr.Runtime.launch_bg_process;
+                D = uiprogressdlg(app.ControlPanelUIFigure, ...
+                    'Title','Starting Background Process',...
+                    'Indeterminate','on','icon','info',...
+                    'Message','Please wait ...');
+                app.Runtime.launch_bg_process;
             end
-            
+    
+            % wait for the background process to load
+            while ~app.Runtime.BgIsRunning, pause(0.01); end
+            if exist('D','var'), close(D); end
+                
             if nargout == 0, clear app; end
             
         end
         
         % Code that executes before app deletion
         function delete(app)
+            
+            f = findobj('type','figure','-and','name','MABR Live Plot');
+            if ~isempty(f), delete(f); end
+            
+            try
+                delete(app.Schedule);
+            end
+            
+            try
+                delete(app.TrcOrg);
+            end
             
             % Delete UIFigure when app is deleted
             delete(app.ControlPanelUIFigure)
@@ -1583,7 +1591,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             pause(0.5);
             app.Runtime.CommandToBg = abr.Cmd.Idle;
             vprintf(0,1,'Attempting to relaunch background process')
-            abr.Runtime.launch_bg_process;
+            app.Runtime.launch_bg_process;
         end
         
         function close_request(app,event)
