@@ -230,6 +230,7 @@ classdef Universal < handle
             r = fileparts(abr.Universal.root);
             addpath(fullfile(r,'helpers'));
             addpath(fullfile(r,'external'));
+            addpath(fullfile(r,'advanceFcns'));
         end
         
         
