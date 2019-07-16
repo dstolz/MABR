@@ -143,6 +143,22 @@ classdef Tools
             obj.BackgroundColor = orig.BackgroundColor;
             obj.FontColor = orig.FontColor;
         end
+
+        function newFcn = define_adv_fcn()
+            prompt = 'Enter the name of your advance function:';
+            newFcn = inputdlg(prompt,'MABR');
+
+            if isempty(newFcn), return; end
+
+            newFcn = char(newFcn);
+            w = which(newFcn);
+            if endsWith(w,'not found')
+                errordlg(sprintf('The function "%s" was not found on Matlab''s path.',newFcn),'MABR','modal');
+            else
+                newFcn = str2func(newFcn);
+            end
+        end
+
     end
 
 end
