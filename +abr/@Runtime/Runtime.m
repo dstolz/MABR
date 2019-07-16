@@ -66,7 +66,7 @@ classdef Runtime < handle
                 abr.Universal.startup;
 
                 obj.create_memmapfile;
-
+                
                 abr.Runtime.print_do_not_close;
 
                 % Make sure MATLAB is running at full steam
@@ -89,7 +89,7 @@ classdef Runtime < handle
                 
             else
                 obj.create_memmapfile;
-
+                
                 wmicStr = sprintf('wmic process where processid=''%d'' CALL setpriority 32768',obj.infoData.Foreground_ProcessID);
                 [s,w] = dos(wmicStr); % 32768 = Above Normal
                 if s ~= 0
@@ -273,8 +273,9 @@ classdef Runtime < handle
                     e = '%s = %s;';
             end
             
+            vprintf(2,e,varname,vardata);
             eval(sprintf(e,varname,vardata));
-            
+                        
             lastUpdated = now;
             
             if exist(obj.Universal.infoFile,'file') == 2
@@ -282,6 +283,7 @@ classdef Runtime < handle
             else
                 save(obj.Universal.infoFile,varname,'lastUpdated');
             end
+            
         end
         
         function set.BackgroundState(obj,state)
@@ -290,7 +292,11 @@ classdef Runtime < handle
         end
         
         function state = get.BackgroundState(obj)
-            state = abr.stateAcq(obj.mapCom.Data.BackgroundState);
+            try
+                state = abr.stateAcq(obj.mapCom.Data.BackgroundState);
+            catch
+                state = abr.stateAcq.NONEXISTANT;
+            end
         end
         
         function set.ForegroundState(obj,state)
@@ -299,7 +305,11 @@ classdef Runtime < handle
         end
         
         function state = get.ForegroundState(obj)
-            state = abr.stateAcq(obj.mapCom.Data.ForegroundState);
+            try
+                state = abr.stateAcq(obj.mapCom.Data.ForegroundState);
+            catch
+                state = abr.stateAcq.NONEXISTANT;
+            end
         end
         
         function set.CommandToFg(obj,cmd)
@@ -362,6 +372,7 @@ classdef Runtime < handle
             p = splitlines(pidstr);
             p(1) = [];
             pid = cellfun(@str2double,cellfun(@deblank,p,'uni',0));
+            pid(isnan(pid)) = [];
         end
         
         function launch_bg_process
@@ -378,7 +389,7 @@ classdef Runtime < handle
                 U.matlabExePath,U.runtimePath,fullfile(U.runtimePath,'Background_process_log.txt'),cmdStr));
             
             if s
-                vprintf(0,1,'FAILED TO LAUNCH BACKGROUND PROCESS!  OH SHIT!\nTry restarting Matlab')
+                vprintf(0,1,'OH CRAP!  FAILED TO LAUNCH BACKGROUND PROCESS!\nTry restarting Matlab')
             else
                 vprintf(3,'Launched background process; message: %s',w)
             end
