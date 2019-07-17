@@ -16,6 +16,10 @@ classdef Buffer
         PadValue     (1,1) = 0; % data type cast to obj.Data type
         PadToFrameSize matlab.lang.OnOffSwitchState = 'off';
         
+        DetrendPoly      (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(DetrendPoly,-1),mustBeLessThanOrEqual(DetrendPoly,9)} = -1;
+        
+        NoiseWinSamples  (1,2) double {mustBeInteger} = [-2 -1];
+        
         FFTOptions = struct('windowFcn',@hanning,'inDecibels',true);
     end
     
@@ -28,7 +32,11 @@ classdef Buffer
         NumSweeps
         SweepMean
         
+        noisePower
+        signalPower
+        
         RMS
+        SNR
     end
     
     
@@ -80,6 +88,22 @@ classdef Buffer
             rms = sqrt(mean(obj.SweepData.^2,'omitnan'));
         end
         
+        function r = get.SNR(obj)
+            r = 20 * log10(obj.signalPower/ obj.noisePower);
+        end
+        
+        function r = get.noisePower(obj)
+            idx = obj.SweepOnsets + (obj.NoiseWinSamples(1):obj.NoiseWinSamples(2));
+            if isempty(idx), r = nan; return; end
+            idx(idx > obj.N | idx < 1) = [];
+            x = obj.Data(idx);
+            r  = rms(x);
+        end
+        
+        function r = get.signalPower(obj)
+            r = rms(obj.Data);
+        end
+        
         function idx = get.sweepIdx(obj)
             idx = ((0:obj.SweepLength-1)+obj.SweepOnsets)';
         end
@@ -97,6 +121,16 @@ classdef Buffer
         
         function m = get.SweepMean(obj)
             m = mean(obj.SweepData,2);
+            
+            if obj.DetrendPoly == 0
+                m = m - mean(m);
+            elseif obj.DetrendPoly > 0
+                t = obj.TimeVector;
+                [p,~,mu] = polyfit(t',m,obj.DetrendPoly);
+                y = polyval(p,t,[],mu);
+                m = m - y';
+            end
+                
         end
         
         function n = get.N(obj)
