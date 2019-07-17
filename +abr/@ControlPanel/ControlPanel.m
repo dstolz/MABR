@@ -762,6 +762,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         vprintf(3,'Reloading schedule file')
                         app.load_schedule_file;
                         
+                        if ~isvalid(app.TrcOrg), app.TrcOrg = abr.traces.Organizer; end
+                        
                         % launch trace organizer
                         app.TrcOrg.figure;
                         
@@ -1519,6 +1521,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         % Code that executes before app deletion
         function delete(app)
+            T = timerfindall;
+            try
+                if ~isempty(T), stop(T); delete(T); end
+            end
             
             f = findobj('type','figure','-and','name','MABR Live Plot');
             if ~isempty(f), delete(f); end
@@ -1528,6 +1534,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             end
             
             try
+                close(app.TrcOrg.mainFig);
                 delete(app.TrcOrg);
             end
             
@@ -1605,10 +1612,14 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                     sprintf('I''m sorry Dave, I''m afraid I can''t do that.\n\nPlease first set acquisition to "Idle".'), ...
                     'Control Panel','Icon','warning','modal',true);
             else
+                vprintf(0,'Goodbye!')
                 try
                     app.Runtime.CommandToBg = abr.Cmd.Kill;
                 end
-                delete(app);
+                
+                try
+                    delete(app);
+                end
             end
         end
     end

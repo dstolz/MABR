@@ -32,9 +32,11 @@ meanSweeps = mean(postSweep,1); % mean
 may = max(abs(meanSweeps));
 [unit,yscale] = abr.Tools.voltage_gauge(may);
 
+
 h.meanLine.XData = tvec;
 h.meanLine.YData = meanSweeps * yscale; % V -> unit
-h.axMean.Title.String = sprintf('%d / %d postSweep',size(postSweep,1),app.ABR.numSweeps);
+h.axMean.Title.String = sprintf('%d / %d sweeps', ...
+    size(postSweep,1),app.ABR.numSweeps);
 
 % control y axis scaling
 m = [0:0.01:0.09 0.1:.1:.4 .5:.25:.75 1:10];
@@ -66,8 +68,11 @@ h.corrBar.YData = R;
 
 m = .5:.25:1;
 m = m(find(m>max(R),1,'first'));
-h.axCorr.YAxis.Limits = [0 m];
-h.axCorr.YAxis.TickLabelFormat = '%2.1f';
+if ~isempty(m)
+    h.axCorr.YAxis.Limits = [0 m];
+end
+h.axCorr.Title.String = sprintf('F_s_p = %.2f',Fsp(postSweep));
+
 
 
 function h = setup(app)
@@ -84,15 +89,15 @@ if isempty(f)
         'tag','MABR_FIG');
 end
 
-
 clf(f);
-
+movegui(f);
 
 axRecent = subplot(1,3,[1 2],'parent',f);
 axMean   = axes(f,'position',axRecent.Position,'Color','none');
 axCorr   = subplot(1,3,3,'parent',f);
 axCorr.Position(1) = 0.75;
 axCorr.Position(3) = 0.15;
+axCorr.YAxis.TickLabelFormat = '%2.1f';
 
 grid(axMean,'on');
 box(axMean,'on');

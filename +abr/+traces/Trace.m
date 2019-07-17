@@ -1,6 +1,7 @@
 classdef Trace < handle &  matlab.mixin.SetGet
     
     properties
+        ID              (1,1) uint32 = 0;
         SampleRate      (1,1) {mustBePositive,mustBeFinite} = 1;
         Data            (1,:) double
         FirstTimepoint  (1,1) double {mustBeFinite,mustBeNonempty,mustBeNonNan} = 0;
@@ -14,9 +15,7 @@ classdef Trace < handle &  matlab.mixin.SetGet
         
         TimeUnit        (1,:) char {mustBeMember(TimeUnit,{'auto','s','ms','us','ns'})} = 'auto';
         
-        
         SIG             (1,1) % abr.sigdef.sigs
-        
         
         RawData         (1,1) abr.Buffer
         
@@ -25,11 +24,8 @@ classdef Trace < handle &  matlab.mixin.SetGet
     
     properties (SetAccess = private)
         Props   (1,1) struct
-        LabelText (1,:)
-    end
-    
-    properties (SetAccess = immutable)
-        ID = fix(rand(1)*1e9);
+        LabelText (1,:) 
+        LabelID   (1,:) char
     end
     
     properties (SetAccess = private, Dependent)
@@ -54,7 +50,7 @@ classdef Trace < handle &  matlab.mixin.SetGet
         % Constructor
         function obj = Trace(data,SIG,firstTimepoint,Fs)
             if nargin == 0
-                obj.ID = -1;
+                obj.ID = 0;
                 return
             end
             narginchk(2,4);
@@ -80,6 +76,10 @@ classdef Trace < handle &  matlab.mixin.SetGet
 %             end
         end
         
+        function str = get.LabelID(obj)
+            str = num2str(obj.ID,'ID %03d');
+        end
+
         function str = get.LabelText(obj)
             fn = fieldnames(obj.SIG.dataParams);
             for i = 1:length(fn)
@@ -152,10 +152,10 @@ classdef Trace < handle &  matlab.mixin.SetGet
                 if kobj.LabelHandleIsValid
                     t = kobj.LabelHandle;
                 else
-                    t = text(ax,x,y,kobj.LabelText);
+                    t = text(ax,x,y,kobj.LabelID);
                 end
                 t.Position = [x y];
-                t.String = kobj.LabelText;
+                t.String = kobj.LabelID;
                 t.Color = max(kobj.Color-.2,0);
                 t.FontWeight = 'bold';
 %                 t.BackgroundColor = [ax.Color 0.9];

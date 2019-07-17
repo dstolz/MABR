@@ -17,6 +17,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
     end
     
     properties (SetAccess = private)
+        
         Labels          (1,:) cell
         N               (1,1) double
         
@@ -32,13 +33,16 @@ classdef (ConstructOnLoad = true) Organizer < handle
         GroupIdx    (:,1)
     end
     
-    properties (Access = private,Transient)
+    properties (SetAccess = private,Transient)
+        ampScaleLineHandle (1,1) %line handle
+        ampScaleLabelHandle (1,1) % text object handle
+        
         mainFigTag       (1,:) char
         mainFig          (1,1) %matlab.ui.Figure
         mainAx           (1,1) %matlab.graphics.axis.Axes
-        
-        ampScaleLineHandle (1,1) %line handle
-        ampScaleLabelHandle (1,1) % text object handle
+    end
+    
+    properties (Access = private,Transient)
         
         ContextMenu
         
@@ -98,12 +102,16 @@ classdef (ConstructOnLoad = true) Organizer < handle
             if nargin < 6, rawData = abr.Buffer; end
             
                         
-            if isempty(obj.Traces) || obj.N == 1 && obj.Traces.ID == -1
+            if isempty(obj.Traces) || obj.N == 1 && obj.Traces.ID == 0
                 obj.Traces = abr.traces.Trace(data,SIG,firstTimepoint,Fs);
+                obj.TraceIdx = 1;
+                obj.Traces(1).ID = 1;
                 obj.YPosition = 0;
                 obj.GroupIdx  = 1; % default group
             else
                 obj.Traces(end+1) = abr.traces.Trace(data,SIG,firstTimepoint,Fs);
+                obj.TraceIdx(end+1) = max(obj.TraceIdx)+1;
+                obj.Traces(end).ID = obj.TraceIdx(end);
                 obj.YPosition(end+1) = min(obj.YPosition) - obj.YSpacing;
                 obj.GroupIdx(end+1) = 1; % default group
             end
@@ -360,7 +368,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 obj.mainFig = f;
             end
             figure(obj.mainFig);
-            
+            movegui(obj.mainFig);
         end
         
         function plot(obj)
@@ -372,7 +380,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             
             pidx = obj.PlotOrder';
             
-            obj.TraceIdx = [];
+            % obj.TraceIdx = [];
             for k = pidx
                 obj.Traces(k).Color     = obj.groupColors(obj.GroupIdx(k),:);
 %                 obj.Traces(k).LabelText = obj.Labels(k,:);
@@ -381,7 +389,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 obj.Traces(k).LineHandle.YData = D{k} + obj.YPosition(k);
                 obj.Traces(k).LineHandle.ButtonDownFcn  = {'abr.traces.Organizer.trace_clicked',obj,k};
                 obj.Traces(k).LabelHandle.ButtonDownFcn = {'abr.traces.Organizer.trace_label_clicked',obj,k};
-                obj.TraceIdx(k) = k;
+                % obj.TraceIdx(k) = k;
                 
                 obj.Traces(k).LabelHandle.Position(2) = obj.YPosition(k);
                 
@@ -514,7 +522,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
         trace_clicked(h,event,obj,traceIdx);
         
         function trace_label_clicked(h,event,obj,traceIdx) 
-            vprintf(2,'Clicked Label: %d',traceIdx)
+            vprintf(2,'Clicked Label: %03d',traceIdx)
             abr.traces.Organizer.trace_clicked(h,event,obj,traceIdx); % FOR NOW
         end
             

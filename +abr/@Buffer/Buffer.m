@@ -17,9 +17,7 @@ classdef Buffer
         PadToFrameSize matlab.lang.OnOffSwitchState = 'off';
         
         DetrendPoly      (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(DetrendPoly,-1),mustBeLessThanOrEqual(DetrendPoly,9)} = -1;
-        
-        NoiseWinSamples  (1,2) double {mustBeInteger} = [-2 -1];
-        
+                
         FFTOptions = struct('windowFcn',@hanning,'inDecibels',true);
     end
     
@@ -93,15 +91,16 @@ classdef Buffer
         end
         
         function r = get.noisePower(obj)
-            idx = obj.SweepOnsets + (obj.NoiseWinSamples(1):obj.NoiseWinSamples(2));
-            if isempty(idx), r = nan; return; end
-            idx(idx > obj.N | idx < 1) = [];
-            x = obj.Data(idx);
-            r  = rms(x);
+            % plus-or-minus averaging attemps to recover expected noise
+            x = obj.SweepData;
+            if obj.N > 1
+                x = mean(x(:,1:2:end),2) - mean(x(:,2:2:end),2);
+            end
+            r = rms(x);
         end
         
         function r = get.signalPower(obj)
-            r = rms(obj.Data);
+            r = rms(obj.SweepMean);
         end
         
         function idx = get.sweepIdx(obj)
@@ -164,14 +163,22 @@ classdef Buffer
             if nargin < 3
                 varargin = {'linestyle','-','linewidth',2,'color',[0.2 0.5 0.9]};
             end
+            
+            M = obj.SweepMean;
                     
-            h = plot(ax,obj.TimeVector,obj.SweepMean,varargin{:});
+            h = plot(ax,obj.TimeVector,M,varargin{:});
             
             grid(ax,'on');
             
-            ax.XAxis.Limits = [0 obj.SweepDuration];
+            t = obj.TimeVector;
+            ax.XAxis.Limits = [min(t), max(t)];
+            ax.YAxis.Limits = [-1.1 1.1] * max(abs(M));
+            
             ax.XAxis.Label.String = 'Time (sec)';
             ax.YAxis.Label.String = 'Amplitude';
+            
+            grid(ax,'on');
+            
             if nargout == 0, clear h; end
         end
         

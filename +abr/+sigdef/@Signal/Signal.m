@@ -159,6 +159,19 @@ classdef (Abstract) Signal
         end
         
         
+        
+        function obj = set.soundLevel(obj,value)
+            if isa(value,'abr.sigdef.sigProp')
+                obj.soundLevel = value;
+            else
+                mustBeFinite(value);
+                mustBeNonempty(value);
+                obj.soundLevel.Value = value;
+                obj.processUpdate; % superclass function
+            end
+        end
+        
+        
         function obj = set.onsetDelay(obj,value)
             if isa(value,'abr.sigdef.sigProp')
                 obj.onsetDelay = value;

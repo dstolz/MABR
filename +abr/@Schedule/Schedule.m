@@ -259,7 +259,7 @@ classdef Schedule < matlab.apps.AppBase
                 setpref('Schedule','path',pn);
             end
             
-            fprintf('Loading schedule "%s" ...',ffn)
+            vprintf(1,'Loading schedule "%s" ...',ffn)
             
             load(ffn,'-mat','compiled','data','SIG','tblData');
             
