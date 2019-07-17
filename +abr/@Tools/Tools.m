@@ -158,6 +158,31 @@ classdef Tools
                 newFcn = str2func(newFcn);
             end
         end
+        
+        
+        function v = range2vec(range)
+            switch numel(range)
+                case 1
+                    v = range;
+                case 2
+                    v = range(1):range(2);
+                case 3
+                    v = range(1):range(2):range(3);
+            end
+        end
+
+        function e = set_priority(pid,level)
+            numLevels = 2.^([5:8 14 15]);
+            txtLevels = {'normal','idle','high priority','real time','below normal','above normal'};
+            ind = ismember(txtLevels,lower(level));
+            assert(~isempty(ind),sprintf('Invalid process priority level: %s',level));
+            wmicStr = sprintf('wmic process where processid=''%d'' CALL setpriority %d',pid,numLevels(ind));
+            [e,w] = dos(wmicStr); % 128 = High
+            if e ~= 0
+                vprintf(0,1,'Failed to elevate the priority of process ID %d to "%s"',pid,level)
+                disp(w)
+            end
+        end
 
     end
 

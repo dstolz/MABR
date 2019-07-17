@@ -70,12 +70,9 @@ classdef Runtime < handle
                 abr.Runtime.print_do_not_close;
 
                 % Make sure MATLAB is running at full steam
-                wmicStr = sprintf('wmic process where processid=''%d'' CALL setpriority 128',obj.infoData.Background_ProcessID);
-                [s,w] = dos(wmicStr); % 128 = High
-                if s ~= 0
-                    warning('Failed to elevate the priority of MATLAB.exe')
-                    disp(w)
-                end
+                abr.Tools.set_priority(obj.infoData.Background_ProcessID,'high priority');
+                
+                
                 
                 % reset command to foreground and background state
                 obj.CommandToFg     = abr.Cmd.Undef;
@@ -90,12 +87,8 @@ classdef Runtime < handle
             else
                 obj.create_memmapfile;
                 
-                wmicStr = sprintf('wmic process where processid=''%d'' CALL setpriority 32768',obj.infoData.Foreground_ProcessID);
-                [s,w] = dos(wmicStr); % 32768 = Above Normal
-                if s ~= 0
-                    warning('Failed to elevate the priority of MATLAB.exe')
-                    disp(w)
-                end
+                abr.Tools.set_priority(obj.infoData.Foreground_ProcessID,'above normal');
+
                 % reset command to background and foreground state
                 obj.CommandToBg     = abr.Cmd.Undef;
                 obj.ForegroundState = abr.stateAcq.IDLE;
