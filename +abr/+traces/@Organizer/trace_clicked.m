@@ -10,6 +10,7 @@ for i = 1:length(c)
 end
 titleStr(end-1:end) = [];
 ax.Title.String = titleStr;
+ax.Title.Color = obj.Traces(traceIdx).Color;
 
 if isequal({'shift'},fcc)
     tidx = obj.TraceSelection;
