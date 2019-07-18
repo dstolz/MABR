@@ -433,7 +433,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             yval = my * multiplier;
             m = 0:0.1:10;
             i = find(yval <= m,1,'first');
-            yval = m(i);
+            if ~isempty(i), yval = m(i); end
             
             y(2) = y(1) - obj.v2yscale(yval/multiplier);
             y = y - diff(y)/2;
@@ -531,6 +531,8 @@ classdef (ConstructOnLoad = true) Organizer < handle
             vprintf(2,'Deselected all traces')
             obj.TraceSelection = [];
             set([obj.Traces.LineHandle],'LineWidth',obj.defaultTraceWidth);
+            
+            event.Source.Title.String = '';
         end
         
         function L = button_state_left

@@ -2,6 +2,15 @@ function trace_clicked(h,event,obj,traceIdx) %#ok<INUSL>
 fcc = obj.mainFig.CurrentModifier;
 
 
+ax = obj.Traces(traceIdx).LineHandle.Parent;
+titleStr = sprintf('%s\n',obj.Traces(traceIdx).LabelID);
+c = obj.Traces(traceIdx).LabelText;
+for i = 1:length(c)
+    titleStr = sprintf('%s%s, ',titleStr,c{i});
+end
+titleStr(end-1:end) = [];
+ax.Title.String = titleStr;
+
 if isequal({'shift'},fcc)
     tidx = obj.TraceSelection;
     if isempty(tidx)
@@ -36,6 +45,7 @@ elseif isequal({'control'},fcc)
     uistack([obj.Traces(obj.TraceSelection).LabelHandle],'top');
     
     set([obj.Traces(obj.TraceSelection).LabelHandle],'BackgroundColor',[1 1 1 1]);
+    
     
 elseif isequal({'shift','control'},fcc)
     ind = obj.GroupIdx == obj.GroupIdx(traceIdx);
