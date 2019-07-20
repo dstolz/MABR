@@ -769,8 +769,8 @@ app.PPMovingAvgLabel.HorizontalAlignment = 'right';
 app.PPMovingAvgDD = uidropdown(G);
 app.PPMovingAvgDD.Tag = 'smooth';
 app.PPMovingAvgDD.FontSize = 16;
-app.PPMovingAvgDD.Items = {'None','3','5','7','9','11'};
-app.PPMovingAvgDD.ItemsData = [0 3:2:11];
+app.PPMovingAvgDD.Items = {'None','2','3','4','5','5','7','6','9','10','11'};
+app.PPMovingAvgDD.ItemsData = [0 2:11];
 app.PPMovingAvgDD.Value = 0;
 app.PPMovingAvgDD.ValueChangedFcn = createCallbackFcn(app, @update_postprocessing, true);
 
@@ -783,15 +783,15 @@ app.PPDetrendLabel.FontSize = 14;
 app.PPDetrendLabel.FontWeight = 'bold';
 app.PPDetrendLabel.Layout.Row = R;
 app.PPDetrendLabel.Layout.Column = 1;
-app.PPDetrendLabel.Text = 'Detrend Polynomial';
+app.PPDetrendLabel.Text = 'Detrend Waveform';
 app.PPDetrendLabel.HorizontalAlignment = 'right';
 
 % Create PPDetrendDD
 app.PPDetrendDD = uidropdown(G);
 app.PPDetrendDD.Tag = 'detrend';
 app.PPDetrendDD.FontSize = 16;
-app.PPDetrendDD.Items = [{'None'},cellfun(@num2str,num2cell(1:7),'uni',0)];
-app.PPDetrendDD.ItemsData = 0:7;
+app.PPDetrendDD.Items = [{'None'},{'Remove Mean'},cellfun(@num2str,num2cell(1:7),'uni',0)];
+app.PPDetrendDD.ItemsData = -1:7;
 app.PPDetrendDD.Value = 1;
 app.PPDetrendDD.ValueChangedFcn = createCallbackFcn(app, @update_postprocessing, true);
 

@@ -92,12 +92,12 @@ classdef Buffer
         end
         
         function r = get.noisePower(obj)
-            % plus-or-minus averaging attemps to recover expected noise
+            % plus-or-minus averaging as noise estimate
             x = obj.SweepData;
             if obj.N > 1
                 x = mean(x(:,1:2:end),2) - mean(x(:,2:2:end),2);
             end
-            r = rms(x);
+            r = sqrt(mean(x.^2));
         end
         
         function r = get.signalPower(obj)
