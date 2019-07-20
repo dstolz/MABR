@@ -73,11 +73,11 @@ classdef (ConstructOnLoad = true) Organizer < handle
             
             if nargin == 1 && isa(traces,'abr.traces.Trace')
                 for i = 1:length(traces)
-                    obj.add_trace(traces(i).Data,traces(i).Props,traces(i).FirstTimepoint,traces(i).SampleRate);
+                    obj.add_trace(traces(i).ABR);
                 end
                 
             elseif nargin == 1 && ischar(traces) && exist(traces,'file')
-                load(traces,'-mat');
+                load(traces,'TO','-mat');
                 obj = TO;
                 plot(obj);
             end
@@ -91,25 +91,20 @@ classdef (ConstructOnLoad = true) Organizer < handle
         end
         
         
-        function add_trace(obj,data,SIG,firstTimepoint,Fs,rawData)
-            narginchk(3,6);
+        function add_trace(obj,ABR)
+            narginchk(2,2);
             
             vprintf(2,'Adding trace to Organizer')
             
-            if nargin < 4 || isempty(firstTimepoint), firstTimepoint = 0; end
-            if nargin < 5 || isempty(Fs), Fs = 1; end
-            
-            if nargin < 6, rawData = abr.Buffer; end
-            
                         
             if isempty(obj.Traces) || obj.N == 1 && obj.Traces.ID == 0
-                obj.Traces = abr.traces.Trace(data,SIG,firstTimepoint,Fs);
+                obj.Traces = abr.traces.Trace(ABR);
                 obj.TraceIdx = 1;
                 obj.Traces(1).ID = 1;
                 obj.YPosition = 0;
                 obj.GroupIdx  = 1; % default group
             else
-                obj.Traces(end+1) = abr.traces.Trace(data,SIG,firstTimepoint,Fs);
+                obj.Traces(end+1) = abr.traces.Trace(ABR);
                 obj.TraceIdx(end+1) = max(obj.TraceIdx)+1;
                 obj.Traces(end).ID = obj.TraceIdx(end);
                 obj.YPosition(end+1) = min(obj.YPosition) - obj.YSpacing;
@@ -118,7 +113,6 @@ classdef (ConstructOnLoad = true) Organizer < handle
             
             obj.Traces(end).Color = obj.groupColors(obj.GroupIdx(end),:);
 
-            obj.Traces(end).RawData = rawData;
             
             plot(obj);
         end

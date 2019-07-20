@@ -1,4 +1,4 @@
-function abr_live_plot(app,postSweep,tvec,R)
+function abr_live_plot(app,postSweep,tvec,R,options)
 
 persistent h
 
@@ -17,7 +17,12 @@ if nargin < 2 || isempty(postSweep)
     return
 end
 
+if nargin < 5 || isempty(options)
+    options = struct('SmoothSpan',0,'DetrendPoly',-1);
+end
 
+if ~isfield(options,'SmoothSpan'),  options.SmoothSpan = 0; end
+if ~isfield(options,'DetrendPoly'), options.DetrendPoly = -1; end
 
 
 tvec = cast(tvec,'like',postSweep);
@@ -27,14 +32,26 @@ tvec = tvec * m;
 
 
 % mean trace
-meanSweeps = mean(postSweep,1); % mean
+meanSweep = mean(postSweep,1); % mean
 
-may = max(abs(meanSweeps));
+% optional post processing
+if options.SmoothSpan > 0, meanSweep = movmean(meanSweep,options.SmoothSpan); end
+% detrend
+if options.DetrendPoly == 0
+    meanSweep = meanSweep - mean(meanSweep);
+elseif options.DetrendPoly > 0
+    [p,~,mu] = polyfit(tvec,meanSweep,options.DetrendPoly);
+    y = polyval(p,tvec,[],mu);
+    meanSweep = meanSweep - y;
+end
+
+
+may = max(abs(meanSweep));
 [unit,yscale] = abr.Tools.voltage_gauge(may);
 
 
 h.meanLine.XData = tvec;
-h.meanLine.YData = meanSweeps * yscale; % V -> unit
+h.meanLine.YData = meanSweep * yscale; % V -> unit
 h.axMean.Title.String = sprintf('%d / %d sweeps', ...
     size(postSweep,1),app.ABR.numSweeps);
 

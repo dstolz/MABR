@@ -121,6 +121,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         FilterNotchFilterLabel         matlab.ui.control.Label
         FilterNotchEnabledLamp         matlab.ui.control.Lamp
         PostProcessingTab              matlab.ui.container.Tab
+        PPMovingAvgLabel               matlab.ui.control.Label
+        PPMovingAvgDD                  matlab.ui.control.DropDown
+        PPDetrendLabel                 matlab.ui.control.Label
+        PPDetrendDD                    matlab.ui.control.DropDown
         UtilitiesTab                   matlab.ui.container.Tab
         UtilityScheduleDesignButton    matlab.ui.control.Button
         UtilitySoundCalibrationButton  matlab.ui.control.Button
@@ -148,7 +152,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     methods
         createComponents(app);
         R = live_analysis(app,preSweep,postSweep);
-        abr_live_plot(app,sweeps,tvec,R);
+        abr_live_plot(app,sweeps,tvec,R,opts);
         
         function ffn = get.outputFile(app)
             fn = app.OutputFileDD.Value;
@@ -796,9 +800,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         if exist('D','var'), close(D); end
                         
                         
-                        % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
-                        app.Runtime.CommandToBg = abr.Cmd.Test;
-                        % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
+%                         % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
+%                         app.Runtime.CommandToBg = abr.Cmd.Test;
+%                         % TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!TEST MODE!!!!
                         
                         
                         app.stateProgram = abr.stateProgram.ADVANCE_BLOCK; % to first trial
@@ -860,6 +864,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ABR.adcDecimationFactor = round(max([1 floor(app.SIG.Fs ./ app.ABR.ADC.SampleRate)]));
                         app.ABR.ADC.SampleRate      = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;
 
+                        % update postprocessing options
+                        app.ABR.ADC.DetrendPoly = app.PPDetrendDD.Value;
+                        app.ABR.ADC.SmoothSpan  = app.PPMovingAvgDD.Value;
                         
                         % generate signal based on its parameters
                         app.SIG = app.Schedule.sigArray(app.scheduleIdx);
@@ -967,24 +974,25 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.scheduleRunCount(app.scheduleIdx) = app.scheduleRunCount(app.scheduleIdx) + 1;
                         
                         % extract sweep-based data and plot one last time
-                        [preSweep,postSweep] = app.Runtime.extract_sweeps(app.ABR.adcWindowTVec,true);
-                        
+                        [preSweep,postSweep,sweepOnsets] = app.Runtime.extract_sweeps(app.ABR.adcWindowTVec,true);                       
                         if ~isnan(postSweep(1))
-                                                        
                             % update signal amplitude by InputAmpGain
                             A = app.Config.Parameters.InputAmpGain;
                             preSweep  = preSweep ./ A;
                             postSweep = postSweep ./ A;
 
                             R = app.partition_corr(preSweep,postSweep);
-                            app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R);
+                            
+                            opts.SmoothSpan  = app.ABR.ADC.SmoothSpan;
+                            opts.DetrendPoly = app.ABR.ADC.DetrendPoly;
+                            app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R,opts);
                             
                             % Add buffer to traces.Organizer
-                            app.TrcOrg.add_trace( ...
-                                mean(postSweep), ...
-                                app.SIG, ...
-                                app.ABR.adcWindow(1), ...
-                                app.ABR.ADC.SampleRate);
+                            app.ABR.ADC.SweepLength = round(app.ABR.ADC.SampleRate .* app.ABR.adcWindow(2)) + 1;
+                            idx = app.Runtime.mapCom.Data.BufferIndex;
+                            app.ABR.ADC.Data = app.Runtime.mapSignalBuffer.Data(1:idx(2));
+                            app.ABR.ADC.SweepOnsets = sweepOnsets;
+                            app.TrcOrg.add_trace(app.ABR);
                         end
                         %%%% TESTING
 %                         R = app.ABR.analysis('peaks');
@@ -1017,7 +1025,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.update_lamp('Ready');
                         stateAcq = abr.stateAcq.CANCELLED;
                         
-                        [preSweep,postSweep] = app.Runtime.extract_sweeps(app.ABR.adcWindowTVec,true);
+                        [preSweep,postSweep,sweepOnsets] = app.Runtime.extract_sweeps(app.ABR.adcWindowTVec,true);
                         if ~isnan(postSweep(1))
                             % update signal amplitude by InputAmpGain
                             A = app.Config.Parameters.InputAmpGain;
@@ -1025,15 +1033,18 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             postSweep = postSweep ./ A;
 
                             R = app.partition_corr(preSweep,postSweep);
-                            app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R)
+                            
+                            opts.SmoothSpan  = app.ABR.ADC.SmoothSpan;
+                            opts.DetrendPoly = app.ABR.ADC.DetrendPoly;
+                            app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R,opts)
                             
 
                             % Add buffer to traces.Organizer
-                            app.TrcOrg.add_trace( ...
-                                mean(postSweep), ...
-                                app.SIG, ...
-                                app.ABR.adcWindow(1), ...
-                                app.ABR.ADC.SampleRate);
+                            app.ABR.ADC.SweepLength = round(app.ABR.ADC.SampleRate .* app.ABR.adcWindow(2)) + 1;
+                            idx = app.Runtime.mapCom.Data.BufferIndex;
+                            app.ABR.ADC.Data = app.Runtime.mapSignalBuffer.Data(1:idx(2));
+                            app.ABR.ADC.SweepOnsets = sweepOnsets;
+                            app.TrcOrg.add_trace(app.ABR);
                         end
                     
                         
@@ -1065,10 +1076,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 case 'Acquire'
                     app.stateProgram = abr.stateProgram.PREP_BLOCK;
                     app.StateMachine;
-
-%                     while ~any(app.stateProgram == [abr.stateProgram.USER_IDLE, abr.stateProgram.ACQ_ERROR, abr.stateProgram.SCHED_COMPLETE])
-%                         app.StateMachine;
-%                     end
+                    
+                    app.ControlAdvanceButton.Enable = 'on';
+                    app.ControlRepeatButton.Enable  = 'on';
+                    app.ControlPauseButton.Enable   = 'on';
                     
                 case 'Idle'
                     stop(app.Timer);
@@ -1088,6 +1099,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                     
                     app.stateProgram = abr.stateProgram.USER_IDLE;
                     app.StateMachine;
+                    
+                    app.ControlAdvanceButton.Enable = 'off';
+                    app.ControlRepeatButton.Enable  = 'off';
+                    app.ControlPauseButton.Enable   = 'off';
             end
         end
         
@@ -1204,6 +1219,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
 
             drawnow
         end
+        
+        
+        
         
         
         function update_num_reps(app,event)
@@ -1333,9 +1351,20 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
 
 
 
+        %% POST-PROCESSING ------------------------------------------------
 
-
-
+        function update_postprocessing(app,event)
+            switch event.Source.Tag
+                case 'smooth'
+                    app.ABR.ADC.SmoothSpan  = event.Source.Value;
+                    vprintf(3,'Update SmoothSpan to %d',app.ABR.ADC.SmoothSpan)
+                case 'detrend'
+                    app.ABR.ADC.DetrendPoly = event.Source.Value;
+                    vprintf(3,'Update DetrendPoly to %d',app.ABR.ADC.DetrendPoly)
+                case 'artifact'
+                    % TO DO
+            end
+        end
         
         
         %% UTILITIES ------------------------------------------------------
@@ -1413,29 +1442,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         
         %% OTHER ----------------------------------------------------------
-       
-        
-        function ax = live_analysis_plot(app)    
-            f = findobj('type','figure','-and','name','Live Analysis');
-            if ~isempty(f) && ishandle(f)
-                ax = findobj('type','axes','-and','tag','live_analysis_plot');
-                return
-            end
-            p = app.ControlPanelUIFigure.Position;
-            f = figure('name','Live Analysis','color','w','NumberTitle','off', ...
-                'Position',[p(1)+p(3)-60020 p(2)+p(4)-280 600 250]);
-            ax = axes(f,'tag','live_analysis_plot','color','none');
-            grid(ax,'on');
-            box(ax,'on');
-            % Correct???
-            ax.XAxis.Label.String = app.ABR.SIG.SortProperty;
-            ax.YAxis.Label.String = 'amplitude (mV)';
-            
-            ax.Toolbar.Visible = 'off'; % disable zoom/pan options
-            ax.HitTest = 'off';
-            
-            figure(f);
-        end
+      
         
         function update_verbosity(app)
             global GVerbosity
@@ -1512,7 +1519,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             end
     
             % wait for the background process to load
-            while ~app.Runtime.BgIsRunning, pause(0.01); end
+            timeout(60);
+            while ~app.Runtime.BgIsRunning && ~timeout, pause(0.01); end
             if exist('D','var'), close(D); end
                 
             if nargout == 0, clear app; end
@@ -1527,7 +1535,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             end
             
             f = findobj('type','figure','-and','name','MABR Live Plot');
-            if ~isempty(f), delete(f); end
+            try
+                if ~isempty(f), delete(f); end
+            end
             
             try
                 delete(app.Schedule);

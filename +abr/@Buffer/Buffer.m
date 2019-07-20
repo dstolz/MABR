@@ -16,7 +16,8 @@ classdef Buffer
         PadValue     (1,1) = 0; % data type cast to obj.Data type
         PadToFrameSize matlab.lang.OnOffSwitchState = 'off';
         
-        DetrendPoly      (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(DetrendPoly,-1),mustBeLessThanOrEqual(DetrendPoly,9)} = -1;
+        SmoothSpan    (1,1) double {mustBeInteger,mustBeNonnegative} = 0;   
+        DetrendPoly   (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(DetrendPoly,-1),mustBeLessThanOrEqual(DetrendPoly,9)} = -1;
                 
         FFTOptions = struct('windowFcn',@hanning,'inDecibels',true);
     end
@@ -110,7 +111,7 @@ classdef Buffer
         function s = get.SweepData(obj)
             idx = obj.sweepIdx;
             if isempty(idx), s = []; return; end
-            ind = any(idx > obj.N | idx < 1);
+            ind = any(idx > obj.N | idx < 1,1);
             s = obj.Data(idx(:,~ind));
         end 
         
@@ -121,16 +122,25 @@ classdef Buffer
         function m = get.SweepMean(obj)
             m = mean(obj.SweepData,2);
             
+            % optionally apply postprocessing
+            
+            % detrend
             if obj.DetrendPoly == 0
                 m = m - mean(m);
             elseif obj.DetrendPoly > 0
-                t = obj.TimeVector;
-                [p,~,mu] = polyfit(t',m,obj.DetrendPoly);
+                t = obj.TimeVector';
+                [p,~,mu] = polyfit(t,m,obj.DetrendPoly);
                 y = polyval(p,t,[],mu);
-                m = m - y';
+                m = m - y;
+            end
+            
+            % smooth
+            if obj.SmoothSpan > 0
+                m = movmean(m,obj.SmoothSpan);
             end
                 
         end
+        
         
         function n = get.N(obj)
             n = length(obj.Data);
@@ -265,6 +275,8 @@ classdef Buffer
             eval(sprintf('signalAnalyzer(%s,''SampleRate'',obj.SampleRate);',str));
             
         end
+        
+        
         
     end
     

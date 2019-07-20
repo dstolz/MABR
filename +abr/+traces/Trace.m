@@ -4,6 +4,7 @@ classdef Trace < handle &  matlab.mixin.SetGet
         ID              (1,1) uint32 = 0;
         SampleRate      (1,1) {mustBePositive,mustBeFinite} = 1;
         Data            (1,:) double
+        ABR             (1,1) abr.ABR
         FirstTimepoint  (1,1) double {mustBeFinite,mustBeNonempty,mustBeNonNan} = 0;
         
         Color           (1,3) double {mustBeNonnegative,mustBeLessThanOrEqual(Color,1)} = [0 0 0];
@@ -14,9 +15,7 @@ classdef Trace < handle &  matlab.mixin.SetGet
 %         LabelText       (1,:)
         
         TimeUnit        (1,:) char {mustBeMember(TimeUnit,{'auto','s','ms','us','ns'})} = 'auto';
-        
-        SIG             (1,1) % abr.sigdef.sigs
-        
+                
         RawData         (1,1) abr.Buffer
         
         Analysis        (1,1) % abr.analysis
@@ -48,17 +47,18 @@ classdef Trace < handle &  matlab.mixin.SetGet
     
     methods
         % Constructor
-        function obj = Trace(data,SIG,firstTimepoint,Fs)
+        %function obj = Trace(data,SIG,firstTimepoint,Fs)
+        function obj = Trace(ABR)
             if nargin == 0
                 obj.ID = 0;
                 return
             end
-            narginchk(2,4);
-            if nargin >= 3 && ~isempty(firstTimepoint), obj.FirstTimepoint = firstTimepoint; end
-            if nargin == 4 && ~isempty(Fs),             obj.SampleRate = Fs; end
             
-            obj.Data  = data(:);
-            obj.SIG   = SIG;
+            obj.Data           = ABR.ADC.SweepMean;
+            obj.FirstTimepoint = ABR.adcWindow(1);
+            obj.SampleRate     = ABR.ADC.SampleRate;
+            
+            obj.ABR = ABR;
         end
         
         % Destructor
@@ -81,9 +81,9 @@ classdef Trace < handle &  matlab.mixin.SetGet
         end
 
         function str = get.LabelText(obj)
-            fn = fieldnames(obj.SIG.dataParams);
+            fn = fieldnames(obj.ABR.SIG.dataParams);
             for i = 1:length(fn)
-                str{i,1} = obj.SIG.(fn{i}).unitValueString;
+                str{i,1} = obj.ABR.SIG.(fn{i}).unitValueString;
             end
         end
         

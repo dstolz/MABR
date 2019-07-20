@@ -613,6 +613,7 @@ app.ControlAdvanceButton.FontSize = 16;
 app.ControlAdvanceButton.Text = 'Advance';
 app.ControlAdvanceButton.Icon = fullfile(app.iconPath,'advance.gif');
 app.ControlAdvanceButton.IconAlignment = 'right';
+app.ControlAdvanceButton.Enable = 'off';
 app.ControlAdvanceButton.ButtonPushedFcn = createCallbackFcn(app, @advance_schedule,false);
 
 R = R + 1;
@@ -624,6 +625,7 @@ app.ControlRepeatButton.Layout.Column = 1;
 app.ControlRepeatButton.FontSize = 16;
 app.ControlRepeatButton.Icon = fullfile(app.iconPath,'repeat.gif');
 app.ControlRepeatButton.IconAlignment = 'right';
+app.ControlRepeatButton.Enable = 'off';
 app.ControlRepeatButton.ValueChangedFcn = createCallbackFcn(app, @repeat_schedule_idx,true);
 
 
@@ -636,6 +638,7 @@ app.ControlPauseButton.Layout.Column = 1;
 app.ControlPauseButton.FontSize = 16;
 app.ControlPauseButton.Icon = fullfile(app.iconPath,'pause.gif');
 app.ControlPauseButton.IconAlignment = 'right';
+app.ControlPauseButton.Enable = 'off';
 app.ControlPauseButton.ValueChangedFcn = createCallbackFcn(app, @pause_button,false);
 
 
@@ -746,6 +749,74 @@ app.FilterNotchFilterLabel.Text = 'Digital Notch Filter';
 app.PostProcessingTab = uitab(app.TabGroup);
 app.PostProcessingTab.Title = 'Post-Processing';
 
+nRows = 6; nCols = 2;
+G = uigridlayout(app.PostProcessingTab,[nRows,nCols]);
+G.RowHeight   = repmat({'1x'},1,nRows);
+G.ColumnWidth = {200,100};
+
+R = 2;
+
+% Create PPMovingAvgLabel
+app.PPMovingAvgLabel = uilabel(G);
+app.PPMovingAvgLabel.FontSize = 14;
+app.PPMovingAvgLabel.FontWeight = 'bold';
+app.PPMovingAvgLabel.Layout.Row = R;
+app.PPMovingAvgLabel.Layout.Column = 1;
+app.PPMovingAvgLabel.Text = 'Moving Average Span';
+app.PPMovingAvgLabel.HorizontalAlignment = 'right';
+
+% Create PPMovingAvgDD
+app.PPMovingAvgDD = uidropdown(G);
+app.PPMovingAvgDD.Tag = 'smooth';
+app.PPMovingAvgDD.FontSize = 16;
+app.PPMovingAvgDD.Items = {'None','3','5','7','9','11'};
+app.PPMovingAvgDD.ItemsData = [0 3:2:11];
+app.PPMovingAvgDD.Value = 0;
+app.PPMovingAvgDD.ValueChangedFcn = createCallbackFcn(app, @update_postprocessing, true);
+
+
+R = R + 1;
+
+% Create PPDetrendLabel
+app.PPDetrendLabel = uilabel(G);
+app.PPDetrendLabel.FontSize = 14;
+app.PPDetrendLabel.FontWeight = 'bold';
+app.PPDetrendLabel.Layout.Row = R;
+app.PPDetrendLabel.Layout.Column = 1;
+app.PPDetrendLabel.Text = 'Detrend Polynomial';
+app.PPDetrendLabel.HorizontalAlignment = 'right';
+
+% Create PPDetrendDD
+app.PPDetrendDD = uidropdown(G);
+app.PPDetrendDD.Tag = 'detrend';
+app.PPDetrendDD.FontSize = 16;
+app.PPDetrendDD.Items = [{'None'},cellfun(@num2str,num2cell(1:7),'uni',0)];
+app.PPDetrendDD.ItemsData = 0:7;
+app.PPDetrendDD.Value = 1;
+app.PPDetrendDD.ValueChangedFcn = createCallbackFcn(app, @update_postprocessing, true);
+
+
+R = R + 1;
+% 
+% % Create PPArtifactRejectLabel
+% app.PPArtifactRejectLabel = uilabel(G);
+% app.PPArtifactRejectLabel.FontSize = 14;
+% app.PPArtifactRejectLabel.FontWeight = 'bold';
+% app.PPArtifactRejectLabel.Layout.Row = R;
+% app.PPArtifactRejectLabel.Layout.Column = 1;
+% app.PPArtifactRejectLabel.Text = 'Detrend Polynomial';
+% app.PPArtifactRejectLabel.HorizontalAlignment = 'right';
+% 
+% % Create PPArtifactRejectDD
+% app.PPArtifactRejectDD = uidropdown(G);
+% app.PPArtifactRejectDD.Tag = 'detrend';
+% app.PPArtifactRejectDD.FontSize = 16;
+% app.PPArtifactRejectDD.Items = [{'None'},cellfun(@num2str,num2cell(1:7),'uni',0)];
+% app.PPArtifactRejectDD.ItemsData = 0:7;
+% app.PPArtifactRejectDD.Value = 1;
+% app.PPArtifactRejectDD.ValueChangedFcn = createCallbackFcn(app, @update_postprocessing, true);
+
+
 
 
 %% UTILITIES TAB ----------------------------------------------------------
@@ -756,7 +827,7 @@ app.UtilitiesTab.Title = 'Utilities';
 
 nRows = 5; nCols = 2;
 G = uigridlayout(app.UtilitiesTab,[nRows nCols]);
-G.RowHeight = repmat({'1x'},1,nRows);
+G.RowHeight   = repmat({'1x'},1,nRows);
 G.ColumnWidth = repmat({'1x'},1,nCols);
     
 R = 2;

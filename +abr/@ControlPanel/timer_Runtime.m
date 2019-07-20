@@ -23,7 +23,11 @@ R = app.live_analysis(preSweep,postSweep);
 if isnan(R), return; end
 
 % update plots
-app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R);
+
+% update postprocessing options
+opts.DetrendPoly = app.ABR.ADC.DetrendPoly;
+opts.SmoothSpan  = app.ABR.ADC.SmoothSpan;
+app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R,opts);
 
 % sweep analysis
 vprintf(4,'Sweep summary_analysis')
