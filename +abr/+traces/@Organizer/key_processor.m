@@ -98,7 +98,8 @@ switch lower(K)
         
     case {'g','group'} % group selected traces
         if isempty(tidx), return; end
-        obj.GroupIdx(tidx) = max(obj.GroupIdx) + 1;
+        gid = max(obj.GroupID) + 1;
+        set(obj.Traces(tidx),'GroupID',gid);
         plot(obj);
         
     case {'h','hide'} % toggle hiding labels
@@ -112,8 +113,8 @@ switch lower(K)
         
     case {'i','equal'}
         if length(tidx) < 2, tidx = obj.TraceIdx; end
-        y = obj.YPosition(tidx);
-        obj.YPosition(tidx) = linspace(min(y),max(y),length(tidx));
+        y = obj.YOffset(tidx);
+        obj.update_yoffset(tidx,linspace(min(y),max(y),length(tidx)));
         plot(obj);
         
         
@@ -123,22 +124,22 @@ switch lower(K)
 
     case 'k' % increase trace spacing
         if length(tidx) < 2, return; end
-        y = obj.YPosition(tidx);
+        y = obj.Traces(tidx).YOffset;
         [y,i] = sort(y,'ascend');
         tidx = tidx(i);
         dy = y - y(1);
         ny = y + dy * .1;
-        obj.YPosition(tidx) = ny;
+        obj.update_yoffset(tidx,ny);
         plot(obj);
         
     case 'm' % decrease trace spacing
         if length(tidx) < 2, return; end
-        y = obj.YPosition(tidx);
+        y = obj.Traces(tidx).YOffset;
         [y,i] = sort(y,'ascend');
         tidx = tidx(i);
         dy = y - y(1);
         ny = y - dy * .1;
-        obj.YPosition(tidx) = ny;
+        obj.update_yoffset(tidx,ny);
         plot(obj);
         
     case 'n' % decrease trace amp
@@ -160,15 +161,17 @@ switch lower(K)
         
     case {'u','ungroup'} % ungroup selected traces
         if isempty(tidx), return; end
-        obj.GroupIdx(tidx) = 1; % reset to default group
+        set(obj.Traces(tidx),'GroupID',1); % reset to default group
         plot(obj);
         
     case {'v','overlap'} % overlap selected traces
         if isempty(tidx), return; end
-        if all(obj.YPosition(tidx) == obj.YPosition(tidx(1)))
-            %                         obj.YPosition(tidx)
+        if all(obj.YOffset(tidx) == obj.YOffset(tidx(1)))
+            yspc = obj.YSpacing .* (0:length(tidx)-1);
+            yspc = yspc - mean(n);
+            set(obj.Traces(tidx),'YOffset',yspc);
         else
-            obj.YPosition(tidx) = obj.YPosition(tidx(1));
+            set(obj.Traces(tidx),'YOffset',obj.Traces(tidx(1)).YOffset);
         end
         plot(obj);
         

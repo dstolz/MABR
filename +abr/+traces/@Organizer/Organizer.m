@@ -4,7 +4,6 @@ classdef (ConstructOnLoad = true) Organizer < handle
         SortBy          (:,1) cell
         SortOrder       (:,1) cell
         
-        YPosition       (:,1) double {mustBeFinite} = 0;
         YScaling        (1,1) double {mustBePositive,mustBeNonempty,mustBeFinite} = 0.7;
         YSpacing        (1,1) double {mustBePositive,mustBeNonempty,mustBeFinite} = 1;
         
@@ -17,7 +16,6 @@ classdef (ConstructOnLoad = true) Organizer < handle
     end
     
     properties (SetAccess = private)
-        
         Labels          (1,:) cell
         N               (1,1) double
         
@@ -29,8 +27,10 @@ classdef (ConstructOnLoad = true) Organizer < handle
         
         informativeProps
         
-        TraceIdx    (:,1)
-        GroupIdx    (:,1)
+        TraceIdx    (:,1) uint32
+
+        GroupID     (:,1) uint32
+        YOffset     (:,1) double
     end
     
     properties (SetAccess = private,Transient)
@@ -94,42 +94,41 @@ classdef (ConstructOnLoad = true) Organizer < handle
         function add_trace(obj,ABR)
             narginchk(2,2);
             
-            vprintf(2,'Adding trace to Organizer')
-            
+            vprintf(2,'Adding new trace to Organizer')
                         
             if isempty(obj.Traces) || obj.N == 1 && obj.Traces.ID == 0
-                obj.Traces = abr.traces.Trace(ABR);
-                obj.TraceIdx = 1;
-                obj.Traces(1).ID = 1;
-                obj.YPosition = 0;
-                obj.GroupIdx  = 1; % default group
+                obj.Traces            = abr.traces.Trace(ABR);
+                obj.Traces(1).ID      = 1;
+                obj.Traces(1).YOffset = 0;
+                obj.Traces(1).GroupID = 1; % default group
+                obj.TraceIdx(1)       = 1;
             else
-                obj.Traces(end+1) = abr.traces.Trace(ABR);
-                obj.TraceIdx(end+1) = max(obj.TraceIdx)+1;
-                obj.Traces(end).ID = obj.TraceIdx(end);
-                obj.YPosition(end+1) = min(obj.YPosition) - obj.YSpacing;
-                obj.GroupIdx(end+1) = 1; % default group
+                obj.Traces(end+1)       = abr.traces.Trace(ABR);
+                obj.Traces(end).ID      = max(obj.TraceIdx)+1;
+                obj.Traces(end).YOffset = min(obj.YOffset) - obj.YSpacing;
+                obj.Traces(end).GroupID = 1; % default group
+                obj.TraceIdx(end+1)     = obj.Traces(end).ID;
             end
             
-            obj.Traces(end).Color = obj.groupColors(obj.GroupIdx(end),:);
+            vprintf(2,'Added trace ID %d',obj.Traces(end).ID)
+
+            
+            obj.Traces(end).Color = obj.groupColors(obj.GroupID(end),:);
 
             
             plot(obj);
         end
                 
         function delete_trace(obj,idx)
-            obj.YPosition(idx) = [];
             obj.Labels(idx) = [];
             obj.TraceSelection(ismember(obj.TraceSelection,idx)) = [];
             obj.TraceIdx(ismember(obj.TraceIdx,idx)) = [];
-            obj.GroupIdx(idx) = [];
             obj.Traces(idx) = [];
         end
         
         function n = get.N(obj)
             n = numel(obj.Traces);
         end
-        
         
         function set.YSpacing(obj,yspace)
             obj.YSpacing = yspace;
@@ -237,18 +236,14 @@ classdef (ConstructOnLoad = true) Organizer < handle
         end
         
         
-        
-        function y = get.YPosition(obj)
-            if isempty(obj.YPosition)
-                y = arrayfun(@(a) mean(a.Data),obj.Traces);
-                y = y + [0 cumsum(repmat(obj.YSpacing,size(y)))];
-            else
-                y = obj.YPosition;
-            end
-            
+        function id = get.GroupID(obj)
+            id = [obj.Traces.GroupID];
         end
-        
-        
+
+        function y = get.YOffset(obj)
+            y = [obj.Traces.YOffset];
+        end
+
         
         
         % Overloaded Functions --------------------------------------------
@@ -376,16 +371,16 @@ classdef (ConstructOnLoad = true) Organizer < handle
             
             % obj.TraceIdx = [];
             for k = pidx
-                obj.Traces(k).Color     = obj.groupColors(obj.GroupIdx(k),:);
+                obj.Traces(k).Color = obj.groupColors(double(obj.Traces(k).GroupID),:);
 %                 obj.Traces(k).LabelText = obj.Labels(k,:);
 
                 obj.Traces(k).plot(obj.mainAx);
-                obj.Traces(k).LineHandle.YData = D{k} + obj.YPosition(k);
+                obj.Traces(k).LineHandle.YData = D{k} + obj.YOffset(k);
                 obj.Traces(k).LineHandle.ButtonDownFcn  = {'abr.traces.Organizer.trace_clicked',obj,k};
                 obj.Traces(k).LabelHandle.ButtonDownFcn = {'abr.traces.Organizer.trace_label_clicked',obj,k};
                 % obj.TraceIdx(k) = k;
                 
-                obj.Traces(k).LabelHandle.Position(2) = obj.YPosition(k);
+                obj.Traces(k).LabelHandle.Position(2) = obj.YOffset(k);
                 
                 obj.Traces(k).LineHandle.UIContextMenu  = obj.ContextMenu;
                 obj.Traces(k).LabelHandle.UIContextMenu = obj.ContextMenu;
@@ -420,7 +415,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 obj.ampScaleLabelHandle = text(obj.mainAx,nan,nan,'mV');
             end
             
-            y(1) = min(obj.YPosition);
+            y(1) = min(obj.YOffset);
             
             my = obj.max_data * 2;
             [unit,multiplier] = abr.Tools.voltage_gauge(my);
@@ -453,9 +448,17 @@ classdef (ConstructOnLoad = true) Organizer < handle
         end
         
         
+        
     end
     
     methods (Access = private)
+        
+        function update_yoffset(obj,idx,yoffset)
+            assert(numel(idx) == numel(yoffset),'numel(idx) ~= numel(yoffset)');
+            for i = 1:numel(idx)
+                obj.Traces(idx(i)).YOffset = yoffset(i);
+            end
+        end
         
         function v = max_data(obj)
             D = {obj.Traces.Data};

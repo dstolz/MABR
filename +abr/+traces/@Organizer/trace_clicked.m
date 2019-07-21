@@ -17,12 +17,12 @@ if isequal({'shift'},fcc)
     if isempty(tidx)
         tidx = traceIdx; 
     else
-        oy = obj.YPosition(tidx);
-        ny = obj.YPosition(traceIdx);
+        oy = obj.Traces(tidx).YOffset;
+        ny = obj.Traces(traceIdx).YOffset;
         if ny < oy
-            tidx = find(obj.YPosition <= oy & obj.YPosition >= ny);
+            tidx = find(obj.YOffset <= oy & obj.YOffset >= ny);
         else
-            tidx = find(obj.YPosition >= oy & obj.YPosition <= ny);
+            tidx = find(obj.YOffset >= oy & obj.YOffset <= ny);
         end
     end
         
@@ -49,7 +49,8 @@ elseif isequal({'control'},fcc)
     
     
 elseif isequal({'shift','control'},fcc)
-    ind = obj.GroupIdx == obj.GroupIdx(traceIdx);
+    gid = obj.GroupID;
+    ind = gid(traceIdx) == gid;
     obj.TraceSelection = union(obj.TraceSelection,obj.TraceIdx(ind));
     uistack([obj.Traces(obj.TraceSelection).LineHandle],'top');
     uistack([obj.Traces(obj.TraceSelection).MarkerHandles],'top');

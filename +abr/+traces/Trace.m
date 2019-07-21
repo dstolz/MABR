@@ -1,7 +1,11 @@
-classdef Trace < handle &  matlab.mixin.SetGet
+classdef Trace < handle & matlab.mixin.SetGet
     
     properties
-        ID              (1,1) uint32 = 0;
+        ID              (1,1) uint32 = 1;
+        GroupID         (1,1) uint32 = 1;
+
+        YOffset         (1,1) double {mustBeFinite} = 0;
+
         SampleRate      (1,1) {mustBePositive,mustBeFinite} = 1;
         Data            (1,:) double
         ABR             (1,1) abr.ABR
@@ -77,7 +81,15 @@ classdef Trace < handle &  matlab.mixin.SetGet
         end
         
         function str = get.LabelID(obj)
-            str = num2str(obj.ID,'ID %03d');
+            gid = obj.GroupID;
+            k = 2;
+            while gid(1) > 26
+                gid(end+1) = mod(gid(k-1),26);
+                if gid(end) == 0, gid(end) = 26; end
+                gid(k-1) = gid(k-1) - 26;
+            end
+            gid = gid+64;
+            str = sprintf('%s-%d',gid,obj.ID);
         end
 
         function str = get.LabelText(obj)

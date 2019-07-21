@@ -34,16 +34,14 @@ if ~any(DC), return; end
 
 LAST_COORD = XY;
 
-% m = 0.05; % movement multiplier
-% obj.YPosition(tidx) = obj.YPosition(tidx) + DC(2)*m;
-obj.YPosition(tidx) = obj.YPosition(tidx) + DC(2);
+obj.update_yoffset(tidx,[obj.Traces(tidx).YOffset] + DC(2));
 
 h = [obj.Traces(tidx).LineHandle];
 k = [obj.Traces(tidx).LabelHandle];
 for i = 1:length(h)
     %h(i).YData = h(i).YData + DC(2)*m;
     h(i).YData = h(i).YData + DC(2);
-    k(i).Position(2) = obj.YPosition(tidx(i));
+    k(i).Position(2) = obj.YOffset(tidx(i));
 end
 
 obj.plot_amp_scale;
