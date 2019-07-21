@@ -749,10 +749,10 @@ app.FilterNotchFilterLabel.Text = 'Digital Notch Filter';
 app.PostProcessingTab = uitab(app.TabGroup);
 app.PostProcessingTab.Title = 'Post-Processing';
 
-nRows = 6; nCols = 2;
+nRows = 6; nCols = 3;
 G = uigridlayout(app.PostProcessingTab,[nRows,nCols]);
 G.RowHeight   = repmat({'1x'},1,nRows);
-G.ColumnWidth = {200,100};
+G.ColumnWidth = {200,100,100};
 
 R = 2;
 
@@ -771,6 +771,8 @@ app.PPMovingAvgDD.Tag = 'smooth';
 app.PPMovingAvgDD.FontSize = 16;
 app.PPMovingAvgDD.Items = {'None','2','3','4','5','5','7','6','9','10','11'};
 app.PPMovingAvgDD.ItemsData = [0 2:11];
+app.PPMovingAvgDD.Layout.Row = R;
+app.PPMovingAvgDD.Layout.Column = 2;
 app.PPMovingAvgDD.Value = 0;
 app.PPMovingAvgDD.ValueChangedFcn = createCallbackFcn(app, @update_postprocessing, true);
 
@@ -790,9 +792,11 @@ app.PPDetrendLabel.HorizontalAlignment = 'right';
 app.PPDetrendDD = uidropdown(G);
 app.PPDetrendDD.Tag = 'detrend';
 app.PPDetrendDD.FontSize = 16;
-app.PPDetrendDD.Items = [{'None'},{'Remove Mean'},cellfun(@num2str,num2cell(1:7),'uni',0)];
+app.PPDetrendDD.Layout.Row = R;
+app.PPDetrendDD.Layout.Column = [2 3];
+app.PPDetrendDD.Items = [{'None'},{'Subtract Mean'},cellfun(@num2str,num2cell(1:7),'uni',0)];
 app.PPDetrendDD.ItemsData = -1:7;
-app.PPDetrendDD.Value = 1;
+app.PPDetrendDD.Value = -1;
 app.PPDetrendDD.ValueChangedFcn = createCallbackFcn(app, @update_postprocessing, true);
 
 
