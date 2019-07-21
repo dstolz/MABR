@@ -252,9 +252,8 @@ classdef (Abstract) Signal
         
         % Overloaded methods ----------------------------------------------
         function signalAnalyzer(obj)
-            fprintf('Launching Signal Analyzer ...')
+            vprintf(0,'Launching Signal Analyzer ...')
             signalAnalyzer(obj.data{1},'TimeValues',obj.timeVector{1});
-            fprintf(' done\n')
         end
         
         function h = plot(obj,ax,varargin)

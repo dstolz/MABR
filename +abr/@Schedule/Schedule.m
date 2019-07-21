@@ -281,9 +281,7 @@ classdef Schedule < matlab.apps.AppBase
             
             app.update_save_state('off');
             
-            
-            fprintf(' done\n')
-            
+                        
         end
     end
     
