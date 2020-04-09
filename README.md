@@ -1,4 +1,6 @@
-# abr
+# MABR
+
+Matlab Auditory Brainstem Response software.
 
 Please contact me directly if you are interested in using this toolbox.
 
