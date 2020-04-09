@@ -1,4 +1,7 @@
 # abr
+
+Please contact me directly if you are interested in using this toolbox.
+
 Copyright (C) Daniel Stolzberg, PhD - All Rights Reserved
 Unauthorized copying of this file, via any medium is strictly prohibited
 Proprietary and confidential
