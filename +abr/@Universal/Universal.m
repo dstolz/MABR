@@ -47,8 +47,8 @@ classdef Universal < handle
         
         RequiredToolboxes = {'MATLAB',9.5; ...
                              'Signal Processing Toolbox',8.1; ...
-                             'Audio System Toolbox',1.5; ...
-                             'DSP System Toolbox',9.7};
+                             'Audio Toolbox',1.5; ...
+                             'DSP System Toolbox',9.1};
                 
         DocumentationFile = 'MABR_Help.json'; % must be on Matlab's path
         DocumentationPDF  = 'MABR_Documentation.pdf'; % must be on Matlab's path
@@ -174,11 +174,11 @@ classdef Universal < handle
         
         function tf = get.hasAllToolboxes(obj)
             v = ver;
-            tf = [];
+            tf = false(size(obj.RequiredToolboxes,1),1);
             for i = 1:length(v)
                 ind = ismember(obj.RequiredToolboxes(:,1),v(i).Name);
                 if ~any(ind), continue; end
-                tf(end+1) = str2double(v(i).Version) >= obj.RequiredToolboxes{ind,2};
+                tf(ind) = str2double(v(i).Version) >= obj.RequiredToolboxes{ind,2};
             end
             if sum(tf) ~= size(obj.RequiredToolboxes,1)
                 rtstr = '';

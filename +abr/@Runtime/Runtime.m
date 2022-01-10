@@ -3,7 +3,7 @@ classdef Runtime < handle
     
     properties        
         mapCom          % memmapfile object: communications
-        mapSignalBuffer  % memmapfile object: signal buffer       
+        mapSignalBuffer % memmapfile object: signal buffer       
         mapTimingBuffer % memmapfile object: timing buffer
         
         CommandToBg     (1,1) abr.Cmd

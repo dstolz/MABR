@@ -118,15 +118,16 @@ classdef (Abstract) Signal
         function obj = set.Fs(obj,Fs)
             obj.Calibration.Fs = Fs;
             
-            p = properties(obj);
-            ind = cellfun(@(a) isa(obj.(a),'abr.sigdef.sigProp'),p);
-            p(~ind) = [];
+%             p = properties(obj);
+%             ind = cellfun(@(a) isa(obj.(a),'abr.sigdef.sigProp'),p);
+%             p(~ind) = [];
             
-            ind = cellfun(@(a) isequal(obj.(a).Dependency,'Nyquist'),p);
-            cellfun(@(a) set(obj.(a),'MaxValue',Fs/2),p(ind));
-            
-            ind = cellfun(@(a) isequal(obj.(a).Dependency,'Duration'),p);
-            cellfun(@(a) set(obj.(a),'MinValue',1/Fs),p(ind));
+%             ind = cellfun(@(a) isequal(obj.(a).Dependency,'Nyquist'),p);
+%             cellfun(@(a) set(obj.(a),'MaxValue',Fs/2),p(ind));
+%             
+%             ind = cellfun(@(a) isequal(obj.(a).Dependency,'Duration'),p);
+%             cellfun(@(a) set(obj.(a),'MinValue',1/Fs),p(ind));
+            obj.Fs = Fs;
         end
         
         

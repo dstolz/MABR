@@ -253,7 +253,7 @@ classdef ScheduleDesign < matlab.apps.AppBase
 
         % Button pushed function: PlotButton
         function PlotButtonPushed(app, event)
-            if isempty(app.ScheduleDesignFigureSigPlot)
+            if isempty(app.ScheduleDesignFigureSigPlot) || ~isvalid(app.ScheduleDesignFigureSigPlot)
                 app.ScheduleDesignFigureSigPlot = figure('name','SigPlot','color','w');
                 app.axSigPlot  = axes(app.ScheduleDesignFigureSigPlot,'Tag','SigPlot');
             end
@@ -292,7 +292,9 @@ classdef ScheduleDesign < matlab.apps.AppBase
                     x = app.SIG.dataParams;
                     N = structfun(@(a) numel(unique(a)),x);
                     p = fieldnames(x);
-                    x = rmfield(x,p(N==1));
+                    if ~all(N==1)
+                        x = rmfield(x,p(N==1));
+                    end
                     
                     pstr = '';
                     for i = fieldnames(x)'
