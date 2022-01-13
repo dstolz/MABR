@@ -6,8 +6,8 @@ classdef Runtime < handle
         mapSignalBuffer % memmapfile object: signal buffer       
         mapTimingBuffer % memmapfile object: timing buffer
         
-        CommandToBg     (1,1) abr.Cmd
-        CommandToFg     (1,1) abr.Cmd
+        CommandToBg     (1,1) abr.Cmd = abr.Cmd.Undef;
+        CommandToFg     (1,1) abr.Cmd = abr.Cmd.Undef;
         
         BackgroundState (1,1) abr.stateAcq
         ForegroundState (1,1) abr.stateAcq
@@ -37,10 +37,9 @@ classdef Runtime < handle
         lastReceivedCmd     abr.Cmd
     end
     
-    properties (Access = private)
+    properties (Access = public)
         AFR     % dsp.AudioFileReader
-        APR     % auidoPlayerRecorder
-        
+        APR     % audioPlayerRecorder
     end
     
     properties (Constant)
@@ -53,7 +52,8 @@ classdef Runtime < handle
 
         % Constructor
         function obj = Runtime(Role)
-            abr.Universal.addpaths;
+
+            obj.Universal.addpaths;
 
             if nargin == 0 || isempty(Role), Role = 'Foreground'; end
             obj.Role = Role;
@@ -63,11 +63,13 @@ classdef Runtime < handle
             
             if obj.isBackground
                 
-                abr.Universal.startup;
-
-                obj.create_memmapfile;
+                obj.Universal.startup;
+                
+                vprintf(4,'Background process started')
                 
                 abr.Runtime.print_do_not_close;
+
+                obj.create_memmapfile;
 
                 % Make sure MATLAB is running at full steam
                 abr.Tools.set_priority(obj.infoData.Background_ProcessID,'high priority');
@@ -75,6 +77,7 @@ classdef Runtime < handle
                 
                 
                 % reset command to foreground and background state
+                obj.CommandToBg     = abr.Cmd.Undef;
                 obj.CommandToFg     = abr.Cmd.Undef;
                 obj.BackgroundState = abr.stateAcq.IDLE;
                 
@@ -370,7 +373,7 @@ classdef Runtime < handle
         
         function launch_bg_process
             
-            U = abr.Universal;
+            U = obj.Universal;
             
             % setup Background process
             cmdStr = sprintf('addpath(''%s''); H = abr.Runtime(''Background'');', ...

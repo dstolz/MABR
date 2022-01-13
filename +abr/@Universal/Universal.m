@@ -27,6 +27,7 @@ classdef Universal < handle
         infoFile        (1,:) char
         
         hasAllToolboxes (1,1) logical = false;
+
                 
     end
     
@@ -57,6 +58,8 @@ classdef Universal < handle
     methods
         % Constructor
         function obj = Universal()
+            
+            obj.set_verbosity; % sets GVerbosity from previous pref
             
             obj.errorLogPath = fullfile(fileparts(obj.root),'.error_logs');
             if ~isdir(obj.errorLogPath), mkdir(obj.errorLogPath); end
@@ -108,7 +111,17 @@ classdef Universal < handle
             vprintf(1,newMode == abr.Cmd.Test,'PROGRAM MODE = %s',char(newMode))
         end
         
-        
+        function set_verbosity(obj,v)
+            global GVerbosity
+            
+            if nargin < 2 || isempty(v)
+                v = getpref('MABRUniversal','verbosity',1);
+            end
+            
+            GVerbosity = min(max(v,0),4);
+            setpref('MABRUniversal','verbosity',GVerbosity);
+        end
+
         
         function m = get.meta(obj)
             m.Author      = obj.Author;

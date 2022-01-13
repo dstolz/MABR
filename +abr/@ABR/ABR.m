@@ -39,6 +39,12 @@ classdef ABR < handle % & abr.Universal
 
     end
     
+    properties (Hidden)
+        % get copied to Runtime ????
+        AFR     % dsp.AudioFileReader
+        APR     % audioPlayerRecorder
+    end
+    
     properties (SetAccess = private)
         adcFilterDesign;
         adcNotchFilterDesign

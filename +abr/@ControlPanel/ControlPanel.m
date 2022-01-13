@@ -30,7 +30,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         DATA             (:,1) abr.ABR
     end
 
-    properties (Access = private)
+    properties % (Access = private)
         Runtime     %abr.Runtime
         
         timer_StartFcn   = @abr.ControlPanel.timer_Start;
@@ -783,6 +783,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             app.Runtime = abr.Runtime;
                         end
                         
+                        % copy handles to audioFileReader and audioPlayerRecorder
+                        app.Runtime.AFR = app.ABR.AFR;
+                        app.Runtime.APR = app.ABR.APR;
+                        
                         % idle background process
                         app.Runtime.CommandToBg = abr.Cmd.Idle;
                         
@@ -1455,7 +1459,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             [s,v] = listdlg('PromptString','Set Verbosity Level', ...
                 'SelectionMode','single', ...
-                'InitialValue',GVerbosity+1, ...
+                'InitialValue',max(min(GVerbosity+1,5),0), ...
                 'ListString',vstr);
             
             if isequal(v,0), return; end
@@ -1463,6 +1467,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             GVerbosity = s-1;
             
             app.VerbosityMenu.Text = sprintf('Program Verbosity = %d',GVerbosity);
+            
+            U = abr.Universal;
+            U.verbosity = GVerbosity;
             
             vprintf(1,'Verbosity set to %s',vstr{GVerbosity+1})
             
