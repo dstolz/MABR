@@ -127,6 +127,7 @@ classdef Runtime < handle
             i = obj.infoData;
             if ~isfield(i,'Background_ProcessID'), obj.update_infoData('Background_ProcessID',-1); end
             tf = any(obj.infoData.Background_ProcessID == pids);
+%             vprintf(4,'BgIsRunning = %d',tf)
         end
         
         
@@ -135,6 +136,7 @@ classdef Runtime < handle
             i = obj.infoData;
             if ~isfield(i,'Foreground_ProcessID'), obj.update_infoData('Foreground_ProcessID',-1); end
             tf = any(obj.infoData.Foreground_ProcessID == pids);
+%             vprintf(4,'FgIsRunning = %d',tf)
         end
         
         function create_memmapfile(obj)
@@ -143,14 +145,15 @@ classdef Runtime < handle
             
             % remove .dat files which will be rewritten
             d = dir(fullfile(obj.Universal.runtimePath,'*.dat'));
-            if isempty(d), return; end
-            ffn = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
-            ind = cellfun(@exist,ffn) ~= 2;
-            if all(ind), return; end
-            ffn(ind) = [];
-            warning('off','MATLAB:DELETE:Permission');
-            cellfun(@delete,ffn);
-            warning('on','MATLAB:DELETE:Permission');
+            if ~isempty(d)
+                ffn = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
+                ind = cellfun(@exist,ffn) ~= 2;
+                if all(ind), return; end
+                ffn(ind) = [];
+                warning('off','MATLAB:DELETE:Permission');
+                cellfun(@delete,ffn);
+                warning('on','MATLAB:DELETE:Permission');
+            end
             
             % NOTE memmapfile does not support char, but can simply convert using char(m.Data)
             if ~exist(obj.Universal.comFile, 'file')
@@ -373,7 +376,7 @@ classdef Runtime < handle
         
         function launch_bg_process
             
-            U = obj.Universal;
+            U = abr.Universal;
             
             % setup Background process
             cmdStr = sprintf('addpath(''%s''); H = abr.Runtime(''Background'');', ...
