@@ -1464,12 +1464,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             if isequal(v,0), return; end
             
-            GVerbosity = s-1;
+            GVerbosity = uint8(s-1);
             
             app.VerbosityMenu.Text = sprintf('Program Verbosity = %d',GVerbosity);
             
-            U = abr.Universal;
-            U.verbosity = GVerbosity;
+            app.Runtime.Universal.set_verbosity(GVerbosity);
             
             vprintf(1,'Verbosity set to %s',vstr{GVerbosity+1})
             
