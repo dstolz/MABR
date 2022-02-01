@@ -1,4 +1,4 @@
-classdef (Abstract) Signal
+classdef (Abstract,Hidden) Signal
     % Signal
     %
     % Daniel Stolzberg, PhD (c) 2019

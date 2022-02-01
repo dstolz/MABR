@@ -1,4 +1,4 @@
-classdef sigProp %< matlab.mixin.SetGet
+classdef (Hidden) sigProp %< matlab.mixin.SetGet
 % obj = sigProp(value,description,unit,scalingFactor,alternate,type,func)
 % 
 % Daniel Stolzberg, PhD (c) 2019
