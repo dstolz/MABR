@@ -171,27 +171,27 @@ classdef (ConstructOnLoad = true) Organizer < handle
         end
         
         function s = get.Labels(obj)
-%             s = {};
-%             b = obj.SortBy;
-%             m = obj.PropertyMatrix;
-%             n = obj.informativeProps;
-%             if isempty(n), return; end
-%                 
-%             for i = 1:obj.N
-%                 for j = 1:length(n)
-%                     s{i,j} = sprintf('%0.1f',obj.Traces(i).Props.(n{j}));
-%                 end
-%             end
-%             for i = 1:obj.N
-%                 s{i} = '';
-% %                 s{i} = sprintf('\\color[rgb]{%0.3f,%0.3f,%0.3f}',obj.Traces(i).Color);
-%                 %for j = 1:length(b)
-%                     %s{i} = sprintf('%s%0.1f,',s{i},m(i,j));
-%                 for j = 1:length(n)
-%                     s{i} = sprintf('%s%0.1f|',s{i},obj.Traces(i).Props.(n{j}));
-%                 end
-%                 s{i}(end) = [];
-%             end
+            s = {};
+            b = obj.SortBy;
+            m = obj.PropertyMatrix;
+            n = obj.informativeProps;
+            if isempty(n), return; end
+                
+            for i = 1:obj.N
+                for j = 1:length(n)
+                    s{i,j} = sprintf('%0.1f',obj.Traces(i).Props.(n{j}));
+                end
+            end
+            for i = 1:obj.N
+                s{i} = '';
+%                 s{i} = sprintf('\\color[rgb]{%0.3f,%0.3f,%0.3f}',obj.Traces(i).Color);
+                %for j = 1:length(b)
+                    %s{i} = sprintf('%s%0.1f,',s{i},m(i,j));
+                for j = 1:length(n)
+                    s{i} = sprintf('%s%0.1f|',s{i},obj.Traces(i).Props.(n{j}));
+                end
+                s{i}(end) = [];
+            end
         end
         
         function i = get.PlotOrder(obj)
