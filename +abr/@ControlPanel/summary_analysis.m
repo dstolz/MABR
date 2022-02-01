@@ -39,9 +39,9 @@ switch type
         r.p    = p;
 
     otherwise
-        if nargin == 3
-            r = feval(type,data,varargin{:});
-        else
+%         if nargin == 3
+%             r = feval(type,data,varargin{:});
+%         else
             r = feval(type,data);
-        end
+%         end
 end
