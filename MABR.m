@@ -1,6 +1,9 @@
 function h = MABR(rootDir)
 
-if nargin == 0 || isempty(rootDir), rootDir = fileparts(which('ABRstartup')); end
+if nargin == 0 || isempty(rootDir)
+    s = dbstack('-completenames');
+    rootDir = fileparts(s(1).file); 
+end
 
 addpath(rootDir);
 
