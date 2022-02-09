@@ -19,7 +19,7 @@ classdef Buffer
         SmoothSpan    (1,1) double {mustBeInteger,mustBeNonnegative} = 0;   
         DetrendPoly   (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(DetrendPoly,-1),mustBeLessThanOrEqual(DetrendPoly,9)} = -1;
                 
-        FFTOptions = struct('windowFcn',@hanning,'inDecibels',true);
+        FFTOptions = struct('windowFcn',@flattop,'inDecibels',true);
     end
     
     properties (SetAccess = private,Dependent)
@@ -79,7 +79,7 @@ classdef Buffer
         end
         
         function t = get.TimeVector(obj)
-            t = 0:1/obj.SampleRate:obj.SweepDuration-1/obj.SampleRate;
+            t = (0:obj.SweepDuration-1)./obj.SampleRate;
         end
         
         
