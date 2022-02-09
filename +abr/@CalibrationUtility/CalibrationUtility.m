@@ -42,7 +42,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
     
     properties (Access = private)
         %SIG              abr.SoundCalibration = abr.SoundCalibration;
-        SIG             (1,1) % abr.sigdefs.sigs...
+        SIG              % abr.sigdefs.sigs...
 
         STATE           {mustBeMember(STATE,{'setup','idle','prerun','running','postrun','error','usercancelled'})} = 'idle';
         lastError   % me
@@ -164,7 +164,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
             app.Calibration.ReferenceSPL  = app.SoundLeveldBSPLEditField.Value;
             app.Calibration.ReferenceVoltage = app.MeasuredVoltagemVEditField.Value./1000;
             
-            app.Calibration.CalibratedValues = app.SIG.(app.Calibration.CalibratedParameter).realValue;
+% %             app.SIG.(app.Calibration.CalibratedParameter) = abr.sigdef.sigs.(app.Calibration.CalibratedParameter);
+%             app.Calibration.CalibratedValues = app.SIG.(app.Calibration.CalibratedParameter).realValue;
 
             app.Calibration.Note = app.NoteTextArea.Value;
         end
@@ -514,6 +515,13 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 release(afw);
                 delete(afw);
                 
+                
+                % update infoData with channel ids
+                app.Runtime.update_infoData('DACsignalCh',1);
+                app.Runtime.update_infoData('DACtimingCh',2);
+                app.Runtime.update_infoData('ADCsignalCh',1);
+                app.Runtime.update_infoData('ADCtimingCh',2);
+                
                 % tell background process to prep for acquisition
                 app.Runtime.CommandToBg = abr.Cmd.Prep;
                 pause(1);
@@ -564,7 +572,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 clf(f);
                 
                 % Time-domain plot
-                ax = subplot(2,4,[1 4],'Parent',f);
+                ax = subplot(2,4,[1 3],'Parent',f);
                 [unit,multiplier] = abr.Tools.voltage_gauge(max(abs(Y)));
                 tvec = 0:1/Fs:length(Y)/Fs-1/Fs;
                 plot(ax,tvec([1 end])*1000,[0 0],'-k','linewidth',2);
@@ -580,9 +588,23 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 ax.Title.String = sprintf('Reference Tone RMS = %.3f %s RMS',Yrms*multiplier,unit);
                 grid(ax,'on');
                 
+                
+                % Zoom time-domain plot
+                ax = subplot(2,4,4,'Parent',f);
+                L = length(Y);
+                n = round(Fs*4/app.FrequencyHzEditField.Value);
+                idx = round(L/2):round(L/2)+n-1;
+                zY = Y(idx);
+                zT = 1000*tvec(idx);
+                plot(ax,zT,zY);
+                axis(ax,'tight');
+                ax.XAxis.Label.String = 'time (ms)';
+                grid(ax,'on');
+                
+                
                 % Freq-domain plot
                 L = length(Y);
-                w = window('hann',L);
+                w = flattopwin(L);
                 Y = Y.*w;
                 Y = fft(Y);
                 P2 = abs(Y/L);
@@ -615,7 +637,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 % zoomed freq plot
                 ax = subplot(2,4,8,'Parent',f);
                 
-                fb = rFreq .* 2.^([-.5 .5]);
+                fb = rFreq .* 2.^([-.25 .25]);
                 ind = freq >= fb(1) & freq <= fb(2);
                 
                 h = line(ax,freq(ind),M(ind));
@@ -871,33 +893,26 @@ classdef CalibrationUtility < matlab.apps.AppBase
             mC  = app.Runtime.mapCom;
             mSB = app.Runtime.mapSignalBuffer;
             mTB = app.Runtime.mapTimingBuffer;
-            
             BH = double(mC.Data.BufferIndex(2));
             LB = app.Calibration.ADC.N;
             if LB == 0, LB = 1; end
-                    
+
             % gather data from background process
             switch app.Runtime.BackgroundState
                 case abr.stateAcq.COMPLETED
-                    %[~,postSweep] = app.Runtime.extract_sweeps([0 app.SIG.duration.realValue],true);
                     app.Calibration.ADC.Data = mSB.Data(1:BH);
-                    ind = mTB.Data(1:BH-1) > mTB.Data(2:BH);
-                    ind = ind & mTB.Data(1:BH-1) >= 0.5;
-                    app.Calibration.ADC.SweepOnsets = find(ind);
+                    app.Calibration.ADC.SweepOnsets = app.Runtime.find_timing_onsets;
                     stop(T);
                     return
                     
                 case abr.stateAcq.ACQUIRE
-                    %[~,postSweep] = app.Runtime.extract_sweeps([0 app.SIG.duration.realValue],false);
-                    
                     data = mSB.Data(LB:BH);
                     app.Calibration.ADC = app.Calibration.ADC.appendData(data);
                     
                     % find stimulus onsets in timing signal
-                    ind = mTB.Data(LB:BH-1) > mTB.Data(LB+1:BH); % rising edge
-                    ind = ind & mTB.Data(LB:BH-1) >= 0.5; % threshold
-                    if ~any(ind), return; end
-                    app.Calibration.ADC.SweepOnsets(end+1:end+sum(ind)) = LB+find(ind);
+                    idx = app.Runtime.find_timing_onsets;
+                    if isempty(idx), return; end
+                    app.Calibration.ADC.SweepOnsets(end+1:end+length(idx)) = LB+idx;
                     
                     
                 case abr.stateAcq.ERROR
