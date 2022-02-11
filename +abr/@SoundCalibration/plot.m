@@ -20,11 +20,11 @@ end
 
 % Sound Level Plot
 x = SIG.dataParams.(obj.CalibratedParameter) ./ SIG.(obj.CalibratedParameter).ScalingFactor;
-y = obj.MeasuredSPL;
-
 x = x(:)';
 
+y = obj.MeasuredSPL;
 y(end+1:length(x)) = nan;
+y = y(:)';
 
 H.mlh.XData = x([1 end]).*[0.9 1.1];
 H.mlh.YData = [1 1].* obj.NormDB;
@@ -57,13 +57,28 @@ obj.axSL.YAxis.Label.String = 'Sound Level (dB SPL)';
 grid(obj.axSL,'on');
 
 % Time Domain Plot
-x = obj.ADC.TimeVector .* 1000;
+tvec = obj.ADC.TimeVector*1000;
 y = SIG.dataParams.(obj.CalibratedParameter);
 z = obj.ADC.SweepData;
+
+
+% switch SIG.Type
+%     case 'Click'
+        ind = tvec <= max(SIG.duration.realValue)*1000;
+        n = min(length(tvec),2.^(max(nextpow2(sum(ind)),10)));
+        x = tvec(1:n);
+        
+        if ~isempty(z)
+            z(~ind,:) = [];
+            z(n,:) = 0;
+        end
+        
+% end
 
 [~,y] = meshgrid(x,y);
 
 if ~isempty(z)
+    
     n = size(z,2);
     
     [unit,mult] = abr.Tools.voltage_gauge(max(abs(z(:))));
