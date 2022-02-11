@@ -1586,6 +1586,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             end
             vprintf(1,'Amplifier gain set to: %g',g);
             app.UpdateInputGainMenu.Text = sprintf('Amplifier Gain = %gx',g);
+            app.Runtime.update_infoData('InputAmpGain',g);
             setpref('ABRControlPanel','AmpGain',g);
         end
         

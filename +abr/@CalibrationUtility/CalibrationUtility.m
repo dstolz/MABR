@@ -55,12 +55,12 @@ classdef CalibrationUtility < matlab.apps.AppBase
         
         % params
         sweepOnsets     (1,:) double {mustBeNonnegative,mustBeFinite} % sec
-        sweepRate       (1,1) double {mustBePositive,mustBeFinite} = 2; % Hz
-        sweepDuration   (1,:) double {mustBePositive,mustBeFinite} = 0.25; % sec
+        sweepRate       (1,1) double {mustBePositive,mustBeFinite} = 4; % Hz
+        sweepDuration   (1,:) double {mustBePositive,mustBeFinite} = 0.1; % sec
         
         % tone params
-        F1  (1,1) double {mustBePositive,mustBeFinite} = 4000;   % First frequency Hz
-        F2  (1,1) double {mustBePositive,mustBeFinite} = 86400; % Second frequency Hz (should be set to ~.45*Fs)
+        F1  (1,1) double {mustBePositive,mustBeFinite} = 1000;   % First frequency Hz
+        F2  (1,1) double {mustBePositive,mustBeFinite} = 64000; % Second frequency Hz (should be set to ~.45*Fs)
         Fn  (1,1) double {mustBePositive,mustBeInteger} = 25;  % number of samples between F1 and F2 (lin)
         
         % noise params
@@ -195,18 +195,22 @@ classdef CalibrationUtility < matlab.apps.AppBase
             % reset background process
             app.Runtime.CommandToBg = abr.Cmd.Idle;
             
+            vprintf(3,'Checking for BG process is running...')
             while waitForBG && ~app.Runtime.BgIsRunning
-                pause(0.1); 
+                pause(0.1);
+                vprintf(4,'Waiting on BG process...')
             end
             
             if isequal(app.SIG,0), close(D); return; end
             
             
             % tell background process to prep for acquisition
+            vprintf(3,'Request BG to prepare for running')
             app.Runtime.CommandToBg = abr.Cmd.Prep;
             
             % wait for state of background process to update
             while app.Runtime.BackgroundState ~= abr.stateAcq.READY
+                vprintf(4,'app.Runtime.BackgroundState ~= abr.stateAcq.READY')
                 pause(0.1);
                 if app.Runtime.BackgroundState == abr.stateAcq.ERROR
                     app.stateProgram = abr.stateProgram.ERROR;
@@ -220,15 +224,16 @@ classdef CalibrationUtility < matlab.apps.AppBase
         
         function setup_stimulus(app)
             if app.CalibrationPhase < 2
-                app.Calibration.CalibratedVoltage = [];
-                app.Calibration.ADC.Data = [];
+                app.Calibration.reset;
             end
-            
+
             % generate stimulus from SIG obj
+            app.SIG.soundLevel.Value = app.NormLeveldBEditField.Value; % db
             app.SIG = app.SIG.update;
             
             app.SIG = sort(app.SIG,app.SIG.SortProperty,'ascend');
             
+            app.Calibration.CalibratedValues = app.SIG.(app.Calibration.CalibratedParameter).realValue;
             
             if app.CalibrationPhase < 2
                 app.Calibration.StimulusVoltage = repmat(app.stimulusV,app.SIG.signalCount,1);
@@ -339,34 +344,43 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.F2 = round(app.Calibration.Fs*0.45,-2);
 %                     app.SIG.frequency.Value  = sprintf('linspace(%g,%g,%d)',app.F1/1000,app.F2/1000,app.Fn); % kHz
                     app.SIG.frequency.Value  = sprintf('%.2f:.25:%.2f',app.F1/1000,app.F2/1000);
-                    app.SIG.duration.Value   = 250; % ms
+                    app.SIG.duration.Value   = 50; % ms
                     app.SIG.windowFcn.Value  = 'blackmanharris';
                     app.SIG.windowRFTime.Value = 1000.*4./app.F1; % ramp over at least one cycle
-                                        
+                    
                     app.Calibration.CalibratedParameter = 'frequency';
-                    
-                    
-                    
+                    app.Calibration.Method = 'rms';
+                    app.Calibration.InterpMethod = 'makima';
+                                        
                 case 'Noise'
                     app.SIG.HPfreq.Value     = app.FHp/1000;
                     app.SIG.LPfreq.Value     = app.FLp/1000;
                     app.SIG.duration.Value   = 250; % ms
                     app.SIG.windowFcn.Value  = 'blackmanharris';
                     app.SIG.windowRFTime.Value = 1000.*2./app.FHp; % ramp over at least one cycle
+                    
                     app.Calibration.CalibratedParameter = 'HPfreq';
+                    app.Calibration.Method = 'rms';
+                    app.Calibration.InterpMethod = 'nearest';
                     
                 case 'Click'
                     app.SIG.duration.Value   = 0.1; % ms
                     app.SIG.duration.MaxLength = inf;
                     app.SIG.duration.MinValue = 1/app.SIG.Fs;
+                    
                     app.Calibration.CalibratedParameter = 'duration';
                     app.Calibration.Method = 'peak';
+                    app.Calibration.InterpMethod = 'makima';
                     
                 case 'File'
                     uiconfirm(app.ScheduleFigure, ...
                         'File calibration not yet implemented.','Calibration', ...
                         'Icon','info');
                     app.RunCalibrationSwitch.Enable = 'off';
+                    
+                    app.Calibration.Method = 'rms';
+                    app.Calibration.CalibratedParameter = 'file';
+                    app.Calibration.InterpMethod = 'none';
                     return
             end
             
@@ -760,7 +774,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 waitfor(h);
                 return
             end
-                        
+            
             dfltpn = getpref('SoundCalibration','dataPath',cd);
             [fn,pn] = uiputfile({'*.cal','Calibration (*.cal)'}, ...
                 'Save Calibration Data',dfltpn);
@@ -769,7 +783,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
             
             ffn = fullfile(pn,fn);
             
-            Calibration = app.SIG.Calibration; %#ok<ADPROP>
+%             Calibration = app.SIG.Calibration; %#ok<ADPROP> % ????
+            Calibration = app.Calibration; %#ok<ADPROP>
             
             save(ffn,'Calibration','-mat');
             
@@ -779,7 +794,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
         % Menu selected function: LoadCalibrationDataMenu
         function LoadCalibrationDataMenuSelected(app)
             dfltpn = getpref('SoundCalibration','dataPath',cd);
-            [pn,fn] = uigetfile({'*.cal','Calibration (*.cal)'}, ...
+            [fn,pn] = uigetfile({'*.cal','Calibration (*.cal)'}, ...
                 'Load Calibration Data', ...
                 dfltpn,'MultiSelect','off');
             
@@ -792,9 +807,9 @@ classdef CalibrationUtility < matlab.apps.AppBase
             load(ffn,'Calibration','-mat');
             
             app.Calibration = Calibration; %#ok<ADPROP>
-            app.SIG.Calibration = Calibration; %#ok<ADPROP>
+%             app.SIG.Calibration = Calibration; %#ok<ADPROP> % ?????
             
-            fprintf('\tCalibration from: %s\n',app.SIG.Timestamp);
+            fprintf('\tCalibration from: %s\n',app.Calibration.Timestamp);
             
             setpref('SoundCalibration','dataPath',pn);
             
@@ -901,7 +916,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
             switch app.Runtime.BackgroundState
                 case abr.stateAcq.COMPLETED
                     app.Calibration.ADC.Data = mSB.Data(1:BH);
-                    app.Calibration.ADC.SweepOnsets = app.Runtime.find_timing_onsets;
+                    app.Calibration.ADC.SweepOnsets = app.Runtime.find_timing_onsets(1,BH,5);
                     stop(T);
                     return
                     
@@ -910,9 +925,9 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.Calibration.ADC = app.Calibration.ADC.appendData(data);
                     
                     % find stimulus onsets in timing signal
-                    idx = app.Runtime.find_timing_onsets;
+                    idx = app.Runtime.find_timing_onsets(LB,BH,5);
                     if isempty(idx), return; end
-                    app.Calibration.ADC.SweepOnsets(end+1:end+length(idx)) = LB+idx;
+                    app.Calibration.ADC.SweepOnsets(end+1:end+length(idx)) = idx;
                     
                     
                 case abr.stateAcq.ERROR

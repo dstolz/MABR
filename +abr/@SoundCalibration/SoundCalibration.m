@@ -66,6 +66,14 @@ classdef SoundCalibration %< matlab.mixin.Copyable
             
         end
         
+        function reset(obj)
+            obj.CalibratedValues = [];
+            obj.MeasuredVoltage = [];
+            obj.MeasuredSPL = [];
+            obj.CalibratedVoltage = [];
+            obj.ADC.Data = [];
+        end
+        
         function obj = set.Fs(obj,Fs)
             obj.Fs = Fs;
             obj.DAC.SampleRate = Fs;
@@ -164,7 +172,7 @@ classdef SoundCalibration %< matlab.mixin.Copyable
 
         
         function r = calibration_is_valid(obj)
-            r = ~(all(isnan(obj.MeasuredVoltage)) || isempty(obj.CalibratedVoltage));
+            r = ~any(isnan(obj.MeasuredVoltage)) && ~isempty(obj.CalibratedVoltage);
         end
 
         
