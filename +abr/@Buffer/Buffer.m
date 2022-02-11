@@ -79,7 +79,7 @@ classdef Buffer
         end
         
         function t = get.TimeVector(obj)
-            t = (0:obj.SweepDuration-1)./obj.SampleRate;
+            t = 0:1/obj.SampleRate:obj.SweepDuration-1/obj.SampleRate;
         end
         
         
