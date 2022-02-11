@@ -216,6 +216,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.stateProgram = abr.stateProgram.ERROR;
                     return
                 end
+                app.Runtime.CommandToBg = abr.Cmd.Prep;
             end
             
             close(D);
@@ -367,6 +368,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.SIG.duration.Value   = 0.1; % ms
                     app.SIG.duration.MaxLength = inf;
                     app.SIG.duration.MinValue = 1/app.SIG.Fs;
+                    app.SIG.polarity.Value = 1;
                     
                     app.Calibration.CalibratedParameter = 'duration';
                     app.Calibration.Method = 'peak';
@@ -902,7 +904,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
         end
 
         function timer_Runtime(T,event,app)
-            vprintf(4,'time_Runtime:Calibration Phase = %d',app.CalibrationPhase)
+            try
+                vprintf(4,'time_Runtime:Calibration Phase = %d',app.CalibrationPhase)
             if app.CalibrationPhase == 0, return; end
             
             mC  = app.Runtime.mapCom;
@@ -940,7 +943,10 @@ classdef CalibrationUtility < matlab.apps.AppBase
             
             
             app.Calibration = app.Calibration.plot(app.SIG,app.CalibrationPhase);
-
+            
+            catch me
+                rethrow(me)
+            end
         end
 
         function timer_Stop(T,event,app)
