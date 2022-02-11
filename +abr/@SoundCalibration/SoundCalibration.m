@@ -112,7 +112,14 @@ classdef SoundCalibration %< matlab.mixin.Copyable
         
         function v = compute_adjusted_voltage(obj)
             % compute voltage to produce sound level at the NormDB value
-            v  = obj.StimulusVoltage(:) .* 10 .^ ((obj.NormDB - obj.MeasuredSPL(:)) ./ 20); 
+            
+            switch obj.Method
+                case 'rms'
+                    v  = obj.StimulusVoltage(:) .* 10 .^ ((obj.NormDB - obj.MeasuredSPL(:)) ./ 20); 
+                case {'peak','peak2peak'}
+                    v  = obj.StimulusVoltage(:) .* 10 .^ ((obj.NormDB - obj.MeasuredSPL(:)) ./ 20);     
+            end
+            
         end
         
 
