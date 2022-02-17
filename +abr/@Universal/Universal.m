@@ -92,7 +92,7 @@ classdef Universal < handle
             banner{i} = sprintf('%s|\tData     v%s',banner{i},obj.DataVersion); i = i + 1;
             banner{i} = sprintf('%s|\tgit commit <a href="matlab: web(''%s'',''-browser'')">%s</a>',banner{i},obj.GithubRepository,obj.shortHash); i = i + 1;
             banner{i} = sprintf('%s|',banner{i}); i = i + 1;
-            banner{i} = sprintf('%s|\t<a href="matlab: type Copyright.txt">Copyright 2019</a>',banner{i}); i = i + 1;
+            banner{i} = sprintf('%s|\t<a href="matlab: type Copyright.txt">Copyright 2022</a>',banner{i}); i = i + 1;
             banner{i} = sprintf('%s|\t<a href="matlab: disp(''Email: daniel.stolzberg@gmail.com'')">Daniel Stolzberg, PhD</a>',banner{i}); i = i + 1;
             
 %             banner{end+1} = '';
