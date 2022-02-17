@@ -47,7 +47,7 @@ classdef Runtime < handle
     end
     
     methods
-        [preSweep,postSweep,sweepOnsets] = extract_sweeps(obj,timeWindow,doAll);
+        [preSweep,postSweep,sweepOnsets] = extract_sweeps(obj,ABRobj,doAll);
         idx = find_timing_onsets(obj,varargin);
 
         % Constructor

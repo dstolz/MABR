@@ -40,7 +40,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
     end
     
     % Properties that correspond to app components
-    properties % (Access = private)
+    properties (Access = private)
         ControlPanelUIFigure           matlab.ui.Figure
         FileMenu                       matlab.ui.container.Menu
         LoadConfigurationMenu          matlab.ui.container.Menu
@@ -1029,7 +1029,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.update_lamp('Ready');
                         stateAcq = abr.stateAcq.CANCELLED;
                         
-                        [preSweep,postSweep,sweepOnsets] = app.Runtime.extract_sweeps(app.ABR.adcWindowTVec,true);
+                        [preSweep,postSweep,sweepOnsets] = app.Runtime.extract_sweeps(app.ABR,true);
                         if ~isnan(postSweep(1))
                             % update signal amplitude by InputAmpGain
                             A = app.Config.Parameters.InputAmpGain;

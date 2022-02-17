@@ -1,4 +1,4 @@
-function [preSweep,postSweep,sweepOnsets] = extract_sweeps(obj,timeWindow,doAll)
+function [preSweep,postSweep,sweepOnsets] = extract_sweeps(obj,ABR,doAll)
 
 persistent lastBufferIdx blockSweepOnsets
 
@@ -41,7 +41,9 @@ end
 
 
 % split signal into resampled windows
-swin  = round(abr.Universal.ADCSampleRate*timeWindow);
+[p,q] = rat(ABR.DAC.SampleRate./ABR.ADC.SampleRate);
+w = round(ABR.DAC.SampleRate*ABR.adcWindowTVec([1 end]));
+swin = w(1):p/q:w(end);
 samps = blockSweepOnsets + swin; % matrix expansion
 
 % make sure we do not exceed buffer head position
