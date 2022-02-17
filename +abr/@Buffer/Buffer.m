@@ -63,7 +63,7 @@ classdef Buffer
             if ~obj.PadToFrameSize, return; end
             
             n = length(d);
-                           
+                                       
             if rem(n,obj.FrameSize) == 0, return; end
             
             frsz = double(obj.FrameSize);
@@ -176,12 +176,14 @@ classdef Buffer
             
             M = obj.SweepMean;
                     
-            h = plot(ax,obj.TimeVector,M,varargin{:});
+            tvec = obj.TimeVector;
+            
+            h = plot(ax,tvec,M,varargin{:});
             
             grid(ax,'on');
             
-            t = obj.TimeVector;
-            ax.XAxis.Limits = [min(t), max(t)];
+            
+            ax.XAxis.Limits = [min(tvec), max(tvec)];
             ax.YAxis.Limits = [-1.1 1.1] * max(abs(M));
             
             ax.XAxis.Label.String = 'Time (sec)';
