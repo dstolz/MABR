@@ -36,11 +36,11 @@ classdef Universal < handle
     end
     
     properties (Constant)
-        ADCSampleRate = 48000;
-        frameLength   = 2048;
+        ADCSampleRate = 24000;
+        frameLength   = 1024;
         maxInputBufferLength = 2^26; % should be power of 2 enough for at least a minute of data at 192kHz sampling rate
 
-        SoftwareVersion = '19A';
+        SoftwareVersion = '22A';
         DataVersion     = '19A';
         Author          = 'Daniel Stolzberg';
         AuthorEmail     = 'daniel.stolzberg@gmail.com';
@@ -62,10 +62,10 @@ classdef Universal < handle
             obj.set_verbosity; % sets GVerbosity from previous pref
             
             obj.errorLogPath = fullfile(fileparts(obj.root),'.error_logs');
-            if ~isdir(obj.errorLogPath), mkdir(obj.errorLogPath); end
+            if ~isfolder(obj.errorLogPath), mkdir(obj.errorLogPath); end
             
             obj.runtimePath = fullfile(fileparts(obj.root),'.runtime_data');
-            if ~isdir(obj.runtimePath); mkdir(obj.runtimePath); end
+            if ~isfolder(obj.runtimePath); mkdir(obj.runtimePath); end
 
             obj.signalPath = fullfile(obj.root,'+sigdef','+sigs');
             
@@ -126,13 +126,12 @@ classdef Universal < handle
         function m = get.meta(obj)
             m.Author      = obj.Author;
             m.AuthorEmail = obj.AuthorEmail;
-            m.Copyright   = 'Copyright to Daniel Stolzberg, 2019';
+            m.Copyright   = 'Copyright to Daniel Stolzberg, 2022';
             m.VersionSoftware = obj.SoftwareVersion;
             m.GithubRepository = obj.GithubRepository;
             m.VersionData = obj.DataVersion;
             m.Checksum    = obj.hash;
             m.CommitDate  = obj.commitDate;
-            m.SmileyFace  = ':)';
             m.CurrentTimestamp = datestr(now);
             m.HostComputerType = computer;
             [~,n] = dos('hostname');
