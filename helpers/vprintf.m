@@ -138,7 +138,7 @@ end
 if needNewLog || isempty(GLogFID) || GLogFID == -1
     U = abr.Universal;
     errlogs = U.errorLogPath;
-    if ~isdir(errlogs), mkdir(errlogs); end
+    if ~isfolder(errlogs), mkdir(errlogs); end
     GLogFID = fopen(fullfile(errlogs,['error_log_' datestr(now,'ddmmmyyyy') '.txt']),'at');
 end
 
