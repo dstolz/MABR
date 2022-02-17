@@ -978,7 +978,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.scheduleRunCount(app.scheduleIdx) = app.scheduleRunCount(app.scheduleIdx) + 1;
                         
                         % extract sweep-based data and plot one last time
-                        [preSweep,postSweep,sweepOnsets] = app.Runtime.extract_sweeps(app.ABR.adcWindowTVec,true);                       
+                        [preSweep,postSweep,sweepOnsets] = app.Runtime.extract_sweeps(app.ABR,true);                       
                         if ~isnan(postSweep(1))
                             % update signal amplitude by InputAmpGain
                             A = app.Config.Parameters.InputAmpGain;
@@ -1065,6 +1065,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 
             catch stateME
 %                 fprintf(2,'Current Program State: "%s"\n',app.stateProgram)
+                vprintf(0,1,stateME)
                 app.stateProgram = abr.stateProgram.ACQ_ERROR;
                 app.StateMachine;
                 rethrow(stateME);
