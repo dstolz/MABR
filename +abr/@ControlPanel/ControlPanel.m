@@ -315,9 +315,20 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         
         function auto_save_abr_data(app)
-            app.DATA(end+1) = app.ABR;
-            ABR_Data        = app.DATA;
-            save(app.outputFile,'ABR_Data','-mat','-v7.3');
+%             app.DATA(end+1) = copy(app.ABR);
+%             ABR_Data        = app.DATA;
+            ABR_Data = copy(app.ABR);
+
+            [pth,fn,ext] = fileparts(app.outputFile);
+            
+            lbl = ABR_Data.SIG.Label;
+            lbl = char(join(lbl,'_'));
+            lbl(lbl==' ') = [];
+            fn = sprintf('%s_%s_%s%s',fn,lbl,datestr(now,30),ext);
+            ffn = fullfile(pth,fn);
+
+            save(ffn,'ABR_Data','-mat','-nocompression');
+
             % TraceOrganizer  = app.TrcOrg;
             % save(app.outputFile,'ABR_Data','TraceOrganizer','-mat','-v7.3');
         end
