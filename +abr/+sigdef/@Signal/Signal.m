@@ -20,13 +20,16 @@ classdef (Abstract,Hidden) Signal
         
         Calibration         (1,1) abr.SoundCalibration
         UseCalibration      (1,1) = true;
+        
+        Label           (:,1) cell
     end
     
     
-    properties (SetAccess = private,Dependent)
+    properties (Dependent)
         timeVector      (:,1) double {mustBeFinite}
-        N = 0;
-        signalCount     
+        N
+        signalCount
+        LabelDefault
     end
     
     properties (SetAccess = protected)
@@ -251,6 +254,23 @@ classdef (Abstract,Hidden) Signal
         end
         
         
+        function lbl = get.Label(obj)
+            if isempty(obj.Label)
+                obj.Label = obj.LabelDefault;
+            end
+            lbl = obj.Label;
+        end
+        
+        function lbl = get.LabelDefault(obj)
+            lbl = {};
+            for i = 1:length(obj.informativeParams)
+                p = obj.(obj.informativeParams{i});
+                lbl{i,1} = sprintf('%s = %g %s', ...
+                    p.Alias,p.Value,p.Unit);
+            end
+        end
+        
+        
         % Overloaded methods ----------------------------------------------
         function signalAnalyzer(obj)
             vprintf(0,'Launching Signal Analyzer ...')
@@ -261,31 +281,24 @@ classdef (Abstract,Hidden) Signal
             % h = plot(obj,[ax],[varargin]);
             
             if nargin < 2 || ~ishandle(ax), ax = gca; end
-                        
-            
-            % BROKEN!!!
-            
+                                    
             h = findobj(ax,'type','line','-and','tag','SignalPlot');
-            if isempty(h) && ~isempty(obj.data)
-                h = plot(ax,obj.timeVector*1000,obj.data,'Tag','SignalPlot', ...
-                    'linewidth',2,varargin{3:end});
+            
+            origHold = ax.NextPlot;
+            if isequal(origHold,'replace'), cla(ax); end
+            hold(ax,'on');
+            for i = 1:length(obj.data)
+                tvec = obj.timeVector{i} * 1000;
+                plot(ax,tvec,obj.data{i},'DisplayName',char(join(obj.Label,',')));
+            end
+            if isequal(origHold,'replace')
                 grid(ax,'on');
-                
-                ax.XAxis.Label.String = 'time (ms)';
-                ax.YAxis.Label.String = 'amplitude';
-                
-            elseif isempty(obj.data) 
-                set(h,'XData',nan,'YData',nan);
-            else
-                for i = 1:size(obj.data,2)
-                    set(h(i),'XData',obj.timeVector*1000,'YData',obj.data(:,i));
-                end
+                legend(ax,'Location','best');
             end
             
-            if ~isempty(obj.data)
-                y = max(abs(obj.data(:))) * 1.1;
-                ax.YAxis.Limits = [-y y];
-            end
+            ax.NextPlot = origHold;
+            
+            if nargout == 0, clear h; end
             
         end
         
@@ -346,6 +359,7 @@ classdef (Abstract,Hidden) Signal
     methods (Static)
         % FUNCTIONS MUST ACCEPT ONE INPUT WHICH WILL BE OF THIS CLASS TYPE: abr.sigdef.Signal
         % FUNCTIONS SHOULD RETURN 'NOVALUE' INSTEAD OF EMPTY VARIABLE
+        % ... then why are these static?
         
         function w = selectWindowFcn(obj)
             dfltwin = 'blackmanharris';
