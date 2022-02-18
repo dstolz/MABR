@@ -1,4 +1,4 @@
-classdef ABR < handle % & abr.Universal 
+classdef ABR < handle & matlab.mixin.Copyable
 % ABR
 % 
 % Daniel Stolzberg, PhD (c) 2019
@@ -87,7 +87,7 @@ classdef ABR < handle % & abr.Universal
         % ADC -------------------------------------------------------------
         function obj = createADCfilt(obj)
             
-            if isa(obj.adcFilterDesign,'digitalFilter')
+            if isa(obj.adcFilterDesign,'digitalFilter') && isvalid(obj.adcFilterDesign)
                 % don't bother replacing filter design if relevant
                 % parameters are unchanged
                 a(1) = obj.adcFilterDesign.FilterOrder == obj.adcFilterOrder;
