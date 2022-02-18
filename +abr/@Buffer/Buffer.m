@@ -2,8 +2,10 @@ classdef Buffer
     
     properties
         SampleRate   (1,1) double {mustBePositive,mustBeFinite} = 1;
-        
+
         Data         (:,1) single
+        
+        ABRobj       (1,1)
         
         % in samples
         SweepOnsets  (:,1) double {mustBeNonnegative,mustBeInteger} = [];
@@ -22,7 +24,7 @@ classdef Buffer
         FFTOptions = struct('windowFcn',@flattop,'inDecibels',true);
     end
     
-    properties (SetAccess = private,Dependent)
+    properties (Dependent)
         N             (1,1)
         SweepDuration (1,1)
         TimeVector    (:,1)
@@ -36,20 +38,24 @@ classdef Buffer
         
         RMS
         SNR
+        
+%         adcDecimationFactor (1,1)
     end
     
     
-    properties (Access = private,Dependent)
+    properties (Dependent)
         sweepIdx
     end
     
     methods
         % Constructor
-        function obj = Buffer(Fs,Data,SweepOnsets,SweepLength)
-            if nargin >= 1 && ~isempty(Fs), obj.SampleRate = Fs; end
-            if nargin >= 2, obj.Data = Data; end
-            if nargin >= 3 && ~isempty(SweepOnsets), obj.SweepOnsets = SweepOnsets; end
-            if nargin == 4 && ~isempty(SweepLength), obj.SweepLength = SweepLength; end
+        function obj = Buffer(ABRobj,Fs,Data,SweepOnsets,SweepLength)            
+            
+            if nargin >= 1 && ~isempty(ABRobj), obj.ABRobj = ABRobj; end
+            if nargin >= 2 && ~isempty(Fs), obj.SampleRate = Fs; end
+            if nargin >= 3, obj.Data = Data; end
+            if nargin >= 4 && ~isempty(SweepOnsets), obj.SweepOnsets = SweepOnsets; end
+            if nargin == 5 && ~isempty(SweepLength), obj.SweepLength = SweepLength; end
             
             
         end
@@ -81,6 +87,8 @@ classdef Buffer
         function t = get.TimeVector(obj)
             t = 0:1/obj.SampleRate:obj.SweepDuration-1/obj.SampleRate;
         end
+        
+        
         
         
         function rms = get.RMS(obj)

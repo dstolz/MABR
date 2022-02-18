@@ -95,7 +95,8 @@ classdef (ConstructOnLoad = true) Organizer < handle
             narginchk(2,2);
             
             vprintf(2,'Adding new trace to Organizer')
-                        
+            
+            
             if isempty(obj.Traces) || obj.N == 1 && obj.Traces.ID == 0
                 obj.Traces            = abr.traces.Trace(ABR);
                 obj.Traces(1).ID      = 1;

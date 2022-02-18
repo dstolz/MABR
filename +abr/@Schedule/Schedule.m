@@ -1,7 +1,7 @@
 classdef Schedule < matlab.apps.AppBase
 
     % Properties that correspond to app components
-    properties (Access = public)
+    properties (Access = public,Hidden)
         ScheduleFigure              matlab.ui.Figure
         FileMenu                    matlab.ui.container.Menu
         LoadScheduleMenu            matlab.ui.container.Menu
@@ -47,7 +47,7 @@ classdef Schedule < matlab.apps.AppBase
         
     end
     
-    properties (SetAccess = private, Dependent)
+    properties (Dependent)
         selectedData % rows currently selected (checked) in table
         sigArray
     end
@@ -261,22 +261,22 @@ classdef Schedule < matlab.apps.AppBase
             
             vprintf(1,'Loading schedule "%s" ...',ffn)
             
-            load(ffn,'-mat','compiled','data','SIG','tblData');
+            D = load(ffn,'-mat','compiled','data','SIG','tblData');
             
-            if ~exist('SIG','var') || ~exist('compiled','var') || ~exist('data','var') || ~exist('tblData','var')
+            if ~all(isfield(D,{'compiled','data','SIG','tblData'}))
                 errordlg(sprintf('Essential component(s) missing from schedule file!\n\n%s',ffn),'Schedule','modal');
                 return
             end
             
             
-            app.SIG      = SIG;
-            app.compiled = compiled;
-            app.data     = data;
+            app.SIG      = D.SIG;
+            app.compiled = D.compiled;
+            app.data     = D.data;
             
             app.filename = ffn;
             
             app.update;
-            app.ScheduleTable.Data = tblData;
+            app.ScheduleTable.Data = D.tblData;
             
             
             app.update_save_state('off');

@@ -3,6 +3,8 @@ classdef Universal < handle
     
     properties
         MODE (1,1) abr.Cmd {mustBeGreaterThanOrEqual(MODE,126)} = abr.Cmd.Normal;
+        
+        DACSampleRate = 192000
     end
     
     properties (SetAccess = private)
@@ -29,6 +31,7 @@ classdef Universal < handle
         hasAllToolboxes (1,1) logical = false;
 
                 
+        
     end
     
     properties (Access = private)
@@ -41,7 +44,7 @@ classdef Universal < handle
         maxInputBufferLength = 2^26; % should be power of 2 enough for at least a minute of data at 192kHz sampling rate
 
         SoftwareVersion = '22A';
-        DataVersion     = '19A';
+        DataVersion     = '22A';
         Author          = 'Daniel Stolzberg';
         AuthorEmail     = 'daniel.stolzberg@gmail.com';
         GithubRepository= 'https://github.com/dstolz/abr';

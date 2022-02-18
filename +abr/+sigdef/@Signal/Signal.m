@@ -21,7 +21,7 @@ classdef (Abstract,Hidden) Signal
         Calibration         (1,1) abr.SoundCalibration
         UseCalibration      (1,1) = true;
         
-        Label           (:,1) cell
+        Label          
     end
     
     

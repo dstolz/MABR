@@ -325,8 +325,12 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             lbl = char(join(lbl,'_'));
             lbl(lbl==' ') = [];
             fn = sprintf('%s_%s_%s%s',fn,lbl,datestr(now,30),ext);
+            
+            fn = matlab.lang.makeValidName(fn);
+            
             ffn = fullfile(pth,fn);
 
+            vprintf(2,'Auto saving %s [%s]',fn,ffn)
             save(ffn,'ABR_Data','-mat','-nocompression');
 
             % TraceOrganizer  = app.TrcOrg;
@@ -867,17 +871,17 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         % update Schedule table selection                        
                         app.Schedule.update_highlight(app.scheduleIdx,[.6 1 .2]);
                         
+                        app.DACSampleRate = app.SIG.Fs; % set Universal sample rate
+                        
                         % convert to signal
+                        app.ABR.DAC = abr.Buffer(app.ABR);
                         app.ABR.DAC.SampleRate = app.SIG.Fs;
                         app.ABR.DAC.FrameSize  = abr.Universal.frameLength;
                         
                         % reset the ADC buffer
-                        app.ABR.ADC = abr.Buffer;
-                        
+                        app.ABR.ADC = abr.Buffer(app.ABR);
                         app.ABR.ADC.FrameSize       = abr.Universal.frameLength;
                         app.ABR.ADC.SampleRate      = abr.Universal.ADCSampleRate;
-                        app.ABR.adcDecimationFactor = round(max([1 floor(app.SIG.Fs ./ app.ABR.ADC.SampleRate)]));
-                        app.ABR.ADC.SampleRate      = app.ABR.DAC.SampleRate ./ app.ABR.adcDecimationFactor;
 
                         % update postprocessing options
                         app.ABR.ADC.DetrendPoly = app.PPDetrendDD.Value;
@@ -885,6 +889,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         % generate signal based on its parameters
                         app.SIG = app.Schedule.sigArray(app.scheduleIdx);
+                        app.SIG.Label = app.SIG.LabelDefault;
                         
                         % calibrate stimulus data
                         if app.Calibration.calibration_is_valid
@@ -1003,10 +1008,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R,opts);
                             
                             % Add buffer to traces.Organizer
-                            app.ABR.ADC.SweepLength = round(app.ABR.ADC.SampleRate .* app.ABR.adcWindow(2)) + 1;
+                            app.ABR.ADC.SweepLength = round(app.ABR.DAC.SampleRate .* app.ABR.adcWindow(2)) + 1;
                             idx = app.Runtime.mapCom.Data.BufferIndex;
                             app.ABR.ADC.Data = app.Runtime.mapSignalBuffer.Data(1:idx(2));
                             app.ABR.ADC.SweepOnsets = sweepOnsets;
+                            
                             app.TrcOrg.add_trace(app.ABR);
                         end
                         %%%% TESTING

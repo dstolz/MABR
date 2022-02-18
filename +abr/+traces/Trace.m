@@ -16,26 +16,26 @@ classdef Trace < handle & matlab.mixin.SetGet
         LineWidth       (1,1) double {mustBePositive,mustBeFinite} = 1;
         
         Marker          (:,1) abr.traces.Marker
-%         LabelText       (1,:)
         
         TimeUnit        (1,:) char {mustBeMember(TimeUnit,{'auto','s','ms','us','ns'})} = 'auto';
                 
         RawData         (1,1) abr.Buffer
         
         Analysis        (1,1) % abr.analysis
+        
+        LabelText       
     end
     
     properties (SetAccess = private)
         Props   (1,1) struct
-        LabelText (1,:) 
         LabelID   (1,:) char
     end
     
-    properties (SetAccess = private, Dependent)
+    properties (Dependent)
         TimeVector
         N
-        LineHandleIsValid  = false;
-        LabelHandleIsValid = false;
+        LineHandleIsValid  
+        LabelHandleIsValid
         Units (1,1) struct % same fields as props
     end
     
@@ -62,7 +62,7 @@ classdef Trace < handle & matlab.mixin.SetGet
             obj.FirstTimepoint = ABR.adcWindow(1);
             obj.SampleRate     = ABR.ADC.SampleRate;
             
-            obj.ABR = ABR;
+            obj.ABR = copy(ABR);
         end
         
         % Destructor
@@ -93,9 +93,10 @@ classdef Trace < handle & matlab.mixin.SetGet
         end
 
         function str = get.LabelText(obj)
-            fn = fieldnames(obj.ABR.SIG.dataParams);
-            for i = 1:length(fn)
-                str{i,1} = obj.ABR.SIG.(fn{i}).unitValueString;
+            if isempty(obj.LabelText)
+                str = obj.ABR.SIG.Label;
+            else
+                str = obj.LabelText;
             end
         end
         
@@ -167,7 +168,8 @@ classdef Trace < handle & matlab.mixin.SetGet
                     t = text(ax,x,y,kobj.LabelID);
                 end
                 t.Position = [x y];
-                t.String = kobj.LabelID;
+                %t.String = kobj.LabelID;
+                t.String = kobj.LabelText;
                 t.Color = max(kobj.Color-.2,0);
                 t.FontWeight = 'bold';
 %                 t.BackgroundColor = [ax.Color 0.9];

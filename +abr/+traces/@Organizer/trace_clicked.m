@@ -1,16 +1,16 @@
 function trace_clicked(h,event,obj,traceIdx) %#ok<INUSL>
 fcc = obj.mainFig.CurrentModifier;
 
+thisTrace = obj.Traces(traceIdx);
 
-ax = obj.Traces(traceIdx).LineHandle.Parent;
-titleStr = sprintf('%s\n',obj.Traces(traceIdx).LabelID);
-c = obj.Traces(traceIdx).LabelText;
-for i = 1:length(c)
-    titleStr = sprintf('%s%s, ',titleStr,c{i});
-end
-titleStr(end-1:end) = [];
-ax.Title.String = titleStr;
-ax.Title.Color = obj.Traces(traceIdx).Color;
+ax = thisTrace.LineHandle.Parent;
+% titleStr = sprintf('%s\n',thisTrace.LabelID);
+
+% titleStr = char(join(c,','));
+
+
+% ax.Title.String = titleStr;
+ax.Title.Color = thisTrace.Color;
 
 if isequal({'shift'},fcc)
     tidx = obj.TraceSelection;
@@ -18,7 +18,7 @@ if isequal({'shift'},fcc)
         tidx = traceIdx; 
     else
         oy = obj.Traces(tidx).YOffset;
-        ny = obj.Traces(traceIdx).YOffset;
+        ny = thisTrace.YOffset;
         if ny < oy
             tidx = find(obj.YOffset <= oy & obj.YOffset >= ny);
         else

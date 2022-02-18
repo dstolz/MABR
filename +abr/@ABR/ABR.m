@@ -7,8 +7,6 @@ classdef ABR < handle & matlab.mixin.Copyable
         ADC           (1,1) abr.Buffer
         
         SIG           (1,1) % abr.sigdef.sigs....
-                
-        adcDecimationFactor (1,1) {mustBeInteger,mustBePositive} = 1;
         
         audioDevice   (1,:) char
         
@@ -34,9 +32,12 @@ classdef ABR < handle & matlab.mixin.Copyable
         DACtimingCh   (1,1) uint8 {mustBePositive,mustBeInteger} = 2;
         
 
-        
         analysisSettings (2,:) cell = {'rms'; []};
 
+    end
+    
+    properties (Dependent)
+        adcDecimationFactor
     end
     
     properties (Hidden)
@@ -76,7 +77,9 @@ classdef ABR < handle & matlab.mixin.Copyable
         
 
 
-       
+        function f = get.adcDecimationFactor(obj)
+            f = obj.DAC.SampleRate ./ obj.ADC.SampleRate;
+        end
         
         
         function n = get.sweepCount(obj)

@@ -41,9 +41,8 @@ end
 
 
 % split signal into resampled windows
-[p,q] = rat(ABR.DAC.SampleRate./ABR.ADC.SampleRate);
-w = round(ABR.DAC.SampleRate*ABR.adcWindowTVec([1 end]));
-swin = w(1):p/q:w(end);
+w = round(ABR.DAC.SampleRate*ABR.adcWindow);
+swin = w(1):ABR.adcDecimationFactor:w(2);
 samps = blockSweepOnsets + swin; % matrix expansion
 
 % make sure we do not exceed buffer head position
