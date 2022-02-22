@@ -22,6 +22,7 @@ classdef Schedule < matlab.apps.AppBase
         EveryOtherButton            matlab.ui.control.Button
         CustomButton                matlab.ui.control.Button
         ToggleButton                matlab.ui.control.Button
+        GUIButton                   matlab.ui.control.Button
         LoadButton                  matlab.ui.control.Button
         SaveButton                  matlab.ui.control.Button
         LaunchSchDesGUIButton       matlab.ui.control.Button
@@ -54,13 +55,8 @@ classdef Schedule < matlab.apps.AppBase
     
     
     
-    
-    
-    
-    
-    
-    
     methods
+        gui_select(app)
         
         function a = get.sigArray(app)
             d = app.ScheduleTable.Data;
@@ -309,6 +305,9 @@ classdef Schedule < matlab.apps.AppBase
                     Selected = [true(1,M); false(1,M)];
                     app.ScheduleTable.Data(:,1) = num2cell(Selected(1:M))';
                     
+                case {'GUI'}
+                    app.gui_select;
+                    
                 case {'Custom','Custom Selection'}
                     dflt = getpref('Schedule','SelectCustom','1:2:end');
                     
@@ -518,6 +517,7 @@ classdef Schedule < matlab.apps.AppBase
             % AppDesigner f's up custom function name when selecting as callback for multiple objects
             app.selection_processor(event);
         end
+        
 
         % Callback function: ResetButton, ResetScheduleMenu
         function ResetButtonPushed(app, event)
@@ -693,6 +693,13 @@ classdef Schedule < matlab.apps.AppBase
             app.ToggleButton.ButtonPushedFcn = createCallbackFcn(app, @ToggleButtonPushed, true);
             app.ToggleButton.Position = [848 5 51 22];
             app.ToggleButton.Text = 'Toggle';
+            
+            
+            % Create GUIButton
+            app.GUIButton = uibutton(app.ButtonPanel, 'push');
+            app.GUIButton.ButtonPushedFcn = createCallbackFcn(app, @gui_select);
+            app.GUIButton.Position = [925 5 51 22];
+            app.GUIButton.Text = 'GUI';
 
             % Create LoadButton
             app.LoadButton = uibutton(app.ButtonPanel, 'push');
