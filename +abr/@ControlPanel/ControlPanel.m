@@ -1,5 +1,5 @@
 classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
-    % Daniel Stolzberg, PhD (c) 2019
+    % Daniel Stolzberg, PhD (c) 2022
     
     properties (Access = public)
         ABR                 (1,1) abr.ABR
@@ -1298,6 +1298,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         
         function update_ControlStimInfoLabel(app,nReps)
+            if isinf(app.scheduleIdx)
+                app.ControlStimInfoLabel.Text = '';
+                return    
+            end
             
             selData = app.Schedule.selectedData;
             
