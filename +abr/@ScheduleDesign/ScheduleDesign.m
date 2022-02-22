@@ -104,11 +104,13 @@ classdef ScheduleDesign < matlab.apps.AppBase
         
         function update_sampling_rate(app,Fs)
             AllFs = [44100,48000,64000,88200,96000,128000,176400,192000];
-            Fs = getpref('ScheduleDesign','Fs',44100);
-            if nargin == 2 && ~isempty(AllFs)
+            if nargin == 2 && ~isempty(Fs)
                 mustBeMember(Fs,AllFs);
                 app.SIG.Fs = Fs;
+            elseif nargin == 2 && isempty(Fs)
+                app.SIG.Fs = getpref('ScheduleDesign','Fs',44100);
             else
+                Fs = getpref('ScheduleDesign','Fs',44100);
                 SRs = cellfun(@(a) sprintf('%d Hz',a),num2cell(AllFs),'uni',0);
                 i = find(AllFs == Fs,1);
                 if isempty(i), i = length(AllFs); end
@@ -258,55 +260,81 @@ classdef ScheduleDesign < matlab.apps.AppBase
                 app.axSigPlot  = axes(app.ScheduleDesignFigureSigPlot,'Tag','SigPlot');
             end
             
+            
+            app.update_sampling_rate([]);% kludge!
+            
             app.SIG = app.SIG.update;
             
             figure(app.ScheduleDesignFigureSigPlot);
+            set(app.ScheduleDesignFigureSigPlot,'color','w');
+            clf(app.ScheduleDesignFigureSigPlot)
+            
+            msl = max(app.SIG.dataParams.soundLevel);
+            ind = app.SIG.dataParams.soundLevel == msl;
+            y = app.SIG.data(ind);
+            d = app.SIG.dataParams.duration(ind);
+%             lbl = app.SIG.
+            
+            t = tiledlayout(app.ScheduleDesignFigureSigPlot,'flow');
+
+            for i = 1:length(y)
+                ax = nexttile(t);
+                
+                tvec = linspace(0,d(i),length(y{i})); % TO DO: ACCOUNT FOR ONSET DELAYS
+                tvec = tvec .* 1000; % s -> ms
+                plot(ax,tvec,y{i});
+                grid(ax,'on');
+                xlim(ax,tvec([1 end]));
+%                 title(
+            end
+            
+            
             
             %         btnSigSched_Callback([],[],true);
-            cla(app.axSigPlot);
-            grid(app.axSigPlot,'on');
+%             cla(app.axSigPlot);
+%             grid(app.axSigPlot,'on');
             
-            app.axSigPlot.XAxis.Label.String = 'time (ms)';
-            app.axSigPlot.YAxis.Label.String = 'amplitude';
-            for k = 1:numel(app.SIG.data)
-                if length(app.SIG.timeVector) == 1
-                    t = app.SIG.timeVector{1};
-                else
-                    t = app.SIG.timeVector{k};
-                end
-                hl(k) = line(app.axSigPlot,t*1000,app.SIG.data{k},'linestyle','-', ...
-                    'marker','o','markersize',4,'linewidth',2);
-                if numel(hl) > 1
-                    set(hl(1:end-1),'marker','none','color',[0.8 0.8 0.8],'linewidth',1);
-                end
-                
-                %             y = max(abs(app.SIG.data{k}(:))) * 1.1;
-                %             app.axSigPlot.YAxis.Limits = [-y y];
-                app.axSigPlot.YAxis.Limits = [-1.1 1.1];
-                
-                if isa(app.SIG,'abr.sigdef.sigs.File')
-                    fn = app.SIG.fullFilename.Value{k};
-                    fn = fn(find(fn==filesep,1,'last')+1:find(fn=='.',1,'last')-1);
-                    pstr = sprintf('Filename: "%s"',fn);
-                else
-                    x = app.SIG.dataParams;
-                    N = structfun(@(a) numel(unique(a)),x);
-                    p = fieldnames(x);
-                    if ~all(N==1)
-                        x = rmfield(x,p(N==1));
-                    end
-                    
-                    pstr = '';
-                    for i = fieldnames(x)'
-                        v = x.(char(i));
-                        pstr = sprintf('%s| %s: %.2f ',pstr,app.SIG.(char(i)).Alias,v(k));
-                    end
-                    pstr([1:2 end]) = [];
-                end
-                app.axSigPlot.Title.String = pstr;
-                
-                pause(0.2)
-            end
+%             app.axSigPlot.XAxis.Label.String = 'time (ms)';
+%             app.axSigPlot.YAxis.Label.String = 'amplitude';
+%             for k = 1:numel(app.SIG.data)
+%                 if length(app.SIG.timeVector) == 1
+%                     t = app.SIG.timeVector{1};
+%                 else
+%                     t = app.SIG.timeVector{k};
+%                 end
+%                 hl(k) = line(app.axSigPlot,t*1000,app.SIG.data{k},'linestyle','-', ...
+%                     'marker','o','markersize',4,'linewidth',2);
+%                 if numel(hl) > 1
+%                     set(hl(1:end-1),'marker','none','color',[0.8 0.8 0.8],'linewidth',1);
+%                 end
+%                 
+%                 %             y = max(abs(app.SIG.data{k}(:))) * 1.1;
+%                 %             app.axSigPlot.YAxis.Limits = [-y y];
+%                 app.axSigPlot.YAxis.Limits = [-1.1 1.1];
+%                 
+%                 if isa(app.SIG,'abr.sigdef.sigs.File')
+%                     fn = app.SIG.fullFilename.Value{k};
+%                     fn = fn(find(fn==filesep,1,'last')+1:find(fn=='.',1,'last')-1);
+%                     pstr = sprintf('Filename: "%s"',fn);
+%                 else
+%                     x = app.SIG.dataParams;
+%                     N = structfun(@(a) numel(unique(a)),x);
+%                     p = fieldnames(x);
+%                     if ~all(N==1)
+%                         x = rmfield(x,p(N==1));
+%                     end
+%                     
+%                     pstr = '';
+%                     for i = fieldnames(x)'
+%                         v = x.(char(i));
+%                         pstr = sprintf('%s| %s: %.2f ',pstr,app.SIG.(char(i)).Alias,v(k));
+%                     end
+%                     pstr([1:2 end]) = [];
+%                 end
+%                 app.axSigPlot.Title.String = pstr;
+%                 
+%                 pause(0.2)
+%             end
             
             
         end
@@ -321,6 +349,8 @@ classdef ScheduleDesign < matlab.apps.AppBase
                 app.SCH = abr.Schedule;
             end
             
+            app.update_sampling_rate([]);% kludge!
+
             app.SCH.preprocess(app.SIG,props,data);
             app.SCH.compile;
             

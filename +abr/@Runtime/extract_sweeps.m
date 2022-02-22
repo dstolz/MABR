@@ -57,7 +57,7 @@ if size(postSweep,2) == 1, postSweep = postSweep'; end
 
 
 % extract signal preceding sweep onsets
-bsamps = -1:-1:-size(samps,2);
+bsamps = w(1)-1:-ABR.adcDecimationFactor:-w(1)-w(2)-1;
 bsamps = blockSweepOnsets + bsamps;
 bsamps(any(bsamps < 1,2) | any(bsamps>bufferHead,2),:) = [];
 

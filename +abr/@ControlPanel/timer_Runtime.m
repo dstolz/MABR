@@ -21,7 +21,7 @@ vprintf(4,'Calling live_analysis')
 R = app.live_analysis(preSweep,postSweep);
 
 if isnan(R), return; end
-
+R(1) = [];
 % update plots
 
 % update postprocessing options

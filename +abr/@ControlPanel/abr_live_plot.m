@@ -4,7 +4,7 @@ persistent h
 
 
 if nargin < 2 || isempty(h) || ~isfield(h,'axMean') || ~isvalid(h.axMean)
-    h = setup(app); 
+    h = setup(app);
     return
 end
 
@@ -13,7 +13,7 @@ if nargin < 2 || isempty(postSweep)
     h.meanLine.XData   = nan;
     h.recentLine.YData = nan;
     h.recentLine.XData = nan;
-    h.axCorr.YData = nan(1,3);
+    h.axCorr.YData = nan(1,2);
     return
 end
 
@@ -116,6 +116,7 @@ axCorr.Position(1) = 0.75;
 axCorr.Position(3) = 0.15;
 axCorr.YAxis.TickLabelFormat = '%2.1f';
 
+
 grid(axMean,'on');
 box(axMean,'on');
 
@@ -146,17 +147,26 @@ h.abrLegend = legend(axMean, ...
 
 
 h.corrBar = bar(axCorr, ...
-    [1 2 3],[nan nan nan],1, ...
+    [1 2],[nan nan],1, ...
     'FaceColor','Flat','EdgeColor','none', ...
-    'CData',[1 .4 .4; 1 .6 .2; .2 1 .2]);
+    'CData',[1 .6 .2; .2 1 .2]);
 
 axCorr.YAxisLocation = 'right';
 grid(axCorr,'on');
 axCorr.YAxis.Label.String = 'correlation';
-axCorr.XAxis.TickValues = [1 2 3];
-axCorr.XAxis.TickLabels = {'Pre'; 'Cross'; 'Post'};
+axCorr.XAxis.TickValues = [1 2];%[1 2 3];
+axCorr.XAxis.TickLabels = {'Cross'; 'Post'};%{'Pre'; 'Cross'; 'Post'};
 axCorr.XAxis.TickLabelRotation = 45;
-axCorr.XAxis.Limits = [0.5 3.5];
+axCorr.XAxis.Limits = [0.5 2.5];
+
+
+tb = axtoolbar(axRecent); tb.Visible = 'off';
+tb = axtoolbar(axMean); tb.Visible = 'off';
+tb = axtoolbar(axCorr); tb.Visible = 'off';
+
+disableDefaultInteractivity(axRecent)
+disableDefaultInteractivity(axMean)
+disableDefaultInteractivity(axCorr)
 
 h.axMean   = axMean;
 h.axRecent = axRecent;

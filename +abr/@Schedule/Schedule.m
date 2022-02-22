@@ -317,17 +317,22 @@ classdef Schedule < matlab.apps.AppBase
                     opts.Interpreter='tex';
                     opts.InputFontSize = 14;
                     
-                    r = inputdlg('\fontsize{14} Enter expression. M = length of schedule.', ...
-                        'Select',1,{dflt},opts);
+                    
+                    D = app.ScheduleTable.Data;
+                    varNames = D.Properties.VariableNames;
+                    prompt = sprintf(['\\fontsize{10}Use \\itD.(variableName)\\rm for logical indexing on a field.\n', ...
+                        'Variables: %s'],char(join(varNames,', ')));
+                    
+                    r = inputdlg(prompt,'Select',1,{dflt},opts);
                     
                     if isempty(r), return; end
                     
-                    D = app.ScheduleTable.Data;
                     
                     t = false(M,1);
                     try
                         eval(sprintf('t(%s) = true;',char(r)));
                         app.ScheduleTable.Data(:,1) = num2cell(t);
+                        app.ScheduleTable.UserData.Table = app.ScheduleTable.Data;
                         setpref('Schedule','SelectCustom',char(r));
                     catch me
                         errordlg(sprintf('Invalid expression: %s.\n\n%s\n%s', ...

@@ -778,8 +778,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ControlSweepCountGauge.Value = 0;
                         app.ControlPauseButton.Value = 0;
                         
-                        vprintf(3,'Reloading schedule file')
-                        app.load_schedule_file;
+%                         vprintf(3,'Reloading schedule file')
+%                         app.load_schedule_file;
                         
                         if ~isvalid(app.TrcOrg), app.TrcOrg = abr.traces.Organizer; end
                         
@@ -787,7 +787,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.TrcOrg.figure;
                         
                         app.Schedule.DO_NOT_DELETE = true;
-                        app.scheduleIdx  = find(app.Schedule.selectedData,1,'first');
+                        idx = find(app.Schedule.selectedData,1,'first');
+                        if isempty(idx)
+                            error('No rows selected in Schedule!')
+                        end
+                        app.scheduleIdx  = idx;
                         app.scheduleRunCount = zeros(size(app.Schedule.selectedData));
                         
                         drawnow
@@ -846,7 +850,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             schAdvFnc = str2func(app.ControlAdvCriteriaDD.Value);
                             vprintf(2,'Calling advancement function: %s',which(app.ControlAdvCriteriaDD.Value))
                             app.scheduleIdx = feval(schAdvFnc,app,nReps);
-                            
+                            app.update_ControlStimInfoLabel(nReps);
+
                             % reached end of schedule
                             if isinf(app.scheduleIdx)
                                 app.stateProgram = abr.stateProgram.SCHED_COMPLETE;
@@ -880,12 +885,13 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         % reset the ADC buffer
                         app.ABR.ADC = abr.Buffer(app.ABR);
-                        app.ABR.ADC.FrameSize       = abr.Universal.frameLength;
-                        app.ABR.ADC.SampleRate      = abr.Universal.ADCSampleRate;
+                        app.ABR.ADC.FrameSize  = abr.Universal.frameLength;
+                        app.ABR.ADC.SampleRate = abr.Universal.ADCSampleRate;
 
                         % update postprocessing options
                         app.ABR.ADC.DetrendPoly = app.PPDetrendDD.Value;
                         app.ABR.ADC.SmoothSpan  = app.PPMovingAvgDD.Value;
+                        
                         
                         % generate signal based on its parameters
                         app.SIG = app.Schedule.sigArray(app.scheduleIdx);
@@ -1002,16 +1008,17 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             postSweep = postSweep ./ A;
 
                             R = app.partition_corr(preSweep,postSweep);
+                            R(1) = [];
                             
                             opts.SmoothSpan  = app.ABR.ADC.SmoothSpan;
                             opts.DetrendPoly = app.ABR.ADC.DetrendPoly;
                             app.abr_live_plot(postSweep,app.ABR.adcWindowTVec,R,opts);
                             
                             % Add buffer to traces.Organizer
-                            app.ABR.ADC.SweepLength = round(app.ABR.DAC.SampleRate .* app.ABR.adcWindow(2)) + 1;
-                            idx = app.Runtime.mapCom.Data.BufferIndex;
-                            app.ABR.ADC.Data = app.Runtime.mapSignalBuffer.Data(1:idx(2));
-                            app.ABR.ADC.SweepOnsets = sweepOnsets;
+                            app.ABR.ADC.SweepLength = round(app.ABR.ADC.SampleRate .* app.ABR.adcWindow(2)) + 1;
+                            idx = 1:app.ABR.adcDecimationFactor:app.Runtime.mapCom.Data.BufferIndex(2);
+                            app.ABR.ADC.Data = app.Runtime.mapSignalBuffer.Data(idx);
+                            app.ABR.ADC.SweepOnsets = round(sweepOnsets./app.ABR.adcDecimationFactor);
                             
                             app.TrcOrg.add_trace(app.ABR);
                         end

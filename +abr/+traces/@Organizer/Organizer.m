@@ -121,10 +121,13 @@ classdef (ConstructOnLoad = true) Organizer < handle
         end
                 
         function delete_trace(obj,idx)
-            obj.Labels(idx) = [];
             obj.TraceSelection(ismember(obj.TraceSelection,idx)) = [];
             obj.TraceIdx(ismember(obj.TraceIdx,idx)) = [];
+            delete(obj.Traces(idx));
             obj.Traces(idx) = [];
+            obj.PlotOrder(idx) = [];
+            obj.GroupID(idx) = [];
+            
         end
         
         function n = get.N(obj)
@@ -251,9 +254,9 @@ classdef (ConstructOnLoad = true) Organizer < handle
         function clear(obj,hObj,event)
             if ~obj.N, return; end
 
-            delete(obj.Traces);
+            obj.delete_trace(1:obj.N);
             obj.Traces = abr.traces.Trace;
-
+            
             try
                 cla(obj.mainAx);
                 obj.mainAx.YTick = [];
@@ -337,7 +340,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
                 obj.mainAx = axes(f, ...
                     'Color',[1 1 1], ...
                     'Units','normalized', ...
-                    'Position',[0.1 0.1 0.88 0.8], ...
+                    'Position',[0.2 0.1 0.78 0.8], ...
                     'YTick',[], ...
                     'GridColor',[0.2 0.2 0.2], ...
                     'XGrid','on','YGrid','on', ...
@@ -369,6 +372,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             D = cellfun(@obj.v2yscale,D,'uni',0);
             
             pidx = obj.PlotOrder';
+            if isempty(pidx), return; end
             
             % obj.TraceIdx = [];
             for k = pidx

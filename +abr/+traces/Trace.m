@@ -6,10 +6,8 @@ classdef Trace < handle & matlab.mixin.SetGet
 
         YOffset         (1,1) double {mustBeFinite} = 0;
 
-        SampleRate      (1,1) {mustBePositive,mustBeFinite} = 1;
-        Data            (1,:) double
+        
         ABR             (1,1) abr.ABR
-        FirstTimepoint  (1,1) double {mustBeFinite,mustBeNonempty,mustBeNonNan} = 0;
         
         Color           (1,3) double {mustBeNonnegative,mustBeLessThanOrEqual(Color,1)} = [0 0 0];
         Alpha           (1,1) double {mustBePositive,mustBeLessThanOrEqual(Alpha,1)} = 1; % 0 = clear; 1 = opaque
@@ -37,6 +35,10 @@ classdef Trace < handle & matlab.mixin.SetGet
         LineHandleIsValid  
         LabelHandleIsValid
         Units (1,1) struct % same fields as props
+        
+        Data
+        FirstTimepoint
+        SampleRate
     end
     
     properties (SetAccess = private, Transient)
@@ -58,10 +60,6 @@ classdef Trace < handle & matlab.mixin.SetGet
                 return
             end
             
-            obj.Data           = ABR.ADC.SweepMean;
-            obj.FirstTimepoint = ABR.adcWindow(1);
-            obj.SampleRate     = ABR.ADC.SampleRate;
-            
             obj.ABR = copy(ABR);
         end
         
@@ -80,6 +78,20 @@ classdef Trace < handle & matlab.mixin.SetGet
 %             end
         end
         
+        function d = get.Data(obj)
+            
+            d = obj.ABR.ADC.SweepMean;           
+            
+        end
+        
+        function fs = get.SampleRate(obj)
+            fs = obj.ABR.ADC.SampleRate;
+        end
+        
+        function p = get.FirstTimepoint(obj)
+            p = obj.ABR.adcWindow(1);
+        end
+        
         function str = get.LabelID(obj)
             gid = obj.GroupID;
             k = 2;
@@ -95,9 +107,11 @@ classdef Trace < handle & matlab.mixin.SetGet
         function str = get.LabelText(obj)
             if isempty(obj.LabelText)
                 str = obj.ABR.SIG.Label;
+                str{end+1} = sprintf('N = %d',obj.ABR.ADC.NumSweeps);
             else
                 str = obj.LabelText;
             end
+            
         end
         
         function t = get.TimeVector(obj)
@@ -160,12 +174,12 @@ classdef Trace < handle & matlab.mixin.SetGet
                 % label
                 x = h.XData(1);
                 
-                x = x - 1;
-                y = max(kobj.Data) + mean(kobj.LineHandle.YData);
+                x = x - .3;
+                y = double(max(kobj.Data) + mean(kobj.LineHandle.YData));
                 if kobj.LabelHandleIsValid
                     t = kobj.LabelHandle;
                 else
-                    t = text(ax,x,y,kobj.LabelID);
+                    t = text(ax,x,y,kobj.LabelText);
                 end
                 t.Position = [x y];
                 %t.String = kobj.LabelID;
@@ -175,7 +189,7 @@ classdef Trace < handle & matlab.mixin.SetGet
 %                 t.BackgroundColor = [ax.Color 0.9];
                 t.BackgroundColor = 'none';
                 t.Margin = 0.1;
-                t.HorizontalAlignment = 'left';
+                t.HorizontalAlignment = 'right';
                 t.VerticalAlignment   = 'baseline';
                 kobj.LabelHandle = t;
                 

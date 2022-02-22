@@ -2,6 +2,7 @@ classdef Buffer
     
     properties
         SampleRate   (1,1) double {mustBePositive,mustBeFinite} = 1;
+        
 
         Data         (:,1) single
         
@@ -39,11 +40,9 @@ classdef Buffer
         RMS
         SNR
         
-%         adcDecimationFactor (1,1)
-    end
-    
-    
-    properties (Dependent)
+        adcDecimationFactor
+
+        
         sweepIdx
     end
     
@@ -88,8 +87,13 @@ classdef Buffer
             t = 0:1/obj.SampleRate:obj.SweepDuration-1/obj.SampleRate;
         end
         
-        
-        
+        function f = get.adcDecimationFactor(obj)
+            if isequal(obj.ABRobj,0)
+                f = 1;
+            else
+                f = obj.ABRobj.adcDecimationFactor;
+            end
+        end
         
         function rms = get.RMS(obj)
             rms = sqrt(mean(obj.SweepData.^2,'omitnan'));
@@ -113,6 +117,7 @@ classdef Buffer
         end
         
         function idx = get.sweepIdx(obj)
+%             idx = ((0:obj.adcDecimationFactor:obj.SweepLength-1)+obj.SweepOnsets)';
             idx = ((0:obj.SweepLength-1)+obj.SweepOnsets)';
         end
         
