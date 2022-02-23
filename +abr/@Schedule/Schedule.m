@@ -748,6 +748,8 @@ classdef Schedule < matlab.apps.AppBase
 
         % Constructor
         function app = Schedule(varargin)
+            
+            abr.Universal.addpaths
 
             % Create and configure components
             createComponents(app)
