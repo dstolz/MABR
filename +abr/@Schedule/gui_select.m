@@ -14,26 +14,26 @@ D(:,~ind) = [];
 
 f = uifigure;
 
-g = uigridlayout(f,[2,size(D,2)+1]);
-g.RowHeight = {50};
-g.ColumnWidth = [repmat({'1x'},1,size(D,2)) 100];
+g = uigridlayout(f,[3,size(D,2)]);
+g.RowHeight = {25,25,'1x'};
+g.ColumnWidth = repmat({'1x'},1,size(D,2));
 
 varNames = D.Properties.VariableNames;
 for i = 1:length(varNames)
     
     
     h = uilistbox(g);
-    h.Layout.Row = 2;
+    h.Layout.Row = 3;
     h.Layout.Column = i;
     h.Multiselect = 'on';
     d = unique(D.(varNames{i}));
     h.Items = cellstr(num2str(d,5));
-    
+    h.UserData = varNames{i};
     hlist(i) = h;
     
     
     h = uibutton(g,'state');
-    h.Layout.Row = 1;
+    h.Layout.Row = 2;
     h.Layout.Column = i;
     h.Text = obj.SIG.(varNames{i}).AliasWithUnit;
     h.UserData = hlist(i);
@@ -42,21 +42,24 @@ for i = 1:length(varNames)
 end
 
 hinfo = uilabel(g);
-hinfo.Layout.Row = 2;
-hinfo.Layout.Column = length(hlist)+1;
+hinfo.Layout.Row = 1;
+hinfo.Layout.Column = [1 length(hlist)];
+hinfo.HorizontalAlignment = 'center';
+hinfo.FontSize = 14;
 hinfo.Text = '';
 
 
 set(hbtn,'ValueChangedFcn',@sort_list);
-set(hlist,'ValueChangedFcn',{@update_selection,obj,D,hlist,hinfo});
+set(hlist,'ValueChangedFcn',{@update_selection,obj,hlist,hinfo});
 
 
-function update_selection(hObj,event,app,D,h,hinfo)
-varNames = D.Properties.VariableNames;
+function update_selection(hObj,event,app,h,hinfo)
+D = app.ScheduleTable.Data;
+
 ind = true(size(D,1),1);
-for i = 1:length(varNames)
+for i = 1:length(h)
     v = str2double(h(i).Value);
-    ind = ind & ismembertol(D.(varNames{i}),v,1e-5);
+    ind = ind & ismembertol(D.(h(i).UserData),v,1e-5);
 end
 
 app.ScheduleTable.Data(:,1) = num2cell(ind);
