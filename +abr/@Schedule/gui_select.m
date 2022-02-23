@@ -26,7 +26,8 @@ for i = 1:length(varNames)
     h.Layout.Row = 2;
     h.Layout.Column = i;
     h.Multiselect = 'on';
-    h.Items = cellstr(num2str(unique(D.(varNames{i}))));
+    d = unique(D.(varNames{i}));
+    h.Items = cellstr(num2str(d,5));
     
     hlist(i) = h;
     
@@ -34,8 +35,9 @@ for i = 1:length(varNames)
     h = uibutton(g,'state');
     h.Layout.Row = 1;
     h.Layout.Column = i;
-    h.Text = varNames{i};
+    h.Text = obj.SIG.(varNames{i}).AliasWithUnit;
     h.UserData = hlist(i);
+    
     hbtn(i) = h;
 end
 
@@ -50,7 +52,7 @@ varNames = D.Properties.VariableNames;
 ind = true(size(D,1),1);
 for i = 1:length(varNames)
     v = str2double(h(i).Value);
-    ind = ind & ismember(D.(varNames{i}),v);
+    ind = ind & ismembertol(D.(varNames{i}),v,1e-5);
 end
 
 app.ScheduleTable.Data(:,1) = num2cell(ind);
@@ -66,7 +68,7 @@ else
     v = sort(v,'ascend');
 end
 
-h.Items = cellstr(num2str(v));
+h.Items = cellstr(num2str(v,5));
 
 
 
