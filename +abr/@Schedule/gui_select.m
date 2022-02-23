@@ -16,7 +16,7 @@ f = uifigure;
 
 g = uigridlayout(f,[2,size(D,2)+1]);
 g.RowHeight = {50};
-g.ColumnWidth = repmat({'1x'},1,size(D,2)+1);
+g.ColumnWidth = [repmat({'1x'},1,size(D,2)) 100];
 
 varNames = D.Properties.VariableNames;
 for i = 1:length(varNames)
@@ -41,13 +41,17 @@ for i = 1:length(varNames)
     hbtn(i) = h;
 end
 
+hinfo = uilabel(g);
+hinfo.Layout.Row = 2;
+hinfo.Layout.Column = length(hlist)+1;
+hinfo.Text = '';
+
+
 set(hbtn,'ValueChangedFcn',@sort_list);
-set(hlist,'ValueChangedFcn',{@update_selection,obj,D,hlist});
+set(hlist,'ValueChangedFcn',{@update_selection,obj,D,hlist,hinfo});
 
 
-
-
-function update_selection(hObj,event,app,D,h)
+function update_selection(hObj,event,app,D,h,hinfo)
 varNames = D.Properties.VariableNames;
 ind = true(size(D,1),1);
 for i = 1:length(varNames)
@@ -57,6 +61,8 @@ end
 
 app.ScheduleTable.Data(:,1) = num2cell(ind);
 app.ScheduleTable.UserData.Table = app.ScheduleTable.Data;
+
+hinfo.Text = sprintf('%d stimuli selected',sum(ind));
 
 function sort_list(hObj,event)
 
