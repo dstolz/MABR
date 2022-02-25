@@ -79,16 +79,16 @@ classdef Universal < handle
             obj.infoFile        = fullfile(obj.runtimePath,'info.mat');
             
             
-            try
-                if ~libisloaded('user32')
-                    loadlibrary('C:\WINDOWS\system32\user32.dll','user32.h');
-                end
-                L = calllib('user32', 'GetAsyncKeyState', int32(1)) ~= 0; %#ok<NASGU>
-            catch me
-                vprintf(0,1,me)
-                pth = which('mingw.mlpkginstall');
-                vprintf(0,1,'Must run and install: %s',pth)
-            end
+%             try
+%                 if ~libisloaded('user32')
+%                     loadlibrary('C:\WINDOWS\system32\user32.dll','user32.h');
+%                 end
+%                 L = calllib('user32', 'GetAsyncKeyState', int32(1)) ~= 0; %#ok<NASGU>
+%             catch me
+%                 vprintf(0,1,me)
+%                 pth = which('mingw.mlpkginstall');
+%                 vprintf(0,1,'Must run and install: %s',pth)
+%             end
             
         end
         
