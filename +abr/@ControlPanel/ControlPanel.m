@@ -316,8 +316,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         
         function auto_save_abr_data(app)
-%             app.DATA(end+1) = copy(app.ABR);
-%             ABR_Data        = app.DATA;
+            
             ABR_Data = copy(app.ABR);
 
             [pth,fn,ext] = fileparts(app.outputFile);
