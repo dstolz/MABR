@@ -1,10 +1,9 @@
-function [preSweep,postSweep,sweepOnsets] = extract_sweeps(obj,ABR,doAll)
+function [preSweep,postSweep,sweepOnsets] = extract_sweeps(obj,ABR,doAll,observedBuffer)
 
 persistent lastBufferIdx blockSweepOnsets
 
 if nargin < 3 || isempty(doAll), doAll = false; end
-
-
+if nargin < 4 || isempty(observedBuffer), observedBuffer = 'mapSignalBuffer'; end % mapTimingBuffer or mapSignalBuffer
 
 preSweep = nan;
 postSweep = nan;
@@ -52,7 +51,7 @@ if isempty(samps), return; end
 
 
 % organize incoming signal
-postSweep = obj.mapSignalBuffer.Data(samps);
+postSweep = obj.(observedBuffer).Data(samps);
 if size(postSweep,2) == 1, postSweep = postSweep'; end
 
 
@@ -61,7 +60,7 @@ bsamps = w(1)-1:-ABR.adcDecimationFactor:-w(1)-w(2)-1;
 bsamps = blockSweepOnsets + bsamps;
 bsamps(any(bsamps < 1,2) | any(bsamps>bufferHead,2),:) = [];
 
-preSweep = obj.mapSignalBuffer.Data(bsamps);
+preSweep = obj.(observedBuffer).Data(bsamps);
 if size(preSweep,2) == 1, preSweep = preSweep'; end
 
 

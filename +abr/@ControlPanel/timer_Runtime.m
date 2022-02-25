@@ -3,7 +3,7 @@ function timer_Runtime(T,event,app)
 app.check_rec_status;
 
 % extract sweeps relative to timing signal
-[preSweep,postSweep,sweepOnsets] = app.Runtime.extract_sweeps(app.ABR);
+[preSweep,postSweep,sweepOnsets] = app.Runtime.extract_sweeps(app.ABR,0,app.observedBuffer);
 
 if isnan(postSweep(1)), return; end
 

@@ -168,9 +168,27 @@ disableDefaultInteractivity(axRecent)
 disableDefaultInteractivity(axMean)
 disableDefaultInteractivity(axCorr)
 
+
+
+cm = uicontextmenu(axMean);
+mch = uimenu(cm,'Text','Observe');
+mchs = uimenu(mch,'Text','Signal','MenuSelectedFcn',{@menu_processor,app});
+mcht = uimenu(mch,'Text','Timing','MenuSelectedFcn',{@menu_processor,app});
+
+
+
 h.axMean   = axMean;
 h.axRecent = axRecent;
 h.axCorr   = axCorr;
 h.fig = f;
 
 figure(f);
+
+
+function menu_processor(hObj,event,app)
+vprintf(1,'Switching to observing "%s"\n',hObj.Text)
+app.observedBuffer = string(sprintf('map%sBuffer',hObj.Text));
+
+
+
+

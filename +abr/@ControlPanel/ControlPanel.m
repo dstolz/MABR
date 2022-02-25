@@ -17,6 +17,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         calibrationFile     (1,:) char
         outputFile          (1,:) char
         
+        observedBuffer      (1,1) string {mustBeMember(observedBuffer,["mapSignalBuffer","mapTimingBuffer"])} = "mapSignalBuffer";
     end
     
     properties (SetAccess = private)
@@ -1002,7 +1003,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.scheduleRunCount(app.scheduleIdx) = app.scheduleRunCount(app.scheduleIdx) + 1;
                         
                         % extract sweep-based data and plot one last time
-                        [preSweep,postSweep,sweepOnsets] = app.Runtime.extract_sweeps(app.ABR,true);                       
+                        
+                        
+                        [preSweep,postSweep,sweepOnsets] = app.Runtime.extract_sweeps(app.ABR,true,app.observedBuffer);
                         if ~isnan(postSweep(1))
                             % update signal amplitude by InputAmpGain
                             A = app.Config.Parameters.InputAmpGain;
@@ -1105,6 +1108,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
 
             switch event.Value
                 case 'Acquire'
+                    % TO DO: ADD LISTENER FOR CHANGES IN abr.stateProgram 
                     app.stateProgram = abr.stateProgram.PREP_BLOCK;
                     app.StateMachine;
                     
