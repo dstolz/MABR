@@ -39,7 +39,7 @@ classdef Universal < handle
     end
     
     properties (Constant)
-        ADCSampleRate = 24000;
+        ADCSampleRate = 12000;
         frameLength   = 1024;
         maxInputBufferLength = 2^26; % should be power of 2 enough for at least a minute of data at 192kHz sampling rate
 
