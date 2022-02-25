@@ -778,8 +778,10 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ControlSweepCountGauge.Value = 0;
                         app.ControlPauseButton.Value = 0;
                         
-%                         vprintf(3,'Reloading schedule file')
-%                         app.load_schedule_file;
+                        if isempty(app.Schedule) || ~isvalid(app.Schedule)
+                            vprintf(3,'Reloading schedule file')
+                            app.load_schedule_file;
+                        end
                         
                         if ~isvalid(app.TrcOrg), app.TrcOrg = abr.traces.Organizer; end
                         
