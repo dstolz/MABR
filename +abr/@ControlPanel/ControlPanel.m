@@ -315,7 +315,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         
         
-        function auto_save_abr_data(app)
+        function save_abr_data(app)
             
             ABR_Data = app.ABR.to_struct;
             
@@ -336,7 +336,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             ffn = fullfile(pth,fn);
 
-            vprintf(2,'Auto saving %s [%s]',fn,ffn)
+            x = whos('ABR_Data');
+            vprintf(1,'Saving %s (%.1f MB) [%s]',fn,x.bytes./1e6,ffn)
             save(ffn,'ABR_Data','-mat','-nocompression');
 
             % TraceOrganizer  = app.TrcOrg;
@@ -1045,7 +1046,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ABR.ADC.Data = app.Runtime.mapSignalBuffer.Data(1:bufferHead);
                         app.ABR.ADC.SweepOnsets = app.Runtime.find_timing_onsets;
                         
-                        app.auto_save_abr_data;
+                        app.save_abr_data;
                         drawnow
 
                         app.stateProgram = abr.stateProgram.ADVANCE_BLOCK;
