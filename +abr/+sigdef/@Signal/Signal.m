@@ -89,6 +89,28 @@ classdef (Abstract,Hidden) Signal
         end
         
         
+        function s = saveobj(obj)
+            s = to_struct(obj);
+        end
+        
+        function s = to_struct(obj)
+            m = metaclass(obj);
+            p = {m.PropertyList.Name};
+            for i = 1:length(p)
+                s.(p{i}) = obj.(p{i});
+            end
+            
+            fn = properties(s.Calibration);
+            for i = 1:length(fn)
+                if isa(s.Calibration.(fn{i}),'abr.Buffer')
+                    s.Calibration.(fn{i}) = abr.Buffer;
+                end
+                
+            end
+        end
+        
+        
+        
         
         function obj = applyGate(obj)
             

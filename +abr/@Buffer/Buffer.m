@@ -56,9 +56,20 @@ classdef Buffer
             if nargin >= 4 && ~isempty(SweepOnsets), obj.SweepOnsets = SweepOnsets; end
             if nargin == 5 && ~isempty(SweepLength), obj.SweepLength = SweepLength; end
             
-            
         end
         
+        
+        function s = saveobj(obj)
+            s = to_struct(obj);
+        end
+        
+        function s = to_struct(obj)
+            m = metaclass(obj);
+            p = {m.PropertyList.Name};
+            for i = 1:length(p)
+                s.(p{i}) = obj.(p{i});
+            end
+        end
         
         function d = get.Data(obj)
             % Pad the buffer if its length does not evenly divide by the

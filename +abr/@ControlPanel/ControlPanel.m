@@ -317,14 +317,20 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
         
         function auto_save_abr_data(app)
             
-            ABR_Data = copy(app.ABR);
+            ABR_Data = app.ABR.to_struct;
+            
+            vprintf(2,'Decimating ADC buffer %d times',ABR_Data.adcDecimationFactor)
+            df = ABR_Data.adcDecimationFactor;
+            ABR_Data.ADC.Data = single(resample(double(ABR_Data.ADC.Data),1,df));
+            ABR_Data.ADC.SweepOnsets = round(ABR_Data.ADC.SweepOnsets./df);
 
             [pth,fn,ext] = fileparts(app.outputFile);
+            if isempty(ext), ext = '.abr'; end
             
             lbl = ABR_Data.SIG.Label;
             lbl = char(join(lbl,'_'));
             lbl(lbl==' ') = [];
-            fn = sprintf('%s_%s_%s%s',fn,lbl,datestr(now,30),ext);
+            fn = sprintf('%s_%s_%s%s',fn,lbl,ABR_Data.StartTime,ext);
             
             fn = matlab.lang.makeValidName(fn);
             
@@ -985,6 +991,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         
                     case abr.stateProgram.ACQUIRE
+                        
+                        app.ABR.StartTime = datestr(now,30); % approximate start time
                                                 
                         % send command to background process to acquire block
                         app.Runtime.CommandToBg = abr.Cmd.Run;

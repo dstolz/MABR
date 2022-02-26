@@ -34,6 +34,7 @@ classdef ABR < handle & matlab.mixin.Copyable
 
         analysisSettings (2,:) cell = {'rms'; []};
 
+        StartTime    (1,1) char
     end
     
     properties (Dependent)
@@ -74,6 +75,23 @@ classdef ABR < handle & matlab.mixin.Copyable
                 
             end
         end
+        
+        
+        function s = to_struct(obj)
+            m = metaclass(obj);
+            p = {m.PropertyList.Name};
+            for i = 1:length(p)
+                if startsWith(class(obj.(p{i})),{'abr.Buffer','abr.sigdef.sigs'})
+                    s.(p{i}) = obj.(p{i}).to_struct;
+                    if isfield(s.(p{i}),'ABRobj')
+                        s.(p{i}) = rmfield(s.(p{i}),'ABRobj');
+                    end
+                else
+                    s.(p{i}) = obj.(p{i});
+                end
+            end
+        end
+        
         
 
 
