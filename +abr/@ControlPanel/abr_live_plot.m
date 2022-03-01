@@ -83,11 +83,8 @@ h.axRecent.YAxis.TickValues = linspace(-s,s,5);
 
 h.corrBar.YData = R;
 
-m = .5:.25:1;
-m = m(find(m>max(R),1,'first'));
-if ~isempty(m)
-    h.axCorr.YAxis.Limits = [0 m];
-end
+h.axCorr.YAxis.Limits = [0 1];
+
 h.axCorr.Title.String = sprintf('F_s_p = %.2f',Fsp(postSweep));
 
 
