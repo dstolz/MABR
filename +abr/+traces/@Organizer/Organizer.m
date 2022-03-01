@@ -126,7 +126,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
             obj.TraceIdx(i) = [];
             delete(obj.Traces(i));
             obj.Traces(i) = [];
-            obj.PlotOrder(i) = [];
+%             obj.PlotOrder(i) = [];
             obj.GroupID(i) = [];
             
         end
@@ -255,7 +255,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
         function clear(obj,hObj,event)
             if ~obj.N, return; end
 
-            obj.delete_trace(1:obj.N);
+            obj.delete_trace(obj.N:-1:1);
             obj.Traces = abr.traces.Trace;
             
             try
