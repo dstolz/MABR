@@ -197,16 +197,36 @@ classdef Universal < handle
         
         function tf = get.hasAllToolboxes(obj)
             v = ver;
-            tf = false(size(obj.RequiredToolboxes,1),1);
+            RT = obj.RequiredToolboxes;
+            tf = false(size(RT,1),1);
+            % Note that Matlab toolbox versions increment the decimal such
+            % that "5.12" > "5.5"
             for i = 1:length(v)
-                ind = ismember(obj.RequiredToolboxes(:,1),v(i).Name);
+                ind = ismember(RT(:,1),v(i).Name);
                 if ~any(ind), continue; end
-                tf(ind) = str2double(v(i).Version) >= obj.RequiredToolboxes{ind,2};
+
+                rv = num2str(RT{ind,2});
+                dp = find(rv == '.');
+                rmv = str2double(rv(1:dp-1));
+                rsv = str2double(rv(dp+1:end));
+                p = str2double(sprintf('%d.%04d', rmv, rsv));
+
+                dp = find(v(i).Version == '.');
+                if isempty(dp)
+                    mv = str2double(v(i).Version);
+                    sv = 0;
+                else
+                    mv = str2double(v(i).Version(1:dp-1));
+                    sv = str2double(v(i).Version(dp+1:end));
+                end
+                q = str2double(sprintf('%d.%04d',mv,sv)) ;
+                tf(ind) = q >= p;
             end
-            if sum(tf) ~= size(obj.RequiredToolboxes,1)
+
+            if sum(tf) ~= size(RT,1)
                 rtstr = '';
-                for i = 1:size(obj.RequiredToolboxes,1)
-                    rtstr = sprintf('%s\t> %s, v%02.1f\n',rtstr,obj.RequiredToolboxes{i,1},obj.RequiredToolboxes{i,2});
+                for i = 1:size(RT,1)
+                    rtstr = sprintf('%s\t> %s, v%02.1f\n',rtstr,RT{i,1},RT{i,2});
                 end
                 error('The MABR toolbox requires the following toolboxes: \n%s',rtstr)
             end
