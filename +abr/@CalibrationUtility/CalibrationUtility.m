@@ -213,7 +213,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 vprintf(4,'app.Runtime.BackgroundState ~= abr.stateAcq.READY')
                 pause(0.1);
                 if app.Runtime.BackgroundState == abr.stateAcq.ERROR
-                    app.stateProgram = abr.stateProgram.ERROR;
+                    app.STATE = 'error';
                     return
                 end
                 app.Runtime.CommandToBg = abr.Cmd.Prep;
