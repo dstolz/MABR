@@ -330,9 +330,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             lbl = ABR_Data.SIG.Label;
             lbl = char(join(lbl,'_'));
             lbl(lbl==' ') = [];
-            fn = sprintf('%s_%s_%s%s',fn,lbl,ABR_Data.StartTime,ext);
+            fn = sprintf('%s_%s_%s',fn,lbl,ABR_Data.StartTime);
             
             fn = matlab.lang.makeValidName(fn);
+            
+            fn = [fn, ext];
             
             ffn = fullfile(pth,fn);
 
@@ -425,6 +427,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             app.FilterLPFcEditField.Value        = app.Config.Filter.adcFilterLP;
             app.FilterNotchFilterKnob.Value      = app.Config.Filter.Notch.Freq;
             
+            if ~isfield(app.Config.Parameters,"InputAmpGain")
+                vprintf(1,'InputAmpGain missing from config. Setting InputAmpGain = 1.')
+                app.Config.Parameters.InputAmpGain = 1;
+            end
+
             P = app.Config.Parameters;
             app.UpdateInputGainMenu.Text = sprintf('Amplifier Gain = %gx',P.InputAmpGain);
             fn = fieldnames(P);
@@ -1187,11 +1194,13 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             switch bgState
                 case abr.stateAcq.COMPLETED
                     stop(app.Timer);
+                    delete(app.Timer);
                     app.stateProgram = abr.stateProgram.BLOCK_COMPLETE;
                     app.StateMachine;
                     
                 case abr.stateAcq.ERROR
                     stop(app.Timer);
+                    delete(app.Timer);
                     app.stateProgram = abr.stateProgram.ACQ_ERROR;
                     app.StateMachine;
             end
