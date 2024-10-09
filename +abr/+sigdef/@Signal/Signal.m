@@ -89,9 +89,9 @@ classdef (Abstract,Hidden) Signal
         end
         
         
-        function s = saveobj(obj)
-            s = to_struct(obj);
-        end
+%        function s = saveobj(obj)
+%            s = to_struct(obj);
+%        end
         
         function s = to_struct(obj)
             m = metaclass(obj);
