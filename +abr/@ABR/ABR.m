@@ -34,7 +34,7 @@ classdef ABR < handle & matlab.mixin.Copyable
 
         analysisSettings (2,:) cell = {'rms'; []};
 
-        StartTime    (1,1) char
+        StartTime    (1,:) char
     end
     
     properties (Dependent)
