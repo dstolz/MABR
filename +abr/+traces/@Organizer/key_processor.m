@@ -124,7 +124,7 @@ switch lower(K)
 
     case 'k' % increase trace spacing
         if length(tidx) < 2, return; end
-        y = obj.Traces(tidx).YOffset;
+        y = [obj.Traces(tidx).YOffset];
         [y,i] = sort(y,'ascend');
         tidx = tidx(i);
         dy = y - y(1);
@@ -134,7 +134,7 @@ switch lower(K)
         
     case 'm' % decrease trace spacing
         if length(tidx) < 2, return; end
-        y = obj.Traces(tidx).YOffset;
+        y = [obj.Traces(tidx).YOffset];
         [y,i] = sort(y,'ascend');
         tidx = tidx(i);
         dy = y - y(1);
@@ -177,7 +177,7 @@ switch lower(K)
         
     case {'q','color'} % change color of selected trace
         if isempty(tidx), return; end
-        
+        vprintf(0,'Color change not yet implemented')
         
         
     case {'?','slash'} % list commands
