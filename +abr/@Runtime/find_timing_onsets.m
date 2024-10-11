@@ -2,8 +2,8 @@ function idx = find_timing_onsets(obj,LB,BH,shadowSamples)
 
 if nargin < 2 || isempty(LB), LB = 1; end
 if nargin < 3, BH = []; end
-if nargin < 4, shadowSamples = 0; end
-
+if nargin < 4, shadowSamples = round(0.1*obj.ADC.SampleRate); end
+    
 mTB = obj.mapTimingBuffer;
 
 if isempty(BH)

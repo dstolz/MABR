@@ -915,11 +915,12 @@ classdef CalibrationUtility < matlab.apps.AppBase
             LB = app.Calibration.ADC.N;
             if LB == 0, LB = 1; end
 
+
             % gather data from background process
             switch app.Runtime.BackgroundState
                 case abr.stateAcq.COMPLETED
                     app.Calibration.ADC.Data = mSB.Data(1:BH);
-                    app.Calibration.ADC.SweepOnsets = app.Runtime.find_timing_onsets(1,BH,5);
+                    app.Calibration.ADC.SweepOnsets = app.Runtime.find_timing_onsets(1,BH);
                     stop(T);
                     return
                     
@@ -928,7 +929,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
                     app.Calibration.ADC = app.Calibration.ADC.appendData(data);
                     
                     % find stimulus onsets in timing signal
-                    idx = app.Runtime.find_timing_onsets(LB,BH,5);
+                    idx = app.Runtime.find_timing_onsets(LB,BH);
                     if isempty(idx), return; end
                     app.Calibration.ADC.SweepOnsets(end+1:end+length(idx)) = idx;
                     
