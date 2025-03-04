@@ -1,7 +1,10 @@
 classdef Runtime < handle
     % Daniel Stolzberg (c) 2019
     
-    properties        
+    properties
+
+        ABR % handle to ABR object
+        
         mapCom          % memmapfile object: communications
         mapSignalBuffer % memmapfile object: signal buffer       
         mapTimingBuffer % memmapfile object: timing buffer

@@ -2,17 +2,24 @@ function idx = find_timing_onsets(obj,LB,BH,shadowSamples)
 
 if nargin < 2 || isempty(LB), LB = 1; end
 if nargin < 3, BH = []; end
-if nargin < 4, shadowSamples = round(0.1*obj.ADC.SampleRate); end
+if nargin < 4
+    if isa(obj,'abr.ABR')
+        Fs = obj.ADC.SampleRate;
+    elseif isa(obj,'abr.Runtime')
+        Fs = obj.ABR.ADC.SampleRate;
+    end
+    shadowSamples = round(0.1*Fs); 
+end
     
-mTB = obj.mapTimingBuffer;
-
 if isempty(BH)
     BH = obj.mapCom.Data.BufferIndex(end);
 end
 
+d = abs(obj.mapTimingBuffer.Data(LB:BH));
+
 % find stimulus onsets in timing signal
-ind = mTB.Data(LB:BH-1) > mTB.Data(LB+1:BH); % rising edge
-ind = ind & mTB.Data(LB:BH-1) >= .5; % threshold
+ind = d(1:end-1) < d(2:end); % rising edge
+ind = ind & d(1:end-1) >= .25; % threshold
 
 x = find(ind);
 dx = diff(x);

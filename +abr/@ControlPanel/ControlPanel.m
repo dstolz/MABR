@@ -818,6 +818,9 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             app.Runtime = abr.Runtime;
                         end
                         
+                        % copy handle to ABR object
+                        app.Runtime.ABR = app.ABR;
+
                         % copy handles to audioFileReader and audioPlayerRecorder
                         app.Runtime.AFR = app.ABR.AFR;
                         app.Runtime.APR = app.ABR.APR;
@@ -1000,7 +1003,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                     case abr.stateProgram.ACQUIRE
                         
-                        app.ABR.StartTime = datestr(now,30); % approximate start time
+                        app.ABR.StartTime = datetime("now"); % approximate start time
                                                 
                         % send command to background process to acquire block
                         app.Runtime.CommandToBg = abr.Cmd.Run;
