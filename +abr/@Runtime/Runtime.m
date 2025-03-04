@@ -143,17 +143,17 @@ classdef Runtime < handle
             % Create the communications file
             % This needs to be done for all involved instances of matlab.
             
-            % remove .dat files which will be rewritten
-            d = dir(fullfile(obj.Universal.runtimePath,'*.dat'));
-            if ~isempty(d)
-                ffn = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
-                ind = cellfun(@exist,ffn) ~= 2;
-                if all(ind), return; end
-                ffn(ind) = [];
-                warning('off','MATLAB:DELETE:Permission');
-                cellfun(@delete,ffn);
-                warning('on','MATLAB:DELETE:Permission');
-            end
+            % % remove .dat files which will be rewritten
+            % d = dir(fullfile(obj.Universal.runtimePath,'*.dat'));
+            % if ~isempty(d)
+            %     ffn = cellfun(@fullfile,{d.folder},{d.name},'uni',0);
+            %     ind = cellfun(@exist,ffn) ~= 2;
+            %     if all(ind), return; end
+            %     ffn(ind) = [];
+            %     warning('off','MATLAB:DELETE:Permission');
+            %     cellfun(@delete,ffn);
+            %     warning('on','MATLAB:DELETE:Permission');
+            % end
             
             % NOTE memmapfile does not support char, but can simply convert using char(m.Data)
             if ~exist(obj.Universal.comFile, 'file')
