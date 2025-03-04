@@ -10,7 +10,7 @@ postSweep = nan;
 sweepOnsets = nan;
 
 
-bufferHead = obj.mapCom.Data.BufferIndex(2);
+bufferHead = obj.BufferIndex(2);
 
 if isempty(lastBufferIdx) || lastBufferIdx > bufferHead, lastBufferIdx = 1; end
 
@@ -24,7 +24,9 @@ if doAll, LB = 1; end
 vprintf(4,'lastBufferIdx = %d',LB)
 vprintf(4,'bufferHead = %d',BH)
 
-idx = obj.find_timing_onsets(LB,BH);
+% FIX ME: NOT CORRECT SAMPLING RATE
+shadowSamples = round(0.1*obj.Universal.DACSampleRate);
+idx = obj.find_timing_onsets(LB,BH,shadowSamples);
 
 if isempty(idx), return; end % no new data
 
