@@ -40,14 +40,14 @@ classdef Universal < handle
     
     properties (Constant)
         ADCSampleRate = 12000;
-        frameLength   = 1024;
+        frameLength   (1,1) uint32 = 1024;
         maxInputBufferLength = 2^26; % should be power of 2 enough for at least a minute of data at 192kHz sampling rate
 
         SoftwareVersion = '22A';
         DataVersion     = '22A';
         Author          = 'Daniel Stolzberg';
         AuthorEmail     = 'daniel.stolzberg@gmail.com';
-        GithubRepository= 'https://github.com/dstolz/abr';
+        GithubRepository= 'https://github.com/dstolz/MABR';
         
         RequiredToolboxes = {'MATLAB',9.5; ...
                              'Signal Processing Toolbox',8.1; ...
@@ -143,7 +143,7 @@ classdef Universal < handle
             m.VersionData = obj.DataVersion;
             m.Checksum    = obj.hash;
             m.CommitDate  = obj.commitDate;
-            m.CurrentTimestamp = datestr(now);
+            m.CurrentTimestamp = datetime("now");
             m.HostComputerType = computer;
             [~,n] = dos('hostname');
             m.HostComputerName = n;

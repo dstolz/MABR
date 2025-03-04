@@ -10,42 +10,41 @@ if obj.isBackground
     if obj.lastReceivedCmd == obj.CommandToBg, return; end
     obj.lastReceivedCmd = abr.Cmd(obj.CommandToBg);
     
+    vprintf(1,'Background Received %s command',obj.CommandToBg)
+
     switch obj.CommandToBg
+        case abr.Cmd.Undef
         case abr.Cmd.Idle
-            vprintf(1,'Received Idle command')
             obj.BackgroundState = abr.stateAcq.IDLE;
             
         case abr.Cmd.Prep
-            vprintf(1,'Received Prep command')
             obj.prepare_block_bg; % sets up audioFileReader and audioPlayerRecorder
             obj.BackgroundState = abr.stateAcq.READY;
             
         case abr.Cmd.Run
-            vprintf(1,'Received Run command')
             obj.BackgroundState = abr.stateAcq.ACQUIRE;
             obj.acquire_block; % runs playback/acquisition
             obj.BackgroundState = abr.stateAcq.COMPLETED;
             obj.CommandToFg = abr.Cmd.Completed;
             
         case abr.Cmd.Stop
-            vprintf(1,'Received Stop command')
             % nothing to do here; stop is received in acquire_block
             
         case abr.Cmd.Kill
-            vprintf(1,'Received Kill command')
             obj.BackgroundState = abr.stateAcq.KILLED;
             seppuku;
             
         case abr.Cmd.Test
-            vprintf(1,'Received Test Mode command')
             obj.Universal.MODE = abr.Cmd.Test;
     end
     
     
 else
     if obj.lastReceivedCmd == obj.CommandToFg, return; end
-    obj.lastReceivedCmd = obj.mapCom.Data.CommandToFg;
+    obj.lastReceivedCmd = obj.CommandToFg;
     
+    vprintf(1,'Foreground Received %s command',obj.CommandToFg)
+
     switch obj.CommandToFg
         case abr.Cmd.Idle
         case abr.Cmd.Prep

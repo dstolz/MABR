@@ -197,8 +197,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
             
             vprintf(3,'Checking for BG process is running...')
             while waitForBG && ~app.Runtime.BgIsRunning
-                pause(0.1);
                 vprintf(4,'Waiting on BG process...')
+                pause(0.5);
             end
             
             if isequal(app.SIG,0), close(D); return; end
@@ -211,7 +211,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
             % wait for state of background process to update
             while app.Runtime.BackgroundState ~= abr.stateAcq.READY
                 vprintf(4,'app.Runtime.BackgroundState ~= abr.stateAcq.READY')
-                pause(0.1);
+                pause(0.5);
                 if app.Runtime.BackgroundState == abr.stateAcq.ERROR
                     app.STATE = 'error';
                     return

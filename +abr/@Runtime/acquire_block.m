@@ -17,7 +17,7 @@ frameLength = obj.Universal.frameLength;
 
 
 % reset latest input buffer index
-C.Data.BufferIndex = uint32([1 frameLength]);
+C.Data.BufferIndex = uint32([1; frameLength]);
 
 obj.BackgroundState = abr.stateAcq.ACQUIRE;
 
@@ -65,7 +65,7 @@ while ~isDone(obj.AFR)
     end
 
     % update the latest buffer index
-    C.Data.BufferIndex = uint32([idx k]);
+    C.Data.BufferIndex = uint32([idx; k]);
 end
 
 obj.BackgroundState = abr.stateAcq.COMPLETED;

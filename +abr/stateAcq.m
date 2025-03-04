@@ -2,6 +2,7 @@ classdef stateAcq < int8
     
     enumeration
         NONEXISTANT (-128)
+        UNDEF       (-99)
         INIT        (-1)
         IDLE        (0)
         READY       (1)
