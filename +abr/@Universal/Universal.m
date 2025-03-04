@@ -73,11 +73,15 @@ classdef Universal < handle
             obj.signalPath = fullfile(obj.root,'+sigdef','+sigs');
             
             obj.dacFile         = fullfile(obj.runtimePath,'dac.wav');
-            obj.comFile         = fullfile(obj.runtimePath,'com.dat');
+            obj.comFile         = fullfile(obj.runtimePath,'mabr_com.dat');
             obj.inputBufferFile = fullfile(obj.runtimePath,'input_buffer.dat');
             obj.inputTimingFile = fullfile(obj.runtimePath,'input_timing.dat');
             obj.infoFile        = fullfile(obj.runtimePath,'info.mat');
             
+
+            if ~isfile(obj.dacFile)
+                audiowrite(obj.dacFile,0,obj.DACSampleRate);
+            end
             
 %             try
 %                 if ~libisloaded('user32')
