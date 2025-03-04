@@ -532,11 +532,6 @@ classdef CalibrationUtility < matlab.apps.AppBase
                 delete(afw);
                 
                 
-                % update infoData with channel ids
-                app.Runtime.update_infoData('DACsignalCh',1);
-                app.Runtime.update_infoData('DACtimingCh',2);
-                app.Runtime.update_infoData('ADCsignalCh',1);
-                app.Runtime.update_infoData('ADCtimingCh',2);
                 
                 % tell background process to prep for acquisition
                 app.Runtime.CommandToBg = abr.Cmd.Prep;
@@ -853,6 +848,13 @@ classdef CalibrationUtility < matlab.apps.AppBase
         % Construct app
         function app = CalibrationUtility(varargin)
 
+            % update infoData with channel ids
+            app.Runtime.update_infoData('DACsignalCh',1);
+            app.Runtime.update_infoData('DACtimingCh',2);
+            app.Runtime.update_infoData('ADCsignalCh',1);
+            app.Runtime.update_infoData('ADCtimingCh',2);
+
+
             % Create and configure components
             createComponents(app)
 
@@ -861,6 +863,8 @@ classdef CalibrationUtility < matlab.apps.AppBase
 
             % Execute the startup function
             runStartupFcn(app, @startupFcn)
+
+
 
             if nargout == 0
                 clear app
