@@ -559,7 +559,7 @@ classdef CalibrationUtility < matlab.apps.AppBase
 
                 
                 pause(0.5);
-                Y = app.Runtime.mapSignalBuffer.Data(1:app.Runtime.mapCom.Data.BufferIndex(2));
+                Y = app.Runtime.mapSignalBuffer.Data(1:app.Runtime.BufferIndex(2));
                 
                 % discard first second of audio in case of recording onset
                 % artifact

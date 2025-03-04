@@ -11,6 +11,9 @@ classdef Runtime < handle
         
         BackgroundState (1,1) abr.stateAcq
         ForegroundState (1,1) abr.stateAcq
+
+
+        BufferIndex (1,2) uint32 = [1 1024]
         
         InputAmpGain    (1,1) double = 1;
     end
@@ -332,6 +335,14 @@ classdef Runtime < handle
             cmd = abr.Cmd(obj.mapCom.Data.CommandToBg);
         end
             
+
+        function set.BufferIndex(obj,idx)
+            obj.mapCOm.Data.BufferIndex = uint32(idx(:)');
+        end
+
+        function idx = get.BufferIndex(obj)
+            idx = obj.mapCom.Data.BufferIndex;
+        end
             
     end
     

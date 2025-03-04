@@ -1036,7 +1036,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             
                             % Add buffer to traces.Organizer
                             app.ABR.ADC.SweepLength = round(app.ABR.ADC.SampleRate .* app.ABR.adcWindow(2)) + 1;
-                            idx = 1:app.ABR.adcDecimationFactor:app.Runtime.mapCom.Data.BufferIndex(2);
+                            idx = 1:app.ABR.adcDecimationFactor:app.Runtime.BufferIndex(2);
                             app.ABR.ADC.Data = app.Runtime.mapSignalBuffer.Data(idx);
                             app.ABR.ADC.SweepOnsets = round(sweepOnsets./app.ABR.adcDecimationFactor);
                             
@@ -1049,7 +1049,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.update_lamp('saving');
 
                         % store continue data buffer for offline analysis
-                        bufferHead = app.Runtime.mapCom.Data.BufferIndex(2);
+                        bufferHead = app.Runtime.BufferIndex(2);
                         app.ABR.ADC.Data = app.Runtime.mapSignalBuffer.Data(1:bufferHead);
                         app.ABR.ADC.SweepOnsets = app.Runtime.find_timing_onsets;
                         
@@ -1089,7 +1089,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
 
                             % Add buffer to traces.Organizer
                             app.ABR.ADC.SweepLength = round(app.ABR.ADC.SampleRate .* app.ABR.adcWindow(2)) + 1;
-                            idx = app.Runtime.mapCom.Data.BufferIndex;
+                            idx = app.Runtime.BufferIndex;
                             app.ABR.ADC.Data = app.Runtime.mapSignalBuffer.Data(1:idx(2));
                             app.ABR.ADC.SweepOnsets = sweepOnsets;
                             app.TrcOrg.add_trace(app.ABR);
