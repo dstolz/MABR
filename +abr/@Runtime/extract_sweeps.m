@@ -24,9 +24,7 @@ if doAll, LB = 1; end
 vprintf(4,'lastBufferIdx = %d',LB)
 vprintf(4,'bufferHead = %d',BH)
 
-% FIX ME: NOT CORRECT SAMPLING RATE
-shadowSamples = round(0.1*obj.Universal.DACSampleRate);
-idx = obj.find_timing_onsets(LB,BH,shadowSamples);
+idx = obj.find_timing_onsets(LB,BH);
 
 if isempty(idx), return; end % no new data
 
