@@ -11,7 +11,7 @@ app.ABR.ADC.SweepOnsets = sweepOnsets;
 
 % update signal amplitude by InputAmpGain
 A = app.Config.Parameters.InputAmpGain;
-vprintf(4,'Making input gain adjustment: %g',A)
+% vprintf(4,'Making input gain adjustment: %g',A)
 preSweep  = preSweep ./ A;
 postSweep = postSweep ./ A;
 

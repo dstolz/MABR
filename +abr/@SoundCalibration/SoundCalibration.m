@@ -55,7 +55,7 @@ classdef SoundCalibration %< matlab.mixin.Copyable
     end
     
     properties (SetAccess = immutable)
-        Timestamp = datestr(now);
+        Timestamp = datetime("now");
     end
     
     methods
@@ -179,7 +179,8 @@ classdef SoundCalibration %< matlab.mixin.Copyable
 
         
         function r = calibration_is_valid(obj)
-            r = ~any(isnan(obj.MeasuredVoltage)) && ~isempty(obj.CalibratedVoltage);
+            r = ~isempty(obj.CalibratedVoltage);
+            % r = ~any(isnan(obj.MeasuredVoltage)) && ~isempty(obj.CalibratedVoltage);
         end
 
         

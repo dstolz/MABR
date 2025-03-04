@@ -52,7 +52,7 @@ classdef (ConstructOnLoad = true) Organizer < handle
     end
     
     properties (SetAccess = immutable)
-        TimeStamp = datestr(now);
+        TimeStamp = datetime("now");
     end
     
     

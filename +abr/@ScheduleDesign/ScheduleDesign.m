@@ -273,13 +273,12 @@ classdef ScheduleDesign < matlab.apps.AppBase
             ind = app.SIG.dataParams.soundLevel == msl;
             y = app.SIG.data(ind);
             d = app.SIG.dataParams.duration(ind);
-%             lbl = app.SIG.
             
             t = tiledlayout(app.ScheduleDesignFigureSigPlot,'flow');
 
             for i = 1:length(y)
                 ax = nexttile(t);
-                
+                yline(0);
                 tvec = linspace(0,d(i),length(y{i})); % TO DO: ACCOUNT FOR ONSET DELAYS
                 tvec = tvec .* 1000; % s -> ms
                 plot(ax,tvec,y{i});
@@ -288,6 +287,8 @@ classdef ScheduleDesign < matlab.apps.AppBase
 %                 title(
             end
             
+            xlabel(t,'time (ms)');
+            ylabel(t,'amplitude (V)');
             
             
             %         btnSigSched_Callback([],[],true);

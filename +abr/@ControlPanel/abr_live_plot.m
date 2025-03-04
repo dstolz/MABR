@@ -166,11 +166,11 @@ disableDefaultInteractivity(axMean)
 disableDefaultInteractivity(axCorr)
 
 
-
-cm = uicontextmenu(axMean);
-mch = uimenu(cm,'Text','Observe');
-mchs = uimenu(mch,'Text','Signal','MenuSelectedFcn',{@menu_processor,app});
-mcht = uimenu(mch,'Text','Timing','MenuSelectedFcn',{@menu_processor,app});
+% axes cannot be parent to context menu
+% cm = uicontextmenu(axMean);
+% mch = uimenu(cm,'Text','Observe');
+% mchs = uimenu(mch,'Text','Signal','MenuSelectedFcn',{@menu_processor,app});
+% mcht = uimenu(mch,'Text','Timing','MenuSelectedFcn',{@menu_processor,app});
 
 
 

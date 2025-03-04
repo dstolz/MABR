@@ -3,7 +3,6 @@ classdef Buffer
     properties
         SampleRate   (1,1) double {mustBePositive,mustBeFinite} = 1;
         
-
         Data         (:,1) single
         
         ABRobj       (1,1)
@@ -95,7 +94,7 @@ classdef Buffer
         end
         
         function t = get.TimeVector(obj)
-            t = 0:1/obj.SampleRate:obj.SweepDuration-1/obj.SampleRate;
+            t = (0:obj.SweepDuration-1)/obj.SampleRate;
         end
         
         function f = get.adcDecimationFactor(obj)
@@ -111,7 +110,7 @@ classdef Buffer
         end
         
         function r = get.SNR(obj)
-            r = 20 * log10(obj.signalPower/ obj.noisePower);
+            r = 20 * log10(obj.signalPower/obj.noisePower);
         end
         
         function r = get.noisePower(obj)
