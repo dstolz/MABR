@@ -6,11 +6,25 @@ if ~ispc
 end
 
 if nargin == 0 || isempty(rootDir)
-    s = dbstack('-completenames');
-    rootDir = fileparts(s(1).file); 
+    rootDir = fileparts(mfilename('fullpath')); 
 end
 
-addpath(rootDir);
+% addpath(rootDir);
+pth = genpath(rootDir);
+
+
+sep = ";";
+if ~ispc(), sep = ":"; end
+
+pth = split(pth,sep);
+
+i = cellfun(@(a) isempty(a) || contains(a,'.git'),pth);
+
+pth(i) = [];
+
+pth = join(pth,sep);
+
+addpath(char(pth));
 
 h = abr.ControlPanel;
 
