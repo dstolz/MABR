@@ -1003,7 +1003,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                     case abr.stateProgram.ACQUIRE
                         
-                        app.ABR.StartTime = datetime("now"); % approximate start time
+                        app.ABR.StartTime = datetime("now",Format = 'yyyyMMdd''T''HHmmss'); % approximate start time
                                                 
                         % send command to background process to acquire block
                         app.Runtime.CommandToBg = abr.Cmd.Run;
