@@ -55,7 +55,7 @@ classdef SoundCalibration %< matlab.mixin.Copyable
     end
     
     properties (SetAccess = immutable)
-        Timestamp = datetime("now");
+        Timestamp = datetime("now",Format = 'yyyyMMdd''T''HHmmss');
     end
     
     methods

@@ -147,7 +147,7 @@ classdef Universal < handle
             m.VersionData = obj.DataVersion;
             m.Checksum    = obj.hash;
             m.CommitDate  = obj.commitDate;
-            m.CurrentTimestamp = datetime("now");
+            m.CurrentTimestamp = datetime("now",Format = 'yyyyMMdd''T''HHmmss');
             m.HostComputerType = computer;
             [~,n] = dos('hostname');
             m.HostComputerName = n;
