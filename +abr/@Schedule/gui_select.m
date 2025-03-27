@@ -52,7 +52,11 @@ end
 
 hinfo = uilabel(g);
 hinfo.Layout.Row = 1;
-hinfo.Layout.Column = [1 length(hlist)];
+if length(hlist) > 2
+    hinfo.Layout.Column = [1 length(hlist)];
+else
+    hinfo.Layout.Column = 1;
+end
 hinfo.HorizontalAlignment = 'center';
 hinfo.FontSize = 14;
 hinfo.Text = '';
