@@ -121,7 +121,9 @@ classdef (ConstructOnLoad = true) Organizer < handle
         end
                 
         function delete_trace(obj,idx)
-            obj.TraceSelection(ismember(obj.TraceSelection,idx)) = [];
+            ind = ismember(obj.TraceSelection,idx);
+            delete(obj.TraceSelection(ind));
+            obj.TraceSelection(ind) = [];
             i = ismember(obj.TraceIdx,idx);
             obj.TraceIdx(i) = [];
             delete(obj.Traces(i));

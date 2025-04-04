@@ -68,4 +68,4 @@ h = [obj.Traces.LineHandle];
 ind = ismember(obj.TraceIdx,obj.TraceSelection)';
 fu = arrayfun(@(a) isa(a,'matlab.graphics.primitive.Line'),h);
 set(h(~ind&fu),'LineWidth',obj.defaultTraceWidth);
-set(h(ind) ,'LineWidth',obj.selectedTraceWidth);
+set(h(fu) ,'LineWidth',obj.selectedTraceWidth);
