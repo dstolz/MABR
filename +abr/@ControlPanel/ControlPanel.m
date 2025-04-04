@@ -792,7 +792,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ControlSweepCountGauge.Value = 0;
                         app.ControlPauseButton.Value = 0;
                         
-                        if isempty(app.Schedule) || ~isvalid(app.Schedule)
+                        if isempty(app.Schedule) || isequal(app.Schedule,0) || ~isvalid(app.Schedule)
                             vprintf(3,'Reloading schedule file')
                             app.load_schedule_file;
                         end
