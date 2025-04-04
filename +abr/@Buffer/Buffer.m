@@ -1,48 +1,109 @@
 classdef Buffer
-    
+    % BUFFER   Class for handling acquired signals
+    %
+    %   BUFFER Properties:
+    %       SampleRate       - Sampling rate of the data (Hz)
+    %       Data             - Stored signal data
+    %       ABRobj           - Associated object for additional processing
+    %       SweepOnsets      - Onset indices of sweeps in the data
+    %       SweepLength      - Length of each sweep (samples)
+    %       SweepValue       - Value associated with each sweep
+    %       FrameSize        - Frame size for processing (samples)
+    %       PadValue         - Value used for padding data
+    %       PadToFrameSize   - Toggle for padding data to frame size
+    %       SmoothSpan       - Span for moving average smoothing
+    %       DetrendPoly      - Polynomial order for detrending
+    %       FFTOptions       - Structure with FFT options
+    %
+    %   BUFFER Methods:
+    %       Buffer           - Constructor method
+    %       saveobj          - Save object to a structure
+    %       to_struct        - Convert object properties to a structure
+    %       insertData       - Insert data at a specified onset
+    %       appendData       - Append data to the existing buffer
+    %       appendSweepOnsets- Append sweep onset indices
+    %       preallocate      - Preallocate data buffer
+    %       plotMean         - Plot the mean of sweeps
+    %       plotSweeps       - Plot individual sweeps
+    %       plotFFT          - Plot the FFT of the mean sweep
+    %       fft              - Compute FFT of the mean sweep
+    %       signalAnalyzer   - Launch Signal Analyzer app with sweep data
     properties
-        SampleRate   (1,1) double {mustBePositive,mustBeFinite} = 1;
-        
+       SampleRate   (1,1) double {mustBePositive,mustBeFinite} = 1;
+        % Sampling rate of the data in Hz.
+
         Data         (:,1) single
-        
+        % Column vector storing the signal data.
+
         ABRobj       (1,1)
-        
-        % in samples
+        % Associated object for additional processing.
+
         SweepOnsets  (:,1) double {mustBeNonnegative,mustBeInteger} = [];
+        % Onset indices of sweeps within the data buffer.
+
         SweepLength  (1,1) double {mustBePositive,mustBeInteger} = 1;
-        
-        SweepValue   
-        
+        % Length of each sweep in samples.
+
+        SweepValue
+        % Value associated with each sweep (e.g., stimulus level).
+
         FrameSize    (1,1) double {mustBePositive,mustBeInteger} = 2048;
-        
-        PadValue     (1,1) = 0; % data type cast to obj.Data type
+        % Frame size for processing in samples.
+
+        PadValue     (1,1) = 0;
+        % Value used to pad the data buffer, cast to the type of Data.
+
         PadToFrameSize matlab.lang.OnOffSwitchState = 'off';
-        
-        SmoothSpan    (1,1) double {mustBeInteger,mustBeNonnegative} = 0;   
-        DetrendPoly   (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(DetrendPoly,-1),mustBeLessThanOrEqual(DetrendPoly,9)} = -1;
-                
+        % Toggle to pad data to match the frame size ('on' or 'off').
+
+        SmoothSpan    (1,1) double {mustBeInteger,mustBeNonnegative} = 0;
+        % Span for moving average smoothing of the sweep mean.
+
+        DetrendPoly   (1,1) double {mustBeInteger, mustBeGreaterThanOrEqual(DetrendPoly,-1), mustBeLessThanOrEqual(DetrendPoly,9)} = -1;
+        % Polynomial order for detrending the sweep mean (-1 to 9).
+
         FFTOptions = struct('windowFcn',@flattop,'inDecibels',true);
+        % Structure containing FFT options:
+        %   windowFcn   - Window function handle (e.g., @flattop)
+        %   inDecibels  - Boolean to toggle decibel scaling of FFT output
     end
-    
+
     properties (Dependent)
         N             (1,1)
-        SweepDuration (1,1)
-        TimeVector    (:,1)
-        
-        SweepData
-        NumSweeps
-        SweepMean
-        
-        noisePower
-        signalPower
-        
-        RMS
-        SNR
-        
-        adcDecimationFactor
+        % Total number of samples in the Data buffer.
 
-        
+        SweepDuration (1,1)
+        % Duration of each sweep in seconds.
+
+        TimeVector    (:,1)
+        % Time vector corresponding to one sweep.
+
+        SweepData
+        % Matrix containing segmented sweep data.
+
+        NumSweeps
+        % Number of sweeps in the data buffer.
+
+        SweepMean
+        % Mean waveform of the sweeps.
+
+        noisePower
+        % Estimated noise power of the sweeps.
+
+        signalPower
+        % Estimated signal power of the sweeps.
+
+        RMS
+        % Root mean square value of the sweep mean.
+
+        SNR
+        % Signal-to-noise ratio in decibels.
+
+        adcDecimationFactor
+        % Decimation factor from the associated ABR object.
+
         sweepIdx
+        % Indices corresponding to each sweep segment.
     end
     
     methods
@@ -94,7 +155,7 @@ classdef Buffer
         end
         
         function t = get.TimeVector(obj)
-            t = (0:obj.SweepDuration-1)/obj.SampleRate;
+            t = (0:obj.SweepLength-1)/obj.SampleRate;
         end
         
         function f = get.adcDecimationFactor(obj)
