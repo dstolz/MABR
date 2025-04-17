@@ -164,7 +164,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             if isequal(ffn,app.outputFile), return; end % no change
 
             if exist(ffn,'file') == 2
-                fprintf('Appending to output file: %s (%s)\n',fn,pn)
+                vprintf(3,'Appending to output file: %s (%s)\n',fn,pn)
                 load(ffn,'-mat','meta');
                 % should probably be ||
 %                 if exist('meta','var') && ~isequal(meta.DataVersion,app.DataVersion)
@@ -177,7 +177,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
 %                 end
                 
             else
-                fprintf('Creating new output file: %s (%s)\n',fn,pn)
+                vprintf(3,'Creating new output file: %s (%s)\n',fn,pn)
                 meta = app.meta;
                 ABR_Data = abr.ABR; % init
                 TraceOrganizer = abr.traces.Organizer; % init
@@ -330,7 +330,8 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             lbl = ABR_Data.SIG.Label;
             lbl = char(join(lbl,'_'));
             lbl(lbl==' ') = [];
-            fn = sprintf('%s_%s_%s',fn,lbl,ABR_Data.StartTime);
+            t = datestr(datetime(ABR_Data.StartTime),'yymmddTHHMMSS'); %#ok<DATST>
+            fn = sprintf('%s_%s_%s',fn,lbl,t);
             
             fn = matlab.lang.makeValidName(fn);
             
@@ -1003,7 +1004,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                     case abr.stateProgram.ACQUIRE
                         
-                        app.ABR.StartTime = datetime("now",Format = 'yyyyMMdd''T''HHmmss'); % approximate start time
+                        app.ABR.StartTime = datetime("now"); % approximate start time
                                                 
                         % send command to background process to acquire block
                         app.Runtime.CommandToBg = abr.Cmd.Run;
@@ -1068,7 +1069,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.ControlAcquisitionSwitch.Value  = 'Idle';
                         app.ControlStimInfoLabel.Text = 'Completed';
                         app.update_lamp('Finished');
-                        
+                        stateAcq = abr.stateAcq.COMPLETED;
                         
                     case abr.stateProgram.USER_IDLE
                         app.Schedule.DO_NOT_DELETE = false;
