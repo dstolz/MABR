@@ -7,7 +7,7 @@ if isnan(preSweep(1)) || isnan(postSweep(1)), return; end
 if app.ABR.sweepCount > 1 
     R = app.partition_corr(preSweep,postSweep);
 else
-    R = [0 0 0];
+    R = 0;
 end
 
 % % Fischer's Z-transform

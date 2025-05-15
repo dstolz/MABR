@@ -9,21 +9,19 @@ function R = partition_corr(preSweep,postSweep)
 %
 % Compute Pearson's correlation in a similar fashion to Arnold et al, 1985
 % Arnold, S.A., et al (1985). Objective versus visual detection of the
-% auditory brain stem response. Ear and Hearing, 6(3), 144–150.
+% auditory brain stem response. Ear and Hearing, 6(3), 144ï¿½150.
 
 
+M = [mean(preSweep(1:2:end,:), 1); 
+     mean(preSweep(2:2:end,:), 1); 
+     mean(postSweep(1:2:end,:), 1); 
+     mean(postSweep(2:2:end,:), 1)];
 
-preMean1  = mean(preSweep(1:2:end,:),1)';
-preMean2  = mean(preSweep((2:2:end),:),1)';
-postMean1 = mean(postSweep(1:2:end,:),1)';
-postMean2 = mean(postSweep(2:2:end,:),1)';
 
 % compute auto and cross correlation between preSweep and postSweep stimulus means
-R = corrcoef([preMean1 preMean2 postMean1 postMean2]);
+M = M - mean(M, 2);
+M = M ./ std(M, 0, 2);
+R = (M * M.') / (size(M, 2) - 1);
 
-Rpre   = R(2,1);
-Rcross = mean(R(sub2ind([4 4],[3 3 4 4],[1 2 1 2])));
-Rpost  = R(4,3);
-
-R = abs([Rpre Rcross Rpost]);
+R = max(R(4,3) -  R(2,1),0);
 

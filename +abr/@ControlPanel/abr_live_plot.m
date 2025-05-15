@@ -13,7 +13,7 @@ if nargin < 2 || isempty(postSweep)
     h.meanLine.XData   = nan;
     h.recentLine.YData = nan;
     h.recentLine.XData = nan;
-    h.axCorr.YData = nan(1,2);
+    h.axCorr.YData = nan(1);
     return
 end
 
@@ -52,11 +52,11 @@ may = max(abs(meanSweep));
 
 h.meanLine.XData = tvec;
 h.meanLine.YData = meanSweep * yscale; % V -> unit
-h.axMean.Title.String = sprintf('%d / %d sweeps', ...
+h.axMean.Subtitle.String = sprintf('%d / %d sweeps', ...
     size(postSweep,1),app.ABR.numSweeps);
 
 % control y axis scaling
-m = [0:0.01:0.09 0.1:.1:.4 .5:.25:.75 1:10];
+m = [0:0.01:0.09 0.1:.1:.4 .5:.25:.75 1:10 20:20:100 150:50:500 600:100:1000];
 may = may * yscale;
 s = m(find(m>may,1,'first'));
 if isempty(s), s = may; end
@@ -81,17 +81,17 @@ h.axRecent.XAxis.Limits = h.axMean.XAxis.Limits;
 h.axRecent.YAxis.TickLabelFormat = sprintf('%%3.2f %s',unit);
 h.axRecent.YAxis.TickValues = linspace(-s,s,5);
 
-h.corrBar.YData = R;
+h.corrBar.YData = [0; R];
 
 h.axCorr.YAxis.Limits = [0 1];
 
-h.axCorr.Title.String = sprintf('F_s_p = %.2f',Fsp(postSweep));
+% h.axCorr.Title.String = sprintf('F_s_p = %.2f',Fsp(postSweep));
 
 
 
 function h = setup(app)
 vprintf(3,'Setting up abr_live_plot')
-f = findobj('type','figure','-and','name','MABR Live Plot');
+f = findobj('type','figure','-and','tag','MABR_FIG');
 
 if isempty(f)
     p = app.ControlPanelUIFigure.Position;
@@ -106,9 +106,9 @@ end
 clf(f);
 movegui(f);
 
-axRecent = subplot(1,3,[1 2],'parent',f);
+axRecent = subplot(1,5,[1 3],'parent',f);
 axMean   = axes(f,'position',axRecent.Position,'Color','none');
-axCorr   = subplot(1,3,3,'parent',f);
+axCorr   = subplot(1,5,5,'parent',f);
 axCorr.Position(1) = 0.75;
 axCorr.Position(3) = 0.15;
 axCorr.YAxis.TickLabelFormat = '%2.1f';
@@ -119,7 +119,7 @@ box(axMean,'on');
 
 axMean.XAxis.Label.String = 'time (ms)';
 axMean.YAxis.Label.String = '';
-
+f.Name = strjoin(app.ABR.SIG.Label,', ');
 
 axMean.XAxis.Limits   = app.ABR.adcWindow * 1000; % s -> ms
 axRecent.XAxis.Limits = app.ABR.adcWindow * 1000;
@@ -143,18 +143,15 @@ h.abrLegend = legend(axMean, ...
     'AutoUpdate','off');
 
 
-h.corrBar = bar(axCorr, ...
-    [1 2],[nan nan],1, ...
-    'FaceColor','Flat','EdgeColor','none', ...
-    'CData',[1 .6 .2; .2 1 .2]);
+h.corrBar = line(axCorr,[1; 1],nan(2,1),LineWidth = 20,Color = [.2 .2 .2]);
 
 axCorr.YAxisLocation = 'right';
 grid(axCorr,'on');
-axCorr.YAxis.Label.String = 'correlation';
-axCorr.XAxis.TickValues = [1 2];%[1 2 3];
-axCorr.XAxis.TickLabels = {'Cross'; 'Post'};%{'Pre'; 'Cross'; 'Post'};
-axCorr.XAxis.TickLabelRotation = 45;
-axCorr.XAxis.Limits = [0.5 2.5];
+box(axCorr,'on');
+axCorr.Title.String = sprintf('[\\rho_{post}%c\\rho_{pre}]_+',8722);
+axCorr.XAxis.TickValues = 1;
+axCorr.XAxis.TickLabels = '';
+axCorr.XAxis.Limits = [0.5 1.5];
 
 
 tb = axtoolbar(axRecent); tb.Visible = 'off';
