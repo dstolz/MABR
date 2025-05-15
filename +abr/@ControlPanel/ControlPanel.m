@@ -963,9 +963,6 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         
                         app.ABR.createADCfilt;
                                                 
-                        % update status
-                        app.update_lamp('acquiring');
-                        
                         
                         % update infoData with channel ids
                         app.Runtime.update_infoData('DACsignalCh',app.ABR.DACsignalCh);
