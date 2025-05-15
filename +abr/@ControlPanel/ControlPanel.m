@@ -973,7 +973,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                         app.Runtime.update_infoData('ADCsignalCh',app.ABR.ADCsignalCh);
                         app.Runtime.update_infoData('ADCtimingCh',app.ABR.ADCtimingCh);
                         
-                        % write audio file to .runtime
+                        % write audio file to runtime
                         app.Runtime.prepare_block_fg(app.ABR.DAC.Data, ...
                             app.ABR.DAC.SampleRate,app.ABR.numSweeps, ...
                             app.ABR.sweepRate,app.ABR.altPolarity);
@@ -993,11 +993,13 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                             end
                         end
                         
-                        
+                        % update acquisition state to READY
                         stateAcq = abr.stateAcq.READY;
 
+                        % update program state for acquisition
                         app.stateProgram = abr.stateProgram.ACQUIRE;
                         
+                        % call state machine
                         app.StateMachine;
                         
                         
