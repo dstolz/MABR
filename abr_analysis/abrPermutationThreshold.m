@@ -1,8 +1,8 @@
-function [thresh_hat,permResult,logMdls] = abrPermutationThreshold(S, U, winIdx, Fs, options, ptoptions)
+function [thresh_hat,permResult,mdls] = abrPermutationThreshold(S, U, winIdx, Fs, options, ptoptions)
 % abrPermutationThreshold - Perform cluster-based permutation testing and estimate ABR thresholds.
 %
 % Syntax:
-%   [thresh_hat, permResult, logMdls] = abrPermutationThreshold(S, U, winIdx, Fs, options, ptoptions)
+%   [thresh_hat, permResult, mdls] = abrPermutationThreshold(S, U, winIdx, Fs, options, ptoptions)
 %
 % Description:
 %   Performs cluster-based permutation testing on auditory brainstem response (ABR) data
@@ -21,6 +21,7 @@ function [thresh_hat,permResult,logMdls] = abrPermutationThreshold(S, U, winIdx,
 %                       .debug          - logical; enable debug mode with pausing and plots (default: false).
 %                       .responseWindow - [tMin tMax] in ms for post-stimulus analysis window (default: [1 9]).
 %                       .thresholdType  - 'logistic' or 'minimum' threshold estimation (default: 'logistic').
+%                       .nearestLevel   - logical; pin estimated threshold to the nearest presented level (default: true)
 %   ptoptions       - struct of permutation-test options:
 %                       .alpha           - significance level (0 < alpha < 1, default: 0.05).
 %                       .nPerm           - number of permutations (positive integer, default: 1000).
@@ -33,7 +34,7 @@ function [thresh_hat,permResult,logMdls] = abrPermutationThreshold(S, U, winIdx,
 %   permResult      - struct array (nLevels*nFreqs) with fields:
 %                       .clusters, .clusterStatsReal, .maxClusterStatReal, .tValsReal,
 %                       .tThresh, .isSig, .maxClusterStatsPerm.
-%   logMdls         - 1 × nFreqs cell array of fitted logistic model objects (if thresholdType=='logistic'; else empty).
+%   mdls         - 1 × nFreqs cell array of fitted logistic model objects (if thresholdType=='logistic'; else empty).
 %
 % Theory of Operation:
 %   The function conducts a cluster-based permutation test as follows:
@@ -56,14 +57,14 @@ arguments
     U
     winIdx double
     Fs (1,1) double {mustBePositive}
-    options.useParallel (1,1) logical = true;
+    options.useParallel (1,1) logical = false;
     options.debug (1,1) logical = false;
     options.responseWindow (1,2) double {mustBeFinite} = [1 9]; % response window in ms
     options.thresholdType (1,1) string {mustBeMember(options.thresholdType,["logistic","minimum"])} = "logistic";
+    options.nearestLevel (1,1) logical = true;
     ptoptions.alpha (1,1) double {mustBeInRange(ptoptions.alpha, 0, 1)} = 0.05
     ptoptions.nPerm (1,1) double {mustBePositive,mustBeFinite} = 1000
     ptoptions.minClusterSize (1,1) double {mustBePositive,mustBeFinite} = 1;
-    ptoptions.approach (1,1) string {mustBeMember(ptoptions.approach,["noise","flip"])} = "flip";
     ptoptions.showPlot (1,1) logical = false;
 end
 
@@ -75,32 +76,32 @@ nFreq = length(U.frequency);
 
 tvec = winIdx ./ Fs;
 
-% Define pre- and post-stimulus windows
-if ptoptions.approach == "noise"
-    ptoptions.preWin  = tvec >= -responseWindow(2)/1000 & tvec <= -responseWindow(1)/1000;
-end
+% % Define pre- and post-stimulus windows
+% if ptoptions.approach == "noise"
+%     ptoptions.preWin  = tvec >= -responseWindow(2)/1000 & tvec <= -responseWindow(1)/1000;
+% end
 postWin = tvec >=  responseWindow(1)/1000 & tvec <=  responseWindow(2)/1000;
 
 
 cargs = namedargs2cell(ptoptions);
 
 
-permResult(size(S,1),size(S,2)) = struct('clusters',[],'clusterStatsReal',[],'maxClusterStatReal',[],'tValsReal',[],'tThresh',[],'isSig',[],'maxClusterStatsPerm',[]);
+permResult(size(S,1),size(S,2)) = struct('tValsReal',[],'tThresh',[],'pos',[],'neg',[],'maxClusterMassReal',[],'maxClusterMassPerm',[],'respWin',[],'preWin',[]);
+% permResult(size(S,1),size(S,2)) = struct('clusters',[],'clusterStatsReal',[],'maxClusterStatReal',[],'tValsReal',[],'tThresh',[],'isSig',[],'maxClusterStatsPerm',[]);
 pVal = nan(size(S));
 
 % Run permutation tests
-fprintf('Permutation tests\n')
-parfor_progress(numel(S));
+parfor_progress(numel(S),'Permutation tests');
 if options.useParallel && ~options.debug
     parfor i = 1:numel(S)
         if isempty(S{i}), continue; end
-        [pVal(i), permResult(i)] = permtest(S{i}, postWin,cargs{:});
+        [pVal(i), permResult(i)] = permtest(S{i}', postWin,cargs{:});
         parfor_progress;
     end
 else
     for i = 1:numel(S)
         if isempty(S{i}), continue; end
-        [pVal(i), permResult(i)] = permtest(S{i}, postWin,cargs{:});
+        [pVal(i), permResult(i)] = permtest(S{i}', postWin,cargs{:});
         if options.debug, pause; end
         parfor_progress;
     end
@@ -108,60 +109,86 @@ end
 parfor_progress(0);
 
 
-fprintf('Estimating thresholds\n')
+i = isnan(pVal);
 pVal = max(pVal, 0);
+pVal(i) = nan;
 isSig = pVal < ptoptions.alpha;
 thresh_hat = nan(1, nFreq);
+mdls = cell(1,nFreq);
 
+parfor_progress(nFreq,'Estimating thresholds');
 switch (thresholdType)
     case "logistic"
-        logisticModel = fittype('A / (1 + exp(-B*(x - C)))', ...
-            'independent', 'x', ...
-            'coefficients', {'A', 'B', 'C'});
-        % invLogFnc = @(A,B,C,y) C - (1/B) * log((A/y) - 1);
-        lowerBounds = [0, 0, -Inf];
-        upperBounds = [Inf, Inf, Inf];
+
 
         % Estimate thresholds for each frequency
-        logMdls = cell(1,nFreq);
         for f = 1:nFreq
+
+            % s = cellfun(@sum,{permResult(:,f).clusterStatsReal});
             y = double(isSig(:, f));
+
             i = ~isnan(y);
-            x = U.level(i);
+            x = U.soundLevel(i);
             y = y(i);
 
-            [x, y] = prepareCurveData(x, y);
-            startPoints = [max(y), 1, mean(x)];
 
-            logMdls{f} = fit(x, y, logisticModel, ...
-                'StartPoint', startPoints, ...
-                'Lower', lowerBounds, ...
-                'Upper', upperBounds);
+            % x: n×1 numeric, y: n×1 (0/1)
+            mdl = fitglm(x(:), y(:), 'Distribution','binomial', 'Link','logit', ...
+                'LikelihoodPenalty','jeffreys-prior');   % Firth logistic
 
-            thresh_hat(f) = logMdls{f}.C;
+            xg = linspace(min(x), max(x), 200)';
+            pg = predict(mdl, xg);
+
+            coef = mdl.Coefficients.Estimate;
+            if all(coef<0)
+                thresh_hat(f) = max(x)+5;
+            else
+                thresh_hat(f) = -coef(1)/coef(2);   % x where P≈0.5
+            end
+
+
+            if options.debug
+                use_fig('abrPermutationThreshold');
+                plot(x,y,'ob');
+                hold on
+                plot(xg,pg,'-k')
+                stem(thresh_hat(f),0.5,'-r')
+                hold off
+                grid on
+                ylim([0 1])
+                titlef('%d Hz -- C = %.3f',U.frequency(f),thresh_hat(f))
+            end
+
+            parfor_progress;
         end
+   
+
+
     case "minimum"
         for f = 1:nFreq
             idx = find(isSig(:,f),1,'first');
             if isempty(idx)
                 thresh_hat(f) = inf;
             else
-                thresh_hat(f) = U.level(idx);
+                thresh_hat(f) = U.soundLevel(idx);
             end
+            parfor_progress;
         end
 end
+parfor_progress(0);
 
 % no response at presented sound levels
-i = thresh_hat > max(U.level);
-thresh_hat(i) =  max(U.level)+5;
+i = thresh_hat > max(U.soundLevel);
+thresh_hat(i) =  max(U.soundLevel)+5;
 
-% i = thresh_hat < min(U.level);
-% thresh_hat(i) = min(U.level);
+% i = thresh_hat < min(U.soundLevel);
+% thresh_hat(i) = min(U.soundLevel);
 
-
-% pin to nearest level greater than threshold
-% for i = 1:length(thresh_hat)
-%     idx = find(U.level >= thresh_hat(i),1);
-%     if isempty(idx), continue; end
-%     thresh_hat(i) = U.level(idx);
-% end
+if options.nearestLevel
+    % pin to nearest level greater than threshold
+    for i = 1:length(thresh_hat)
+        idx = find(U.soundLevel >= thresh_hat(i),1);
+        if isempty(idx), continue; end
+        thresh_hat(i) = U.soundLevel(idx);
+    end
+end

@@ -44,7 +44,7 @@ SM = cellfun(@(a) mean(a, 2), data, 'UniformOutput', false);
 
 % Flip the data and levels for plotting
 SM = flipud(SM);
-lvl = flipud(U.level(:));
+lvl = flipud(U.soundLevel(:));
 
 % Determine the number of frequencies
 numFreq = numel(U.frequency);

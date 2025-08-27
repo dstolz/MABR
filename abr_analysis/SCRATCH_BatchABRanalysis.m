@@ -1,47 +1,59 @@
 %% 1. Batch ABR Analysis
 
-addpath('C:\Users\dstolz\My Drive\temp_analysis\ABR_analysis\')
+addpath_nogit('c:\src\MABR')
 
-rootPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_data/";
-resultPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_results";
+% rootPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_data/";
+% resultPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_results";
+rootPth = "C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data";
+resultPth = "C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_results";
 
 abrSessions = getABRSessions(rootPth);
-% abrSessions = {'C:\Users\dstolz\My Drive\PROJECTS\MABR\MABR_Analysis\abr_data\SUBJ-ID-979\SUBJ-ID-979_Baseline'};
+% abrSessions = {'C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data/SUBJ-ID-1064/SUBJ-ID-1064_Baseline';
+%     'C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data/SUBJ-ID-1064/SUBJ-ID-1064_Post';
+%     'C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data/SUBJ-ID-1065/SUBJ-ID-1065_Baseline';
+%     'C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data/SUBJ-ID-1065/SUBJ-ID-1065_Post'};
 
+% abrSessions = {'C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data/SUBJ-ID-1065/SUBJ-ID-1065_Post'};
+
+
+fprintf(2,'WORK IN PROGRESS\n')
+
+% skipExisting = true;
+skipExisting = false;
 
 debug = false;
 % debug = true;
 
-filePattern = "SUBJ_ID_(\d+)_Frequency_([\d_]+kHz)_Level_(\d+dB)_(\d{6}T\d{6})\.abr";
-fullWin = [-10 10]; % ms
+fullWin = [-12 12]; % ms
 
 respWin = [0 9]; % ms
-plotWindow = [-2 9];
+plotWindow = [-2 10];
 
 
-skipExisting = true;
-% skipExisting = false;
 
 
 for k = 1:length(abrSessions)
     abrSessionName = extractSessionName(abrSessions{k});
-    fprintf('%d/%d. Processing: %s\n', k, length(abrSessions), abrSessionName)
 
-    T = parseABRFiles(abrSessions{k}, filePattern);
+    fprintf('Dataset %d/%d. %s\n', k, length(abrSessions), abrSessionName)
+
+    T = parseABRFiles(abrSessions{k});
+
     if isempty(T)
         fprintf(2, '* No valid file names, skipping *\n')
         continue
     end
 
+    subjectID = regexp(abrSessions{k},'SUBJ-ID-\d+','match','once');
 
-    abrSessionDate = T.timestamp(1);
+    abrSessionDate = min(T.timestamp);
     abrSessionDate.Format = "dd-MMM-uuuu";
 
 
 
     td = abrSessionDate;
     td.Format = "uuMMdd";
-    ffnOut = fullfile(resultPth,sprintf('%s_%s.mat',T.subject_id(1),td));
+    ffnOut = fullfile(resultPth,sprintf('%s_%s.mat',subjectID,td));
     
     if skipExisting && isfile(ffnOut)
         fprintf('\tResults already exist, skipping ...\n')
@@ -49,18 +61,27 @@ for k = 1:length(abrSessions)
     end
 
 
-    % Extract ABR signals
-    [S, U, Fs, winIdx] = extractABRResponses(T, abrSessions{k}, fullWin);
+    % Filter and Extract ABR signals
+    [S, U, Fs, winIdx] = extractABRResponses(T,fullWin);
+
+    tvec = winIdx ./ Fs; % time vector
+
+    S = S'; % freq x lvl -> lvl x freq
+
+
+    % detrend
+    warning('off','MATLAB:detrend:PolyNotUnique')
+    S = cellfun(@(a) detrend(a,1),S,'uni',0,'ErrorHandler',@errEmpty);
+    warning('on','MATLAB:detrend:PolyNotUnique')
 
 
 
-
-
-    % Preprocess
-    S = rejectArtifacts(S, Fs, winIdx, respWin);
-    S = filterABRData(S, Fs, [300 3000]);
-    S = cellfun(@(a) detrend(a,2),S,'uni',0,'ErrorHandler',@errEmpty);
-
+    % Artifact detection and rejection
+    [S, artInd] = rejectArtifacts(S, ...
+        respInd = tvec >= respWin(1) & tvec <= respWin(2), ...
+        feature = 'absPeak', ...
+        useParallel = true, ...
+        plot = false);
 
 
 
@@ -68,25 +89,6 @@ for k = 1:length(abrSessions)
     if debug
         fprintf(2,'debug mode enabled\n')
     end
-
-
-
-    tvec = fullWin(1)/1000:1/Fs:fullWin(2)/1000;
-
-    % Find threshold
-    [thresh_hat,permResult,logModels] = abrPermutationThreshold(S, U, winIdx, Fs, ...
-        responseWindow = respWin, ...
-        minClusterSize = 1, ...
-        thresholdType = "logistic", ...
-        debug = debug);
-
-
-    % [thresh_hat,permResult] = abrPermutationThreshold(S, U, winIdx, Fs, ...
-    %     responseWindow = respWin, ...
-    %     minClusterSize = 1, ...
-    %     thresholdType = "minimum", ...
-    %     debug = debug);
-
 
 
 
@@ -100,13 +102,40 @@ for k = 1:length(abrSessions)
     subtitle(tl, char(abrSessionDate))
     drawnow
 
+
+
+
+
+
+
+
+
+    % Find threshold
+    [thresh_hat,permResult] = abrPermutationThreshold(S, U, winIdx, Fs, ...
+        responseWindow = respWin, ...
+        minClusterSize = 2, ...
+        alpha = 0.05, ...
+        thresholdType = "logistic", ...
+        useParallel = true, ...
+        debug = debug);
+
+
+
+
+
+
+
+
+
+
     % Plot ABR audiogram
     h = use_fig('ABR_Audiogram');
     plotABRThresholds(thresh_hat,U.frequency);
+    ylim([min(U.soundLevel)-5 max(U.soundLevel)+5]);
 
     tl = h.Children;
-    title(abrSessionName,Interpreter = 'none');
-    subtitle(char(abrSessionDate))
+    title(tl,abrSessionName,Interpreter = 'none');
+    subtitle(tl,char(abrSessionDate))
     drawnow
 
 
@@ -169,10 +198,10 @@ for i = 1:length(a)
 
     st = nan(size(U.frequency));
     for j = 1:length(thresh_checked)
-        if thresh_checked(j) > max(U.level)
-            st(j) = length(U.level);
+        if thresh_checked(j) > max(U.soundLevel)
+            st(j) = length(U.soundLevel);
         else
-            st(j) = find(U.level >= fix(thresh_checked(j)),1);
+            st(j) = find(U.soundLevel >= fix(thresh_checked(j)),1);
         end
         hj = h(st(j),j);
         yline(hj,min(hj.YLim),'-r',LineWidth = 5);
