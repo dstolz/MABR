@@ -169,13 +169,20 @@ classdef (Hidden) sigProp %< matlab.mixin.SetGet
             else
                 d = sprintf(['%s:\t' obj.ValueFormat ' %s'],obj.Description,obj.Value,obj.Unit);
             end
+            
         end
         
         % overloaded functions
         function disp(obj)
-            fprintf('\t%s\n',obj.info_text)
-            
+            for i = 1:numel(obj)
+                fprintf('\t%s\n',obj(i).info_text)
+            end
         end
+
+        function v = double(obj)
+            v = double([obj.Value]);
+        end
+
     end
     
     
