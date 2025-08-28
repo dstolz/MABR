@@ -1,4 +1,41 @@
 function r = acquire_block(obj)
+% ACQUIRE_BLOCK Run background playback/record and fill memmapped buffers.
+%
+%   r = acquire_block(obj) streams audio frames from obj.AFR (file/stream
+%   source), plays & records with obj.APR, and writes the acquired samples
+%   into memory-mapped buffers:
+%       • obj.mapSignalBuffer.Data  (channel 1 samples)
+%       • obj.mapTimingBuffer.Data  (channel 2 samples)
+%   The current write window [idx,k] is tracked via
+%   obj.mapCom.Data.BufferIndex and wraps to the beginning when the end of
+%   the circular buffer is reached.
+%
+%   Control flow is governed by obj.mapCom.Data.CommandToBg using abr.Cmd:
+%       • abr.Cmd.Run    : acquire
+%       • abr.Cmd.Pause  : pause in place
+%       • otherwise      : stop acquisition loop
+%
+%   Mode:
+%       If obj.Universal.MODE == abr.Cmd.Test, acquisition is simulated by
+%       loop-backing the DAC data with tiny added noise; otherwise, actual
+%       ADC channels are written.
+%
+%   States:
+%       Sets obj.BackgroundState to abr.stateAcq.ACQUIRE on entry and to
+%       abr.stateAcq.COMPLETED on exit.
+%
+%   Buffering:
+%       Frame length is obj.Universal.frameLength. When the next frame
+%       would exceed obj.Universal.maxInputBufferLength, indices wrap and a
+%       notice is printed via vprintf.
+%
+%   Output
+%       r  – Status code (0 on normal completion).
+%
+%   Notes
+%       • Progress and XRUNs (underruns/overruns) are reported with vprintf.
+%       • This function is intended to run as a background process.
+% 
 % Daniel Stolzberg (c) 2019
 
 % Background process
