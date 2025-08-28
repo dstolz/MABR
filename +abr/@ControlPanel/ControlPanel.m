@@ -517,6 +517,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
                 
                 if isempty(app.configFile), return; end
             else
+                if isstruct(ffn),ffn = ffn.Value; end
                 app.configFile = ffn;
             end
             
@@ -534,6 +535,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             app.scheduleFile    = app.Config.scheduleFile;
             app.calibrationFile = app.Config.calibrationFile;
+            app.outputFile      = abrConfig.Config.outputFile;
             
             setpref('ABRControlPanel','configPath',fileparts(app.configFile));
             setpref('ABRControlPanel','configFile',app.configFile);
@@ -544,6 +546,11 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             
             app.load_schedule_file;
             app.load_calibration_file;
+
+            % FIX ME
+            % event.Value = app.outputFile;
+            % event.Source = app.OutputPathDD;
+            % app.output_path_changed(event)
             
             figure(app.ControlPanelUIFigure);
         end
@@ -681,6 +688,7 @@ classdef ControlPanel < matlab.apps.AppBase & abr.Universal & handle
             if isequal(app.Schedule,0)
                 if exist(app.scheduleFile,'file') == 2
                     app.Schedule = abr.Schedule(app.scheduleFile);
+                    movegui(app.Schedule.ScheduleFigure,'onscreen');
                 else
                     return % ????
                 end

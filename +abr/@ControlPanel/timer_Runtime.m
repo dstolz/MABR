@@ -7,6 +7,14 @@ app.check_rec_status;
 
 if isnan(postSweep(1)), return; end
 
+
+% artifact detection
+if size(postSweep,1) > 10
+    % vprintf(4,'Calling rejectArtifacts')
+    f = max(abs(postSweep),[],2); % feature: max absolute peak amplitude
+    app.ABR.ADC.IsArtifact = isoutlier(f,'median');
+end
+
 app.ABR.ADC.SweepOnsets = sweepOnsets;
 
 % update signal amplitude by InputAmpGain
@@ -14,7 +22,6 @@ A = app.Config.Parameters.InputAmpGain;
 % vprintf(4,'Making input gain adjustment: %g',A)
 preSweep  = preSweep ./ A;
 postSweep = postSweep ./ A;
-
 
 % do online analysis
 vprintf(4,'Calling live_analysis')

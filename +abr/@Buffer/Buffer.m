@@ -66,6 +66,9 @@ classdef Buffer
         % Structure containing FFT options:
         %   windowFcn   - Window function handle (e.g., @flattop)
         %   inDecibels  - Boolean to toggle decibel scaling of FFT output
+
+        IsArtifact  (:,1) logical = false;
+        % Logical vector indicating which sweeps are marked as artifacts.
     end
 
     properties (Dependent)
@@ -104,6 +107,9 @@ classdef Buffer
 
         sweepIdx
         % Indices corresponding to each sweep segment.
+
+        NumArtifacts
+        % Number of sweeps marked as artifacts.
     end
     
     methods
@@ -228,6 +234,10 @@ classdef Buffer
         
         function n = get.N(obj)
             n = length(obj.Data);
+        end
+
+        function n = get.NumArtifacts(obj)
+            n = nnz(obj.IsArtifact);
         end
         
         

@@ -1,4 +1,40 @@
 function prepare_block_fg(obj,sweep,Fs,nReps,sweepRate,altPolarity)
+% PREPARE_BLOCK_FG Build and save a 2-channel stimulus block with timing pulses.
+%
+%   prepare_block_fg(obj, sweep, Fs, nReps, sweepRate, altPolarity)
+%   zero-pads a single sweep to the sweep period (round(Fs/sweepRate)),
+%   repeats it nReps times (optionally alternating polarity), and writes a
+%   2-channel WAV file to obj.Universal.dacFile. Channel 1 contains the
+%   stimulus; Channel 2 contains a per-sweep timing pulse (one sample at 1
+%   followed by r−1 zeros). The signal is padded with leading and trailing
+%   silence (Fs samples each) and extended to a multiple of
+%   obj.Universal.frameLength.
+%
+% Inputs
+%   obj           Object with fields:
+%                   • Universal.dacFile (char/string): output WAV path
+%                   • Universal.frameLength (positive integer): frame size
+%   sweep         Column vector stimulus samples.
+%   Fs            Positive scalar, sample rate in Hz.
+%   nReps         Positive integer, number of sweep repetitions.
+%   sweepRate     Positive scalar, sweeps per second (Hz).
+%   altPolarity   Logical; if true, alternate sweep polarity (+/−).
+%
+% Output
+%   (none)        Writes single-precision, uncompressed WAV to disk at
+%                 obj.Universal.dacFile.
+%
+% Details
+%   • r = round(Fs/sweepRate) defines the sweep period in samples.
+%   • Channel layout: [stimulus, timingPulse].
+%   • File written via dsp.AudioFileWriter (DSP System Toolbox).
+%
+% Example
+%   % Build a chirp sweep and write 200 alternating-polarity repetitions at 20 Hz
+%   Fs = 97656; t = (0:round(Fs*0.04)-1)'/Fs;                % ~40 ms sweep
+%   sweep = chirp(t,2e3,t(end),16e3);
+%   prepare_block_fg(abr, sweep, Fs, 200, 20, true)
+% 
 % Daniel Stolzberg (c) 2019
 
 

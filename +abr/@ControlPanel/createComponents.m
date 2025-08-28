@@ -331,6 +331,7 @@ app.OutputPathLabel.Layout.Column = 1;
 recentPaths = getpref('ABRControlPanel','outputFolder',{app.root}); % set with recent directories
 ind = isfolder(recentPaths);
 recentPaths(~ind) = [];
+if isempty(recentPaths), recentPaths = {cd}; end
 app.OutputPathDD = uidropdown(G);
 app.OutputPathDD.Editable = 'off';
 app.OutputPathDD.FontSize = 14;

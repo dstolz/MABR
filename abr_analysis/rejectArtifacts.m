@@ -14,6 +14,8 @@ function [S, artInd] = rejectArtifacts(S, option)
 % Inputs
 %   S            Cell array of ABR response matrices sized [samples x trials].
 %                A single numeric matrix is also accepted and handled as 1x1 cell.
+%                If S is a cell array, then each cell is processed independently.
+%                Each element of S must be a matrix, with trials in columns.
 %
 % Name-Value Options
 %   'respInd'    Logical vector. Samples that define the response window.
