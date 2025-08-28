@@ -8,12 +8,13 @@ app.check_rec_status;
 if isnan(postSweep(1)), return; end
 
 
-% artifact detection
-if size(postSweep,1) > 10
-    % vprintf(4,'Calling rejectArtifacts')
-    f = max(abs(postSweep),[],2); % feature: max absolute peak amplitude
-    app.ABR.ADC.IsArtifact = isoutlier(f,'median');
-end
+%% artifact detection
+% *** NOTE THAT IT IS NOT CURRENTLY POSSIBLE TO UPDATE THE NUMBER OF SWEEPS DURING PALYBACK DUE TO HOW ABR.RUNTIME.ACQUIRE_BLOCK() IS IMPLEMENTED ***
+%if size(postSweep,1) > 10
+    %% vprintf(4,'Calling rejectArtifacts')
+    %f = max(abs(postSweep),[],2); % feature: max absolute peak amplitude
+    %app.ABR.ADC.IsArtifact = isoutlier(f,'median');
+%end
 
 app.ABR.ADC.SweepOnsets = sweepOnsets;
 
