@@ -8,12 +8,6 @@ rootPth = "C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_da
 resultPth = "C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_results";
 
 abrSessions = getABRSessions(rootPth);
-% abrSessions = {'C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data/SUBJ-ID-1064/SUBJ-ID-1064_Baseline';
-%     'C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data/SUBJ-ID-1064/SUBJ-ID-1064_Post';
-%     'C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data/SUBJ-ID-1065/SUBJ-ID-1065_Baseline';
-%     'C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data/SUBJ-ID-1065/SUBJ-ID-1065_Post'};
-
-% abrSessions = {'C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data/SUBJ-ID-1065/SUBJ-ID-1065_Post'};
 
 
 fprintf(2,'WORK IN PROGRESS\n')
@@ -26,10 +20,35 @@ debug = false;
 
 fullWin = [-12 12]; % ms
 
-respWin = [0 9]; % ms
-plotWindow = [-2 10];
+respWin = [0 10]; % ms
+plotWindow = [-2 12];
 
 
+Fs    = 12000;  % Sampling Frequency
+
+% lowpass
+Fpass = 1500;   % Passband Frequency
+Fstop = 3000;   % Stopband Frequency
+Apass = 0.5;      % Passband Ripple (dB)
+Astop = 30;     % Stopband Attenuation (dB)
+h = fdesign.lowpass('fp,fst,ap,ast', Fpass, Fstop, Apass, Astop, Fs);
+HdLP = design(h, 'equiripple', ...
+    'MinOrder', 'any', ...
+    'StopbandShape', 'flat', ...
+    'SystemObject', true);
+% fvtool(HdLP)
+
+% highpass
+Fstop = 150;    % Stopband Frequency
+Fpass = 300;    % Passband Frequency
+Astop = 30;     % Stopband Attenuation (dB)
+Apass = 0.5;      % Passband Ripple (dB)
+h = fdesign.highpass('fst,fp,ast,ap', Fstop, Fpass, Astop, Apass, Fs);
+HdHP = design(h, 'equiripple', ...
+    'MinOrder', 'any', ...
+    'StopbandShape', 'flat', ...
+    'SystemObject', true);
+% fvtool(HdHP)
 
 
 for k = 1:length(abrSessions)
@@ -54,7 +73,7 @@ for k = 1:length(abrSessions)
     td = abrSessionDate;
     td.Format = "uuMMdd";
     ffnOut = fullfile(resultPth,sprintf('%s_%s.mat',subjectID,td));
-    
+
     if skipExisting && isfile(ffnOut)
         fprintf('\tResults already exist, skipping ...\n')
         continue
@@ -62,12 +81,11 @@ for k = 1:length(abrSessions)
 
 
     % Filter and Extract ABR signals
-    [S, U, Fs, winIdx] = extractABRResponses(T,fullWin);
-
-    tvec = winIdx ./ Fs; % time vector
+    [S, U, Fs, winIdx] = extractABRResponses(T,fullWin, ...
+        HighpassHd=HdHP,LowpassHd=HdLP);
 
     S = S'; % freq x lvl -> lvl x freq
-
+    tvec = winIdx ./ Fs; % time vector
 
     % detrend
     warning('off','MATLAB:detrend:PolyNotUnique')
@@ -82,6 +100,10 @@ for k = 1:length(abrSessions)
         feature = 'absPeak', ...
         useParallel = true, ...
         plot = false);
+
+
+
+
 
 
 
@@ -108,21 +130,28 @@ for k = 1:length(abrSessions)
 
 
 
-
-
     % Find threshold
-    [thresh_hat,permResult] = abrPermutationThreshold(S, U, winIdx, Fs, ...
-        responseWindow = respWin, ...
-        minClusterSize = 2, ...
+    rind = tvec >=  respWin(1)/1000 & tvec <=  respWin(2)/1000;
+    St = cellfun(@(a) a(rind,:),S,'uni',0,'ErrorHandler',@errEmpty);
+
+    [thresh_hat,permResult,thresholdMdls] = abrPermutationThreshold(St,U.soundLevel, ...
+        minClusterSize = 1, ...
         alpha = 0.05, ...
         thresholdType = "logistic", ...
         useParallel = true, ...
-        debug = debug);
+        debug = false);
+    clear St
 
 
 
 
 
+    % no response at presented sound levels
+    ind = thresh_hat > max(U.soundLevel);
+    thresh_hat(ind) =  max(U.soundLevel)+5;
+
+    % threshold could be below 0, but we never really see this
+    thresh_hat(thresh_hat < 0) = 0;
 
 
 
@@ -144,7 +173,7 @@ for k = 1:length(abrSessions)
 
     % Save Data
     fprintf('\tsaving results: %s ...',ffnOut)
-    save(ffnOut,'T','S','U','Fs','winIdx','thresh_hat','permResult','respWin','tvec');
+    save(ffnOut,'T','S','U','Fs','winIdx','thresh_hat','permResult','thresholdMdls','respWin','tvec');
     fprintf(' done\n')
 
 
@@ -157,7 +186,8 @@ end
 %% 2. View and curate data
 
 
-resultPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_results";
+% resultPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_results";
+resultPth = "C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_results";
 
 a = dir(fullfile(resultPth,'*.mat'));
 
@@ -166,7 +196,7 @@ rng(12)
 a = a(randperm(length(a)));
 
 
-skipCurated = true;
+skipCurated = false;
 
 for i = 1:length(a)
     fprintf('%d of %d \n',i,length(a))
@@ -179,6 +209,8 @@ for i = 1:length(a)
     clear thresh_checked
 
     load(ffn);
+
+    if isfield(U,'level'), U.soundLevel = U.level; end
 
     cm = colorcet('R1','N',length(U.frequency));
 
@@ -265,7 +297,7 @@ for s = subjs
     ax.Visible = "off";
 
     p = uipanel('Parent', gcf, 'Units', 'normalized', 'Position', pos, ...
-                'BorderType', 'none' ,'BackgroundColor','w');
+        'BorderType', 'none' ,'BackgroundColor','w');
 
     % Create axes manually within the panel
     ax1 = axes('Parent', p, 'Position', [0.1 0.55 0.85 0.4]);
@@ -333,8 +365,8 @@ nexttile
 
 
 calcStats = @(data) struct('n', sum(~isnan(data),3), ...
-                          'mean', mean(data,3,"omitmissing"), ...
-                          'std', std(data,0,3,"omitmissing"));
+    'mean', mean(data,3,"omitmissing"), ...
+    'std', std(data,0,3,"omitmissing"));
 
 Y.pre = calcStats(X(1,:,:));
 Y.sham = calcStats(X(2,:,~isNE));
@@ -414,4 +446,68 @@ xlabel('frequency (Hz)')
 title('Change in ABR Threshold')
 
 legend(Location = "northwest",Box="off")
+
+
+
+%% 4 Peak finding
+
+% compute mean ABR for each stimulus
+Sm = cellfun(@(a) mean(a,2),S,'uni',0);
+ind = cellfun(@isempty,Sm);
+[Sm{ind}] = deal(nan(size(Sm{find(~ind,1)})));
+% Sm = cat(2,Sm{:});
+
+use_fig('peaks')
+
+tl = tiledlayout(size(S,1),size(S,2));
+tl.TileSpacing = "tight";
+tl.Padding = "compact";
+tl.TileIndexing = 'columnmajor';
+
+rind = tvec >=  respWin(1)/1000 & tvec <=  respWin(2)/1000;
+
+
+Sm = flipud(Sm);
+permResult = flipud(permResult);
+parfor_progress(numel(Sm));
+for i = 1:numel(Sm)
+    nexttile
+    
+    
+    if isempty(Sm{i}), continue; end
+
+    % preserve response window only
+    Smp = Sm{i}(rind);
+    tvecRw = tvec(rind);
+
+    plot(tvecRw,Smp);
+    yline(0,'-k');
+    grid on
+
+    mask = permResult(i).pos.mask | permResult(i).neg.mask;
+
+    line(tvecRw(mask),Smp(mask),Color = 'r',Marker = '.',LineStyle = "none")
+
+    parfor_progress();
+end
+parfor_progress(0);
+
+ax = tl.Children;
+set(ax,'xtick',[],'ytick',[])
+linkaxes(ax)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

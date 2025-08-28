@@ -1,67 +1,102 @@
-function [thresh_hat,permResult,mdls] = abrPermutationThreshold(S, U, winIdx, Fs, options, ptoptions)
-% abrPermutationThreshold - Perform cluster-based permutation testing and estimate ABR thresholds.
+function [thresh_hat,permResult,mdls] = abrPermutationThreshold(S, rowVals, options, ptoptions)
+% abrPermutationThreshold  Permutation-based detection across rows and per-column thresholding.
 %
-% Syntax:
-%   [thresh_hat, permResult, mdls] = abrPermutationThreshold(S, U, winIdx, Fs, options, ptoptions)
+%   [thresh_hat, permResult, mdls] = abrPermutationThreshold(S, rowVals)
+%   [thresh_hat, permResult, mdls] = abrPermutationThreshold(S, rowVals, options, ptoptions)
 %
-% Description:
-%   Performs cluster-based permutation testing on auditory brainstem response (ABR) data
-%   to detect significant responses within a specified time window, and estimates thresholds
-%   using logistic model fitting or minimum significant level selection.
+% Description
+%   For each cell S{r,c} (row r, column c), runs a two-sided cluster-based
+%   permutation test (PERMTEST) across trials to detect a response over time.
+%   Within each column c, detections across rows are summarized versus rowVals
+%   and a threshold is estimated using the selected model. Thresholds are
+%   reported per column (1 × nCols).
 %
-% Inputs:
-%   S               - cell array (nLevels × nFreqs) of ABR data matrices (trials × timepoints).
-%   U               - struct with fields:
-%                       .frequency - vector of stimulus frequencies (Hz).
-%                       .level     - vector of stimulus levels (dB SPL).
-%   winIdx          - vector of sample indices defining the full recording window.
-%   Fs              - sampling frequency in Hz.
-%   options         - struct of function-level options:
-%                       .useParallel    - logical; run permutation tests in parallel (default: true).
-%                       .debug          - logical; enable debug mode with pausing and plots (default: false).
-%                       .responseWindow - [tMin tMax] in ms for post-stimulus analysis window (default: [1 9]).
-%                       .thresholdType  - 'logistic' or 'minimum' threshold estimation (default: 'logistic').
-%                       .nearestLevel   - logical; pin estimated threshold to the nearest presented level (default: true)
-%   ptoptions       - struct of permutation-test options:
-%                       .alpha           - significance level (0 < alpha < 1, default: 0.05).
-%                       .nPerm           - number of permutations (positive integer, default: 1000).
-%                       .minClusterSize  - minimum cluster size for inclusion (>=1, default: 1).
-%                       .approach        - 'flip' (sign-flipping) or 'noise' (pre-vs-post noise resampling) (default: 'flip').
-%                       .showPlot        - logical; visualize real and permuted cluster statistics (default: inherits options.debug).
+% Inputs
+%   S         cell [nRows × nCols]. Each S{r,c} is a numeric matrix of size
+%             [nSamples × nTrials] (this function transposes to trials × samples
+%             before calling PERMTEST).
 %
-% Outputs:
-%   thresh_hat      - 1 × nFreqs vector of estimated ABR thresholds (dB SPL).
-%   permResult      - struct array (nLevels*nFreqs) with fields:
-%                       .clusters, .clusterStatsReal, .maxClusterStatReal, .tValsReal,
-%                       .tThresh, .isSig, .maxClusterStatsPerm.
-%   mdls         - 1 × nFreqs cell array of fitted logistic model objects (if thresholdType=='logistic'; else empty).
+%   rowVals   double [nRows × 1]. X-values for the row dimension (e.g., frequency).
 %
-% Theory of Operation:
-%   The function conducts a cluster-based permutation test as follows:
-%     1. For each sound level and frequency, compute real t-values comparing activity within
-%        the post-stimulus response window to baseline.
-%     2. Identify temporal clusters of contiguous samples exceeding a critical t-threshold
-%        determined from the t-distribution at the specified alpha level.
-%     3. Measure cluster statistics (sum of t-values) for each cluster.
-%     4. Generate a null distribution by permuting labels (sign-flipping or resampling noise)
-%        nPerm times, recomputing max cluster statistics for each permutation.
-%     5. Determine significance by comparing real cluster statistics to the null distribution.
-%   Detected significant responses (p < alpha) across levels yield a binary detection matrix,
-%   which is either fit with a logistic psychometric function (estimating the 50% threshold),
-%   or thresholded by the first level showing significance (minimum criterion).
+% Name-Value Options (struct; fields shown with defaults)
+%   options.useParallel      (1,1) logical = false
+%       Use PARFOR for permutation tests when true.
+%
+%   options.debug            (1,1) logical = false
+%       Show diagnostic plots for fits; also forwards to ptoptions.showPlot.
+%
+%   options.thresholdType    (1,1) string = "logistic"
+%       Per-column threshold model:
+%         "logistic"  – fit fittype('logistic') to binary detection vs rowVals.
+%         "logistic4" – fit fittype('logistic4') to cluster mass vs rowVals.
+%         "minimum"   – first row with significant detection (by p < alpha).
+%
+%   options.nearestLevel     (1,1) logical = false
+%       If true, pin each threshold up to the nearest value in rowVals.
+%
+% Permutation Test Options (struct; fields shown with defaults)
+%   ptoptions.alpha          (1,1) double = 0.05
+%       Family-wise alpha for the cluster-forming t-threshold (two-sided).
+%
+%   ptoptions.nPerm          (1,1) double = 1000
+%       Number of sign-flip permutations per condition.
+%
+%   ptoptions.minClusterSize (1,1) double = 1
+%       Minimum contiguous sample length to count as a cluster.
+%
+%   ptoptions.showPlot       (1,1) logical = false
+%       Plot PERMTEST diagnostics (overridden by options.debug).
+%
+% Outputs
+%   thresh_hat   1 × nCols double
+%       Threshold per column. For "logistic"/"logistic4" this is the fitted
+%       center/inflection parameter (field ‘c’). For "minimum" it is rowVals at
+%       the first significant row; Inf if none. Optionally quantized to rowVals
+%       when options.nearestLevel = true.
+%
+%   permResult   nRows × nCols struct
+%       PERMTEST results for each condition with fields:
+%         .tValsReal, .tThresh, .pos, .neg, .maxClusterMassReal, .maxClusterMassPerm
+%       (See PERMTEST for details.)
+%
+%   mdls         1 × nCols cell
+%       Curve-fitting model objects (one per column) for "logistic"/"logistic4";
+%       empty for "minimum".
+%
+% Theory (brief)
+%   Each condition uses a two-sided cluster-based permutation on the time axis,
+%   controlling FWER over samples. Column-wise thresholds are then obtained by
+%   fitting detection summaries across rows versus rowVals, or by first-hit.
+%
+% Requirements
+%   Statistics and Machine Learning Toolbox (ttest, tinv)
+%   Image Processing Toolbox (bwlabel)
+%   Curve Fitting Toolbox (fit, fittype, fitoptions; models 'logistic','logistic4')
+%   Parallel Computing Toolbox (optional; for PARFOR)
+%
+% Example
+%   % S: nRows × nCols cell; each S{r,c} is [nSamples × nTrials]
+%   fHz     = [4e3; 8e3; 16e3; 32e3];           % rowVals
+%   opts    = struct('thresholdType',"logistic", 'useParallel',true, 'nearestLevel',true);
+%   ptopts  = struct('alpha',0.05, 'nPerm',2000, 'minClusterSize',3);
+%   [th, PR, M] = abrPermutationThreshold(S, fHz, opts, ptopts);
+%
+% Notes
+%   • ptoptions.showPlot is set to options.debug inside.
+%   • The fittype names 'logistic' and 'logistic4' must exist in your environment
+%     (e.g., user-defined FITTYPEs).
+%
+% See also: PERMTEST
 %
 % DJS 2025
 
 arguments
     S cell
-    U
-    winIdx double
-    Fs (1,1) double {mustBePositive}
+    rowVals (:,1) double
     options.useParallel (1,1) logical = false;
     options.debug (1,1) logical = false;
-    options.responseWindow (1,2) double {mustBeFinite} = [1 9]; % response window in ms
-    options.thresholdType (1,1) string {mustBeMember(options.thresholdType,["logistic","minimum"])} = "logistic";
-    options.nearestLevel (1,1) logical = true;
+    options.thresholdType (1,1) string {mustBeMember(options.thresholdType,["logistic","logistic4","minimum"])} = "logistic";
+    options.nearestLevel (1,1) logical = false;
     ptoptions.alpha (1,1) double {mustBeInRange(ptoptions.alpha, 0, 1)} = 0.05
     ptoptions.nPerm (1,1) double {mustBePositive,mustBeFinite} = 1000
     ptoptions.minClusterSize (1,1) double {mustBePositive,mustBeFinite} = 1;
@@ -71,23 +106,19 @@ end
 ptoptions.showPlot = options.debug;
 structToCallerVars(options);
 
+nCols = size(S,2);
+nRows = length(rowVals);
 
-nFreq = length(U.frequency);
+assert(size(S,1) == nRows,'Length of `rowVals` must match `size(S,1)`')
 
-tvec = winIdx ./ Fs;
 
-% % Define pre- and post-stimulus windows
-% if ptoptions.approach == "noise"
-%     ptoptions.preWin  = tvec >= -responseWindow(2)/1000 & tvec <= -responseWindow(1)/1000;
-% end
-postWin = tvec >=  responseWindow(1)/1000 & tvec <=  responseWindow(2)/1000;
 
 
 cargs = namedargs2cell(ptoptions);
 
 
-permResult(size(S,1),size(S,2)) = struct('tValsReal',[],'tThresh',[],'pos',[],'neg',[],'maxClusterMassReal',[],'maxClusterMassPerm',[],'respWin',[],'preWin',[]);
-% permResult(size(S,1),size(S,2)) = struct('clusters',[],'clusterStatsReal',[],'maxClusterStatReal',[],'tValsReal',[],'tThresh',[],'isSig',[],'maxClusterStatsPerm',[]);
+permResult(size(S,1),size(S,2)) = struct('tValsReal',[],'tThresh',[],'pos',[],'neg',[],'maxClusterMassReal',[],'maxClusterMassPerm',[]);
+
 pVal = nan(size(S));
 
 % Run permutation tests
@@ -95,13 +126,13 @@ parfor_progress(numel(S),'Permutation tests');
 if options.useParallel && ~options.debug
     parfor i = 1:numel(S)
         if isempty(S{i}), continue; end
-        [pVal(i), permResult(i)] = permtest(S{i}', postWin,cargs{:});
+        [pVal(i), permResult(i)] = permtest(S{i}',cargs{:});
         parfor_progress;
     end
 else
     for i = 1:numel(S)
         if isempty(S{i}), continue; end
-        [pVal(i), permResult(i)] = permtest(S{i}', postWin,cargs{:});
+        [pVal(i), permResult(i)] = permtest(S{i}',cargs{:});
         if options.debug, pause; end
         parfor_progress;
     end
@@ -113,82 +144,114 @@ i = isnan(pVal);
 pVal = max(pVal, 0);
 pVal(i) = nan;
 isSig = pVal < ptoptions.alpha;
-thresh_hat = nan(1, nFreq);
-mdls = cell(1,nFreq);
+thresh_hat = nan(1, nCols);
+mdls = cell(1,nCols);
 
-parfor_progress(nFreq,'Estimating thresholds');
+parfor_progress(nCols,'Estimating thresholds');
 switch (thresholdType)
     case "logistic"
+        ft = fittype('logistic');
+        ftopts = fitoptions('Method','NonlinearLeastSquares');
+        ftopts.Algorithm = 'Levenberg-Marquardt';
+        ftopts.Display = 'Off';
+        ftopts.StartPoint = [0 1 mean(rowVals)];
 
-
-        % Estimate thresholds for each frequency
-        for f = 1:nFreq
+        % Estimate thresholds for each (fieldOfInterst)
+        for k = 1:nCols
 
             % s = cellfun(@sum,{permResult(:,f).clusterStatsReal});
-            y = double(isSig(:, f));
+            y = double(isSig(:, k));
 
             i = ~isnan(y);
-            x = U.soundLevel(i);
+            x = rowVals(i);
             y = y(i);
 
-
-            % x: n×1 numeric, y: n×1 (0/1)
-            mdl = fitglm(x(:), y(:), 'Distribution','binomial', 'Link','logit', ...
-                'LikelihoodPenalty','jeffreys-prior');   % Firth logistic
-
-            xg = linspace(min(x), max(x), 200)';
-            pg = predict(mdl, xg);
-
-            coef = mdl.Coefficients.Estimate;
-            if all(coef<0)
-                thresh_hat(f) = max(x)+5;
-            else
-                thresh_hat(f) = -coef(1)/coef(2);   % x where P≈0.5
+            try
+                mdl = fit(x(:),y(:),ft,ftopts);
+                thresh_hat(k) = mdl.c;
+                mdls{k} = mdl;
+            catch
+                thresh_hat(k) = max(rowVals) + 5;
             end
+
 
 
             if options.debug
                 use_fig('abrPermutationThreshold');
                 plot(x,y,'ob');
                 hold on
-                plot(xg,pg,'-k')
-                stem(thresh_hat(f),0.5,'-r')
+                if isequal(class(mdl),'cfit')
+                    plot(mdl,x(:),y(:));
+                end
+                stem(thresh_hat(k),0.5,'-kd')
                 hold off
                 grid on
                 ylim([0 1])
-                titlef('%d Hz -- C = %.3f',U.frequency(f),thresh_hat(f))
+                titlef('%d Hz -- C = %.3f',rowVals(k),thresh_hat(k))
+                legend off
             end
+
 
             parfor_progress;
         end
-   
+
+    case "logistic4"
+        ft = fittype('logistic4');
+        ftopts = fitoptions('Method','NonlinearLeastSquares');
+        ftopts.Algorithm = 'Levenberg-Marquardt';
+        ftopts.Display = 'Off';
+        ftopts.StartPoint = [0 1 mean(rowVals) 1];
+
+        % Estimate thresholds for each column
+        for k = 1:nCols
+            y = [permResult(:,k).maxClusterMassReal];
+            i = ~isnan(y);
+            x = rowVals(i);
+            y = y(i);
+
+            mdl = fit(x(:),y(:),ft,ftopts);
+
+            thresh_hat(k) = mdl.c;
+
+
+            if options.debug
+                use_fig('abrPermutationThreshold');
+                plot(x,y,'ob');
+                hold on
+                plot(mdl,x(:),y(:));
+                stem(thresh_hat(k),0.5,'-kd')
+                hold off
+                grid on
+                ylim([0 1])
+                titlef('%d Hz -- C = %.3f',rowVals(k),thresh_hat(k))
+                legend off
+            end
+
+            mdls{k} = mdl;
+
+            parfor_progress;
+        end
+
 
 
     case "minimum"
-        for f = 1:nFreq
-            idx = find(isSig(:,f),1,'first');
+        for k = 1:nCols
+            idx = find(isSig(:,k),1,'first');
             if isempty(idx)
-                thresh_hat(f) = inf;
+                thresh_hat(k) = inf;
             else
-                thresh_hat(f) = U.soundLevel(idx);
+                thresh_hat(k) = rowVals(idx);
             end
             parfor_progress;
         end
 end
 parfor_progress(0);
 
-% no response at presented sound levels
-i = thresh_hat > max(U.soundLevel);
-thresh_hat(i) =  max(U.soundLevel)+5;
-
-% i = thresh_hat < min(U.soundLevel);
-% thresh_hat(i) = min(U.soundLevel);
-
 if options.nearestLevel
     % pin to nearest level greater than threshold
     for i = 1:length(thresh_hat)
-        idx = find(U.soundLevel >= thresh_hat(i),1);
+        idx = find(rowVals >= thresh_hat(i),1);
         if isempty(idx), continue; end
-        thresh_hat(i) = U.soundLevel(idx);
+        thresh_hat(i) = rowVals(idx);
     end
 end

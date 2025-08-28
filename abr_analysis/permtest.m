@@ -1,47 +1,72 @@
-function [pVal, result] = permtest(A, respWin, options)
-% PERMTEST  Cluster-based permutation t-test with baseline correction & sign-flips.
+function [pVal, result] = permtest(A, options)
+% permtest  Cluster-based permutation test on a 1-D series across trials.
 %
-%   pVal = PERMTEST(A, respWin, options) tests whether the response window
-%   contains timepoints with nonzero mean across trials using a cluster-based
-%   permutation on the signed t-map.
+%   [pVal, result] = permtest(A)
+%   [pVal, result] = permtest(A, options)
 %
-%   Inputs
-%     A         - [trials x timepoints] data matrix
-%     respWin   - logical vector (length = # timepoints) marking response window
+% Description
+%   Performs a two-sided, cluster-based permutation test on a time/position
+%   series measured across repeated trials. For each sample (column) of A,
+%   a one-sample t-test against 0 is computed across trials (rows). The t-map
+%   is thresholded at a two-sided level (alpha/2 each tail), contiguous
+%   supra-threshold samples form clusters, and each cluster’s mass is the sum
+%   of its t-values. A null distribution of the maximum absolute cluster mass
+%   is built by random trial-wise sign flips (Rademacher permutations). The
+%   p-value is the +1-corrected proportion of null maxima ≥ the observed max.
 %
-%   Name-Value Options
-%     preWin          - logical vector for baseline window (REQUIRED)
-%     nPerm           - number of permutations (default = 1000)
-%     minClusterSize  - minimum contiguous samples per cluster (default = 1)
-%     alpha           - cluster-defining two-sided alpha for t-threshold (default = 0.05)
-%     showPlot        - show quick diagnostic plots (default = false)
+% Input
+%   A        double, size [nTrials x nSamples]. Rows are trials, columns are
+%            time/position samples. Values should be baseline-corrected so
+%            that 0 represents “no effect”.
 %
-%   Method (brief)
-%     1) Baseline-correct each trial by subtracting its mean over preWin.
-%     2) Compute one-sample t-statistic vs 0 at each timepoint in respWin.
-%     3) Form clusters separately for positive (t>tThr) and negative (t<-tThr)
-%        runs; cluster mass = sum of t-values in the run.
-%     4) Build a max-cluster-mass null by trial-wise random sign-flips of the
-%        baseline-corrected data; recompute steps (2)-(3) each permutation.
-%     5) pVal = (1 + #{perm max ≥ real max}) / (nPerm + 1).
+% Name-Value Options (struct; fields shown with defaults)
+%   options.nPerm          (1,1) double = 1000
+%       Number of sign-flip permutations.
+%   options.minClusterSize (1,1) double = 1
+%       Minimum contiguous length (in samples) for clusters to be counted.
+%   options.alpha          (1,1) double = 0.05
+%       Family-wise alpha for the initial t-threshold (two-sided).
+%   options.showPlot       (1,1) logical = false
+%       If true, plots the t-map with thresholds and the permutation null.
 %
-%   Outputs
-%     pVal    - permutation p-value for the maximum cluster mass
-%     result  - struct with fields:
-%                 .tValsReal              (1 x sum(respWin))
-%                 .tThresh
-%                 .pos.mask, .neg.mask    (logical masks over respWin)
-%                 .pos.mass, .neg.mass    (cluster masses per run)
-%                 .maxClusterMassReal
-%                 .maxClusterMassPerm     (nPerm x 1)
-%                 .respWin, .preWin
+% Output
+%   pVal    Scalar p-value from the max-cluster-mass test with +1 correction.
+%
+%   result  Struct with fields (returned only if requested):
+%       .tValsReal              1 x nSamples real t-statistics
+%       .tThresh                Scalar t-threshold (two-sided)
+%       .pos.mask               1 x nSamples logical, positive clusters
+%       .neg.mask               1 x nSamples logical, negative clusters
+%       .pos.mass               1 x nPosClusters cluster masses (positive)
+%       .neg.mass               1 x nNegClusters cluster masses (negative)
+%       .maxClusterMassReal     Scalar observed max absolute cluster mass
+%       .maxClusterMassPerm     nPerm x 1 null distribution of max masses
+%
+% Assumptions
+%   Exchangeability under sign-flips (symmetric noise across trials) and
+%   temporal adjacency defining clusters along columns of A.
+%
+% Requirements
+%   Statistics and Machine Learning Toolbox (ttest, tinv)
+%   Image Processing Toolbox (bwlabel)
+%
+% Example
+%   rng default
+%   A = randn(100, 500);
+%   A(:, 200:215) = A(:, 200:215) + 0.6;               % inject effect
+%   opts = struct('nPerm', 2000, 'minClusterSize', 3, 'alpha', 0.05);
+%   [pVal, R] = permtest(A, opts);
+%
+% Notes
+%   Cluster mass is the sum of t-values; the test controls FWER over the
+%   family of samples. This implementation uses two-sided thresholding and
+%   the maximum absolute cluster mass across both positive and negative
+%   clusters on each permutation.
 %
 % dstolz@umd.edu 2025
 
 arguments
     A double
-    respWin logical
-    options.preWin logical = []
     options.nPerm (1,1) double {mustBeInteger,mustBePositive} = 1000
     options.minClusterSize (1,1) double {mustBeInteger,mustBeNonnegative} = 1
     options.alpha (1,1) double {mustBeGreaterThanOrEqual(options.alpha,0), mustBeLessThanOrEqual(options.alpha,1)} = 0.05
@@ -56,23 +81,12 @@ if isempty(A)
 end
 
 % Dimensions & window checks
-[trials, timepoints] = size(A);
-respWin = respWin(:).';
-assert(numel(respWin)==timepoints, 'respWin length must match size(A,2)');
-assert(any(respWin), 'respWin must contain at least one true sample');
+[trials, ~] = size(A);
 
-preWin = options.preWin;
-if isempty(preWin), preWin = ~respWin; end
-% assert(~isempty(preWin) && islogical(preWin) && numel(preWin)==timepoints && any(preWin), ...
-%     '`preWin` is required and must match size(A,2)');
 
-% Baseline-correct each trial by its mean over preWin
-b = mean(A(:, preWin), 2, 'omitnan');
-A_bc = A - b;
-A_bc = A_bc(:, respWin);
 
 % Real t-map on response window
-[~, ~, ~, stats] = ttest(A_bc, 0);      % across trials
+[~, ~, ~, stats] = ttest(A, 0);      % across trials
 tValsReal = stats.tstat;                            % 1 x sum(respWin)
 tThresh = tinv(1 - options.alpha/2, trials - 1);
 
@@ -118,7 +132,7 @@ end
 maxClusterMassPerm = zeros(options.nPerm,1);
 for p = 1:options.nPerm
     s = 2*(rand(trials,1)>0.5) - 1;           % +/-1
-    Aperm = A_bc .* s;
+    Aperm = A .* s;
 
     [~, ~, ~, statsPerm] = ttest(Aperm, 0);
     tPerm = statsPerm.tstat(:).';
@@ -162,8 +176,6 @@ if nargout > 1
     result.neg.mass = massNeg;
     result.maxClusterMassReal = maxClusterMassReal;
     result.maxClusterMassPerm = maxClusterMassPerm;
-    result.respWin = respWin;
-    result.preWin = preWin;
 end
 
 if options.showPlot
@@ -173,7 +185,8 @@ if options.showPlot
     nexttile(tl);
     plot(tValsReal, '-'); hold on
     yline(0,'-k');
-    yline(tThresh, '--'); yline(-tThresh, '--');
+    yregion(tThresh,-tThresh)
+
     xlim([1 numel(tValsReal)]);
     posIdx = find(posMask);
     negIdx = find(negMask);
@@ -181,7 +194,7 @@ if options.showPlot
     if ~isempty(negIdx), plot(negIdx, tValsReal(negIdx), 'sk',MarkerFaceCOlor = 'r'); end
     titlef('t-map (p = %.4f)', pVal);
     subtitlef('alpha = %.4f', options.alpha);
-    xlabel('sample in respWin'); 
+    xlabel('sample'); 
     ylabel('t-statistic');
     ylim([-1 1]*max(abs(ylim)));
     
@@ -189,8 +202,8 @@ if options.showPlot
     grid on
 
     nexttile(tl);
-    histogram(maxClusterMassPerm(maxClusterMassPerm>0), 100, Normalization="pdf");
-    xline(maxClusterMassReal,'-','LineWidth',2);
+    histogram(maxClusterMassPerm(maxClusterMassPerm>0), 100, Normalization="pdf", LineStyle="none");
+    xline(maxClusterMassReal,'-r','actual','LineWidth',2);
     xlabel('max cluster mass'); ylabel('pdf'); title('Permutation null')
     grid on
 end
