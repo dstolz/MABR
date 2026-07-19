@@ -15,11 +15,13 @@ if isempty(BH)
     BH = obj.mapCom.Data.BufferIndex(end);
 end
 
-d = abs(obj.mapTimingBuffer.Data(LB:BH));
+% d = abs(obj.mapTimingBuffer.Data(LB:BH));
+d = obj.mapTimingBuffer.Data(LB:BH);
+d(d<0) = 0; % look only at the positive signal
 
 % find stimulus onsets in timing signal
 ind = d(1:end-1) < d(2:end); % rising edge
-ind = ind & d(1:end-1) >= .25; % threshold
+ind = ind & d(1:end-1) >= 0.1; % threshold
 
 x = find(ind);
 dx = diff(x);

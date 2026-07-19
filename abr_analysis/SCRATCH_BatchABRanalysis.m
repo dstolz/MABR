@@ -3,9 +3,13 @@
 addpath_nogit('c:\src\MABR')
 
 % rootPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_data/";
+% resultPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/X";
 % resultPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_results";
-rootPth = "C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data";
-resultPth = "C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_results";
+% rootPth = "C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_data";
+% resultPth = "C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_results";
+
+rootPth = "C:/Users/dstolz/My Drive/PROJECTS/FM_Detection/abr_data/POST";
+resultPth = "C:/Users/dstolz/My Drive/PROJECTS/FM_Detection/abr_results";
 
 abrSessions = getABRSessions(rootPth);
 
@@ -63,7 +67,7 @@ for k = 1:length(abrSessions)
         continue
     end
 
-    subjectID = regexp(abrSessions{k},'SUBJ-ID-\d+','match','once');
+    subject_id = regexp(abrSessions{k},'SUBJ-ID-\d+','match','once');
 
     abrSessionDate = min(T.timestamp);
     abrSessionDate.Format = "dd-MMM-uuuu";
@@ -72,7 +76,7 @@ for k = 1:length(abrSessions)
 
     td = abrSessionDate;
     td.Format = "uuMMdd";
-    ffnOut = fullfile(resultPth,sprintf('%s_%s.mat',subjectID,td));
+    ffnOut = fullfile(resultPth,sprintf('%s_%s.mat',subject_id,td));
 
     if skipExisting && isfile(ffnOut)
         fprintf('\tResults already exist, skipping ...\n')
@@ -135,11 +139,16 @@ for k = 1:length(abrSessions)
     St = cellfun(@(a) a(rind,:),S,'uni',0,'ErrorHandler',@errEmpty);
 
     [thresh_hat,permResult,thresholdMdls] = abrPermutationThreshold(St,U.soundLevel, ...
-        minClusterSize = 1, ...
+        method = "tfce", ...
+        nPerm = 2000, ...
         alpha = 0.05, ...
-        thresholdType = "logistic", ...
+        thresholdType = "glm", ...
+        fitTarget="binary", ...
+        criterion = 0.75, ...
         useParallel = true, ...
         debug = false);
+    
+
     clear St
 
 
@@ -150,8 +159,8 @@ for k = 1:length(abrSessions)
     ind = thresh_hat > max(U.soundLevel);
     thresh_hat(ind) =  max(U.soundLevel)+5;
 
-    % threshold could be below 0, but we never really see this
-    thresh_hat(thresh_hat < 0) = 0;
+    % % threshold could be below 0, but we never really see this
+    % thresh_hat(thresh_hat < 0) = 0;
 
 
 
@@ -173,7 +182,7 @@ for k = 1:length(abrSessions)
 
     % Save Data
     fprintf('\tsaving results: %s ...',ffnOut)
-    save(ffnOut,'T','S','U','Fs','winIdx','thresh_hat','permResult','thresholdMdls','respWin','tvec');
+    save(ffnOut,'subject_id','T','S','U','Fs','winIdx','thresh_hat','permResult','thresholdMdls','respWin','tvec');
     fprintf(' done\n')
 
 
@@ -187,7 +196,9 @@ end
 
 
 % resultPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_results";
-resultPth = "C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_results";
+% resultPth = "C:/Users/dstolz/My Drive/PROJECTS/NIHL and Perceptual Learning/abr_results";
+resultPth = "C:/Users/dstolz/My Drive/PROJECTS/FM_Detection/abr_results";
+
 
 a = dir(fullfile(resultPth,'*.mat'));
 
@@ -223,6 +234,11 @@ for i = 1:length(a)
     end
 
     use_fig('ABR Thresholds');
+
+
+    % [curation,state] = abrPermutationThresholdCuration(U.soundLevel,thresh_hat,permResult,thresholdMdls, ...
+    %     S = S)
+
     plotABRThresholds(thresh_checked, U.frequency,cm = cm);
 
     use_fig('ABR Matrix');
@@ -249,14 +265,16 @@ for i = 1:length(a)
         plotABRThresholds(thresh_checked, U.frequency,cm = cm);
     end
 
-    save(ffn,'T','S','U','Fs','winIdx','thresh_hat','thresh_checked')
+    save(ffn,'subject_id','T','S','U','Fs','winIdx','thresh_hat','thresh_checked')
 end
 
 
 
 %% 3A. Across Session Analysis
 
-resultPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_results";
+% resultPth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_results";
+resultPth = "C:/Users/dstolz/My Drive/PROJECTS/FM_Detection/abr_results";
+
 
 plotWindow = [-2 9];
 
@@ -266,12 +284,12 @@ D = cellfun(@(a,b) load(fullfile(a,b)),{a.folder},{a.name},'uni',1);
 
 
 for i = 1:length(D)
-    D(i).subject_id = D(i).T.subject_id(1);
     ts = D(i).T.timestamp(1);
     ts.Format = 'uuMMdd';
     D(i).date = ts;
 end
-subjs = unique([D.subject_id]);
+subjs = unique({D.subject_id});
+subjs(string(subjs) == "SUBJ-ID-1107") = [];
 [~, i] = sort([D.date]);
 D = D(i);
 
@@ -285,7 +303,7 @@ tl.TileSpacing = "tight";
 cm = colorcet('L1', 'N', 3);
 
 for s = subjs
-    idx = [D.subject_id] == s;
+    idx = ismember({D.subject_id},s);
     d = D(idx);
 
     % Create a next tile for this subject (placeholder)
@@ -305,28 +323,39 @@ for s = subjs
     colororder(ax1, cm);
     for i = 1:length(d)
         plot(ax1, d(i).U.frequency, d(i).thresh_checked, ...
-            'DisplayName', char(d(i).date));
+            'o-', ...
+            Color = cm(i,:), ...
+            MarkerFaceColor = cm(i,:), ...
+            DisplayName = char(d(i).date));
     end
     hold(ax1, 'off');
     grid(ax1, 'on');
     set(ax1, 'XScale', 'log');
+    box(ax1,'on')
     xticks(ax1, d(1).U.frequency);
-    ylim(ax1, [0 80]);
-    titlef(ax1, s);
-    legend(ax1, 'Location', 'northwest','Box','off');
+    ylim(ax1, [0 90]);
+    title(ax1, char(s));
+    ylabel('Threshold (dB SPL)')
+    xlabel(ax1,'Frequency (kHz)')
+    legend(ax1, 'Location', 'southwest','Box','off');
 
     % Second subplot: Threshold shifts
     ax2 = axes('Parent', p, 'Position', [0.1 0.1 0.85 0.35]);
     tc = vertcat(d.thresh_checked);
     dtc = tc - tc(1, :);
     if size(dtc, 1) > 1, dtc(1, :) = []; end
-    stem(ax2, d(1).U.frequency, dtc, '-sk', 'LineWidth', 2, ...
+    plot(ax2, d(1).U.frequency, dtc, '-sk', 'LineWidth', 2, ...
         'MarkerFaceColor', 'k');
+    % stem(ax2, d(1).U.frequency, dtc, '-sk', 'LineWidth', 2, ...
+    %     'MarkerFaceColor', 'k');
     grid(ax2, 'on');
     set(ax2, 'XScale', 'log');
     xticks(ax2, d(1).U.frequency);
     yline(ax2, 0, 'LineWidth', 2);
-    ylim([-1.1 1.1]*max(abs(ylim)))
+    ylim(ax2,[-10 60]);
+    % ylim(ax2,[-1.1 1.1]*max(abs(ylim)))
+    xlabel(ax2,'Frequency (kHz)')
+    ylabel(ax2,'Threshold Shift (dB)')
 end
 
 
@@ -340,6 +369,11 @@ showIndividuals = false;
 NE = readtable(fullfile(resultPth,"Trackers - Noise Exposure.csv"),  ...
     TextType="string", ...
     NumHeaderLines=1);
+i = ismissing(NE.Protocol);
+NE(i,:) = [];
+
+subjs = NE.subject_id;
+
 
 % assumes same frequencies for all subjects/sessions (true)
 X = nan(2,length(U.frequency),length(subjs));
@@ -349,7 +383,7 @@ for s = subjs
     idx = find([D.subject_id] == s);
     X(1:length(idx),:,k) = vertcat(D(idx).thresh_checked);
 
-    isNE(k) = any(NE.SubjectID == s & startsWith(NE.Protocol,"NEID"));
+    isNE(k) = any(NE.subject_id == s & startsWith(NE.Protocol,"NEID"));
     k = k + 1;
 end
 

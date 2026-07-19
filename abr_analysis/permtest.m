@@ -1,209 +1,281 @@
 function [pVal, result] = permtest(A, options)
-% permtest  Cluster-based permutation test on a 1-D series across trials.
+% permtest  1-D permutation test across trials with selectable correction method.
 %
 %   [pVal, result] = permtest(A)
 %   [pVal, result] = permtest(A, options)
 %
-% Description
-%   Performs a two-sided, cluster-based permutation test on a time/position
-%   series measured across repeated trials. For each sample (column) of A,
-%   a one-sample t-test against 0 is computed across trials (rows). The t-map
-%   is thresholded at a two-sided level (alpha/2 each tail), contiguous
-%   supra-threshold samples form clusters, and each cluster’s mass is the sum
-%   of its t-values. A null distribution of the maximum absolute cluster mass
-%   is built by random trial-wise sign flips (Rademacher permutations). The
-%   p-value is the +1-corrected proportion of null maxima ≥ the observed max.
+% Methods (options.method):
+%   "clusterMass"  (default) classic two-sided cluster mass (sum of t) with max-|mass| null
+%   "tmax"         two-sided max-|t| (FWER-corrected per sample via max-statistic null)
+%   "tfce"         two-sided TFCE (threshold-free cluster enhancement) with max-TFCE null 
+%                       see Mensen & Khatami, 2013
 %
-% Input
-%   A        double, size [nTrials x nSamples]. Rows are trials, columns are
-%            time/position samples. Values should be baseline-corrected so
-%            that 0 represents “no effect”.
+% Inputs
+%   A: [nTrials x nSamples]
 %
-% Name-Value Options (struct; fields shown with defaults)
-%   options.nPerm          (1,1) double = 1000
-%       Number of sign-flip permutations.
-%   options.minClusterSize (1,1) double = 1
-%       Minimum contiguous length (in samples) for clusters to be counted.
-%   options.alpha          (1,1) double = 0.05
-%       Family-wise alpha for the initial t-threshold (two-sided).
-%   options.showPlot       (1,1) logical = false
-%       If true, plots the t-map with thresholds and the permutation null.
+% Options (defaults)
+%   options.nPerm          = 1000
+%   options.alpha          = 0.05
+%   options.minClusterSize = 1
+%   options.method         = "clusterMass"  ("clusterMass"|"tmax"|"tfce")
+%   options.tfce.E         = 0.5           (Extent parameter)
+%   options.tfce.H         = 2.0           (Height parameter)
+%   options.tfce.dh        = 0.1           (threshold step in t-units)
+%   options.showPlot       = false
 %
-% Output
-%   pVal    Scalar p-value from the max-cluster-mass test with +1 correction.
-%
-%   result  Struct with fields (returned only if requested):
-%       .tValsReal              1 x nSamples real t-statistics
-%       .tThresh                Scalar t-threshold (two-sided)
-%       .pos.mask               1 x nSamples logical, positive clusters
-%       .neg.mask               1 x nSamples logical, negative clusters
-%       .pos.mass               1 x nPosClusters cluster masses (positive)
-%       .neg.mass               1 x nNegClusters cluster masses (negative)
-%       .maxClusterMassReal     Scalar observed max absolute cluster mass
-%       .maxClusterMassPerm     nPerm x 1 null distribution of max masses
-%
-% Assumptions
-%   Exchangeability under sign-flips (symmetric noise across trials) and
-%   temporal adjacency defining clusters along columns of A.
-%
-% Requirements
-%   Statistics and Machine Learning Toolbox (ttest, tinv)
-%   Image Processing Toolbox (bwlabel)
-%
-% Example
-%   rng default
-%   A = randn(100, 500);
-%   A(:, 200:215) = A(:, 200:215) + 0.6;               % inject effect
-%   opts = struct('nPerm', 2000, 'minClusterSize', 3, 'alpha', 0.05);
-%   [pVal, R] = permtest(A, opts);
+% Outputs
+%   pVal   scalar global p-value for the chosen max-statistic
+%   result struct with method-specific fields; for "tmax" and "tfce", returns
+%          result.pCorrSample (1 x nSamples) FWER-corrected per-sample p-values
 %
 % Notes
-%   Cluster mass is the sum of t-values; the test controls FWER over the
-%   family of samples. This implementation uses two-sided thresholding and
-%   the maximum absolute cluster mass across both positive and negative
-%   clusters on each permutation.
+% - Uses sign-flip (Rademacher) permutations, appropriate for a one-sample test.
+% - For "tmax"/"tfce", "where in time" is best read from result.pCorrSample.
 %
-% dstolz@umd.edu 2025
+% Mensen, A., & Khatami, R. (2013). Advanced EEG analysis using 
+% threshold-free cluster-enhancement and non-parametric statistics. 
+% NeuroImage, 67, 111–118. https://doi.org/10.1016/j.neuroimage.2012.10.027
+
+
+
 
 arguments
     A double
-    options.nPerm (1,1) double {mustBeInteger,mustBePositive} = 1000
-    options.minClusterSize (1,1) double {mustBeInteger,mustBeNonnegative} = 1
-    options.alpha (1,1) double {mustBeGreaterThanOrEqual(options.alpha,0), mustBeLessThanOrEqual(options.alpha,1)} = 0.05
+    options.nPerm (1,1) double {mustBeInteger,mustBePositive,mustBeFinite} = 1000
+    options.minClusterSize (1,1) double {mustBeInteger,mustBePositive,mustBeFinite} = 1
+    options.alpha (1,1) double {mustBeGreaterThan(options.alpha,0), mustBeLessThan(options.alpha,1)} = 0.05
+    options.method (1,1) string {mustBeMember(options.method, ["clusterMass","tmax","tfce"])} = "clusterMass"
+    options.tfce struct = struct("E",0.5,"H",2.0,"dh",0.1)
     options.showPlot (1,1) logical = false
 end
 
 pVal = NaN;
 result = struct();
+if isempty(A), return; end
 
-if isempty(A)
-    return
+[trials, nSamples] = size(A);
+if trials < 2 || nSamples < 1, return; end
+
+% --- Fast analytic one-sample t across trials ---
+n = trials;
+sumA   = sum(A, 1);
+sumSqA = sum(A.^2, 1);
+
+varA = (sumSqA - (sumA.^2)/n) ./ (n - 1);
+seA  = sqrt(varA ./ n);
+
+tValsReal = (sumA ./ n) ./ seA;
+tValsReal(~isfinite(tValsReal)) = 0;
+
+tThresh = tinv(1 - options.alpha/2, n - 1);
+
+% --- Compute observed max-statistic (depends on method) ---
+switch options.method
+    case "clusterMass"
+        [massPos, massNeg] = cluster_masses_1d(tValsReal, tThresh, options.minClusterSize);
+        maxStatReal = max([0, massPos(:).', abs(massNeg(:).')]);  % max abs mass
+        maxStatReal = maxStatReal(1);
+
+    case "tmax"
+        maxStatReal = max(abs(tValsReal));
+
+    case "tfce"
+        tfcePosReal = tfce_1d(max(tValsReal,0), options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
+        tfceNegReal = tfce_1d(max(-tValsReal,0), options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
+        tfceAbsReal = max(tfcePosReal, tfceNegReal);
+        maxStatReal = max(tfceAbsReal);
 end
 
-% Dimensions & window checks
-[trials, ~] = size(A);
+% --- Permutations: sign flips; compute max-statistic null ---
+maxStatPerm = zeros(options.nPerm, 1);
 
+batchSize = min(options.nPerm, 512);
+p0 = 0;
 
+while p0 < options.nPerm
+    nb = min(batchSize, options.nPerm - p0);
 
-% Real t-map on response window
-[~, ~, ~, stats] = ttest(A, 0);      % across trials
-tValsReal = stats.tstat;                            % 1 x sum(respWin)
-tThresh = tinv(1 - options.alpha/2, trials - 1);
+    s = 2*(rand(trials, nb) > 0.5) - 1;     % trials x nb
+    sumPerm = (s.' * A);                    % nb x nSamples
 
-% Build signed clusters (positive and negative), apply minClusterSize
-posMask = tValsReal >  tThresh;
-negMask = tValsReal < -tThresh;
+    varPerm = (sumSqA - (sumPerm.^2)/n) ./ (n - 1);
+    sePerm  = sqrt(varPerm ./ n);
+    tBlock  = (sumPerm ./ n) ./ sePerm;
+    tBlock(~isfinite(tBlock)) = 0;
 
-% Positive clusters
-if any(posMask)
-    [Lpos, npos] = bwlabel(posMask);                       % Image Processing Toolbox
-    lenPos = accumarray(Lpos(Lpos>0).', 1, [npos,1]);
-    keepPos = find(lenPos >= options.minClusterSize);
-    massPos = zeros(1, numel(keepPos));
-    for k = 1:numel(keepPos)
-        massPos(k) = sum(tValsReal(Lpos == keepPos(k)));
-    end
-else
-    massPos = [];
-end
+    for j = 1:nb
+        tPerm = tBlock(j, :);
 
-% Negative clusters
-if any(negMask)
-    [Lneg, nneg] = bwlabel(negMask);
-    lenNeg = accumarray(Lneg(Lneg>0).', 1, [nneg,1]);
-    keepNeg = find(lenNeg >= options.minClusterSize);
-    massNeg = zeros(1, numel(keepNeg));
-    for k = 1:numel(keepNeg)
-        massNeg(k) = sum(tValsReal(Lneg == keepNeg(k)));   % negative masses
-    end
-else
-    massNeg = [];
-end
+        switch options.method
+            case "clusterMass"
+                [mPos, mNeg] = cluster_masses_1d(tPerm, tThresh, options.minClusterSize);
+                if isempty(mPos) && isempty(mNeg)
+                    maxStatPerm(p0+j) = 0;
+                else
+                    maxStatPerm(p0+j) = max([0, mPos(:).', abs(mNeg(:).')]);
+                end
 
-maxClusterMassReal = 0;
-if ~isempty(massPos)
-    maxClusterMassReal = max(maxClusterMassReal, max(massPos));
-end
-if ~isempty(massNeg)
-    maxClusterMassReal = max(maxClusterMassReal, max(abs(massNeg)));
-end
+            case "tmax"
+                maxStatPerm(p0+j) = max(abs(tPerm));
 
-% Permutations: trial-wise sign flips of baseline-corrected data
-maxClusterMassPerm = zeros(options.nPerm,1);
-for p = 1:options.nPerm
-    s = 2*(rand(trials,1)>0.5) - 1;           % +/-1
-    Aperm = A .* s;
-
-    [~, ~, ~, statsPerm] = ttest(Aperm, 0);
-    tPerm = statsPerm.tstat(:).';
-
-    posP = tPerm >  tThresh;
-    negP = tPerm < -tThresh;
-
-    maxMass = 0;
-
-    if any(posP)
-        [Lp, np] = bwlabel(posP);
-        lenP = accumarray(Lp(Lp>0).', 1, [np,1]);
-        keepP = find(lenP >= options.minClusterSize);
-        for k = 1:numel(keepP)
-            maxMass = max(maxMass, sum(tPerm(Lp == keepP(k))));
+            case "tfce"
+                tfcePos = tfce_1d(max(tPerm,0),  options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
+                tfceNeg = tfce_1d(max(-tPerm,0), options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
+                maxStatPerm(p0+j) = max(max(tfcePos, tfceNeg));
         end
     end
 
-    if any(negP)
-        [Ln, nn] = bwlabel(negP);
-        lenN = accumarray(Ln(Ln>0).', 1, [nn,1]);
-        keepN = find(lenN >= options.minClusterSize);
-        for k = 1:numel(keepN)
-            maxMass = max(maxMass, abs(sum(tPerm(Ln == keepN(k)))));
+    p0 = p0 + nb;
+end
+
+% Global p-value (+1 correction) for the max-statistic
+pVal = (1 + sum(maxStatPerm >= maxStatReal)) / (options.nPerm + 1);
+
+% --- Fill result struct (method-specific) ---
+result.method   = options.method;
+result.tValsReal = tValsReal;
+result.tThresh   = tThresh;
+result.maxStatReal = maxStatReal;
+result.maxStatPerm = maxStatPerm;
+
+switch options.method
+    case "clusterMass"
+        % For clusterMass, keep cluster-level outputs (like your original)
+        posMask = tValsReal >  tThresh;
+        negMask = tValsReal < -tThresh;
+
+        result.pos.mask = posMask;
+        result.neg.mask = negMask;
+        result.pos.mass = massPos;
+        result.neg.mass = massNeg;
+
+        % Cluster p-values from max-statistic null
+        pPos = zeros(size(massPos));
+        for k = 1:numel(massPos)
+            pPos(k) = (1 + sum(maxStatPerm >= abs(massPos(k)))) / (options.nPerm + 1);
         end
-    end
+        pNeg = zeros(size(massNeg));
+        for k = 1:numel(massNeg)
+            pNeg(k) = (1 + sum(maxStatPerm >= abs(massNeg(k)))) / (options.nPerm + 1);
+        end
+        result.pos.pCorr = pPos;
+        result.neg.pCorr = pNeg;
 
-    maxClusterMassPerm(p) = maxMass;
+    case "tmax"
+        % Per-sample FWER-corrected p-values using max-|t| null
+        result.pCorrSample = fwer_p_from_maxnull(abs(tValsReal), maxStatPerm);
+        result.sigMask = result.pCorrSample < options.alpha;
+
+    case "tfce"
+        % Per-sample FWER-corrected p-values using max-TFCE null
+        result.tfcePosReal = tfcePosReal;
+        result.tfceNegReal = tfceNegReal;
+        result.tfceAbsReal = tfceAbsReal;
+        result.pCorrSample = fwer_p_from_maxnull(tfceAbsReal, maxStatPerm);
+        result.sigMask = result.pCorrSample < options.alpha;
 end
 
-% p-value with +1 correction
-pVal = (1 + sum(maxClusterMassPerm >= maxClusterMassReal)) / (options.nPerm + 1);
-
-% Outputs
-if nargout > 1
-    result.tValsReal = tValsReal;
-    result.tThresh = tThresh;
-    result.pos.mask = posMask;
-    result.neg.mask = negMask;
-    result.pos.mass = massPos;
-    result.neg.mass = massNeg;
-    result.maxClusterMassReal = maxClusterMassReal;
-    result.maxClusterMassPerm = maxClusterMassPerm;
-end
-
+% --- Optional quick plot ---
 if options.showPlot
-    
-    tl = use_fig_tiledlayout('permtest');
+    tl = tiledlayout(1,2);
 
     nexttile(tl);
     plot(tValsReal, '-'); hold on
     yline(0,'-k');
-    yregion(tThresh,-tThresh)
-
-    xlim([1 numel(tValsReal)]);
-    posIdx = find(posMask);
-    negIdx = find(negMask);
-    if ~isempty(posIdx), plot(posIdx, tValsReal(posIdx), 'sk',MarkerFaceColor = 'r'); end
-    if ~isempty(negIdx), plot(negIdx, tValsReal(negIdx), 'sk',MarkerFaceCOlor = 'r'); end
-    titlef('t-map (p = %.4f)', pVal);
-    subtitlef('alpha = %.4f', options.alpha);
-    xlabel('sample'); 
-    ylabel('t-statistic');
-    ylim([-1 1]*max(abs(ylim)));
-    
-    hold off
+    yregion([-1 1]*tThresh); 
+    title(sprintf('%s (global p = %.4g)', options.method, pVal));
+    xlabel('sample'); ylabel('t');
     grid on
 
     nexttile(tl);
-    histogram(maxClusterMassPerm(maxClusterMassPerm>0), 100, Normalization="pdf", LineStyle="none");
-    xline(maxClusterMassReal,'-r','actual','LineWidth',2);
-    xlabel('max cluster mass'); ylabel('pdf'); title('Permutation null')
+    histogram(maxStatPerm(maxStatPerm>0), 100, "Normalization","pdf", "LineStyle","none");
+    xline(maxStatReal,'-r','actual','LineWidth',2);
+    xlabel('max-statistic'); ylabel('pdf'); title('Permutation null');
     grid on
+end
+
+end
+
+% ===================== helpers =====================
+
+function [massPos, massNeg] = cluster_masses_1d(tVals, tThresh, minSz)
+% Returns cluster masses for t > +tThresh and t < -tThresh, using 1D run-length parsing.
+posMask = tVals >  tThresh;
+negMask = tVals < -tThresh;
+
+massPos = cluster_sum_from_mask(tVals,  posMask, minSz);
+massNeg = cluster_sum_from_mask(tVals,  negMask, minSz); % will be negative values
+end
+
+function masses = cluster_sum_from_mask(x, mask, minSz)
+masses = [];
+if ~any(mask), return; end
+
+d = diff([false, mask, false]);
+starts = find(d==1);
+ends   = find(d==-1) - 1;
+
+lens = ends - starts + 1;
+keep = lens >= minSz;
+starts = starts(keep);
+ends   = ends(keep);
+
+masses = zeros(1, numel(starts));
+for k = 1:numel(starts)
+    masses(k) = sum(x(starts(k):ends(k)));
+end
+end
+
+function tfce = tfce_1d(xNonneg, E, H, dh, minSz)
+% Simple 1D TFCE for a nonnegative map.
+% Integrates over thresholds h with step dh; at each h, finds clusters where x>h and
+% adds (extent^E)*(h^H)*dh to all samples in those clusters.
+%
+% xNonneg: 1 x nSamples, must be >=0
+tfce = zeros(size(xNonneg));
+mx = max(xNonneg);
+if mx <= 0 || dh <= 0, return; end
+
+hs = dh:dh:mx;
+for h = hs
+    mask = xNonneg > h;
+    if ~any(mask), continue; end
+
+    d = diff([false, mask, false]);
+    starts = find(d==1);
+    ends   = find(d==-1) - 1;
+
+    lens = ends - starts + 1;
+    keep = lens >= minSz;
+    starts = starts(keep);
+    ends   = ends(keep);
+    lens   = lens(keep);
+
+    if isempty(starts), continue; end
+
+    % TFCE increment for each cluster at this threshold
+    incPerCluster = (lens.^E) .* (h.^H) .* dh;
+
+    for k = 1:numel(starts)
+        tfce(starts(k):ends(k)) = tfce(starts(k):ends(k)) + incPerCluster(k);
+    end
+end
+end
+
+function pCorr = fwer_p_from_maxnull(statPerSample, nullMax)
+% FWER-corrected p per sample using max-statistic null:
+% p = (1 + #{nullMax >= stat}) / (nPerm+1)
+nPerm = numel(nullMax);
+pCorr = zeros(size(statPerSample));
+
+% Chunk to avoid large temporary matrices for big nSamples
+chunk = 2000;
+nS = numel(statPerSample);
+for i0 = 1:chunk:nS
+    i1 = min(nS, i0+chunk-1);
+    v = statPerSample(i0:i1);
+    % count perms with max >= v (vectorized via implicit expansion)
+    c = sum(nullMax >= v, 1);
+    pCorr(i0:i1) = (1 + c) / (nPerm + 1);
+end
 end
