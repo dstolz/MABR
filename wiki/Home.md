@@ -2,6 +2,7 @@
 
 **M**atlab **A**uditory **B**rainstem **R**esponse — a Windows-only MATLAB toolbox for presenting calibrated acoustic stimuli and acquiring/analyzing ABR electrophysiology data.
 
+
 Copyright © Daniel Stolzberg, PhD (`dstolz@umd.edu`). Proprietary — see `Copyright.txt` in the repository.
 
 ## Start here
