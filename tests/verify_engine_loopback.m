@@ -19,7 +19,9 @@ fl  = cfg.frameLength;
 Fs  = cfg.DACSampleRate;
 
 % ---- Build a deterministic test block --------------------------------------
-nFrames = 40;
+% Long enough that, at the paced ~4 ms/frame below, the block still has time
+% left when the Pause/Resume/Stop assertions run (~2 s of streaming).
+nFrames = 500;
 N       = nFrames * fl;
 t       = (0:N-1)'/Fs;
 signal  = single(0.2*sin(2*pi*1000*t));          % 1 kHz tone

@@ -123,7 +123,11 @@ function reason = stream_block(cmdQueue,resultQueue,rb,apr,spec,cfg,testing)
 fl = cfg.frameLength;
 X  = spec.PlayMatrix;          % [N x 2] single
 N  = size(X,1);
-testDelay = getdef(spec,'TestingFrameDelay',0);   % pace loopback for tests only
+% Loopback pacing. With no device there is no sample clock to throttle the
+% loop, so without this the whole run streams as fast as the CPU can copy
+% frames and the requested ISI means nothing in wall-clock terms. The client
+% sets this to one frame's duration to make TESTING run at real time.
+testDelay = getdef(spec,'TestingFrameDelay',0);
 
 rb.reset();                    % new block: clear write head, bump BlockSeq
 send_state(resultQueue,mabr.acq.State.Acquire);
@@ -131,6 +135,11 @@ mabr.log.vprintf(1,'Streaming block: %d samples (%d frames)',N,ceil(N/fl));
 
 reason = 'completed';
 i = 1;
+% Pace against a running deadline rather than pause()-per-frame: pause has
+% millisecond-scale granularity on Windows and the frame work itself takes
+% time, so a naive pause(testDelay) accumulates drift and runs slow.
+paceOrigin = tic;
+paceFrames = 0;
 while i <= N
     % --- honor any pending command (non-blocking) -------------------------
     [msg,ok] = poll(cmdQueue,0);
@@ -143,6 +152,10 @@ while i <= N
                 term = wait_while_paused(cmdQueue);      % blocks until resumed/terminated
                 if ~isempty(term), reason = term; break; end
                 send_state(resultQueue,mabr.acq.State.Acquire);
+                % Paused time is not owed back: restart the pacing clock so
+                % the loop does not sprint to "catch up" after a resume.
+                paceOrigin = tic;
+                paceFrames = 0;
         end
     end
 
@@ -162,7 +175,11 @@ while i <= N
     rb.writeFrame(audioADC(:,1),audioADC(:,2));
     i = hi + 1;
 
-    if testing && testDelay > 0, pause(testDelay); end
+    if testing && testDelay > 0
+        paceFrames = paceFrames + 1;
+        lag = paceFrames*testDelay - toc(paceOrigin);
+        if lag > 0, pause(lag); end
+    end
 end
 
 mabr.log.vprintf(1,'Block %s (head = %d)',reason,rb.WriteHead);

@@ -162,6 +162,17 @@ classdef AcqController < handle
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot), obj.LivePlot.reset(); end
 
             spec = obj.Schedule.renderSpec(r);
+
+            % In TESTING there is no audio device, so nothing throttles the
+            % worker to the sample clock and the run would finish far faster
+            % than the ISI implies. Pace it at one frame per frame-duration so
+            % loopback presentation happens at the requested rate. An explicit
+            % Schedule.TestingFrameDelay (the verification scripts set one)
+            % still wins.
+            if obj.Testing && spec.TestingFrameDelay <= 0
+                spec.TestingFrameDelay = obj.Config.frameLength/spec.SampleRate;
+            end
+
             obj.CurRun = r;
             obj.CurSeq = spec.StimulusIndex(:)';
 
