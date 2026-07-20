@@ -30,6 +30,13 @@ if numel(above) < 2, idx = []; return; end
 % first sample entering the 'above threshold' region = rising crossing
 idx = find(above(2:end) & ~above(1:end-1)) + 1;
 
+% A vector that already starts above threshold has its onset at sample 1;
+% without this the onset is dropped entirely. This matters at the incremental
+% slice boundaries in mabr.metrics.extract_sweeps, where a pulse can straddle
+% two slices. A duplicate raised here (pulse actually started in the previous
+% slice) is removed by that function's shadow-interval de-duplication.
+if above(1), idx = [1; idx]; end
+
 % merge onsets closer than shadowSamples (keep the earliest of each cluster)
 if ~isempty(idx)
     keep = [true; diff(idx) >= shadowSamples];

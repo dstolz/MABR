@@ -53,11 +53,11 @@ classdef RingBuffer < handle
             obj.MaxLength = cfg.maxInputBufferLength;
 
             mabr.acq.RingBuffer.ensure_file(cfg.signalBufferFile, ...
-                @() zeros(obj.MaxLength,1,'single'));
+                @() zeros(obj.MaxLength,1,'single'), obj.MaxLength*4);
             mabr.acq.RingBuffer.ensure_file(cfg.timingBufferFile, ...
-                @() zeros(obj.MaxLength,1,'single'));
+                @() zeros(obj.MaxLength,1,'single'), obj.MaxLength*4);
             mabr.acq.RingBuffer.ensure_file(cfg.headerFile, ...
-                @() zeros(1,2,'uint32'));
+                @() zeros(1,2,'uint32'), 8);
 
             obj.mapSignal = memmapfile(cfg.signalBufferFile, ...
                 'Writable',obj.Writable,'Format','single','Repeat',Inf);
@@ -192,10 +192,20 @@ classdef RingBuffer < handle
     end
 
     methods (Static, Access = private)
-        function ensure_file(ffn,makeData)
+        function ensure_file(ffn,makeData,expectBytes)
             % Create a binary file of the correct size/type if it does not yet
-            % exist (the client typically creates it before the worker opens).
-            if exist(ffn,'file') == 2, return; end
+            % exist (the client typically creates it before the worker opens),
+            % or if the file on disk is the wrong size. A stale file — left by
+            % a different maxInputBufferLength, or truncated by a crash or a
+            % full disk — would otherwise be memory-mapped as-is and produce
+            % out-of-range writes on the acquisition hot path.
+            d = dir(ffn);
+            if ~isempty(d) && d(1).bytes == expectBytes, return; end
+            if ~isempty(d)
+                mabr.log.vprintf(1,1, ...
+                    'Ring buffer "%s" is %d bytes, expected %d; recreating.', ...
+                    ffn,d(1).bytes,expectBytes);
+            end
             [fid,msg] = fopen(ffn,'wb');
             if fid == -1
                 error('mabr:acq:RingBuffer:cannotOpenFile', ...

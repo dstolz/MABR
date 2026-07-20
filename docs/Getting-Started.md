@@ -1,0 +1,126 @@
+# Getting Started
+
+This walks through a complete recording session. If you have not installed MABR yet, see [Installation](Installation.md).
+
+## The short version
+
+1. `>> MABR` in MATLAB.
+2. Type a subject ID and pick an output folder.
+3. Load your stimulus file (or click **Test Stimulus** to try the software without one).
+4. Choose when each condition should stop: a fixed number of sweeps, or automatically when a response is detected.
+5. Untick **Testing** once real hardware is connected.
+6. Click **Start** and watch the live plot.
+
+Each condition is saved to its own `.abr` file as soon as it finishes. If something goes wrong halfway through a session, everything recorded up to that point is already on disk.
+
+## Step by step
+
+### 1. Launch
+
+```matlab
+>> MABR
+```
+
+A small window titled **MABR** opens. Every control is described in [The Acquisition App](Acquisition-App.md); this page covers just the path through them.
+
+### 2. Identify the subject and choose where data goes
+
+**Subject ID** labels the recording and becomes part of every filename. **Output** is the folder the `.abr` files are written to — use **Browse…** to pick one. A per-subject or per-session folder is a good habit, because the offline analysis tools treat each folder as one session.
+
+If you leave Output blank, blocks are still recorded and held in memory, but nothing is written to disk.
+
+### 3. Load a stimulus
+
+MABR does not create sounds. It plays waveforms that an external, calibrated stimulus package produced for you, so that the levels in your data mean what they say.
+
+- **Load .mat…** opens a `.mat` file containing your pre-computed blocks. Each block carries its own waveform, sample rate, sweep timing, and metadata (frequency, level, and so on).
+- **Test Stimulus** loads a built-in grid of tone pips (8 and 16 kHz at 30 and 60 dB). These are **not calibrated** — the levels are nominal. Use this to learn the software or to check the signal chain, never to collect real data.
+
+Once loaded, the label next to **Stimulus** turns from red to a block count.
+
+### 4. Decide when each condition stops
+
+The **Advance** dropdown controls when MABR moves from one condition to the next:
+
+- **Number of Sweeps** — run each condition for a fixed count (set it in the first number field, e.g. 256 or 512). Simple and predictable; every condition takes the same time.
+- **Correlation Threshold** — stop as soon as the response becomes reproducible. MABR continuously compares the response window against the pre-stimulus baseline; when that contrast reaches the threshold you set (the second field, 0–1), the condition ends early and the next one starts.
+
+The correlation option can meaningfully shorten a session, because strong conditions (loud levels, near-threshold frequencies) finish in a fraction of the sweeps that weak ones need. It cannot fire before a minimum number of sweeps have been collected, so it will not stop on a lucky-looking handful of traces.
+
+### 5. Testing vs. real hardware
+
+**Testing (loopback, no hardware)** is ticked by default. In this mode nothing is sent to an audio device — the stimulus is fed straight back as if it were the recorded response, so you can see the whole program run without a rig. Untick it when your ASIO device is connected and you want to record for real.
+
+Changing this checkbox rebuilds the acquisition worker, which takes a few seconds the first time.
+
+### 6. Record
+
+Click **Start**. In order, MABR will:
+
+1. Start the background acquisition process (once per session; the status line says so).
+2. Prepare the first condition and begin playing it.
+3. Show sweeps accumulating in the live plot as the running average builds.
+4. Stop the condition when your advance criterion is met, save it to a `.abr` file, and move to the next.
+5. Repeat until every condition is done, then report the schedule is complete.
+
+While it runs:
+
+- **Pause** suspends playback in place and keeps the audio device open; the button becomes **Resume**.
+- **Stop Block** ends the current condition early, saves it, and continues with the next one. Useful when a condition is clearly done or clearly bad.
+- **Abort** ends the current condition, saves it, and stops the whole schedule.
+
+Nothing is discarded by any of these — whatever was recorded before you pressed the button is saved.
+
+### 7. Look at the results
+
+**Show Live Plot** displays the running average (black), the most recent sweep (blue), and a bar showing the current correlation against your threshold. It updates about 20 times a second.
+
+**Trace Organizer** stacks the finished conditions on one axis so you can compare them, drag traces to reorder them vertically, and mark response peaks. See [Viewing Data](Viewing-Data.md).
+
+For threshold estimation across a whole subject or study, use the offline pipeline — see [Offline Analysis](Offline-Analysis.md).
+
+## What to expect on disk
+
+One file per condition, in your output folder:
+
+```
+SUBJ_ID_001_Frequency_8kHz_Level_30dB_260720T141530.abr
+SUBJ_ID_001_Frequency_8kHz_Level_60dB_260720T141812.abr
+```
+
+These names are not cosmetic — the offline analysis tools read the stimulus parameters back out of them. See [Data Files](Data-Files.md).
+
+---
+
+## Developer notes
+
+### Driving a session from a script
+
+The GUI is a thin view over [mabr.ui.AcqController](../+mabr/+ui/AcqController.m), which is usable headlessly. This is the whole flow, no figure required:
+
+```matlab
+cfg = mabr.Config;
+c   = mabr.ui.AcqController(cfg,true);      % true = loopback/testing
+c.waitUntilReady(120);                       % one-time worker handshake
+
+c.setSource(mabr.stim.demoSource(cfg));      % any mabr.stim.StimulusSource
+c.Session.Subject.ID = 'SUBJ_ID_001';
+c.Session.OutputPath = 'C:\data\subj001';
+
+c.AdvanceFcn    = @mabr.stim.advance.corr_threshold;
+c.AdvanceParams = struct('targetSweeps',512,'corrThreshold',0.5, ...
+                         'minSweeps',32,'maxSweeps',Inf);
+
+addlistener(c,'BlockSaved',      @(~,e) fprintf('saved %s\n',e.Info.file));
+addlistener(c,'ScheduleComplete',@(~,~) disp('done'));
+
+c.start();
+```
+
+The controller is event-driven throughout — `start()` returns immediately and the schedule proceeds on engine events and a live-view timer. Do not busy-wait on its state; listen to `StateChanged`, `MetricsUpdated`, `BlockSaved`, and `ScheduleComplete`.
+
+See [verify_online_advance.m](../tests/verify_online_advance.m) for the same pattern used as an end-to-end test, including how to block until completion in a script.
+
+### Where the pieces live
+
+`AcqController` owns three things and mediates between them: an [Engine](../+mabr/+acq/Engine.m) (hardware), a [BlockQueue](../+mabr/+stim/BlockQueue.m) (what to play), and a [Session](../+mabr/+data/Session.m) (what came back). [Architecture](Architecture.md) explains the boundaries; [Extending MABR](Extending.md) covers replacing any of them.

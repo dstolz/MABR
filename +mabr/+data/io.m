@@ -48,7 +48,9 @@ classdef io
 
             if df > 1
                 data   = single(resample(double(rec.Data),1,df));
-                onsets = round(rec.SweepOnsets(:)./df);
+                % max(1,...): onsets below df/2 round to 0, which is an invalid
+                % index into ADC.Data for the offline pipeline.
+                onsets = max(1,round(rec.SweepOnsets(:)./df));
                 Fs     = rec.SampleRate./df;
             else
                 data   = rec.Data;
@@ -116,7 +118,17 @@ classdef io
             subj = char(baseName);
             if isempty(subj) && isfield(meta,'SubjectID'), subj = char(string(meta.SubjectID)); end
             if isempty(subj), subj = 'SUBJ_ID_0'; end
-            if ~startsWith(subj,'SUBJ'), subj = ['SUBJ_ID_' regexprep(subj,'\D','')]; end
+            if ~startsWith(subj,'SUBJ')
+                % Prefer the numeric part, but fall back to the sanitized name:
+                % stripping non-digits from a purely alphabetic ID yielded
+                % 'SUBJ_ID_', collapsing every such subject onto one filename.
+                digits = regexprep(subj,'\D','');
+                if isempty(digits)
+                    subj = ['SUBJ_ID_' matlab.lang.makeValidName(subj)];
+                else
+                    subj = ['SUBJ_ID_' digits];
+                end
+            end
 
             t = mabr.data.io.timestampToken(block.StartTime);
 

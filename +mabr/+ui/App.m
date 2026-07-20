@@ -17,7 +17,10 @@ classdef App < handle
     properties (SetAccess = private)
         Config
         Controller  mabr.ui.AcqController
-        Source      mabr.stim.StimulusSource
+        % Source is deliberately untyped: mabr.stim.StimulusSource is Abstract,
+        % and MATLAB cannot build the implicit default value for a property
+        % typed as an abstract class (it errors at class-definition time).
+        Source      = [];
         LivePlot    mabr.ui.LivePlot
         TraceOrg    mabr.ui.TraceOrganizer
         Listeners
@@ -269,6 +272,9 @@ classdef App < handle
                 app.TraceOrg = mabr.ui.TraceOrganizer();
             end
             if ~isempty(app.Controller) && isvalid(app.Controller)
+                % Rebuild from scratch: addBlock appends, so re-pressing the
+                % button would otherwise duplicate every trace.
+                app.TraceOrg.clear();
                 for i = 1:app.Controller.Session.NumBlocks
                     app.TraceOrg.addBlock(app.Controller.Session.Blocks(i));
                 end

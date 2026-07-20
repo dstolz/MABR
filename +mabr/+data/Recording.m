@@ -41,8 +41,12 @@ classdef Recording
         UseNotch    (1,1) logical = false;
         FilterHP    (1,1) double {mustBePositive,mustBeFinite} = 10;    % Hz
         FilterLP    (1,1) double {mustBePositive,mustBeFinite} = 3000;  % Hz
-        FilterOrder (1,1) double {mustBePositive,mustBeInteger} = 10;
+        % Butterworth order for the bandpass. Kept low: a high-order IIR with a
+        % 10 Hz corner at 12 kHz is numerically fragile, and designFilters
+        % clamps to [2 8] for that reason.
+        FilterOrder (1,1) double {mustBePositive,mustBeInteger} = 4;
         NotchFreq   (1,1) double {mustBePositive,mustBeFinite} = 60;    % Hz
+        NotchWidth  (1,1) double {mustBePositive,mustBeFinite} = 4;     % Hz, -3 dB width
 
         FFTOptions = struct('windowFcn',@flattop,'inDecibels',true);
     end
@@ -80,21 +84,29 @@ classdef Recording
         function obj = designFilters(obj)
             % Design the enabled filters at the current SampleRate. Call once
             % after setting SampleRate/params; segmentation then uses them.
+            % IIR (Butterworth) designs. An FIR of any practical order cannot
+            % realize a 10 Hz corner at a 12 kHz sample rate: the previous
+            % order-10 'bandpassfir'/'bandstopfir' pair measured 0.0 dB at both
+            % DC and 60 Hz, i.e. it removed neither baseline drift nor line
+            % noise. filtfilt() below makes the response zero-phase, so the IIR
+            % phase distortion that motivates FIR here does not apply.
+            nyq = obj.SampleRate/2;
             if obj.UseBandpass
-                obj.BandpassDesign = designfilt('bandpassfir', ...
-                    'FilterOrder',     obj.FilterOrder, ...
-                    'CutoffFrequency1',obj.FilterHP, ...
-                    'CutoffFrequency2',obj.FilterLP, ...
-                    'SampleRate',      obj.SampleRate);
+                lp = min(obj.FilterLP,0.99*nyq);
+                obj.BandpassDesign = designfilt('bandpassiir', ...
+                    'FilterOrder',          min(8,max(2,2*ceil(obj.FilterOrder/2))), ...
+                    'HalfPowerFrequency1',  obj.FilterHP, ...
+                    'HalfPowerFrequency2',  lp, ...
+                    'SampleRate',           obj.SampleRate);
             else
                 obj.BandpassDesign = [];
             end
             if obj.UseNotch
-                obj.NotchDesign = designfilt('bandstopfir', ...
-                    'FilterOrder',10, ...
-                    'CutoffFrequency1',obj.NotchFreq-1, ...
-                    'CutoffFrequency2',obj.NotchFreq+1, ...
-                    'SampleRate',      obj.SampleRate);
+                obj.NotchDesign = designfilt('bandstopiir', ...
+                    'FilterOrder',          2, ...
+                    'HalfPowerFrequency1',  obj.NotchFreq-obj.NotchWidth/2, ...
+                    'HalfPowerFrequency2',  obj.NotchFreq+obj.NotchWidth/2, ...
+                    'SampleRate',           obj.SampleRate);
             else
                 obj.NotchDesign = [];
             end
