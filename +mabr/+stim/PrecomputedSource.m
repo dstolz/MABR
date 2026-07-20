@@ -18,10 +18,16 @@ classdef PrecomputedSource < mabr.stim.StimulusSource
                 obj.Blocks = struct([]);
                 return
             end
+            % Validate each block into a cell first: validateBlock normalizes
+            % the field set (e.g. adds Meta when absent), and assigning a
+            % struct with different fields back into a struct-array element
+            % errors ("dissimilar structures"). Concatenating validated
+            % scalars avoids that.
+            v = cell(1,numel(blocks));
             for i = 1:numel(blocks)
-                blocks(i) = mabr.stim.StimulusSource.validateBlock(blocks(i));
+                v{i} = mabr.stim.StimulusSource.validateBlock(blocks(i));
             end
-            obj.Blocks = blocks;
+            obj.Blocks = [v{:}];
         end
 
         function n = numBlocks(obj)

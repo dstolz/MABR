@@ -119,6 +119,16 @@ classdef BlockQueue < handle
             Fs = blk.SampleRate;
             N  = numel(samples);
 
+            % MABR records into a ring buffer clocked at the DAC rate and the
+            % downstream windowing/decimation assume it, so a block must be
+            % rendered at Config.DACSampleRate. Fail fast rather than silently
+            % mis-window a differently-clocked source.
+            if Fs ~= cfg.DACSampleRate
+                error('mabr:stim:BlockQueue:sampleRate', ...
+                    ['Block SampleRate (%g Hz) must equal Config.DACSampleRate ' ...
+                     '(%g Hz).'],Fs,cfg.DACSampleRate);
+            end
+
             onsets = mabr.stim.BlockQueue.resolveOnsets(blk,N);
 
             if isfield(blk,'Timing') && ~isempty(blk.Timing)

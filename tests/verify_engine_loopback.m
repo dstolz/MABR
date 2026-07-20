@@ -29,7 +29,10 @@ timing                  = zeros(N,1,'single');
 timing(1:sweepPeriod:N) = 1;
 expectedOnsets          = numel(1:sweepPeriod:N);
 
-spec = struct('PlayMatrix',[signal timing],'SampleRate',Fs);
+% Pace the loopback (~4 ms/frame) so the block streams in real-ish time and
+% the Pause/Resume/Stop assertions below land mid-block rather than after it
+% has already finished.
+spec = struct('PlayMatrix',[signal timing],'SampleRate',Fs,'TestingFrameDelay',0.004);
 
 % ---- Launch the engine (loopback) ------------------------------------------
 eng = mabr.acq.Engine(cfg,true);

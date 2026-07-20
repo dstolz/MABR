@@ -136,7 +136,7 @@ classdef AcqController < handle
             obj.SweepState = struct();
             obj.CurMetrics = struct('numSweeps',0,'corr',0);
             obj.BlockStart = char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss'));
-            if ~isempty(obj.LivePlot), obj.LivePlot.reset(); end
+            if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot), obj.LivePlot.reset(); end
 
             spec = obj.Queue.renderSpec(idx);
             obj.Engine.prep(spec);
@@ -211,7 +211,8 @@ classdef AcqController < handle
             obj.CurMetrics.corr      = R;
 
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot)
-                tvec = obj.Window(1):obj.Config.decimationFactor/obj.Config.DACSampleRate:obj.Window(2);
+                w    = round(obj.Config.DACSampleRate.*obj.Window);
+                tvec = (w(1):obj.Config.decimationFactor:w(2))/obj.Config.DACSampleRate;
                 obj.LivePlot.update(post,tvec,R,obj.AdvanceParams.targetSweeps);
             end
 
@@ -236,15 +237,13 @@ classdef AcqController < handle
         function ffn = finalize_block(obj)
             ffn = '';
             rb   = obj.Engine.RingBuffer;
-            head = rb.WriteHead;
-            if head < 2, return; end
+            [rawSignal,rawTiming] = rb.readBlock();   % chronological, wrap-safe
+            if numel(rawSignal) < 2, return; end
 
             Fs = obj.Config.DACSampleRate;         % ring-buffer (DAC) rate
             df = obj.Config.decimationFactor;
             adcFs = obj.Config.ADCSampleRate;      % analysis/storage rate
 
-            rawSignal = rb.readSignal(1,head);
-            rawTiming = rb.readTiming(1,head);
             onsetsRaw = mabr.metrics.find_timing_onsets(rawTiming,round(0.002*Fs),0.1);
             if isempty(onsetsRaw), return; end
 

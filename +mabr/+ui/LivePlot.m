@@ -44,6 +44,7 @@ classdef LivePlot < handle
         end
 
         function reset(obj)
+            if isempty(obj.axTrace) || ~isgraphics(obj.axTrace), return; end
             set([obj.meanLine obj.recentLine],'XData',nan,'YData',nan);
             obj.corrBar.YData = 0;
             title(obj.axTrace,'');

@@ -42,8 +42,6 @@ classdef Engine < handle
         ResultQueue              % DataQueue  (worker -> client)
         CmdQueue                 % PollableDataQueue (client -> worker)
         MsgListener
-        lastConsumedHead (1,1) double = 0
-        lastBlockSeq     (1,1) double = -1
     end
 
     events
@@ -61,8 +59,7 @@ classdef Engine < handle
 
             % Read-only view of the ring buffer (also creates the backing
             % files if this is a fresh checkout).
-            obj.RingBuffer   = mabr.acq.RingBuffer(cfg,false);
-            obj.lastBlockSeq = obj.RingBuffer.BlockSeq;
+            obj.RingBuffer = mabr.acq.RingBuffer(cfg,false);
 
             % Warm pool + async worker.
             obj.Pool = mabr.acq.Engine.ensure_pool();
@@ -121,10 +118,10 @@ classdef Engine < handle
             obj.send_cmd(mabr.acq.Cmd.Prep,blockSpec);
         end
 
-        function run(obj),    obj.send_cmd(mabr.acq.Cmd.Run);   end
-        function pause(obj),  obj.send_cmd(mabr.acq.Cmd.Pause); end
-        function resume(obj), obj.send_cmd(mabr.acq.Cmd.Run);   end
-        function stop(obj),   obj.send_cmd(mabr.acq.Cmd.Stop);  end
+        function run(obj),    obj.send_cmd(mabr.acq.Cmd.Run);    end
+        function pause(obj),  obj.send_cmd(mabr.acq.Cmd.Pause);  end
+        function resume(obj), obj.send_cmd(mabr.acq.Cmd.Resume); end
+        function stop(obj),   obj.send_cmd(mabr.acq.Cmd.Stop);   end
 
         function kill(obj)
             if ~isempty(obj.CmdQueue)
@@ -133,35 +130,7 @@ classdef Engine < handle
         end
 
         % --- Live view access ----------------------------------------------
-        function h = head(obj),     h = obj.RingBuffer.WriteHead; end
-        function s = blockSeq(obj), s = obj.RingBuffer.BlockSeq;  end
-
-        function [sig,tim,range] = readNewSamples(obj)
-            % Return recorded samples appended since the previous call, in the
-            % current block's coordinates. Resets automatically at block
-            % boundaries (detected via BlockSeq) and on wrap.
-            seq = obj.RingBuffer.BlockSeq;
-            if seq ~= obj.lastBlockSeq
-                obj.lastBlockSeq     = seq;
-                obj.lastConsumedHead = 0;
-            end
-
-            hd = obj.RingBuffer.WriteHead;
-            if hd < obj.lastConsumedHead   % wrapped
-                obj.lastConsumedHead = 0;
-            end
-
-            lo = obj.lastConsumedHead + 1;
-            hi = hd;
-            if hi < lo
-                sig = single([]); tim = single([]); range = [lo lo-1];
-                return
-            end
-            sig = obj.RingBuffer.readSignal(lo,hi);
-            tim = obj.RingBuffer.readTiming(lo,hi);
-            range = [lo hi];
-            obj.lastConsumedHead = hi;
-        end
+        function h = head(obj), h = obj.RingBuffer.WriteHead; end
     end
 
     methods (Access = private)

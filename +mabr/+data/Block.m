@@ -50,20 +50,16 @@ classdef Block
         end
 
         function obj = computeMetrics(obj)
-            % Compute the standard live metrics over the ADC sweeps. Kept
-            % self-contained (no dependency on +metrics) so a Block can be
-            % finalized anywhere.
-            D = obj.ADC.SweepData;
+            % Compute the standard live metrics over the ADC sweeps using the
+            % tested mabr.metrics functions (the single source of truth).
+            D = obj.ADC.SweepData;      % [nSamples x nSweeps]
             m = struct();
             if isempty(D) || size(D,2) < 2
                 m.corr = 0; m.rms = NaN; m.snr = NaN;
             else
-                r = corrcoef(double(D));
-                r = tril(r,-1); r = r(r~=0);
-                z = (log(1+r) - log(1-r))/2;         % Fisher z-transform
-                m.corr = mean(z,'all','omitnan');
-                m.rms  = mean(rms(double(D)));
-                m.snr  = obj.ADC.SNR;
+                m.corr = mabr.metrics.mean_pairwise_corr(D);
+                m.rms  = mabr.metrics.rms_metric(D);
+                m.snr  = mabr.metrics.snr(D);
             end
             obj.Metrics = m;
         end

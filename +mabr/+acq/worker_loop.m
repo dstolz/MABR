@@ -89,6 +89,10 @@ try
             case mabr.acq.Cmd.Pause
                 % No effect while idle.
 
+            case mabr.acq.Cmd.Resume
+                % No effect while idle: a Resume can only unpause a running
+                % block (handled inside stream_block), never re-run one.
+
             case mabr.acq.Cmd.Stop
                 send_state(resultQueue,mabr.acq.State.Ready);
 
@@ -174,9 +178,9 @@ while true
     [msg,ok] = poll(cmdQueue,0.05);
     if ~ok, continue; end
     switch msg.cmd
-        case mabr.acq.Cmd.Run,  return
-        case mabr.acq.Cmd.Stop, term = 'stopped'; return
-        case mabr.acq.Cmd.Kill, term = 'killed';  return
+        case mabr.acq.Cmd.Resume, return
+        case mabr.acq.Cmd.Stop,   term = 'stopped'; return
+        case mabr.acq.Cmd.Kill,   term = 'killed';  return
     end
 end
 end
