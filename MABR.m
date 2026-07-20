@@ -1,31 +1,31 @@
 function h = MABR(rootDir)
+% MABR  Launch the MABR acquisition GUI.
+%
+%   MABR adds the toolbox (all subfolders except .git) to the MATLAB path and
+%   opens the acquisition app, mabr.ui.App. Windows-only.
+%
+%   As of the ground-up rewrite this points at the +mabr namespace; the legacy
+%   +abr package was retired at cutover (recoverable from git history / the
+%   master branch).
+%
+% Daniel Stolzberg (c) 2019-2026
 
 if ~ispc
-    vprintf(0,1,'No support yet for non-Windows operating systems! :(')
+    warning('MABR:windowsOnly','MABR is Windows-only.');
+    if nargout, h = []; end
     return
 end
 
 if nargin == 0 || isempty(rootDir)
-    rootDir = fileparts(mfilename('fullpath')); 
+    rootDir = fileparts(mfilename('fullpath'));
 end
 
-% addpath(rootDir);
-pth = genpath(rootDir);
+% add every subfolder except .git
+p = split(string(genpath(rootDir)),pathsep);
+p(p == "" | contains(p,'.git')) = [];
+addpath(char(join(p,pathsep)));
 
-
-sep = ";";
-if ~ispc(), sep = ":"; end
-
-pth = split(pth,sep);
-
-i = cellfun(@(a) isempty(a) || contains(a,'.git'),pth);
-
-pth(i) = [];
-
-pth = join(pth,sep);
-
-addpath(char(pth));
-
-h = abr.ControlPanel;
+h = mabr.ui.App;
 
 if nargout == 0, clear h; end
+end

@@ -1,0 +1,215 @@
+classdef io
+% mabr.data.io  Save/load for MABR session data.
+%
+%   Writes .abr files whose ABR_Data struct satisfies the UNCHANGED offline
+%   abr_analysis/ pipeline, and reads legacy ABR_Data structs back into the
+%   new mabr.data model via an import shim.
+%
+%   The offline pipeline reads exactly these fields (see parseABRFiles.m and
+%   extractABRResponses.m):
+%       ABR_Data.ADC.SampleRate           (Hz, post-decimation)
+%       ABR_Data.ADC.Data                 (single vector)
+%       ABR_Data.ADC.SweepOnsets          (indices into ADC.Data)
+%       ABR_Data.StartTime                (datetime-parseable)
+%       ABR_Data.SIG.informativeParams    (cellstr of param names)
+%       ABR_Data.SIG.(param)              (numeric, one per informativeParam)
+%       ABR_Data.SIG.Label                (cellstr; also drives the filename)
+%
+%   Filenames are built to match the pipeline's default regex:
+%       SUBJ_ID_<id>_Frequency_<f>kHz_Level_<L>dB_<yyMMdd'T'HHmmss>.abr
+%
+%   Save-time ADC decimation (by Recording.DecimationFactor) is preserved
+%   exactly as the legacy save_abr_data did: resample(Data,1,df) and
+%   round(SweepOnsets/df), with ADC.SampleRate = SampleRate/df.
+%
+% Daniel Stolzberg (c) 2019-2026
+
+    methods (Static)
+        function ffn = writeABR(block,outputPath,baseName)
+            % Write one mabr.data.Block to an offline-compatible .abr file.
+            if nargin < 2 || isempty(outputPath), outputPath = pwd; end
+            if nargin < 3, baseName = ''; end
+            if ~isfolder(outputPath), mkdir(outputPath); end
+
+            ABR_Data = mabr.data.io.buildStruct(block); %#ok<NASGU>
+
+            fn  = mabr.data.io.buildFilename(block,baseName);
+            ffn = fullfile(outputPath,fn);
+
+            x = whos('ABR_Data');
+            mabr.log.vprintf(1,'Saving %s (%.1f MB) [%s]',fn,x.bytes/1e6,ffn);
+            save(ffn,'ABR_Data','-mat','-nocompression');
+        end
+
+        function ABR_Data = buildStruct(block)
+            % Build the offline-compatible ABR_Data struct from a Block.
+            rec = block.ADC;
+            df  = rec.DecimationFactor;
+
+            if df > 1
+                data   = single(resample(double(rec.Data),1,df));
+                onsets = round(rec.SweepOnsets(:)./df);
+                Fs     = rec.SampleRate./df;
+            else
+                data   = rec.Data;
+                onsets = rec.SweepOnsets(:);
+                Fs     = rec.SampleRate;
+            end
+
+            ABR_Data = struct();
+            ABR_Data.ADC.SampleRate  = Fs;
+            ABR_Data.ADC.Data        = single(data(:));
+            ABR_Data.ADC.SweepOnsets = onsets;
+            ABR_Data.ADC.SweepLength = max(1,round(rec.SweepLength./df));
+
+            ABR_Data.StartTime = mabr.data.io.startTimeChar(block.StartTime);
+
+            ABR_Data.SIG = mabr.data.io.buildSIG(block);
+
+            % Provenance / metadata (harmless extras; offline pipeline ignores)
+            cfg = mabr.Config;
+            ABR_Data.SoftwareVersion = cfg.SoftwareVersion;
+            ABR_Data.DataVersion     = cfg.DataVersion;
+            ABR_Data.DecimationFactor = df;
+            if isfield(block.Stim,'SampleRate')
+                ABR_Data.DAC.SampleRate = block.Stim.SampleRate;
+            end
+        end
+
+        function SIG = buildSIG(block)
+            % Flatten the external stimulus metadata into an offline-readable
+            % SIG substruct (plain-numeric params, not sigProp structs).
+            SIG = struct();
+            if isfield(block.Stim,'Meta')
+                meta = block.Stim.Meta;
+            else
+                meta = block.Stim;
+            end
+
+            if isfield(meta,'informativeParams')
+                ip = cellstr(meta.informativeParams);
+            else
+                ip = {};
+            end
+            SIG.informativeParams = ip(:)';
+
+            for i = 1:numel(ip)
+                p = ip{i};
+                if isfield(meta,p)
+                    SIG.(p) = double(mabr.data.io.plainValue(meta.(p)));
+                end
+            end
+
+            if isfield(meta,'Label')
+                SIG.Label = meta.Label;
+            else
+                SIG.Label = ip(:)';
+            end
+        end
+
+        function fn = buildFilename(block,baseName)
+            % Build a filename that matches the offline pipeline's default
+            % regex when Frequency/Level are present; otherwise a label-based
+            % fallback. Frequency is formatted in kHz with '.' -> '_'.
+            if isfield(block.Stim,'Meta'), meta = block.Stim.Meta; else, meta = block.Stim; end
+
+            subj = char(baseName);
+            if isempty(subj) && isfield(meta,'SubjectID'), subj = char(string(meta.SubjectID)); end
+            if isempty(subj), subj = 'SUBJ_ID_0'; end
+            if ~startsWith(subj,'SUBJ'), subj = ['SUBJ_ID_' regexprep(subj,'\D','')]; end
+
+            t = mabr.data.io.timestampToken(block.StartTime);
+
+            hasFL = isfield(meta,'Frequency') && isfield(meta,'Level');
+            if hasFL
+                fkHz = mabr.data.io.plainValue(meta.Frequency);
+                lvl  = mabr.data.io.plainValue(meta.Level);
+                fStr = strrep(sprintf('%g',fkHz),'.','_');
+                lStr = strrep(sprintf('%g',lvl),'.','_');
+                fn = sprintf('%s_Frequency_%skHz_Level_%sdB_%s.abr',subj,fStr,lStr,t);
+            else
+                if isfield(meta,'Label') && ~isempty(meta.Label)
+                    lbl = char(join(string(meta.Label),'_'));
+                else
+                    lbl = 'block';
+                end
+                lbl = regexprep(lbl,'\s+','');
+                fn  = matlab.lang.makeValidName(sprintf('%s_%s_%s',subj,lbl,t));
+                fn  = [fn '.abr'];
+            end
+        end
+
+        % --- Loading / import ----------------------------------------------
+        function block = importLegacy(ffn)
+            % Load a legacy (or new) ABR_Data .abr file into a mabr.data.Block.
+            a = load(ffn,'-mat','ABR_Data');
+            assert(isfield(a,'ABR_Data'),'mabr:data:io:noABRData', ...
+                'File "%s" contains no ABR_Data.',ffn);
+            D = a.ABR_Data;
+
+            if isfield(D.ADC,'SweepLength') && ~isempty(D.ADC.SweepLength)
+                swLen = double(D.ADC.SweepLength);
+            else
+                swLen = 1;
+            end
+
+            rec = mabr.data.Recording(double(D.ADC.SampleRate), ...
+                D.ADC.Data, double(D.ADC.SweepOnsets), swLen);
+
+            % Reconstruct stimulus metadata (handles both plain-numeric SIG
+            % from the new writer and sigProp-struct SIG from legacy files).
+            meta = struct();
+            if isfield(D,'SIG') && isstruct(D.SIG)
+                if isfield(D.SIG,'informativeParams')
+                    ip = cellstr(D.SIG.informativeParams);
+                    meta.informativeParams = ip(:)';
+                    for i = 1:numel(ip)
+                        p = ip{i};
+                        if isfield(D.SIG,p)
+                            meta.(p) = mabr.data.io.plainValue(D.SIG.(p));
+                        end
+                    end
+                end
+                if isfield(D.SIG,'Label'), meta.Label = D.SIG.Label; end
+            end
+
+            stim = struct('Meta',meta);
+            if isfield(D,'DAC') && isfield(D.DAC,'SampleRate')
+                stim.SampleRate = D.DAC.SampleRate;
+            end
+
+            st = '';
+            if isfield(D,'StartTime'), st = mabr.data.io.startTimeChar(D.StartTime); end
+
+            block = mabr.data.Block(stim,rec,st);
+        end
+    end
+
+    methods (Static, Access = private)
+        function v = plainValue(x)
+            % Extract a plain numeric/char value, unwrapping a legacy sigProp
+            % struct (which stores the value in a .Value field).
+            if isstruct(x) && isfield(x,'Value')
+                v = x.Value;
+            else
+                v = x;
+            end
+        end
+
+        function s = startTimeChar(t)
+            if isempty(t)
+                dt = datetime('now');
+            else
+                dt = datetime(t);
+            end
+            dt.Format = 'yyyy-MM-dd''T''HH:mm:ss';
+            s = char(dt);
+        end
+
+        function t = timestampToken(startTime)
+            if isempty(startTime), dt = datetime('now'); else, dt = datetime(startTime); end
+            dt.Format = 'yyMMdd''T''HHmmss';
+            t = char(dt);
+        end
+    end
+end

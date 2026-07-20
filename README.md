@@ -2,6 +2,10 @@
 
 MATLAB Auditory Brainstem Response software for stimulus presentation, real-time acquisition, and offline analysis of ABR data.
 
+The acquisition app has been rewritten ground-up into a single `+mabr` namespace with a modern acquisition engine built on the Parallel Computing Toolbox (a warm parpool worker + a memory-mapped ring buffer), a decoupled data model and GUI, and a clean boundary where an external package supplies precomputed, calibrated stimulus waveforms. Saved `.abr` files remain compatible with the offline `abr_analysis/` pipeline. See `MABR Complete Refactor — Ground-Up Rewrite.md` for the design and `CLAUDE.md` for an architecture map.
+
+> **Note:** the `wiki/` pages below document the pre-rewrite Control Panel UI and stimulus/calibration/schedule features (now supplied by an external package); they have not yet been updated for the `+mabr` rewrite.
+
 ## Documentation
 
 Comprehensive documentation is available in the [`wiki/`](wiki/) directory:
@@ -21,7 +25,7 @@ Comprehensive documentation is available in the [`wiki/`](wiki/) directory:
 ## Quick Start
 
 ```matlab
-MABR   % launch the Control Panel
+MABR   % launch the acquisition app (mabr.ui.App)
 ```
 
 Please contact me directly if you are interested in using this toolbox.

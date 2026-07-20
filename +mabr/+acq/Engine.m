@@ -1,0 +1,240 @@
+classdef Engine < handle
+% mabr.acq.Engine  Client-side controller for the acquisition worker.
+%
+%   The Engine runs in the GUI process. It keeps a warm 1-process parallel
+%   pool, launches mabr.acq.worker_loop once via parfeval, and owns the
+%   read-only view of the shared ring buffer. Control and state flow over
+%   parallel queues; recorded samples flow through the memmap ring buffer.
+%
+%   This replaces the entire legacy machinery: abr.Runtime, launch_bg_process
+%   (system('matlab.exe ...')), the Wmic PID liveness checks, info.mat, the
+%   dac.wav handoff, and the mabr_com.dat command/state memmap. Crucially, it
+%   removes every "while ... pause(0.01)" busy-wait: worker messages arrive on
+%   a DataQueue and are dispatched by an afterEach callback, so the Engine is
+%   event-driven.
+%
+%   Events (listen to drive a UI):
+%       StateChanged   - notified with mabr.acq.StateEventData (.State)
+%       BlockCompleted - the current block finished (or was stopped)
+%       WorkerError    - the worker reported an error (.Identifier/.Message)
+%
+%   Typical use:
+%       eng = mabr.acq.Engine(cfg,testing);
+%       eng.waitUntilReady();          % one-time worker handshake
+%       eng.prep(blockSpec);           % arm a block
+%       eng.run();                     % start streaming
+%       ... eng.pause()/eng.resume()/eng.stop() ...
+%       eng.kill();                    % tear down the worker
+%
+% Daniel Stolzberg (c) 2019-2026
+
+    properties (SetAccess = private)
+        Config
+        Testing   (1,1) logical = false
+        State     (1,1) mabr.acq.State = mabr.acq.State.Idle
+        WorkerPID (1,1) double = -1
+        RingBuffer               % read-only mabr.acq.RingBuffer
+    end
+
+    properties (Access = private)
+        Pool
+        Future
+        ResultQueue              % DataQueue  (worker -> client)
+        CmdQueue                 % PollableDataQueue (client -> worker)
+        MsgListener
+        lastConsumedHead (1,1) double = 0
+        lastBlockSeq     (1,1) double = -1
+    end
+
+    events
+        StateChanged
+        BlockCompleted
+        WorkerError
+    end
+
+    methods
+        function obj = Engine(cfg,testing)
+            if nargin < 1 || isempty(cfg), cfg = mabr.Config; end
+            if nargin < 2 || isempty(testing), testing = false; end
+            obj.Config  = cfg;
+            obj.Testing = logical(testing);
+
+            % Read-only view of the ring buffer (also creates the backing
+            % files if this is a fresh checkout).
+            obj.RingBuffer   = mabr.acq.RingBuffer(cfg,false);
+            obj.lastBlockSeq = obj.RingBuffer.BlockSeq;
+
+            % Warm pool + async worker.
+            obj.Pool = mabr.acq.Engine.ensure_pool();
+            % Ensure the +mabr namespace resolves on the worker BEFORE the cfg
+            % argument is deserialized (defends against a reused pool that
+            % predates the MABR path; a fresh pool already has it via
+            % AutoAddClientPath). Adding the repo root suffices for packages.
+            try
+                pctRunOnAll(['addpath(''' mabr.Config.root ''')']);
+            catch me
+                mabr.log.vprintf(2,'pctRunOnAll addpath skipped: %s',me.message);
+            end
+            obj.ResultQueue = parallel.pool.DataQueue;
+            obj.MsgListener = afterEach(obj.ResultQueue,@(m) obj.on_worker_message(m));
+
+            mabr.log.vprintf(1,'Launching acquisition worker (testing = %d)',obj.Testing);
+            obj.Future = parfeval(obj.Pool,@mabr.acq.worker_loop,0, ...
+                mabr.Config.root,obj.ResultQueue,obj.Testing);
+        end
+
+        function delete(obj)
+            try, obj.kill(); end %#ok<TRYNC>
+            try, delete(obj.MsgListener); end %#ok<TRYNC>
+            try, cancel(obj.Future); end %#ok<TRYNC>
+        end
+
+        % --- Lifecycle ------------------------------------------------------
+        function tf = waitUntilReady(obj,timeout)
+            % Block (bounded) until the worker handshake arrives. This is a
+            % one-time startup wait, not a per-frame poll.
+            if nargin < 2 || isempty(timeout), timeout = 120; end
+            t0 = tic;
+            while isempty(obj.CmdQueue) && toc(t0) < timeout
+                if ~isempty(obj.Future) && strcmp(obj.Future.State,'finished') ...
+                        && ~isempty(obj.Future.Error)
+                    error('mabr:acq:Engine:workerFailed', ...
+                        'Worker failed to start: %s',obj.Future.Error.message);
+                end
+                pause(0.05);   % lets the afterEach handshake callback run
+            end
+            tf = ~isempty(obj.CmdQueue);
+            if ~tf
+                error('mabr:acq:Engine:handshakeTimeout', ...
+                    'Timed out waiting for the acquisition worker handshake.');
+            end
+        end
+
+        function tf = isReady(obj)
+            tf = ~isempty(obj.CmdQueue);
+        end
+
+        % --- Commands to the worker ----------------------------------------
+        function prep(obj,blockSpec)
+            % Arm the worker with a pre-rendered block (2-channel play matrix
+            % + parameters). See mabr.acq.worker_loop for the payload shape.
+            obj.send_cmd(mabr.acq.Cmd.Prep,blockSpec);
+        end
+
+        function run(obj),    obj.send_cmd(mabr.acq.Cmd.Run);   end
+        function pause(obj),  obj.send_cmd(mabr.acq.Cmd.Pause); end
+        function resume(obj), obj.send_cmd(mabr.acq.Cmd.Run);   end
+        function stop(obj),   obj.send_cmd(mabr.acq.Cmd.Stop);  end
+
+        function kill(obj)
+            if ~isempty(obj.CmdQueue)
+                try, obj.send_cmd(mabr.acq.Cmd.Kill); end %#ok<TRYNC>
+            end
+        end
+
+        % --- Live view access ----------------------------------------------
+        function h = head(obj),     h = obj.RingBuffer.WriteHead; end
+        function s = blockSeq(obj), s = obj.RingBuffer.BlockSeq;  end
+
+        function [sig,tim,range] = readNewSamples(obj)
+            % Return recorded samples appended since the previous call, in the
+            % current block's coordinates. Resets automatically at block
+            % boundaries (detected via BlockSeq) and on wrap.
+            seq = obj.RingBuffer.BlockSeq;
+            if seq ~= obj.lastBlockSeq
+                obj.lastBlockSeq     = seq;
+                obj.lastConsumedHead = 0;
+            end
+
+            hd = obj.RingBuffer.WriteHead;
+            if hd < obj.lastConsumedHead   % wrapped
+                obj.lastConsumedHead = 0;
+            end
+
+            lo = obj.lastConsumedHead + 1;
+            hi = hd;
+            if hi < lo
+                sig = single([]); tim = single([]); range = [lo lo-1];
+                return
+            end
+            sig = obj.RingBuffer.readSignal(lo,hi);
+            tim = obj.RingBuffer.readTiming(lo,hi);
+            range = [lo hi];
+            obj.lastConsumedHead = hi;
+        end
+    end
+
+    methods (Access = private)
+        function send_cmd(obj,cmd,data)
+            if nargin < 3, data = []; end
+            assert(~isempty(obj.CmdQueue),'mabr:acq:Engine:notReady', ...
+                'Worker is not ready; call waitUntilReady() first.');
+            send(obj.CmdQueue,struct('cmd',cmd,'data',data));
+        end
+
+        function on_worker_message(obj,msg)
+            % afterEach dispatcher for worker -> client messages.
+            switch msg.type
+                case 'handshake'
+                    obj.CmdQueue  = msg.cmdQueue;
+                    obj.WorkerPID = msg.pid;
+                    obj.elevate_priority();
+                    mabr.log.vprintf(1,'Worker handshake received (PID %d)',obj.WorkerPID);
+
+                case 'state'
+                    prev = obj.State;
+                    obj.State = msg.state;
+                    notify(obj,'StateChanged',mabr.acq.StateEventData(msg.state));
+                    if msg.state == mabr.acq.State.Completed && prev ~= mabr.acq.State.Completed
+                        notify(obj,'BlockCompleted');
+                    end
+
+                case 'error'
+                    mabr.log.vprintf(0,1,'Worker error [%s]: %s',msg.identifier,msg.message);
+                    obj.State = mabr.acq.State.Error;
+                    notify(obj,'WorkerError',mabr.acq.StateEventData( ...
+                        mabr.acq.State.Error,msg.identifier,msg.message));
+            end
+        end
+
+        function elevate_priority(obj)
+            % Raise the worker process priority (reuses the legacy wmic call).
+            if obj.WorkerPID <= 0 || ~ispc, return; end
+            try
+                mabr.acq.Engine.set_priority(obj.WorkerPID,'high priority');
+            catch me
+                mabr.log.vprintf(1,1,'Could not elevate worker priority: %s',me.message);
+            end
+        end
+    end
+
+    methods (Static)
+        function pool = ensure_pool()
+            % Reuse an existing 1-process pool or create one.
+            pool = gcp('nocreate');
+            if ~isempty(pool)
+                if pool.NumWorkers >= 1, return; end
+                delete(pool);
+            end
+            try
+                pool = parpool('Processes',1);
+            catch
+                pool = parpool('local',1);   % older release fallback
+            end
+        end
+
+        function set_priority(pid,level)
+            % Ported from abr.Tools.set_priority.
+            numLevels = 2.^([5:8 14 15]);
+            txtLevels = {'normal','idle','high priority','real time','below normal','above normal'};
+            ind = ismember(txtLevels,lower(level));
+            assert(any(ind),'mabr:acq:Engine:badPriority','Invalid priority level: %s',level);
+            [e,w] = dos(sprintf('wmic process where processid=''%d'' CALL setpriority %d', ...
+                pid,numLevels(ind)));
+            if e ~= 0
+                mabr.log.vprintf(0,1,'Failed to set priority of PID %d to "%s"',pid,level);
+                disp(w);
+            end
+        end
+    end
+end
