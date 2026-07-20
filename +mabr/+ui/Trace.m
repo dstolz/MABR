@@ -103,10 +103,14 @@ classdef Trace < handle
             showLbl = mabr.ui.Trace.onoff(obj.ShowLabel && obj.Visible);
             if obj.Selected, weight = 'bold'; else, weight = 'normal'; end
 
+            % Labels live in the margin left of the axes, right-aligned against
+            % the y-axis and vertically centred on the trace baseline, so they
+            % never sit on top of the waveform. Clipping must be off for text
+            % drawn outside the axes box to render at all.
             if isempty(obj.LabelHandle) || ~isgraphics(obj.LabelHandle)
                 obj.LabelHandle = text(ax,labelX,obj.YOffset,obj.DisplayName, ...
-                    'HorizontalAlignment','left','VerticalAlignment','bottom', ...
-                    'Interpreter','none','Clipping','on');
+                    'HorizontalAlignment','right','VerticalAlignment','middle', ...
+                    'Interpreter','none','Clipping','off');
             else
                 set(obj.LabelHandle,'Position',[labelX obj.YOffset 0], ...
                     'String',obj.DisplayName);

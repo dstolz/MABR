@@ -6,20 +6,36 @@ Open it with `>> MABR`, or `>> mabr.ui.App` if the path is already set.
 
 ## Layout
 
-The window is a single column of controls, top to bottom: session identity, stimulus, acquisition settings, viewers, status, and transport buttons.
+Under the toolbar, the window is five titled panels stacked top to bottom in the order you work through them: **Session** (who and where), **Stimulus** (what to play), **Presentation** (how to order it), **Acquisition** (when to stop), and **Run**. A status line sits at the very bottom.
 
 ```
- Subject ID  [ SUBJ_ID_001                          ]
- Output      [ C:\data\subj001          ] [ Browse… ]
- Stimulus     8 blocks     [ Load .mat… ] [ Test Stimulus ]
- [x] Testing (loopback, no hardware)
- Advance     [ Number of Sweeps                   v ]
- Target/Thr  [ 256    ] [ 0.50 ]
- [ Show Live Plot        ] [ Trace Organizer       ]
- (o) Acquire      Sweeps: 128      r = 0.42
- [ Start ] [ Pause ] [ Stop Block ] [ Abort ]
+ [L] [T] | [?]
+ ┌ Session ─────────────────────────────────────────┐
+ │  Subject ID  [ SUBJ_ID_001                    v ] │
+ │      Output  [ C:\data\subj001    v ] [ Browse… ] │
+ └───────────────────────────────────────────────────┘
+ ┌ Stimulus ────────────────────────────────────────┐
+ │        Bank   8 stimuli  [ Load .mat… ] [ Test ]  │
+ └───────────────────────────────────────────────────┘
+ ┌ Presentation ────────────────────────────────────┐
+ │    Strategy  [ Blocked — one stimulus per run  v ] │
+ │ Repetitions  [   512 ] [ Per stimulus…          ] │
+ │  ISI / Rate  [ 47.39 ms ] [        21.10 Hz     ] │
+ │              overlap! 60.0 ms stim                │
+ │        8 runs (blocked) · 4096 presentations · ~4 min │
+ └───────────────────────────────────────────────────┘
+ ┌ Acquisition ─────────────────────────────────────┐
+ │  [x] Testing (loopback, no hardware)              │
+ │     Advance  [ Correlation Thr. v ] [ r ≥ 0.50 ]  │
+ └───────────────────────────────────────────────────┘
+ ┌ Run ─────────────────────────────────────────────┐
+ │  (o) Acquire       Sweeps: 128           r = 0.42 │
+ │  [ Start ] [ Pause ] [ Stop Run ] [ Abort ]       │
+ └───────────────────────────────────────────────────┘
  Saved SUBJ_ID_001_Frequency_8kHz_Level_30dB_....abr
 ```
+
+Every panel shares one label-column width, so the fields line up along a single edge down the whole window. The gap above **Run** is a spacer that absorbs extra height, keeping the transport controls pinned to the bottom at any window size. The overlap warning and plan summary rows in **Presentation** are blank until they have something to say, but their space is reserved so nothing jumps when they appear.
 
 ## Session identity
 
@@ -35,7 +51,7 @@ Note what the file does *not* contain: repetition counts, spacing, or ordering. 
 
 **Test Stimulus** — Loads the built-in tone-pip grid (8 and 16 kHz × 30 and 60 dB). **Uncalibrated** — for testing the software and signal chain only.
 
-The label between the two buttons shows `(none loaded)` in red until stimuli are loaded, then the stimulus count.
+The **Bank** field shows `(none loaded)` in red until stimuli are loaded, then the stimulus count in green. It sits in the field column rather than beside the buttons, so it reads as the panel's current value.
 
 ## Presentation
 
@@ -74,11 +90,21 @@ The threshold field (0 to 1, 0.5 is a reasonable starting point) is enabled only
 
 **Correlation early-stop is available for blocked strategies only.** When you pick an intermixed strategy the Advance control greys out: a correlation computed across mixed conditions is not meaningful, and stopping such a run would truncate whichever stimuli happened to fall last in the sequence, unbalancing the design. Those runs always play to completion.
 
-## Viewers
+## Toolbar
 
-**Show Live Plot** — Opens (or brings forward) the live view. Opened automatically when you press Start.
+Both viewers open automatically with the app and sit beside the main window, so the toolbar buttons normally just raise them; they rebuild a window only if you closed it.
 
-**Trace Organizer** — Opens the stacked comparison viewer with the conditions completed so far. Both are described in [Viewing Data](Viewing-Data.md).
+| Button | Effect |
+| --- | --- |
+| **L** | Raises the Live Plot. |
+| **T** | Raises the Trace Organizer, refreshed with the conditions completed so far. |
+| **?** | Opens the [MABR wiki](https://github.com/dstolz/MABR/wiki) in a browser (same as **Help ▸ MABR Wiki**). |
+
+Both viewers are described in [Viewing Data](Viewing-Data.md).
+
+Where you drag the two viewer windows is remembered across sessions ([mabr.ui.WindowPos](../+mabr/+ui/WindowPos.m) stores each position in MATLAB prefs under group `MABR`). A remembered position is clamped back onto the current display before it is applied, so unplugging a monitor cannot strand a window off-screen. The first time you run MABR they are laid out to the right of the main window: the Trace Organizer beside it, the Live Plot beyond that.
+
+The toolbar is never disabled — raising a viewer is safe at any time, including while the engine is starting up.
 
 ## Status row
 
@@ -115,7 +141,7 @@ It does own the **presentation settings** — the stimulus bank, per-stimulus re
 
 [mabr.ui.RepetitionsDialog](../+mabr/+ui/RepetitionsDialog.m) is a self-contained modal returning a repetition vector (or `[]` on cancel). It is a plain function, not a class — it holds no state beyond the window's lifetime.
 
-Layout lives in `createComponents` and is treated as generated code — a rewrite of the layout should not need to touch the callbacks. Logic lives in the `on*` callbacks and event handlers below it. `syncAdvanceEnables` is deliberately separate from `onStrategyChanged`: `transport()` calls it too, and it must not write to the status line there.
+Layout lives in `createComponents` and the `build*Panel` methods below it, kept strictly separate from behaviour — a rewrite of the layout should not need to touch the callbacks. Each panel is built by the shared `panelGrid(title,row,rowHeights,colWidths)` helper, and all of them use the `LabelWidth` constant for their first column, which is what keeps the fields aligned across panel borders. Panels need explicit pixel heights: `uigridlayout`'s `'fit'` does not measure through a `uipanel` into its nested grid. Logic lives in the `on*` callbacks and event handlers below it. `syncAdvanceEnables` is deliberately separate from `onStrategyChanged`: `transport()` calls it too, and it must not write to the status line there.
 
 The events the app listens for:
 

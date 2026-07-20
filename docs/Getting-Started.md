@@ -73,9 +73,11 @@ Nothing is discarded by any of these — whatever was recorded before you presse
 
 ### 7. Look at the results
 
-**Show Live Plot** displays the running average (black), the most recent sweep (blue), and a bar showing the current correlation against your threshold. It updates about 20 times a second.
+Both viewers are already open — they launch with the app and sit to the right of the main window. The **L** and **T** toolbar buttons raise them if they get buried.
 
-**Trace Organizer** stacks the finished conditions on one axis so you can compare them, drag traces to reorder them vertically, and mark response peaks. See [Viewing Data](Viewing-Data.md).
+The **Live Plot** (**L**) displays the running average (black), the most recent sweep (blue), and a bar showing the current correlation against your threshold. It updates about 20 times a second.
+
+The **Trace Organizer** (**T**) stacks the finished conditions on one axis so you can compare them, drag traces to reorder them vertically, and mark response peaks. See [Viewing Data](Viewing-Data.md).
 
 For threshold estimation across a whole subject or study, use the offline pipeline — see [Offline Analysis](Offline-Analysis.md).
 

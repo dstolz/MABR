@@ -173,7 +173,7 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 
 | Item | Description |
 |------|-------------|
-| [`mabr.ui.App`](../+mabr/+ui/App.m) | The acquisition GUI (the view). Programmatic `uifigure`; layout in `createComponents` is treated as generated. Holds no acquisition state. |
+| [`mabr.ui.App`](../+mabr/+ui/App.m) | The acquisition GUI (the view). Programmatic `uifigure`; layout in `createComponents` is five titled panels built from one `panelGrid` helper. Holds no acquisition state. |
 | [`mabr.ui.AcqController`](../+mabr/+ui/AcqController.m) | **The program.** Owns the Engine, Session, BlockQueue, and live view; translates actions → commands and events → UI updates. Usable headlessly. |
 | [`mabr.ui.ProgState`](../+mabr/+ui/ProgState.m) | Enumeration: `Idle`, `PrepBlock`, `Acquire`, `BlockComplete`, `AdvanceBlock`, `SchedComplete`, `Error`. |
 | [`mabr.ui.ProgStateEventData`](../+mabr/+ui/ProgStateEventData.m) | Event payload carrying `State` and an `Info` struct. |

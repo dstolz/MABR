@@ -17,6 +17,10 @@ classdef App < handle
     properties (Constant)
         DefaultRateHz = 21.1;   % stimulus presentation rate (Hz)
 
+        % Shared width of the label column in every panel, so the fields line
+        % up along one edge down the whole window.
+        LabelWidth = 82;
+
         % Display names for mabr.stim.Schedule.Strategies, in the same order
         % (the dropdown carries the canonical names as ItemsData).
         StrategyItems = { ...
@@ -44,6 +48,7 @@ classdef App < handle
     properties (Access = private)
         UIFigure
         HelpMenu
+        Toolbar
         Grid
         SubjectField
         OutputField
@@ -65,8 +70,6 @@ classdef App < handle
         PauseButton
         StopButton
         AbortButton
-        LiveButton
-        TraceButton
         StateLamp
         StateLabel
         SweepLabel
@@ -84,13 +87,18 @@ classdef App < handle
             end
             app.createComponents();
             app.syncAdvanceEnables();
+            app.openViewers();
             if nargout == 0, clear app; end
         end
 
         function delete(app)
+            % Whatever layout the user ended up with is the one they want back
+            % next session, so capture it before anything is torn down.
+            app.rememberViewerPositions();
             try, delete(app.Listeners);  end %#ok<TRYNC>
             try, delete(app.Controller); end %#ok<TRYNC>
             try, delete(app.TraceOrg);   end %#ok<TRYNC>
+            try, delete(app.LivePlot);   end %#ok<TRYNC>
             try, delete(app.UIFigure);   end %#ok<TRYNC>
         end
     end
@@ -98,129 +106,230 @@ classdef App < handle
     % ===================================================================
     methods (Access = private)
         function createComponents(app)
-            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 470 640], ...
+            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 640], ...
                 'CloseRequestFcn',@(~,~) app.onClose());
 
             app.HelpMenu = uimenu(app.UIFigure,'Text','&Help');
             uimenu(app.HelpMenu,'Text','MABR Wiki', ...
-                'MenuSelectedFcn',@(~,~) web('https://github.com/dstolz/MABR/wiki','-browser'));
+                'MenuSelectedFcn',@(~,~) app.openHelp());
 
-            app.Grid = uigridlayout(app.UIFigure,[13 4]);
-            app.Grid.RowHeight   = {30,30,30,25,30,30,30,30,22,'1x',30,40,26};
-            app.Grid.ColumnWidth = {'fit','1x','1x','fit'};
+            app.buildToolbar();
 
-            % Row 1: Subject (editable dropdown of previously used IDs)
-            app.addLabel('Subject ID',1,1);
-            app.SubjectField = uidropdown(app.Grid,'Editable','on', ...
-                'Items',app.loadHistory('Subject',{'SUBJ_ID_001'}));
-            app.SubjectField.Value = app.SubjectField.Items{1};
-            app.SubjectField.Layout.Row = 1; app.SubjectField.Layout.Column = [2 4];
+            % The window reads top to bottom in the order the work is actually
+            % done: who and where, what to play, how to order it, when to stop,
+            % then run it. Each stage is a titled panel so the eye can jump
+            % straight to one instead of reading every label in between --
+            % before this the controls were one undifferentiated 13-row list.
+            % Panels get explicit heights rather than 'fit' because 'fit' does
+            % not see through a panel to its nested grid.
+            app.Grid = uigridlayout(app.UIFigure,[7 1]);
+            app.Grid.ColumnWidth = {'1x'};
+            app.Grid.RowHeight   = {96,60,166,90,'1x',96,22};
+            app.Grid.RowSpacing  = 8;
+            app.Grid.Padding     = [10 10 10 6];
 
-            % Row 2: Output folder (editable dropdown of previously used paths)
-            app.addLabel('Output',2,1);
-            app.OutputField = uidropdown(app.Grid,'Editable','on', ...
-                'Items',app.loadHistory('Output',{pwd}));
-            app.OutputField.Value = app.OutputField.Items{1};
-            app.OutputField.Layout.Row = 2; app.OutputField.Layout.Column = [2 3];
-            app.BrowseButton = uibutton(app.Grid,'Text','Browse…','ButtonPushedFcn',@(~,~) app.onBrowse());
-            app.BrowseButton.Layout.Row = 2; app.BrowseButton.Layout.Column = 4;
+            app.buildSessionPanel(1);
+            app.buildStimulusPanel(2);
+            app.buildPresentationPanel(3);
+            app.buildAcquisitionPanel(4);
+            % Row 5 is a spacer: it absorbs spare height so the run controls
+            % stay pinned to the bottom of the window at any size.
+            app.buildRunPanel(6);
 
-            % Row 3: Stimulus source
-            app.addLabel('Stimulus',3,1);
-            app.SourceLabel = uilabel(app.Grid,'Text','(none loaded)','FontColor',[0.6 0 0]);
-            app.SourceLabel.Layout.Row = 3; app.SourceLabel.Layout.Column = 2;
-            app.LoadButton = uibutton(app.Grid,'Text','Load .mat…','ButtonPushedFcn',@(~,~) app.onLoadSource());
-            app.LoadButton.Layout.Row = 3; app.LoadButton.Layout.Column = 3;
-            app.TestButton = uibutton(app.Grid,'Text','Test Stimulus','ButtonPushedFcn',@(~,~) app.onTestSource());
-            app.TestButton.Layout.Row = 3; app.TestButton.Layout.Column = 4;
-
-            % Row 4: Testing mode
-            app.TestingCheck = uicheckbox(app.Grid,'Text','Testing (loopback, no hardware)','Value',true);
-            app.TestingCheck.Layout.Row = 4; app.TestingCheck.Layout.Column = [1 4];
-
-            % Row 5: how stimuli are combined across the bank
-            app.addLabel('Strategy',5,1);
-            app.StrategyDrop = uidropdown(app.Grid, ...
-                'Items',mabr.ui.App.StrategyItems, ...
-                'ItemsData',mabr.stim.Schedule.Strategies, ...
-                'ValueChangedFcn',@(~,~) app.onStrategyChanged());
-            app.StrategyDrop.Layout.Row = 5; app.StrategyDrop.Layout.Column = [2 4];
-
-            % Row 6: repetitions per stimulus entry
-            app.addLabel('Repetitions',6,1);
-            app.RepsField = uieditfield(app.Grid,'numeric','Value',512, ...
-                'Limits',[0 Inf],'RoundFractionalValues','on', ...
-                'ValueChangedFcn',@(~,~) app.onRepsChanged());
-            app.RepsField.Layout.Row = 6; app.RepsField.Layout.Column = 2;
-            app.RepsButton = uibutton(app.Grid,'Text','Per stimulus…', ...
-                'ButtonPushedFcn',@(~,~) app.onRepsDialog());
-            app.RepsButton.Layout.Row = 6; app.RepsButton.Layout.Column = [3 4];
-
-            % Row 7: inter-stimulus interval <-> presentation rate (linked)
-            app.addLabel('ISI / Rate',7,1);
-            app.ISIField = uieditfield(app.Grid,'numeric', ...
-                'Value',1e3/mabr.ui.App.DefaultRateHz,'Limits',[eps Inf], ...
-                'ValueDisplayFormat','%.2f ms', ...
-                'ValueChangedFcn',@(~,~) app.onISIChanged());
-            app.ISIField.Layout.Row = 7; app.ISIField.Layout.Column = 2;
-            app.RateField = uieditfield(app.Grid,'numeric', ...
-                'Value',mabr.ui.App.DefaultRateHz,'Limits',[eps Inf], ...
-                'ValueDisplayFormat','%.2f Hz', ...
-                'ValueChangedFcn',@(~,~) app.onRateChanged());
-            app.RateField.Layout.Row = 7; app.RateField.Layout.Column = 3;
-            app.OverlapLabel = uilabel(app.Grid,'Text','','FontColor',[0.8 0.2 0]);
-            app.OverlapLabel.Layout.Row = 7; app.OverlapLabel.Layout.Column = 4;
-
-            % Row 8: advance criterion. Early stop only applies to a run that
-            % holds one stimulus, so this is disabled for intermixed strategies.
-            app.addLabel('Advance',8,1);
-            app.AdvanceDrop = uidropdown(app.Grid, ...
-                'Items',{'All Repetitions','Correlation Threshold'}, ...
-                'ValueChangedFcn',@(~,~) app.onAdvanceChanged());
-            app.AdvanceDrop.Layout.Row = 8; app.AdvanceDrop.Layout.Column = [2 3];
-            app.CorrField = uieditfield(app.Grid,'numeric','Value',0.5,'Limits',[0 1],'Enable','off');
-            app.CorrField.Layout.Row = 8; app.CorrField.Layout.Column = 4;
-
-            % Row 9: plan summary (runs / presentations / estimated duration)
-            app.PlanLabel = uilabel(app.Grid,'Text','','FontColor',[0.3 0.3 0.3]);
-            app.PlanLabel.Layout.Row = 9; app.PlanLabel.Layout.Column = [1 4];
-
-            % Row 10: live plot region host buttons (spacer row grows)
-            app.LiveButton = uibutton(app.Grid,'Text','Show Live Plot','ButtonPushedFcn',@(~,~) app.onShowLive());
-            app.LiveButton.Layout.Row = 10; app.LiveButton.Layout.Column = [1 2];
-            app.TraceButton = uibutton(app.Grid,'Text','Trace Organizer','ButtonPushedFcn',@(~,~) app.onTraceOrg());
-            app.TraceButton.Layout.Row = 10; app.TraceButton.Layout.Column = [3 4];
-
-            % Row 11: metrics
-            app.StateLamp = uilamp(app.Grid,'Color',[0.6 0.6 0.6]);
-            app.StateLamp.Layout.Row = 11; app.StateLamp.Layout.Column = 1;
-            app.StateLabel = uilabel(app.Grid,'Text','Idle','FontWeight','bold');
-            app.StateLabel.Layout.Row = 11; app.StateLabel.Layout.Column = 2;
-            app.SweepLabel = uilabel(app.Grid,'Text','Sweeps: 0');
-            app.SweepLabel.Layout.Row = 11; app.SweepLabel.Layout.Column = 3;
-            app.CorrLabel = uilabel(app.Grid,'Text','r = —');
-            app.CorrLabel.Layout.Row = 11; app.CorrLabel.Layout.Column = 4;
-
-            % Row 12: transport
-            app.StartButton = uibutton(app.Grid,'Text','Start','BackgroundColor',[0.6 0.9 0.6], ...
-                'ButtonPushedFcn',@(~,~) app.onStart());
-            app.StartButton.Layout.Row = 12; app.StartButton.Layout.Column = 1;
-            app.PauseButton = uibutton(app.Grid,'Text','Pause','Enable','off','ButtonPushedFcn',@(~,~) app.onPause());
-            app.PauseButton.Layout.Row = 12; app.PauseButton.Layout.Column = 2;
-            app.StopButton = uibutton(app.Grid,'Text','Stop Run','Enable','off','ButtonPushedFcn',@(~,~) app.onStopBlock());
-            app.StopButton.Layout.Row = 12; app.StopButton.Layout.Column = 3;
-            app.AbortButton = uibutton(app.Grid,'Text','Abort','Enable','off','BackgroundColor',[0.95 0.7 0.7], ...
-                'ButtonPushedFcn',@(~,~) app.onAbort());
-            app.AbortButton.Layout.Row = 12; app.AbortButton.Layout.Column = 4;
-
-            % Row 13: status line
             app.StatusLabel = uilabel(app.Grid,'Text','Ready.','FontColor',[0.3 0.3 0.3]);
-            app.StatusLabel.Layout.Row = 13; app.StatusLabel.Layout.Column = [1 4];
+            app.StatusLabel.Layout.Row = 7; app.StatusLabel.Layout.Column = 1;
         end
 
-        function addLabel(app,txt,r,c)
-            h = uilabel(app.Grid,'Text',txt);
+        % --- Layout building blocks -----------------------------------------
+        % Every panel shares one label-column width, so the fields line up in a
+        % single vertical edge down the whole window even across panel borders.
+        function g = panelGrid(app,title,row,rowHeights,colWidths)
+            p = uipanel(app.Grid,'Title',title,'FontWeight','bold');
+            p.Layout.Row = row; p.Layout.Column = 1;
+            g = uigridlayout(p,[numel(rowHeights) numel(colWidths)]);
+            g.RowHeight     = rowHeights;
+            g.ColumnWidth   = colWidths;
+            g.Padding       = [8 6 8 6];
+            g.RowSpacing    = 6;
+            g.ColumnSpacing = 6;
+        end
+
+        function addLabel(~,g,txt,r,c)
+            h = uilabel(g,'Text',txt,'HorizontalAlignment','right');
             h.Layout.Row = r; h.Layout.Column = c;
+        end
+
+        function buildSessionPanel(app,row)
+            g = app.panelGrid('Session',row,{24,24},{app.LabelWidth,'1x','fit'});
+
+            app.addLabel(g,'Subject ID',1,1);
+            app.SubjectField = uidropdown(g,'Editable','on', ...
+                'Items',app.loadHistory('Subject',{'SUBJ_ID_001'}), ...
+                'Tooltip','Labels the session and begins every saved filename.');
+            app.SubjectField.Value = app.SubjectField.Items{1};
+            app.SubjectField.Layout.Row = 1; app.SubjectField.Layout.Column = [2 3];
+
+            app.addLabel(g,'Output',2,1);
+            app.OutputField = uidropdown(g,'Editable','on', ...
+                'Items',app.loadHistory('Output',{pwd}), ...
+                'Tooltip','Folder for .abr files, one per condition. Leave empty to record without saving.');
+            app.OutputField.Value = app.OutputField.Items{1};
+            app.OutputField.Layout.Row = 2; app.OutputField.Layout.Column = 2;
+            app.BrowseButton = uibutton(g,'Text','Browse…','ButtonPushedFcn',@(~,~) app.onBrowse());
+            app.BrowseButton.Layout.Row = 2; app.BrowseButton.Layout.Column = 3;
+        end
+
+        function buildStimulusPanel(app,row)
+            g = app.panelGrid('Stimulus',row,{24},{app.LabelWidth,'1x','fit','fit'});
+
+            % The count doubles as the loaded/not-loaded indicator, so it sits
+            % where a value would: in the field column, not tucked by a button.
+            app.addLabel(g,'Bank',1,1);
+            app.SourceLabel = uilabel(g,'Text','(none loaded)','FontColor',[0.6 0 0]);
+            app.SourceLabel.Layout.Row = 1; app.SourceLabel.Layout.Column = 2;
+            app.LoadButton = uibutton(g,'Text','Load .mat…', ...
+                'Tooltip','Load a calibrated stimulus bank from your stimulus package.', ...
+                'ButtonPushedFcn',@(~,~) app.onLoadSource());
+            app.LoadButton.Layout.Row = 1; app.LoadButton.Layout.Column = 3;
+            app.TestButton = uibutton(g,'Text','Test Stimulus', ...
+                'Tooltip','Load the built-in tone-pip bank (testing only -- not calibrated).', ...
+                'ButtonPushedFcn',@(~,~) app.onTestSource());
+            app.TestButton.Layout.Row = 1; app.TestButton.Layout.Column = 4;
+        end
+
+        function buildPresentationPanel(app,row)
+            g = app.panelGrid('Presentation',row,{24,24,24,16,18},{app.LabelWidth,'1x','1x'});
+
+            app.addLabel(g,'Strategy',1,1);
+            app.StrategyDrop = uidropdown(g, ...
+                'Items',mabr.ui.App.StrategyItems, ...
+                'ItemsData',mabr.stim.Schedule.Strategies, ...
+                'Tooltip','How the bank is ordered: one stimulus per run, or intermixed within a run.', ...
+                'ValueChangedFcn',@(~,~) app.onStrategyChanged());
+            app.StrategyDrop.Layout.Row = 1; app.StrategyDrop.Layout.Column = [2 3];
+
+            app.addLabel(g,'Repetitions',2,1);
+            app.RepsField = uieditfield(g,'numeric','Value',512, ...
+                'Limits',[0 Inf],'RoundFractionalValues','on', ...
+                'Tooltip','Presentations per stimulus. Sets every entry in the bank at once.', ...
+                'ValueChangedFcn',@(~,~) app.onRepsChanged());
+            app.RepsField.Layout.Row = 2; app.RepsField.Layout.Column = 2;
+            app.RepsButton = uibutton(g,'Text','Per stimulus…', ...
+                'Tooltip','Give individual stimuli their own repetition counts.', ...
+                'ButtonPushedFcn',@(~,~) app.onRepsDialog());
+            app.RepsButton.Layout.Row = 2; app.RepsButton.Layout.Column = 3;
+
+            % Two views of one number; the units live in the display format so
+            % the pair needs no second label to say which is which.
+            app.addLabel(g,'ISI / Rate',3,1);
+            app.ISIField = uieditfield(g,'numeric', ...
+                'Value',1e3/mabr.ui.App.DefaultRateHz,'Limits',[eps Inf], ...
+                'ValueDisplayFormat','%.2f ms', ...
+                'Tooltip','Onset-to-onset interval. Editing this updates the rate.', ...
+                'ValueChangedFcn',@(~,~) app.onISIChanged());
+            app.ISIField.Layout.Row = 3; app.ISIField.Layout.Column = 2;
+            app.RateField = uieditfield(g,'numeric', ...
+                'Value',mabr.ui.App.DefaultRateHz,'Limits',[eps Inf], ...
+                'ValueDisplayFormat','%.2f Hz', ...
+                'Tooltip','Presentation rate. Editing this updates the ISI.', ...
+                'ValueChangedFcn',@(~,~) app.onRateChanged());
+            app.RateField.Layout.Row = 3; app.RateField.Layout.Column = 3;
+
+            % A full-width warning line directly under the fields that cause
+            % it, rather than a clipped stub squeezed in beside them.
+            app.OverlapLabel = uilabel(g,'Text','','FontColor',[0.8 0.2 0]);
+            app.OverlapLabel.Layout.Row = 4; app.OverlapLabel.Layout.Column = [2 3];
+
+            % Live consequence of everything above it: runs, presentations,
+            % estimated duration. Kept in this panel because those are the
+            % settings that change it.
+            app.PlanLabel = uilabel(g,'Text','','FontColor',[0.3 0.3 0.3], ...
+                'HorizontalAlignment','right');
+            app.PlanLabel.Layout.Row = 5; app.PlanLabel.Layout.Column = [1 3];
+        end
+
+        function buildAcquisitionPanel(app,row)
+            g = app.panelGrid('Acquisition',row,{24,24},{app.LabelWidth,'1x','1x'});
+
+            app.TestingCheck = uicheckbox(g,'Text','Testing (loopback, no hardware)','Value',true, ...
+                'Tooltip','Run the whole engine without an audio device. Changing this rebuilds the worker.');
+            app.TestingCheck.Layout.Row = 1; app.TestingCheck.Layout.Column = [2 3];
+
+            % Early stop only applies to a run holding one stimulus, so this is
+            % disabled for intermixed strategies (see syncAdvanceEnables).
+            app.addLabel(g,'Advance',2,1);
+            app.AdvanceDrop = uidropdown(g, ...
+                'Items',{'All Repetitions','Correlation Threshold'}, ...
+                'Tooltip','When a run ends: after every repetition, or once the response is reproducible enough.', ...
+                'ValueChangedFcn',@(~,~) app.onAdvanceChanged());
+            app.AdvanceDrop.Layout.Row = 2; app.AdvanceDrop.Layout.Column = 2;
+            % The threshold field is captioned by its own display format --
+            % as a bare "0.50" beside a dropdown it read as an orphan.
+            app.CorrField = uieditfield(g,'numeric','Value',0.5,'Limits',[0 1], ...
+                'ValueDisplayFormat','stop at r ≥ %.2f','Enable','off', ...
+                'Tooltip','Correlation the running average must reach for the run to stop early.');
+            app.CorrField.Layout.Row = 2; app.CorrField.Layout.Column = 3;
+        end
+
+        function buildRunPanel(app,row)
+            g = app.panelGrid('Run',row,{22,32},{'1x','1x','1x','1x'});
+
+            % Readout and transport share a panel: what the run is doing and
+            % what you can do about it belong to the same glance.
+            s = uigridlayout(g,[1 4]);
+            s.Layout.Row = 1; s.Layout.Column = [1 4];
+            % Fixed width for the state label rather than 'fit', so the sweep
+            % count does not slide sideways as the state text changes length.
+            s.ColumnWidth   = {18,118,'1x','fit'};
+            s.Padding       = [0 0 0 0];
+            s.ColumnSpacing = 8;
+            app.StateLamp  = uilamp(s,'Color',[0.6 0.6 0.6]);
+            app.StateLabel = uilabel(s,'Text','Idle','FontWeight','bold');
+            app.SweepLabel = uilabel(s,'Text','Sweeps: 0');
+            app.CorrLabel  = uilabel(s,'Text','r = —','HorizontalAlignment','right');
+
+            app.StartButton = uibutton(g,'Text','Start','BackgroundColor',[0.6 0.9 0.6], ...
+                'FontWeight','bold','ButtonPushedFcn',@(~,~) app.onStart());
+            app.StartButton.Layout.Row = 2; app.StartButton.Layout.Column = 1;
+            app.PauseButton = uibutton(g,'Text','Pause','Enable','off', ...
+                'Tooltip','Suspend playback in place, keeping the audio device open.', ...
+                'ButtonPushedFcn',@(~,~) app.onPause());
+            app.PauseButton.Layout.Row = 2; app.PauseButton.Layout.Column = 2;
+            app.StopButton = uibutton(g,'Text','Stop Run','Enable','off', ...
+                'Tooltip','End the current run early and advance to the next.', ...
+                'ButtonPushedFcn',@(~,~) app.onStopBlock());
+            app.StopButton.Layout.Row = 2; app.StopButton.Layout.Column = 3;
+            app.AbortButton = uibutton(g,'Text','Abort','Enable','off','BackgroundColor',[0.95 0.7 0.7], ...
+                'Tooltip','Abandon the whole schedule. Data already recorded is still saved.', ...
+                'ButtonPushedFcn',@(~,~) app.onAbort());
+            app.AbortButton.Layout.Row = 2; app.AbortButton.Layout.Column = 4;
+        end
+
+        function buildToolbar(app)
+            % The viewers are always open, so their entries here are "bring to
+            % front" rather than "show" -- they reopen a window only if the
+            % user closed one. Lettered glyphs (L/T/?) instead of pictograms:
+            % there is no pictogram for "trace organizer" that reads better
+            % than its initial at 16 px.
+            ink  = [0.16 0.26 0.42];
+            help = [0.35 0.35 0.35];
+
+            app.Toolbar = uitoolbar(app.UIFigure);
+            app.toolButton('L',ink, 'Live plot',       @() app.onShowLive());
+            app.toolButton('T',ink, 'Trace organizer', @() app.onTraceOrg());
+            app.toolButton('?',help,'Help (MABR wiki)',@() app.openHelp(),true);
+        end
+
+        function toolButton(app,glyph,rgb,tip,fcn,sep)
+            if nargin < 6, sep = false; end
+            sepStr = 'off'; if sep, sepStr = 'on'; end
+            uipushtool(app.Toolbar,'Tooltip',tip,'Separator',sepStr, ...
+                'CData',mabr.ui.Icon.fromArt(mabr.ui.App.glyph(glyph),rgb), ...
+                'ClickedCallback',@(~,~) fcn());
+        end
+
+        function openHelp(~)
+            web('https://github.com/dstolz/MABR/wiki','-browser');
         end
 
         % --- Editable-dropdown history -------------------------------------
@@ -498,31 +607,85 @@ classdef App < handle
         function onStopBlock(app), app.Controller.stopBlock(); end
         function onAbort(app),     app.Controller.abort(); end
 
+        % --- Viewer windows -------------------------------------------------
+        % Both viewers open with the app rather than on demand, so the toolbar
+        % buttons raise an existing window and only build one the user has
+        % closed. Each remembers where it was last left (mabr.ui.WindowPos).
+        function openViewers(app)
+            app.onTraceOrg();
+            app.onShowLive();
+            figure(app.UIFigure);       % the main window keeps focus
+        end
+
         function onShowLive(app)
             if isempty(app.LivePlot) || ~isvalid(app.LivePlot)
                 app.LivePlot = mabr.ui.LivePlot();
+                f = app.LivePlot.Figure;
+                mabr.ui.WindowPos.restore(f,'LivePlot',app.defaultViewerPos('LivePlot'));
+                % Closing disposes the viewer outright: it holds no state worth
+                % keeping, and that keeps the isvalid() check above honest.
+                f.CloseRequestFcn = @(~,~) app.closeLive();
             end
             if ~isempty(app.Controller) && isvalid(app.Controller)
                 app.Controller.setLivePlot(app.LivePlot);
             end
+            figure(app.LivePlot.Figure);
+        end
+
+        function closeLive(app)
+            mabr.ui.WindowPos.remember(app.LivePlot.Figure,'LivePlot');
+            delete(app.LivePlot);
         end
 
         function onTraceOrg(app)
+            % Only a freshly built organizer is backfilled from the session.
+            % Once it exists it keeps itself current through BlockReady, so
+            % pressing T is a pure raise -- re-running the backfill would
+            % discard whatever the user has arranged or loaded in there.
             if isempty(app.TraceOrg) || ~isvalid(app.TraceOrg)
                 app.TraceOrg = mabr.ui.TraceOrganizer();
-            end
-            if ~isempty(app.Controller) && isvalid(app.Controller)
-                % Rebuild from scratch: addBlock appends, so re-pressing the
-                % button would otherwise duplicate every trace.
-                app.TraceOrg.clear();
-                for i = 1:app.Controller.Session.NumBlocks
-                    app.TraceOrg.addBlock(app.Controller.Session.Blocks(i));
+                if ~isempty(app.Controller) && isvalid(app.Controller)
+                    for i = 1:app.Controller.Session.NumBlocks
+                        app.TraceOrg.addBlock(app.Controller.Session.Blocks(i));
+                    end
+                    app.TraceOrg.listenTo(app.Controller);
                 end
-                % From here on the organizer adds each new block itself, so a
-                % view left open during a run fills in as blocks complete.
-                app.TraceOrg.listenTo(app.Controller);
             end
+            isNewWindow = ~app.TraceOrg.isvalidView();
             app.TraceOrg.show();
+            if isNewWindow
+                % Unlike the live plot, closing this window keeps the object
+                % and its traces -- show() rebuilds the figure around them.
+                f = app.TraceOrg.Figure;
+                mabr.ui.WindowPos.restore(f,'TraceOrganizer', ...
+                    app.defaultViewerPos('TraceOrganizer'));
+                f.CloseRequestFcn = @(~,~) app.closeTraceOrg();
+            end
+        end
+
+        function closeTraceOrg(app)
+            mabr.ui.WindowPos.remember(app.TraceOrg.Figure,'TraceOrganizer');
+            delete(app.TraceOrg.Figure);
+        end
+
+        function rememberViewerPositions(app)
+            try, mabr.ui.WindowPos.remember(app.LivePlot.Figure,'LivePlot'); end %#ok<TRYNC>
+            try, mabr.ui.WindowPos.remember(app.TraceOrg.Figure,'TraceOrganizer'); end %#ok<TRYNC>
+        end
+
+        function pos = defaultViewerPos(app,name)
+            % First-run layout only -- afterwards the remembered position wins.
+            % Both viewers sit to the right of the main window, the organizer
+            % beside it and the live plot beyond that, so the three are visible
+            % together without overlapping.
+            a   = app.UIFigure.Position;
+            gap = 12;
+            switch name
+                case 'TraceOrganizer'
+                    pos = [a(1)+a(3)+gap, a(2), 640, a(4)];
+                otherwise   % live plot, top-aligned with the main window
+                    pos = [a(1)+a(3)+gap+640+gap, a(2)+a(4)-280, 640, 280];
+            end
         end
 
         function onClose(app)
@@ -574,7 +737,7 @@ classdef App < handle
         function h = allControls(app)
             h = [app.configControls, ...
                  {app.StartButton, app.PauseButton, app.StopButton, ...
-                  app.AbortButton, app.LiveButton, app.TraceButton}];
+                  app.AbortButton}];
         end
 
         function setBusy(app,msg)
@@ -592,8 +755,8 @@ classdef App < handle
             app.PauseButton.Enable  = onOff(running);
             app.StopButton.Enable   = onOff(running);
             app.AbortButton.Enable  = onOff(running);
-            app.LiveButton.Enable   = 'on';   % viewers are safe at any time
-            app.TraceButton.Enable  = 'on';
+            % The toolbar is deliberately never disabled -- raising a viewer is
+            % safe at any time, including while the engine is starting up.
             if ~running
                 app.PauseButton.Text = 'Pause';
                 app.syncAdvanceEnables();     % re-derives the Advance/Corr enables
@@ -611,6 +774,67 @@ classdef App < handle
             if ~isvalid(app.UIFigure), return; end
             app.StatusLabel.Text = txt;
             drawnow   % status arrives mid-blocking-call; force the repaint
+        end
+    end
+
+    methods (Static, Access = private)
+        function rows = glyph(name)
+            % 16x16 toolbar art, one 16-char string per row; see mabr.ui.Icon.
+            switch name
+                case 'L'
+                    rows = {'................'
+                            '................'
+                            '...XXX..........'
+                            '...XXX..........'
+                            '...XXX..........'
+                            '...XXX..........'
+                            '...XXX..........'
+                            '...XXX..........'
+                            '...XXX..........'
+                            '...XXX..........'
+                            '...XXX..........'
+                            '...XXXXXXXXXX...'
+                            '...XXXXXXXXXX...'
+                            '................'
+                            '................'
+                            '................'};
+                case 'T'
+                    rows = {'................'
+                            '................'
+                            '..XXXXXXXXXXXX..'
+                            '..XXXXXXXXXXXX..'
+                            '......XXX.......'
+                            '......XXX.......'
+                            '......XXX.......'
+                            '......XXX.......'
+                            '......XXX.......'
+                            '......XXX.......'
+                            '......XXX.......'
+                            '......XXX.......'
+                            '......XXX.......'
+                            '................'
+                            '................'
+                            '................'};
+                case '?'
+                    rows = {'................'
+                            '....XXXXXX......'
+                            '...XX....XX.....'
+                            '..XX......XX....'
+                            '..XX......XX....'
+                            '..........XX....'
+                            '.........XX.....'
+                            '......XXXX......'
+                            '......XX........'
+                            '......XX........'
+                            '................'
+                            '......XX........'
+                            '......XX........'
+                            '................'
+                            '................'
+                            '................'};
+                otherwise
+                    rows = repmat({repmat('.',1,16)},16,1);
+            end
         end
     end
 end

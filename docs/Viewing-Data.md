@@ -1,10 +1,10 @@
 # Viewing Data
 
-MABR has two viewers: a live plot for the condition being recorded now, and the Trace Organizer for comparing finished conditions.
+MABR has two viewers: a live plot for the condition being recorded now, and the Trace Organizer for comparing finished conditions. Both open with the app and are laid out beside the main window; the **L** and **T** toolbar buttons raise them, and where you leave them is remembered across sessions.
 
 ## Live Plot
 
-Opens automatically when you press Start, or via **Show Live Plot**.
+Opens with the app, and is raised by the **L** toolbar button or by pressing Start. Closing it discards the window; **L** builds a fresh one.
 
 Two panels:
 
@@ -21,12 +21,12 @@ The plot refreshes about 20 times per second and resets at the start of each con
 
 ## Trace Organizer
 
-Opens via **Trace Organizer**. It stacks the mean waveform of every completed condition on one time axis so you can read a series — usually a level series at one frequency — as a whole.
+Opens with the app, and is raised by the **T** toolbar button. Closing it only disposes the window — the traces are kept, and **T** brings them back. It stacks the mean waveform of every completed condition on one time axis so you can read a series — usually a level series at one frequency — as a whole.
 
 **What you can do:**
 
 - **Drag a trace vertically** to reorder or separate the stack. Click and drag; release to drop.
-- **Mark peaks** — the toolbar's peak-marking action finds and labels response peaks on the selected trace, for identifying waves I–V.
+- **Mark peaks** — **Peaks ▸ Mark peaks** (or the ▼-over-a-peak toolbar button, or `p`) finds and labels response peaks on the selected trace, for identifying waves I–V.
 - **Save / load** the arrangement, so a figure you have laid out can be recovered later.
 
 Traces are labeled with their stimulus parameters and coloured in sequence. Time is shown in milliseconds relative to sweep onset.
@@ -63,7 +63,7 @@ to.markPeaks();
 to.show();
 ```
 
-Each trace is labelled on the plot with the stimulus ID `addBlock` reads from `block.Stim.Meta.ID`, falling back to the descriptive label when there is no stimulus metadata.
+Each trace is labelled on the plot with the stimulus ID `addBlock` reads from `block.Stim.Meta.ID`, falling back to the descriptive label when there is no stimulus metadata. Labels sit in the margin to the left of the axes, right-aligned against the y-axis at each trace's baseline, so they never obscure the waveforms; the margin widens automatically to fit the longest one.
 
 To have the stack fill in during a run rather than only when reopened, point the organizer at a controller:
 
@@ -72,7 +72,7 @@ to.listenTo(controller);   % adds a trace on every AcqController BlockReady
 to.stopListening();        % detach
 ```
 
-`listenTo` tracks one controller at a time — calling it again re-points the listener rather than stacking a second one, so re-opening the view cannot duplicate traces. The handler is wrapped in a try/catch: it runs on the acquisition path, so a plotting error must never propagate back into the controller mid-schedule. New blocks are drawn without raising the figure, so an auto-update cannot steal focus from the live view. `App` wires this up when you open the Trace Organizer.
+`listenTo` tracks one controller at a time — calling it again re-points the listener rather than stacking a second one, so re-opening the view cannot duplicate traces. The handler is wrapped in a try/catch: it runs on the acquisition path, so a plotting error must never propagate back into the controller mid-schedule. New blocks are drawn without raising the figure, so an auto-update cannot steal focus from the live view. `App` wires this up when it builds the Trace Organizer at launch, and re-points it whenever the controller is rebuilt.
 
 Every command is reachable three ways — the menu bar, the right-click context menu, and the keyboard — so nothing is discoverable only by memorization; press `F1` in the figure for the shortcut list. Amplitude commands act on the current selection, or on every trace when nothing is selected. Click a trace or its label to select it, shift- or ctrl-click to extend.
 

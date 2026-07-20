@@ -379,7 +379,8 @@ classdef TraceOrganizer < handle
                 'Color','w','Tag',obj.FigTag,'MenuBar','none','Position',[820 120 640 700], ...
                 'WindowButtonMotionFcn',@(~,~) obj.doDrag(), ...
                 'WindowButtonUpFcn',@(~,~) obj.endDrag(), ...
-                'WindowKeyPressFcn',@(~,e) obj.onKey(e));
+                'WindowKeyPressFcn',@(~,e) obj.onKey(e), ...
+                'SizeChangedFcn',@(~,~) obj.fitLabelMargin());
             obj.Axes = axes('Parent',obj.Figure,'Box','on','NextPlot','add', ...
                 'YTick',[],'XGrid','on','YGrid','on','GridLineStyle',':');
             xlabel(obj.Axes,'Time (ms)');
@@ -389,21 +390,31 @@ classdef TraceOrganizer < handle
         end
 
         function buildToolbar(obj)
+            % Every action here is also in the menu bar -- the toolbar is a
+            % shortcut, never the only route to a function. Each button draws
+            % the glyph named in obj.glyph so its meaning is readable without
+            % having to hover for the tooltip.
+            ink   = [0.16 0.26 0.42];   % amplitude / spacing / file
+            alert = [0.72 0.12 0.12];   % peaks
+            warn  = [0.45 0.16 0.16];   % destructive
+
             obj.Toolbar = uitoolbar(obj.Figure);
-            obj.toolButton('Larger (Up arrow)',       [0.15 0.5 0.15], @() obj.scaleTraces(obj.GainStep));
-            obj.toolButton('Smaller (Down arrow)',    [0.5 0.7 0.5],   @() obj.scaleTraces(1/obj.GainStep));
-            obj.toolButton('Wider spacing (Shift+Up)',[0.2 0.35 0.7],  @() obj.setSpacing(obj.YSpacing*obj.SpacingStep));
-            obj.toolButton('Tighter spacing (Shift+Down)',[0.55 0.65 0.85], @() obj.setSpacing(obj.YSpacing/obj.SpacingStep));
-            obj.toolButton('Mark peaks on selection (p)',[0.85 0.1 0.1], @() obj.markPeaks());
-            obj.toolButton('Save view (Ctrl+S)',      [0.1 0.4 0.85],  @() obj.saveView());
-            obj.toolButton('Load view (Ctrl+O)',      [0.1 0.7 0.3],   @() obj.loadView());
-            obj.toolButton('Clear all',               [0.4 0.4 0.4],   @() obj.clear());
-            obj.toolButton('Keyboard shortcuts (F1)', [0.6 0.4 0.75],  @() obj.showHelp());
+            obj.toolButton('grow',   ink,  'Larger amplitude (Up arrow)',        @() obj.scaleTraces(obj.GainStep));
+            obj.toolButton('shrink', ink,  'Smaller amplitude (Down arrow)',     @() obj.scaleTraces(1/obj.GainStep));
+            obj.toolButton('spread', ink,  'Wider spacing (Shift+Up)',           @() obj.setSpacing(obj.YSpacing*obj.SpacingStep),true);
+            obj.toolButton('squeeze',ink,  'Tighter spacing (Shift+Down)',       @() obj.setSpacing(obj.YSpacing/obj.SpacingStep));
+            obj.toolButton('peaks',  alert,'Mark peaks on selection (p)',        @() obj.markPeaks(),true);
+            obj.toolButton('save',   ink,  'Save view (Ctrl+S)',                 @() obj.saveView(),true);
+            obj.toolButton('load',   ink,  'Load view (Ctrl+O)',                 @() obj.loadView());
+            obj.toolButton('trash',  warn, 'Remove all traces',                  @() obj.clear());
+            obj.toolButton('help',   ink,  'Keyboard shortcuts (F1)',            @() obj.showHelp(),true);
         end
 
-        function toolButton(obj,tip,rgb,fcn)
-            uipushtool(obj.Toolbar,'Tooltip',tip,'CData',obj.icon(rgb), ...
-                'ClickedCallback',@(~,~) fcn());
+        function toolButton(obj,name,rgb,tip,fcn,sep)
+            if nargin < 6, sep = false; end
+            sepStr = 'off'; if sep, sepStr = 'on'; end
+            uipushtool(obj.Toolbar,'Tooltip',tip,'CData',obj.icon(name,rgb), ...
+                'Separator',sepStr,'ClickedCallback',@(~,~) fcn());
         end
 
         function buildMenus(obj)
@@ -521,7 +532,7 @@ classdef TraceOrganizer < handle
                 tAll = vertcat(tAll{:});
                 obj.Axes.XLim = [min(tAll(:,1)) max(tAll(:,2))];
             end
-            labelX = obj.Axes.XLim(1) + 0.01*diff(obj.Axes.XLim);
+            labelX = obj.labelX();
 
             for k = 1:numel(obj.Traces)
                 tr = obj.Traces(k);
@@ -537,7 +548,47 @@ classdef TraceOrganizer < handle
                 allY = [obj.Traces.YOffset];
                 obj.Axes.YLim = [min(allY)-obj.YSpacing, max(allY)+obj.YSpacing];
             end
+            obj.fitLabelMargin();
             obj.refreshStatus();
+        end
+
+        function x = labelX(obj)
+            % Anchor for the right-aligned labels: just left of the y-axis, so
+            % the text runs outward into the margin instead of over the traces.
+            x = obj.Axes.XLim(1) - 0.015*diff(obj.Axes.XLim);
+        end
+
+        function fitLabelMargin(obj)
+            % Widen the axes' left inset to whatever the longest label needs.
+            % Label pixel width depends only on the font, not on the axes size,
+            % so measuring and then resizing cannot chase its own tail.
+            % Also fires as a resize callback, possibly before the axes exists.
+            if ~obj.isvalidView() || isempty(obj.Axes) || ~isgraphics(obj.Axes)
+                return
+            end
+            ax        = obj.Axes;
+            rightEdge = 0.955;     % held fixed; only the left edge moves
+            minLeft   = 0.13;      % MATLAB's default inset
+            left      = minLeft;
+
+            if obj.ShowLabels && ~isempty(obj.Traces)
+                figPos = getpixelposition(obj.Figure);
+                w = 0;
+                for k = 1:numel(obj.Traces)
+                    h = obj.Traces(k).LabelHandle;
+                    if isempty(h) || ~isgraphics(h) || strcmp(h.Visible,'off')
+                        continue
+                    end
+                    u = h.Units;
+                    h.Units = 'pixels';
+                    w = max(w,h.Extent(3));
+                    h.Units = u;
+                end
+                if w > 0
+                    left = min(0.5,max(minLeft,(w+16)/figPos(3)));
+                end
+            end
+            ax.Position = [left ax.Position(2) rightEdge-left ax.Position(4)];
         end
 
         function sc = yscale(obj)
@@ -579,8 +630,7 @@ classdef TraceOrganizer < handle
             obj.dragMoved = true;
             sc = obj.yscale();
             obj.Traces(obj.dragIdx).YOffset = obj.dragStartOffset + dy;
-            labelX = obj.Axes.XLim(1) + 0.01*diff(obj.Axes.XLim);
-            obj.Traces(obj.dragIdx).plot(obj.Axes,sc(obj.dragIdx),labelX);
+            obj.Traces(obj.dragIdx).plot(obj.Axes,sc(obj.dragIdx),obj.labelX());
         end
 
         function endDrag(obj)
@@ -738,8 +788,172 @@ classdef TraceOrganizer < handle
     end
 
     methods (Static, Access = private)
-        function c = icon(rgb)
-            c = repmat(reshape(rgb,1,1,3),16,16);
+        function c = icon(name,rgb)
+            % 16x16 CData from a named glyph.
+            c = mabr.ui.Icon.fromArt(mabr.ui.TraceOrganizer.glyph(name),rgb);
+        end
+
+        function rows = glyph(name)
+            % ASCII art, one 16-char string per row. Kept as art rather than
+            % index math because the shapes have to be legible at 16 px and
+            % that is only checkable by looking at them.
+            switch name
+                case 'grow'      % arrow up off a baseline: bigger amplitude
+                    rows = {'.......XX.......'
+                            '......XXXX......'
+                            '.....XXXXXX.....'
+                            '....XXXXXXXX....'
+                            '...XXXXXXXXXX...'
+                            '.......XX.......'
+                            '.......XX.......'
+                            '.......XX.......'
+                            '.......XX.......'
+                            '.......XX.......'
+                            '.......XX.......'
+                            '................'
+                            'XXXXXXXXXXXXXXXX'
+                            '................'
+                            '................'
+                            '................'};
+                case 'shrink'    % arrow down toward a baseline
+                    rows = {'XXXXXXXXXXXXXXXX'
+                            '................'
+                            '.......XX.......'
+                            '.......XX.......'
+                            '.......XX.......'
+                            '.......XX.......'
+                            '.......XX.......'
+                            '.......XX.......'
+                            '...XXXXXXXXXX...'
+                            '....XXXXXXXX....'
+                            '.....XXXXXX.....'
+                            '......XXXX......'
+                            '.......XX.......'
+                            '................'
+                            '................'
+                            '................'};
+                case 'spread'    % two rails, arrows pushing them apart
+                    rows = {'................'
+                            'XXXXXXXXXXXXXXXX'
+                            '................'
+                            '.......XX.......'
+                            '......XXXX......'
+                            '.....XXXXXX.....'
+                            '................'
+                            '................'
+                            '................'
+                            '.....XXXXXX.....'
+                            '......XXXX......'
+                            '.......XX.......'
+                            '................'
+                            'XXXXXXXXXXXXXXXX'
+                            '................'
+                            '................'};
+                case 'squeeze'   % two rails, arrows pulling them together
+                    rows = {'................'
+                            'XXXXXXXXXXXXXXXX'
+                            '................'
+                            '.....XXXXXX.....'
+                            '......XXXX......'
+                            '.......XX.......'
+                            '................'
+                            '................'
+                            '................'
+                            '.......XX.......'
+                            '......XXXX......'
+                            '.....XXXXXX.....'
+                            '................'
+                            'XXXXXXXXXXXXXXXX'
+                            '................'
+                            '................'};
+                case 'peaks'     % marker dropped onto a waveform peak
+                    rows = {'................'
+                            '....XXXXXXX.....'
+                            '.....XXXXX......'
+                            '......XXX.......'
+                            '.......X........'
+                            '................'
+                            '................'
+                            '.......XX.......'
+                            '......X..X......'
+                            '.....X....X.....'
+                            '....X......X....'
+                            '...X........X...'
+                            'XXX..........XXX'
+                            '................'
+                            '................'
+                            '................'};
+                case 'save'      % floppy disk
+                    rows = {'................'
+                            '.XXXXXXXXXXXXXX.'
+                            '.X....XXXX....X.'
+                            '.X....XXXX....X.'
+                            '.X....XXXX....X.'
+                            '.X............X.'
+                            '.X.XXXXXXXXXX.X.'
+                            '.X.X........X.X.'
+                            '.X.X........X.X.'
+                            '.X.X........X.X.'
+                            '.X.XXXXXXXXXX.X.'
+                            '.XXXXXXXXXXXXXX.'
+                            '................'
+                            '................'
+                            '................'
+                            '................'};
+                case 'load'      % folder with a waveform lifting out of it
+                    rows = {'................'
+                            '................'
+                            '.......XX.......'
+                            '......XXXX......'
+                            '.....XXXXXX.....'
+                            '.......XX.......'
+                            '.......XX.......'
+                            '................'
+                            'XXXX............'
+                            'X..XXXXX........'
+                            'X......XXXXXXXX.'
+                            'X..............X'
+                            'X..............X'
+                            'XXXXXXXXXXXXXXXX'
+                            '................'
+                            '................'};
+                case 'trash'     % waste bin: removes every trace
+                    rows = {'................'
+                            '......XXXX......'
+                            '...XXXXXXXXXX...'
+                            '................'
+                            '..XXXXXXXXXXXX..'
+                            '..X.X.X..X.X.X..'
+                            '..X.X.X..X.X.X..'
+                            '..X.X.X..X.X.X..'
+                            '..X.X.X..X.X.X..'
+                            '..X.X.X..X.X.X..'
+                            '..X.X.X..X.X.X..'
+                            '..X.X.X..X.X.X..'
+                            '..XXXXXXXXXXXX..'
+                            '................'
+                            '................'
+                            '................'};
+                case 'help'      % question mark
+                    rows = {'................'
+                            '....XXXXXX......'
+                            '...XX....XX.....'
+                            '..XX......XX....'
+                            '..XX......XX....'
+                            '..........XX....'
+                            '.........XX.....'
+                            '......XXXX......'
+                            '......XX........'
+                            '......XX........'
+                            '................'
+                            '......XX........'
+                            '......XX........'
+                            '................'
+                            '................'
+                            '................'};
+                otherwise
+                    rows = repmat({repmat('.',1,16)},16,1);
+            end
         end
 
         function s = shortName(file)
