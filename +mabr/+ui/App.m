@@ -14,6 +14,10 @@ classdef App < handle
 %
 % Daniel Stolzberg (c) 2019-2026
 
+    properties (Constant)
+        DefaultRateHz = 21.1;   % stimulus presentation rate (Hz)
+    end
+
     properties (SetAccess = private)
         Config
         Controller  mabr.ui.AcqController
@@ -40,6 +44,9 @@ classdef App < handle
         AdvanceDrop
         TargetField
         CorrField
+        ISIField
+        RateField
+        OverlapLabel
         StartButton
         PauseButton
         StopButton
@@ -79,18 +86,22 @@ classdef App < handle
             app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 460 560], ...
                 'CloseRequestFcn',@(~,~) app.onClose());
 
-            app.Grid = uigridlayout(app.UIFigure,[10 4]);
-            app.Grid.RowHeight   = {30,30,30,25,30,30,'1x',30,40,26};
+            app.Grid = uigridlayout(app.UIFigure,[11 4]);
+            app.Grid.RowHeight   = {30,30,30,25,30,30,30,'1x',30,40,26};
             app.Grid.ColumnWidth = {'fit','1x','1x','fit'};
 
-            % Row 1: Subject
+            % Row 1: Subject (editable dropdown of previously used IDs)
             app.addLabel('Subject ID',1,1);
-            app.SubjectField = uieditfield(app.Grid,'text','Value','SUBJ_ID_001');
+            app.SubjectField = uidropdown(app.Grid,'Editable','on', ...
+                'Items',app.loadHistory('Subject',{'SUBJ_ID_001'}));
+            app.SubjectField.Value = app.SubjectField.Items{1};
             app.SubjectField.Layout.Row = 1; app.SubjectField.Layout.Column = [2 4];
 
-            % Row 2: Output folder
+            % Row 2: Output folder (editable dropdown of previously used paths)
             app.addLabel('Output',2,1);
-            app.OutputField = uieditfield(app.Grid,'text','Value',pwd);
+            app.OutputField = uidropdown(app.Grid,'Editable','on', ...
+                'Items',app.loadHistory('Output',{pwd}));
+            app.OutputField.Value = app.OutputField.Items{1};
             app.OutputField.Layout.Row = 2; app.OutputField.Layout.Column = [2 3];
             app.BrowseButton = uibutton(app.Grid,'Text','Browse…','ButtonPushedFcn',@(~,~) app.onBrowse());
             app.BrowseButton.Layout.Row = 2; app.BrowseButton.Layout.Column = 4;
@@ -122,37 +133,52 @@ classdef App < handle
             app.CorrField = uieditfield(app.Grid,'numeric','Value',0.5,'Limits',[0 1],'Enable','off');
             app.CorrField.Layout.Row = 6; app.CorrField.Layout.Column = 3;
 
-            % Row 7: live plot region host buttons (spacer row grows)
+            % Row 7: inter-stimulus interval <-> presentation rate (linked)
+            app.addLabel('ISI / Rate',7,1);
+            app.ISIField = uieditfield(app.Grid,'numeric', ...
+                'Value',1e3/mabr.ui.App.DefaultRateHz,'Limits',[eps Inf], ...
+                'ValueDisplayFormat','%.2f ms', ...
+                'ValueChangedFcn',@(~,~) app.onISIChanged());
+            app.ISIField.Layout.Row = 7; app.ISIField.Layout.Column = 2;
+            app.RateField = uieditfield(app.Grid,'numeric', ...
+                'Value',mabr.ui.App.DefaultRateHz,'Limits',[eps Inf], ...
+                'ValueDisplayFormat','%.2f Hz', ...
+                'ValueChangedFcn',@(~,~) app.onRateChanged());
+            app.RateField.Layout.Row = 7; app.RateField.Layout.Column = 3;
+            app.OverlapLabel = uilabel(app.Grid,'Text','','FontColor',[0.8 0.2 0]);
+            app.OverlapLabel.Layout.Row = 7; app.OverlapLabel.Layout.Column = 4;
+
+            % Row 8: live plot region host buttons (spacer row grows)
             app.LiveButton = uibutton(app.Grid,'Text','Show Live Plot','ButtonPushedFcn',@(~,~) app.onShowLive());
-            app.LiveButton.Layout.Row = 7; app.LiveButton.Layout.Column = [1 2];
+            app.LiveButton.Layout.Row = 8; app.LiveButton.Layout.Column = [1 2];
             app.TraceButton = uibutton(app.Grid,'Text','Trace Organizer','ButtonPushedFcn',@(~,~) app.onTraceOrg());
-            app.TraceButton.Layout.Row = 7; app.TraceButton.Layout.Column = [3 4];
+            app.TraceButton.Layout.Row = 8; app.TraceButton.Layout.Column = [3 4];
 
-            % Row 8: metrics
+            % Row 9: metrics
             app.StateLamp = uilamp(app.Grid,'Color',[0.6 0.6 0.6]);
-            app.StateLamp.Layout.Row = 8; app.StateLamp.Layout.Column = 1;
+            app.StateLamp.Layout.Row = 9; app.StateLamp.Layout.Column = 1;
             app.StateLabel = uilabel(app.Grid,'Text','Idle','FontWeight','bold');
-            app.StateLabel.Layout.Row = 8; app.StateLabel.Layout.Column = 2;
+            app.StateLabel.Layout.Row = 9; app.StateLabel.Layout.Column = 2;
             app.SweepLabel = uilabel(app.Grid,'Text','Sweeps: 0');
-            app.SweepLabel.Layout.Row = 8; app.SweepLabel.Layout.Column = 3;
+            app.SweepLabel.Layout.Row = 9; app.SweepLabel.Layout.Column = 3;
             app.CorrLabel = uilabel(app.Grid,'Text','r = —');
-            app.CorrLabel.Layout.Row = 8; app.CorrLabel.Layout.Column = 4;
+            app.CorrLabel.Layout.Row = 9; app.CorrLabel.Layout.Column = 4;
 
-            % Row 9: transport
+            % Row 10: transport
             app.StartButton = uibutton(app.Grid,'Text','Start','BackgroundColor',[0.6 0.9 0.6], ...
                 'ButtonPushedFcn',@(~,~) app.onStart());
-            app.StartButton.Layout.Row = 9; app.StartButton.Layout.Column = 1;
+            app.StartButton.Layout.Row = 10; app.StartButton.Layout.Column = 1;
             app.PauseButton = uibutton(app.Grid,'Text','Pause','Enable','off','ButtonPushedFcn',@(~,~) app.onPause());
-            app.PauseButton.Layout.Row = 9; app.PauseButton.Layout.Column = 2;
+            app.PauseButton.Layout.Row = 10; app.PauseButton.Layout.Column = 2;
             app.StopButton = uibutton(app.Grid,'Text','Stop Block','Enable','off','ButtonPushedFcn',@(~,~) app.onStopBlock());
-            app.StopButton.Layout.Row = 9; app.StopButton.Layout.Column = 3;
+            app.StopButton.Layout.Row = 10; app.StopButton.Layout.Column = 3;
             app.AbortButton = uibutton(app.Grid,'Text','Abort','Enable','off','BackgroundColor',[0.95 0.7 0.7], ...
                 'ButtonPushedFcn',@(~,~) app.onAbort());
-            app.AbortButton.Layout.Row = 9; app.AbortButton.Layout.Column = 4;
+            app.AbortButton.Layout.Row = 10; app.AbortButton.Layout.Column = 4;
 
-            % Row 10: status line
+            % Row 11: status line
             app.StatusLabel = uilabel(app.Grid,'Text','Ready.','FontColor',[0.3 0.3 0.3]);
-            app.StatusLabel.Layout.Row = 10; app.StatusLabel.Layout.Column = [1 4];
+            app.StatusLabel.Layout.Row = 11; app.StatusLabel.Layout.Column = [1 4];
         end
 
         function addLabel(app,txt,r,c)
@@ -160,19 +186,51 @@ classdef App < handle
             h.Layout.Row = r; h.Layout.Column = c;
         end
 
+        % --- Editable-dropdown history -------------------------------------
+        % Subject ID and Output are editable dropdowns: free text is allowed,
+        % and whatever gets used is remembered (most-recent first) across
+        % sessions via MATLAB prefs.
+        function items = loadHistory(~,name,defaults)
+            items = getpref('MABR',['History_' name],defaults);
+            if ~iscellstr(items) || isempty(items), items = defaults; end %#ok<ISCLSTR>
+        end
+
+        function rememberValue(app,field,name)
+            v = strtrim(field.Value);
+            if isempty(v), return; end
+            items = [{v} field.Items(~strcmp(field.Items,v))];
+            if numel(items) > 10, items = items(1:10); end
+            field.Items = items;
+            field.Value = v;
+            setpref('MABR',['History_' name],items);
+        end
+
+        % Editable dropdowns reject a programmatic Value that is not in Items,
+        % so add it first.
+        function setDropValue(~,field,v)
+            if ~any(strcmp(field.Items,v)), field.Items = [{v} field.Items]; end
+            field.Value = v;
+        end
+
         % --- Controller lifecycle ------------------------------------------
         function ensureController(app)
             testing = app.TestingCheck.Value;
             if ~isempty(app.Controller) && isvalid(app.Controller) ...
                     && app.Controller.Testing == testing
+                app.setStatus('Reusing the running acquisition worker.');
                 return
             end
             % (Re)build for the selected mode.
             delete(app.Listeners);
-            if ~isempty(app.Controller) && isvalid(app.Controller), delete(app.Controller); end
+            if ~isempty(app.Controller) && isvalid(app.Controller)
+                app.setStatus('Shutting down the previous worker…'); drawnow;
+                delete(app.Controller);
+            end
 
-            app.setStatus('Starting acquisition worker…'); drawnow;
-            app.Controller = mabr.ui.AcqController(app.Config,testing);
+            % Startup is slow (parallel pool + worker handshake), so the
+            % engine reports each milestone straight into the status line.
+            app.Controller = mabr.ui.AcqController(app.Config,testing, ...
+                @(msg) app.setStatus(msg));
             app.Listeners = [ ...
                 addlistener(app.Controller,'StateChanged',   @(~,e) app.onState(e)); ...
                 addlistener(app.Controller,'MetricsUpdated', @(~,e) app.onMetrics(e)); ...
@@ -185,7 +243,7 @@ classdef App < handle
         % --- Button callbacks ----------------------------------------------
         function onBrowse(app)
             p = uigetdir(app.OutputField.Value,'Select output folder');
-            if ischar(p) && ~isequal(p,0), app.OutputField.Value = p; end
+            if ischar(p) && ~isequal(p,0), app.setDropValue(app.OutputField,p); end
             figure(app.UIFigure);
         end
 
@@ -198,6 +256,7 @@ classdef App < handle
                 blocks = pick_blocks(S);
                 app.Source = mabr.stim.PrecomputedSource(blocks);
                 app.setSourceLabel();
+                app.checkOverlap();
             catch me
                 app.setStatus(['Load failed: ' me.message]);
             end
@@ -207,6 +266,7 @@ classdef App < handle
             app.Source = mabr.stim.demoSource(app.Config);
             app.setSourceLabel();
             app.setStatus('Loaded built-in test stimulus.');
+            app.checkOverlap();
         end
 
         function onAdvanceChanged(app)
@@ -214,36 +274,85 @@ classdef App < handle
             app.CorrField.Enable = onOff(isCorr);
         end
 
+        % --- ISI <-> rate ---------------------------------------------------
+        % The two fields are two views of one number: editing either recomputes
+        % the other. ISI is onset-to-onset in ms, rate is 1/ISI in Hz.
+        function onISIChanged(app)
+            app.RateField.Value = 1e3/app.ISIField.Value;
+            app.checkOverlap();
+        end
+
+        function onRateChanged(app)
+            app.ISIField.Value = 1e3/app.RateField.Value;
+            app.checkOverlap();
+        end
+
+        function checkOverlap(app)
+            % Warn when the stimulus is longer than the gap between onsets, so
+            % the next sweep would start before the current one has finished.
+            app.OverlapLabel.Text = '';
+            if isempty(app.Source), return; end
+            try
+                stimMs = 1e3*mabr.stim.BlockQueue.sourceStimulusDuration(app.Source);
+            catch
+                return
+            end
+            if stimMs > app.ISIField.Value
+                app.OverlapLabel.Text = sprintf('overlap! %.1f ms stim',stimMs);
+                app.setStatus(sprintf(['Stimulus is %.2f ms but the ISI is only %.2f ms ' ...
+                    '(%.2f Hz) — sweeps will overlap. Lower the rate to %.2f Hz or below.'], ...
+                    stimMs,app.ISIField.Value,app.RateField.Value,1e3/stimMs));
+            end
+        end
+
         function onStart(app)
             if isempty(app.Source)
                 app.setStatus('Load a stimulus source first.'); return
             end
+
+            % Lock the entire UI up front: bringing the engine up blocks this
+            % callback for tens of seconds (parallel pool + worker handshake),
+            % and nothing here is safe to re-enter meanwhile. The engine
+            % reports each startup milestone into the status line as it goes.
+            app.setBusy('Starting…');
+
             try
                 app.ensureController();
+
+                app.setStatus('Configuring session…');
+                app.rememberValue(app.SubjectField,'Subject');
+                app.rememberValue(app.OutputField,'Output');
+                app.checkOverlap();
+
+                c = app.Controller;
+                c.Session.Subject.ID = app.SubjectField.Value;
+                c.Session.OutputPath = app.OutputField.Value;
+                c.setSource(app.Source);
+
+                if strcmp(app.AdvanceDrop.Value,'Correlation Threshold')
+                    c.AdvanceFcn = @mabr.stim.advance.corr_threshold;
+                else
+                    c.AdvanceFcn = @mabr.stim.advance.num_sweeps;
+                end
+                p = c.AdvanceParams;
+                p.targetSweeps  = app.TargetField.Value;
+                p.corrThreshold = app.CorrField.Value;
+                c.AdvanceParams = p;
+                c.Queue.TargetSweeps  = app.TargetField.Value;
+                c.Queue.SweepInterval = app.ISIField.Value/1e3;   % ms -> s
+
+                if isempty(app.LivePlot) || ~isvalid(app.LivePlot), app.onShowLive(); end
+                c.setLivePlot(app.LivePlot);
+
+                app.setStatus(sprintf('Starting schedule (%d blocks)…',app.Source.numBlocks));
+                c.start();
             catch me
-                app.setStatus(['Worker error: ' me.message]); return
+                app.transport(false);      % unlock so the user can fix and retry
+                app.setStatus(['Start failed: ' me.message]);
+                mabr.log.vprintf(0,1,'Start failed: %s',me.message);
+                return
             end
 
-            c = app.Controller;
-            c.Session.Subject.ID = app.SubjectField.Value;
-            c.Session.OutputPath = app.OutputField.Value;
-            c.setSource(app.Source);
-
-            if strcmp(app.AdvanceDrop.Value,'Correlation Threshold')
-                c.AdvanceFcn = @mabr.stim.advance.corr_threshold;
-            else
-                c.AdvanceFcn = @mabr.stim.advance.num_sweeps;
-            end
-            p = c.AdvanceParams;
-            p.targetSweeps  = app.TargetField.Value;
-            p.corrThreshold = app.CorrField.Value;
-            c.AdvanceParams = p;
-            c.Queue.TargetSweeps = app.TargetField.Value;
-
-            if isempty(app.LivePlot) || ~isvalid(app.LivePlot), app.onShowLive(); end
-            c.setLivePlot(app.LivePlot);
-
-            c.start();
             app.transport(true);
         end
 
@@ -314,13 +423,47 @@ classdef App < handle
         end
 
         % --- UI helpers ----------------------------------------------------
+        % Enable state has three modes, all driven from here so no callback
+        % has to reason about individual components:
+        %   busy    - startup/teardown in progress; everything is dead
+        %   running - acquiring; only the transport controls and viewers live
+        %   idle    - configurable; everything but the transport controls
+        function h = configControls(app)
+            % Settings that must not change once a run is under way.
+            h = {app.SubjectField, app.OutputField, app.BrowseButton, ...
+                 app.LoadButton, app.TestButton, app.TestingCheck, ...
+                 app.AdvanceDrop, app.TargetField, app.CorrField, ...
+                 app.ISIField, app.RateField};
+        end
+
+        function h = allControls(app)
+            h = [app.configControls, ...
+                 {app.StartButton, app.PauseButton, app.StopButton, ...
+                  app.AbortButton, app.LiveButton, app.TraceButton}];
+        end
+
+        function setBusy(app,msg)
+            % Lock the whole UI for a blocking operation (pool/worker startup).
+            setEnable(app.allControls,false);
+            app.UIFigure.Pointer = 'watch';
+            app.setStatus(msg);
+        end
+
         function transport(app,running)
-            app.StartButton.Enable = onOff(~running);
-            app.PauseButton.Enable = onOff(running);
-            app.StopButton.Enable  = onOff(running);
-            app.AbortButton.Enable = onOff(running);
-            app.TestingCheck.Enable = onOff(~running);
-            if ~running, app.PauseButton.Text = 'Pause'; end
+            % Leave busy mode and settle into running/idle enable state.
+            app.UIFigure.Pointer = 'arrow';
+            setEnable(app.configControls,~running);
+            app.StartButton.Enable  = onOff(~running);
+            app.PauseButton.Enable  = onOff(running);
+            app.StopButton.Enable   = onOff(running);
+            app.AbortButton.Enable  = onOff(running);
+            app.LiveButton.Enable   = 'on';   % viewers are safe at any time
+            app.TraceButton.Enable  = 'on';
+            if ~running
+                app.PauseButton.Text = 'Pause';
+                app.onAdvanceChanged();       % CorrField follows the criterion
+            end
+            drawnow limitrate
         end
 
         function setSourceLabel(app)
@@ -330,7 +473,9 @@ classdef App < handle
         end
 
         function setStatus(app,txt)
+            if ~isvalid(app.UIFigure), return; end
             app.StatusLabel.Text = txt;
+            drawnow   % status arrives mid-blocking-call; force the repaint
         end
     end
 end
@@ -338,6 +483,16 @@ end
 % ======================= local helpers ================================
 function s = onOff(tf)
 if tf, s = 'on'; else, s = 'off'; end
+end
+
+function setEnable(controls,tf)
+% Set Enable on a cell array of components. They are different classes, so
+% they cannot be concatenated into one handle array for a vectorized set().
+state = onOff(tf);
+for i = 1:numel(controls)
+    c = controls{i};
+    if ~isempty(c) && isvalid(c), c.Enable = state; end
+end
 end
 
 function blocks = pick_blocks(S)

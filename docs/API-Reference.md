@@ -44,9 +44,14 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 | `targetSweeps(idx)` | Per-block target, from `Meta.NumSweeps` or the queue default |
 | `recordRun(idx,nSweeps)` | Record how many sweeps a block actually produced |
 | `Order`, `Selected` | Play order and per-block enable — the hooks for randomized or interleaved schedules |
+| `SweepInterval` | Inter-stimulus interval (s, onset-to-onset). Blocks are re-tiled at this rate; `0` keeps the source's own timing. Default `1/21.1` |
+| `stimulusDuration([idx])` | Longest single-sweep duration (s) — compare against `SweepInterval` to detect overlap |
 | `SilencePad`, `PlayerChannels`, `RecorderChannels`, `Device` | Padding and device/channel mapping |
 | `TestingFrameDelay` | Per-frame pause used to pace loopback in tests only |
-| `buildSpec(blk,cfg,silencePad)` | Static. Synthesizes the timing channel, pads, and builds the spec |
+| `buildSpec(blk,cfg,silencePad,sweepInterval)` | Static. Re-tiles at `sweepInterval`, synthesizes the timing channel, pads, and builds the spec |
+| `retile(blk,sweepInterval)` | Static. Re-lays a block's sweep waveform out at the given ISI, keeping its sweep count |
+| `sweepWaveform(blk)` | Static. Recovers the single-sweep waveform from an already-tiled block |
+| `sourceStimulusDuration(source,[idx])` | Static. `stimulusDuration` over a source, for callers with no queue yet |
 | `resolveOnsets(blk,N)` | Static. Resolves `SweepOnsets` or `SweepRate` into onset indices |
 
 ### Advance criteria — `+mabr/+stim/+advance/`

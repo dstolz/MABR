@@ -55,14 +55,17 @@ classdef AcqController < handle
     end
 
     methods
-        function obj = AcqController(cfg,testing)
+        function obj = AcqController(cfg,testing,progressFcn)
+            % progressFcn (optional) receives char status messages while the
+            % engine starts up; forwarded straight to mabr.acq.Engine.
             if nargin < 1 || isempty(cfg), cfg = mabr.Config; end
             if nargin < 2 || isempty(testing), testing = false; end
+            if nargin < 3, progressFcn = []; end
             obj.Config  = cfg;
             obj.Testing = logical(testing);
 
             obj.Session = mabr.data.Session(cfg);
-            obj.Engine  = mabr.acq.Engine(cfg,obj.Testing);
+            obj.Engine  = mabr.acq.Engine(cfg,obj.Testing,progressFcn);
             obj.Listeners = [ ...
                 addlistener(obj.Engine,'StateChanged', @(~,e) obj.on_engine_state(e)); ...
                 addlistener(obj.Engine,'BlockCompleted',@(~,~) obj.on_block_completed()); ...

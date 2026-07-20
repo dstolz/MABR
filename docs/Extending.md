@@ -99,6 +99,8 @@ end
 
 [BlockQueue](../+mabr/+stim/BlockQueue.m) turns your spec into what the worker streams: it pairs your signal with a **synthesized timing channel** (a unit pulse at each onset), brackets the result with silence for device settling, pads to a whole number of frames, and attaches channel mappings. MABR owns the timing contract because sweep extraction depends on it — see [Architecture](Architecture.md#what-mabr-does-not-do).
 
+MABR also owns the **presentation rate**. Whatever rate you tiled your block at, `BlockQueue` extracts the single-sweep waveform back out (first onset to the next, trailing silence trimmed) and re-tiles it at `SweepInterval` — the inter-stimulus interval in seconds, set from the GUI's linked ISI/rate fields and defaulting to 21.1 Hz. Your `SweepOnsets` are the fallback used only when `SweepInterval` is `0`. If your stimulus is longer than the interval the operator picks, the sweeps are summed where they overlap and the condition is logged; the GUI warns before acquisition starts.
+
 `BlockQueue` also controls schedule order (`Order`), which blocks are enabled (`Selected`), padding (`SilencePad`), and channel mapping (`PlayerChannels`, `RecorderChannels`). Reordering `Order` is how you would implement a randomized or interleaved schedule.
 
 ## Defining when a block ends

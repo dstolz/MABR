@@ -42,6 +42,7 @@ classdef Engine < handle
         ResultQueue              % DataQueue  (worker -> client)
         CmdQueue                 % PollableDataQueue (client -> worker)
         MsgListener
+        Progress = @(~) []       % startup progress sink, fcn(char)
     end
 
     events
@@ -51,18 +52,24 @@ classdef Engine < handle
     end
 
     methods
-        function obj = Engine(cfg,testing)
+        function obj = Engine(cfg,testing,progressFcn)
+            % progressFcn (optional) is called with a char status message at
+            % each startup milestone so a UI can show what is happening while
+            % the pool spins up (that can take tens of seconds).
             if nargin < 1 || isempty(cfg), cfg = mabr.Config; end
             if nargin < 2 || isempty(testing), testing = false; end
+            if nargin >= 3 && ~isempty(progressFcn), obj.Progress = progressFcn; end
             obj.Config  = cfg;
             obj.Testing = logical(testing);
 
             % Read-only view of the ring buffer (also creates the backing
             % files if this is a fresh checkout).
+            obj.report('Mapping ring buffer…');
             obj.RingBuffer = mabr.acq.RingBuffer(cfg,false);
 
             % Warm pool + async worker.
-            obj.Pool = mabr.acq.Engine.ensure_pool();
+            obj.Pool = mabr.acq.Engine.ensure_pool(obj.Progress);
+            obj.report('Parallel pool ready (%d worker(s)).',obj.Pool.NumWorkers);
             % Ensure the +mabr namespace resolves on the worker BEFORE the cfg
             % argument is deserialized (defends against a reused pool that
             % predates the MABR path; a fresh pool already has it via
@@ -75,6 +82,7 @@ classdef Engine < handle
             obj.ResultQueue = parallel.pool.DataQueue;
             obj.MsgListener = afterEach(obj.ResultQueue,@(m) obj.on_worker_message(m));
 
+            obj.report('Launching acquisition worker…');
             mabr.log.vprintf(1,'Launching acquisition worker (testing = %d)',obj.Testing);
             obj.Future = parfeval(obj.Pool,@mabr.acq.worker_loop,0, ...
                 mabr.Config.root,obj.ResultQueue,obj.Testing);
@@ -91,16 +99,22 @@ classdef Engine < handle
             % Block (bounded) until the worker handshake arrives. This is a
             % one-time startup wait, not a per-frame poll.
             if nargin < 2 || isempty(timeout), timeout = 120; end
-            t0 = tic;
+            t0 = tic; lastReport = -Inf;
             while isempty(obj.CmdQueue) && toc(t0) < timeout
                 if ~isempty(obj.Future) && strcmp(obj.Future.State,'finished') ...
                         && ~isempty(obj.Future.Error)
                     error('mabr:acq:Engine:workerFailed', ...
                         'Worker failed to start: %s',obj.Future.Error.message);
                 end
+                if toc(t0) - lastReport >= 1
+                    lastReport = toc(t0);
+                    obj.report('Waiting for worker handshake… (%.0f s of %.0f)', ...
+                        lastReport,timeout);
+                end
                 pause(0.05);   % lets the afterEach handshake callback run
             end
             tf = ~isempty(obj.CmdQueue);
+            if tf, obj.report('Worker ready (PID %d).',obj.WorkerPID); end
             if ~tf
                 error('mabr:acq:Engine:handshakeTimeout', ...
                     'Timed out waiting for the acquisition worker handshake.');
@@ -134,6 +148,15 @@ classdef Engine < handle
     end
 
     methods (Access = private)
+        function report(obj,fmt,varargin)
+            % Push a startup status message to the UI sink (never fatal).
+            try
+                obj.Progress(sprintf(fmt,varargin{:}));
+            catch me
+                mabr.log.vprintf(2,'Progress callback failed: %s',me.message);
+            end
+        end
+
         function send_cmd(obj,cmd,data)
             if nargin < 3, data = []; end
             assert(~isempty(obj.CmdQueue),'mabr:acq:Engine:notReady', ...
@@ -178,13 +201,19 @@ classdef Engine < handle
     end
 
     methods (Static)
-        function pool = ensure_pool()
+        function pool = ensure_pool(progressFcn)
             % Reuse an existing 1-process pool or create one.
+            if nargin < 1 || isempty(progressFcn), progressFcn = @(~) []; end
+            progressFcn('Checking for a parallel pool…');
             pool = gcp('nocreate');
             if ~isempty(pool)
-                if pool.NumWorkers >= 1, return; end
+                if pool.NumWorkers >= 1
+                    progressFcn('Reusing the existing parallel pool.');
+                    return
+                end
                 delete(pool);
             end
+            progressFcn('Starting parallel pool (first launch can take ~30–60 s)…');
             try
                 pool = parpool('Processes',1);
             catch
