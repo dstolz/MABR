@@ -32,6 +32,7 @@ stim(N).ID     = "click_rare";
 | `SampleRate` | DAC rate; defaults to `Config.DACSampleRate` and **must equal** it |
 | `Repetitions` | Starting repetition count the GUI picks up (the operator can still change it) |
 | `Timing` | `[N x 1]` your own timing channel for this stimulus; otherwise MABR synthesizes a unit pulse at the onset |
+| `alternatePolarity` | Logical. Present successive repetitions as `+1, -1, +1, …`, splitting the repetition count between the two polarities rather than doubling it |
 
 **Every other field passes straight through** into the block metadata and on to the saved `.abr`. Numeric scalars are additionally advertised as `informativeParams`, so the offline pipeline picks them up without any extra declaration:
 
@@ -125,14 +126,17 @@ To expose a new criterion in the GUI, add it to the `AdvanceDrop` items and the 
 
 ## Building a different front end
 
-[AcqController](../+mabr/+ui/AcqController.m) is the whole program; [App](../+mabr/+ui/App.m) is one view of it. Drive the controller and listen to four events:
+[AcqController](../+mabr/+ui/AcqController.m) is the whole program; [App](../+mabr/+ui/App.m) is one view of it. Drive the controller and listen to its events:
 
 | Event | Payload | Meaning |
 |-------|---------|---------|
 | `StateChanged` | `ProgStateEventData.State` | Program flow changed |
 | `MetricsUpdated` | `.Info` = `numSweeps`, `corr` | Live metrics |
-| `BlockSaved` | `.Info.file` | A block was written — fires **once per stimulus** recovered from the run |
+| `BlockReady` | `.Info.block` | A finalized `mabr.data.Block` is available — fires **once per stimulus** recovered from the run, whether or not it was written to disk |
+| `BlockSaved` | `.Info.file` | A block was written — fires once per stimulus, and only when the `Session` has an `OutputPath` |
 | `ScheduleComplete` | — | Schedule finished |
+
+A viewer should listen to `BlockReady`, not `BlockSaved`: it carries the block itself, and a session configured with no output path never raises `BlockSaved` at all.
 
 Public surface: `setStimuli`, `setLivePlot`, `waitUntilReady`, `start`, `pauseAcq`, `resumeAcq`, `stopBlock`, `abort`, and the settable properties `Window`, `AdvanceFcn`, `AdvanceParams`, `UseBandpass`, `UseNotch`. `setStimuli` accepts either a `StimulusSet` or the raw struct array, and builds a default `Schedule` you then configure:
 

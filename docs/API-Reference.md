@@ -56,6 +56,7 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 | `build()` | (Re)build `Runs` from `Repetitions` + `Strategy`. **Required after changing either** |
 | `NumRuns`, `current()`, `advance()`, `reset()`, `isComplete()` | Run walk; `advance` returns `[]` when finished |
 | `runSequence(r)` | The stimulus index presented at each onset of run `r` |
+| `runPolarity(r)` | The polarity (`+1`/`-1`) applied at each onset of run `r` |
 | `renderSpec(r)` | Build the acquisition spec for run `r` — the argument to `Engine.prep` |
 | `isIntermixed()` | True when one run mixes stimuli (the last three strategies) |
 | `summary()` | Plan overview: `numRuns`, `presentations`, `repetitions`, `duration` (s), `intermixed` |
@@ -154,7 +155,7 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 | `DetrendPoly`, `SmoothSpan` | Post-processing applied to `SweepMean` |
 | `IsArtifact`, `SweepValue`, `DecimationFactor` | Bookkeeping |
 
-**`Block` surface** — `Stim`, `ADC`, `Timing`, `Metrics`, `StartTime`; dependent `NumSweeps`, `Label`; `computeMetrics()` populates `Metrics.corr`/`.rms`/`.snr` from the `+metrics` functions.
+**`Block` surface** — `Stim`, `ADC`, `Timing`, `Metrics`, `StartTime`, `SweepPolarity` (`+1`/`-1` per sweep, aligned with `ADC.SweepOnsets`); dependent `NumSweeps`, `Label`; `computeMetrics()` populates `Metrics.corr`/`.rms`/`.snr` from the `+metrics` functions.
 
 **`Session` surface** — `Subject`, `Device`, `DACSampleRate`, `ADCSampleRate`, `OutputPath`, `Queue`, `Blocks`, `StartTime`; dependent `DecimationFactor`, `NumBlocks`; `addBlock(block)`, `saveBlock(block,baseName)`.
 
@@ -194,13 +195,13 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 | `AdvanceFcn`, `AdvanceParams` | The criterion and its context. `targetSweeps` is overwritten per run with that run's presentation count |
 | `UseBandpass`, `UseNotch` | Filter chain applied at finalization |
 | `Engine`, `Session`, `Stimuli`, `Schedule`, `LivePlot`, `State`, `Testing` | Read-only properties |
-| events `StateChanged`, `MetricsUpdated`, `BlockSaved`, `ScheduleComplete` | The front-end contract |
+| events `StateChanged`, `MetricsUpdated`, `BlockReady`, `BlockSaved`, `ScheduleComplete` | The front-end contract. `BlockReady` carries the finalized `Block` (`.Info.block`) and always fires; `BlockSaved` carries a path (`.Info.file`) and fires only when the `Session` has an `OutputPath` |
 
 At finalization the run's sweeps are split by `Schedule.runSequence`, yielding **one `Block` and one `.abr` per stimulus** that appeared in it. A homogeneous run saves the continuous trace; an intermixed one saves each stimulus's sweep windows concatenated, so files do not each carry a full copy of the shared recording.
 
 **`LivePlot`** — `LivePlot(parent)` (omit `parent` for its own figure), `update(postSweep,tvec,R,target)`, `reset()`.
 
-**`TraceOrganizer`** — `addBlock(block)`, `addTrace(data,time,label)`, `markPeaks()`, `show()`, `clear()`, `isvalidView()`; properties `YSpacing`, `YScaling`, `Colors`, `Traces`.
+**`TraceOrganizer`** — `addBlock(block)`, `addTrace(data,time,label,stimID)`, `markPeaks(idx)`, `clearMarkers(idx)`, `show()`, `refresh()`, `clear()`, `isvalidView()`; live updates `listenTo(controller)`, `stopListening()`; selection `select(idx,extend)`, `selectedIndices()`, `targetIndices()`; display `scaleTraces(factor,idx)`, `resetGain(idx)`, `setSpacing(s)`, `restack()`, `moveTrace(idx,delta)`, `toggleVisible(idx)`, `removeTraces(idx)`; persistence `saveView(file)`, `loadView(file)`; properties `YSpacing`, `YScaling`, `NormalizeEach`, `ShowLabels`, `Colors`, `Traces`, and read-only `Figure`/`Axes`.
 
 ## Logging — `+mabr/+log/`
 

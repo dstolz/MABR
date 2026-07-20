@@ -28,7 +28,7 @@ This control is **greyed out and forced to *All Repetitions* for intermixed stra
 
 **Show Live Plot** — opens `mabr.ui.LivePlot` (mean / most-recent / correlation bar), refreshed by a single ~20 Hz timer.
 
-**Trace Organizer** — opens `mabr.ui.TraceOrganizer`, the interactive stacked-waveform viewer.
+**Trace Organizer** — opens `mabr.ui.TraceOrganizer`, the interactive stacked-waveform viewer. Each acquired block appears as one trace labelled with its stimulus ID, and the view keeps up on its own — leave it open during a run and a new trace appears as each block completes, without stealing focus from the live view. Resize individual traces, the selection, or all of them, adjust the stack spacing, reorder and mark peaks — from the menu bar, the right-click menu, or the keyboard (`F1` lists the shortcuts) — then save the arranged view to a `.torg` file and reload it exactly as it was.
 
 ## Transport
 

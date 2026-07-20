@@ -20,6 +20,13 @@ classdef StimulusSet < handle
 %       Timing       [N x 1]       an explicit timing channel for this
 %                                  stimulus (otherwise MABR synthesizes one
 %                                  unit pulse at each onset)
+%       alternatePolarity (1,1) logical  present this entry with alternating
+%                                  polarity: successive presentations are
+%                                  multiplied by +1, -1, +1, ... so half the
+%                                  repetitions are inverted. It does NOT add
+%                                  presentations -- the repetition count is
+%                                  unchanged, it is only split between the two
+%                                  polarities (see mabr.stim.Schedule).
 %
 %   Numeric scalar extras are additionally advertised as informativeParams so
 %   the offline pipeline picks them up (see mabr.data.io.buildSIG).
@@ -36,7 +43,8 @@ classdef StimulusSet < handle
 
     properties (Constant, Access = private)
         % Fields MABR interprets itself; everything else is passthrough metadata.
-        ReservedFields = {'signal','ID','SampleRate','Repetitions','Timing'};
+        ReservedFields = {'signal','ID','SampleRate','Repetitions','Timing', ...
+                          'alternatePolarity'};
     end
 
     properties (SetAccess = private)
@@ -101,6 +109,20 @@ classdef StimulusSet < handle
             if isfield(obj.Stimuli,'Timing'), t = obj.Stimuli(i).Timing; end
         end
 
+        function tf = alternatesPolarity(obj,i)
+            % True where the entry asks to be presented with alternating
+            % polarity. With no argument, the flag for the whole bank.
+            if nargin < 2 || isempty(i), i = 1:obj.numStimuli; end
+            tf = false(size(i));
+            if obj.numStimuli == 0 || ~isfield(obj.Stimuli,'alternatePolarity')
+                return
+            end
+            for k = 1:numel(i)
+                obj.checkRange(i(k));
+                tf(k) = obj.Stimuli(i(k)).alternatePolarity;
+            end
+        end
+
         function s = id(obj,i)
             obj.checkRange(i);
             s = obj.Stimuli(i).ID;
@@ -149,6 +171,9 @@ classdef StimulusSet < handle
 
             m    = struct();
             m.ID = char(string(s.ID));
+            % Reserved, but carried into metadata anyway: how the condition was
+            % presented is part of what it means, and offline analysis needs it.
+            m.alternatePolarity = logical(s.alternatePolarity);
 
             extra = setdiff(fieldnames(s),mabr.stim.StimulusSet.ReservedFields,'stable');
             ip    = {};
@@ -200,6 +225,17 @@ classdef StimulusSet < handle
             end
             assert(isscalar(s.SampleRate),'mabr:stim:StimulusSet:badRate', ...
                 'Stimulus entry %d has a non-scalar SampleRate.',idx);
+
+            % Normalized (rather than left absent) so every entry carries the
+            % field: struct-array concatenation needs one common field set.
+            if ~isfield(s,'alternatePolarity') || isempty(s.alternatePolarity)
+                s.alternatePolarity = false;
+            end
+            assert(isscalar(s.alternatePolarity) && ...
+                   (islogical(s.alternatePolarity) || isnumeric(s.alternatePolarity)), ...
+                'mabr:stim:StimulusSet:badAltPolarity', ...
+                'Stimulus entry %d: alternatePolarity must be a logical scalar.',idx);
+            s.alternatePolarity = logical(s.alternatePolarity);
 
             if isfield(s,'Timing') && ~isempty(s.Timing)
                 s.Timing = single(s.Timing(:));

@@ -117,14 +117,19 @@ It does own the **presentation settings** — the stimulus bank, per-stimulus re
 
 Layout lives in `createComponents` and is treated as generated code — a rewrite of the layout should not need to touch the callbacks. Logic lives in the `on*` callbacks and event handlers below it. `syncAdvanceEnables` is deliberately separate from `onStrategyChanged`: `transport()` calls it too, and it must not write to the status line there.
 
-The four events the app listens for:
+The events the app listens for:
 
 | Event | Payload | App response |
 |-------|---------|--------------|
 | `StateChanged` | `ProgStateEventData.State` | Lamp colour, state label, button enable states |
 | `MetricsUpdated` | `.Info` = `numSweeps`, `corr` | Sweep and correlation labels |
-| `BlockSaved` | `.Info.file` | Status line; adds the block to the Trace Organizer. Fires once per stimulus recovered from the run, so an intermixed run raises it several times |
+| `BlockReady` | `.Info.block` | Not handled by `App` — the Trace Organizer subscribes to it directly (see below) |
+| `BlockSaved` | `.Info.file` | Status line. Fires once per stimulus recovered from the run, so an intermixed run raises it several times |
 | `ScheduleComplete` | — | Status line; resets transport buttons |
+
+`BlockReady` and `BlockSaved` both fire once per stimulus recovered from the run, but they are not interchangeable: `BlockReady` carries the finalized `mabr.data.Block` and fires whether or not the session is writing files, while `BlockSaved` carries only a path and is skipped entirely when the `Session` has no `OutputPath`. Anything that needs the *data* listens to `BlockReady`.
+
+Rather than the app pushing traces into the viewer, `onTraceOrg` hands the controller to `TraceOrganizer.listenTo`, and the organizer adds each block itself as it lands — so a view left open during a run fills in live. Opening the organizer re-points the listener instead of adding a second one, and `ensureController` re-points it again when the controller is rebuilt, so neither action can duplicate traces or leave the view attached to a deleted controller.
 
 `ensureController` rebuilds the controller when the Testing checkbox changes, since testing mode is fixed at Engine construction. It is also where the one-time `waitUntilReady(120)` handshake happens — the only bounded wait in the program, and the reason the first Start is slower than the rest.
 

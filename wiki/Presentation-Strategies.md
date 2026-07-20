@@ -38,7 +38,13 @@ The last three strategies mix different stimuli inside one continuous acquisitio
 - The **timing channel is synthesized by MABR** — one unit pulse per onset, unless the entry supplied an explicit `Timing`, in which case it is `max`-merged in. Sweep extraction depends on this channel.
 - The run is bracketed by `SilencePad` (default 0.25 s) of silence for device settling and response tail, then zero-padded to a whole number of frames.
 
-The returned spec carries `PlayMatrix`, `SampleRate`, `ExpectedOnsets`, `StimulusIndex`, `PlayerChannels`, `RecorderChannels`, and `Meta`.
+The returned spec carries `PlayMatrix`, `SampleRate`, `ExpectedOnsets`, `StimulusIndex`, `Polarity`, `PlayerChannels`, `RecorderChannels`, and `Meta`.
+
+## Alternating polarity
+
+An entry flagged `alternatePolarity` (see [[Stimulus Package Contract]]) has its successive presentations multiplied by `+1, -1, +1, …`, so half of them are inverted. This **splits** the entry's repetition count between the two polarities — it does not add presentations, and a run's total length is unchanged.
+
+Polarity is assigned per presentation and travels with it through shuffling: under `shuffled-cycles` or `shuffled`, the inverted presentations land in shuffled positions rather than in a fixed alternation. `Schedule.runPolarity(r)` returns the sign at each onset of run `r`, and `renderSpec` reports the same vector as the spec's `Polarity`. Entries without the flag are always `+1`, so a bank can mix flagged and unflagged stimuli in one run.
 
 ### Length check
 

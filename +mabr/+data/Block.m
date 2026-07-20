@@ -15,6 +15,11 @@ classdef Block
 %   the external package supplied, with informativeParams/Label driving
 %   display and the offline-compatible .abr write.
 %
+%   SweepPolarity records the sign (+1/-1) the stimulus was presented with at
+%   each sweep, aligned element-for-element with ADC.SweepOnsets. It is all +1
+%   unless the entry set alternatePolarity, and is written to the .abr file as
+%   ADC.SweepPolarity so offline analysis can separate the two polarities.
+%
 % Daniel Stolzberg (c) 2019-2026
 
     properties
@@ -23,6 +28,7 @@ classdef Block
         Timing    (1,1) mabr.data.Recording     % recorded timing channel (optional)
         Metrics   (1,1) struct = struct();      % computed metrics
         StartTime (1,:) char = '';              % ISO-ish timestamp
+        SweepPolarity (1,:) double = [];        % +1/-1 per ADC.SweepOnsets entry
     end
 
     properties (Dependent)

@@ -11,13 +11,14 @@ stim(i).signal        % [N x 1] required — calibrated waveform for a SINGLE pr
 stim(i).ID            % string  required — names the stimulus condition
 ```
 
-Three optional fields are given meaning:
+Four optional fields are given meaning:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `SampleRate` | scalar | Defaults to `Config.DACSampleRate` (192000). Must equal it. |
 | `Repetitions` | scalar | Per-entry starting repetition count the GUI picks up |
 | `Timing` | `[N x 1]` | Explicit timing channel; must match `signal` in length. Otherwise MABR synthesizes one unit pulse at each onset. |
+| `alternatePolarity` | logical | Present this entry with alternating polarity: successive presentations are multiplied by `+1, -1, +1, …`. This **splits** the repetition count between the two polarities — it does not double it. See [[Presentation Strategies]]. |
 
 **Every other field passes through untouched** into the block metadata and on into the saved `.abr` file, so the external package can add parameters without MABR changing. Numeric scalar extras are additionally advertised in `informativeParams`, which is how the offline pipeline discovers them.
 
@@ -32,6 +33,7 @@ Name a passthrough field `Frequency` (kHz) and `Level` (dB) to get filenames tha
 | `mabr:stim:StimulusSet:notStruct` | Not a struct array |
 | `mabr:stim:StimulusSet:noSignal` / `:noID` | Missing or empty required field |
 | `mabr:stim:StimulusSet:timingLength` | `Timing` length ≠ `signal` length |
+| `mabr:stim:StimulusSet:badAltPolarity` | `alternatePolarity` is not a logical scalar |
 | `mabr:stim:StimulusSet:mixedRates` | Entries disagree on `SampleRate` — one run is rendered against one clock |
 | `mabr:stim:StimulusSet:sampleRate` | Rate ≠ `Config.DACSampleRate`; the ring buffer and sweep windowing assume it |
 

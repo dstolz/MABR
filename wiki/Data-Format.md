@@ -25,11 +25,33 @@ Written by `mabr.data.io.writeABR`. The offline pipeline reads exactly these:
 | `SIG.(param)` | one numeric value per informative param |
 | `SIG.Label` | cellstr; also drives the filename |
 
+Two more fields are always written for offline analysis. The stock pipeline does not read them, but they are what lets analysis code tell stimulus polarities apart:
+
+| Field | Contents |
+| --- | --- |
+| `ADC.SweepPolarity` | `+1`/`-1` per sweep, aligned element-for-element with `ADC.SweepOnsets` |
+| `SIG.alternatePolarity` | `0`/`1` — whether this condition was presented with alternating polarity |
+
+Both are unconditional, so analysis code can read them without testing for their existence: a fixed-polarity condition writes all `+1` and `0`. `SIG.alternatePolarity` is deliberately **not** listed in `informativeParams` — those become grouping dimensions in `extractABRResponses`, and this describes how a condition was run rather than defining a separate condition. Files written before this field existed import as all `+1` (see `mabr.data.io.importLegacy`).
+
+Working with the two polarities offline:
+
+```matlab
+a = load(f,'-mat','ABR_Data'); D = a.ABR_Data;
+p = D.ADC.SweepPolarity;          % aligned with D.ADC.SweepOnsets
+% ... segment into sweeps S [nSamples x nSweeps] as extractABRResponses does
+cond = mean(S(:,p ==  1),2);      % condensation
+rare = mean(S(:,p == -1),2);      % rarefaction
+abrs = mean(S,2);                 % standard alternating average
+```
+
+Note that `extractABRResponses` **drops** sweeps whose window falls outside the trace, so its returned columns do not always correspond one-to-one with `SweepPolarity`. Segment from `ADC.Data`/`ADC.SweepOnsets` directly when you need the pairing to hold.
+
 Harmless extras the offline pipeline ignores: `SoftwareVersion`, `DataVersion`, `DecimationFactor`, `DAC.SampleRate`.
 
 ### Decimation at save time
 
-Preserved exactly as the legacy `save_abr_data` did: `resample(Data,1,df)`, `round(SweepOnsets/df)` (floored at 1, since onsets below `df/2` would otherwise round to an invalid index 0), and `ADC.SampleRate = SampleRate/df`.
+Preserved exactly as the legacy `save_abr_data` did: `resample(Data,1,df)`, `round(SweepOnsets/df)` (floored at 1, since onsets below `df/2` would otherwise round to an invalid index 0), and `ADC.SampleRate = SampleRate/df`. Decimation moves onsets but never changes how many there are, so `SweepPolarity` passes through untouched and stays aligned.
 
 ## Filenames
 

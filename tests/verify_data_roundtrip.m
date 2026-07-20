@@ -6,6 +6,9 @@ function verify_data_roundtrip()
 %       1. the ABR_Data struct exposes exactly the fields abr_analysis/ reads
 %          (ADC.SampleRate/Data/SweepOnsets, StartTime, SIG.informativeParams,
 %          numeric SIG params, SIG.Label);
+%       1b. the polarity fields offline analysis needs are present, aligned
+%          with SweepOnsets, and survive a load back (ADC.SweepPolarity,
+%          SIG.alternatePolarity -- which must stay out of informativeParams);
 %       2. the filename matches the pipeline's default regex;
 %       3. (if parfor_progress is installed) the UNCHANGED pipeline functions
 %          parseABRFiles + extractABRResponses load and group the files.
@@ -26,11 +29,13 @@ clean = onCleanup(@() rmdir(outDir,'s'));
 
 regex = "^SUBJ_ID_(\d+)_Frequency_([\d_]+kHz)_Level_(\d+dB)_(\d{6}T\d{6})\.abr";
 
-conds = struct('Freq',{8,16},'Level',{30,30});
+% One alternating-polarity condition and one fixed, so the polarity fields are
+% checked in both states.
+conds = struct('Freq',{8,16},'Level',{30,30},'Alt',{true,false});
 files = strings(1,numel(conds));
 
 for i = 1:numel(conds)
-    block = make_synthetic_block(Fs,df,conds(i).Freq,conds(i).Level);
+    block = make_synthetic_block(Fs,df,conds(i).Freq,conds(i).Level,conds(i).Alt);
     ffn   = mabr.data.io.writeABR(block,outDir,'SUBJ_ID_999');
     files(i) = string(ffn);
 
@@ -48,13 +53,39 @@ for i = 1:numel(conds)
     end
     assert(~isempty(datetime(D.StartTime)),'StartTime not datetime-parseable');
 
+    % --- 1b. polarity fields the offline analysis needs -----------------
+    % Always written, whether or not the condition alternated, so analysis
+    % code can read them without testing for their existence.
+    assert(isfield(D.ADC,'SweepPolarity'),'missing ADC.SweepPolarity');
+    assert(isfield(D.SIG,'alternatePolarity'),'missing SIG.alternatePolarity');
+    assert(numel(D.ADC.SweepPolarity) == numel(D.ADC.SweepOnsets), ...
+        'SweepPolarity (%d) must align with SweepOnsets (%d)', ...
+        numel(D.ADC.SweepPolarity),numel(D.ADC.SweepOnsets));
+    assert(all(ismember(D.ADC.SweepPolarity,[-1 1])),'SweepPolarity must be +/-1');
+    assert(D.SIG.alternatePolarity == conds(i).Alt, ...
+        'SIG.alternatePolarity does not reflect how the condition was run');
+    % It must stay OUT of informativeParams: those become grouping
+    % dimensions in extractABRResponses.
+    assert(~ismember('alternatePolarity',cellstr(D.SIG.informativeParams)), ...
+        'alternatePolarity must not be an informativeParam');
+    if conds(i).Alt
+        assert(sum(D.ADC.SweepPolarity == -1) == floor(numel(D.ADC.SweepOnsets)/2), ...
+            'An alternating condition should have half its sweeps inverted');
+    else
+        assert(all(D.ADC.SweepPolarity == 1),'A fixed condition must be all +1');
+    end
+    % ...and it must survive a load back into the data model.
+    b2 = mabr.data.io.importLegacy(ffn);
+    assert(isequal(b2.SweepPolarity(:)',double(D.ADC.SweepPolarity(:))'), ...
+        'importLegacy lost SweepPolarity');
+
     % --- 2. filename regex ---------------------------------------------
     [~,fn,ext] = fileparts(ffn);
     assert(~isempty(regexp([fn ext],regex,'once')), ...
         'Filename "%s" does not match the offline regex',[fn ext]);
     fprintf('  wrote %s  (Fs=%g, %d onsets)\n',[fn ext],D.ADC.SampleRate,numel(D.ADC.SweepOnsets));
 end
-fprintf('  PASS: struct contract + filename regex\n');
+fprintf('  PASS: struct contract + polarity fields + filename regex\n');
 
 % --- 3. full offline pipeline (optional) --------------------------------
 if isempty(which('parfor_progress'))
@@ -77,7 +108,7 @@ end
 
 
 % =====================================================================
-function block = make_synthetic_block(Fs,df,freqkHz,leveldB)
+function block = make_synthetic_block(Fs,df,freqkHz,leveldB,alt)
 % A short block with a repeatable evoked wavelet at each sweep onset, so the
 % offline pipeline has something to segment and correlate.
 sweepRate = 21.1;
@@ -99,9 +130,16 @@ end
 rec = mabr.data.Recording(Fs,data,onsets,round(0.01*Fs),df);
 
 meta = struct('Frequency',freqkHz,'Level',leveldB,'Polarity',1, ...
+    'alternatePolarity',alt, ...
     'informativeParams',{{'Frequency','Level'}}, ...
     'Label',{{sprintf('Frequency = %g kHz',freqkHz),sprintf('Level = %g dB',leveldB)}});
 stim = struct('Meta',meta,'SampleRate',Fs);
 
 block = mabr.data.Block(stim,rec);
+if alt
+    block.SweepPolarity = repmat([1 -1],1,ceil(nSweeps/2));
+    block.SweepPolarity = block.SweepPolarity(1:nSweeps);
+else
+    block.SweepPolarity = ones(1,nSweeps);
+end
 end

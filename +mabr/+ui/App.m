@@ -273,6 +273,11 @@ classdef App < handle
                 addlistener(app.Controller,'MetricsUpdated', @(~,e) app.onMetrics(e)); ...
                 addlistener(app.Controller,'BlockSaved',     @(~,e) app.onBlockSaved(e)); ...
                 addlistener(app.Controller,'ScheduleComplete',@(~,~) app.onScheduleComplete())];
+            % An organizer left open across a controller rebuild would still be
+            % listening to the deleted one, so re-point it at the new.
+            if ~isempty(app.TraceOrg) && isvalid(app.TraceOrg)
+                app.TraceOrg.listenTo(app.Controller);
+            end
             app.Controller.waitUntilReady(120);
             app.setStatus('Worker ready.');
         end
@@ -513,6 +518,9 @@ classdef App < handle
                 for i = 1:app.Controller.Session.NumBlocks
                     app.TraceOrg.addBlock(app.Controller.Session.Blocks(i));
                 end
+                % From here on the organizer adds each new block itself, so a
+                % view left open during a run fills in as blocks complete.
+                app.TraceOrg.listenTo(app.Controller);
             end
             app.TraceOrg.show();
         end

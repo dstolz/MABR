@@ -80,6 +80,7 @@ Both are enumerations sent as messages. They are never written into shared memor
 | `Device` | char | Optional ASIO device name |
 | `ExpectedOnsets` | `[k x 1]` | Nominal onsets, for reference |
 | `StimulusIndex` | `[k x 1]` | Which stimulus is presented at each onset |
+| `Polarity` | `[k x 1]` | Sign (`+1`/`-1`) applied to the waveform at each onset |
 | `TestingFrameDelay` | scalar | Loopback pacing, tests only |
 
 The worker ignores `ExpectedOnsets` and `StimulusIndex` entirely — it just streams the matrix. `StimulusIndex` exists for the **client's** finalization step: it is how `AcqController` maps recorded sweeps back to the stimulus that produced them when a run intermixes conditions.

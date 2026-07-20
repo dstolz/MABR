@@ -23,8 +23,14 @@ classdef AcqController < handle
 %   Events the App can listen to:
 %       StateChanged     - program flow changed (mabr.ui.ProgStateEventData)
 %       MetricsUpdated   - live metrics changed (ProgStateEventData.Info)
+%       BlockReady       - a finalized mabr.data.Block is available
+%                          (.Info.block); fires once per stimulus recovered
+%                          from the run, whether or not it was written to
+%                          disk. This is what viewers (mabr.ui.TraceOrganizer)
+%                          listen to so a trace appears as each block lands.
 %       BlockSaved       - a block was written (.Info.file); fires once per
-%                          stimulus recovered from the run
+%                          stimulus recovered from the run, and only when the
+%                          Session has an OutputPath
 %       ScheduleComplete - the whole schedule finished
 %
 % Daniel Stolzberg (c) 2019-2026
@@ -56,6 +62,7 @@ classdef AcqController < handle
         BlockStart (1,:) char = '';
         CurRun     (1,1) double = 0;    % index of the run being acquired
         CurSeq     (1,:) double = [];   % stimulus index at each of its onsets
+        CurPol     (1,:) double = [];   % polarity (+1/-1) at each of its onsets
         HaltAfterBlock (1,1) logical = false;
         Listeners
     end
@@ -63,6 +70,7 @@ classdef AcqController < handle
     events
         StateChanged
         MetricsUpdated
+        BlockReady
         BlockSaved
         ScheduleComplete
     end
@@ -175,6 +183,7 @@ classdef AcqController < handle
 
             obj.CurRun = r;
             obj.CurSeq = spec.StimulusIndex(:)';
+            obj.CurPol = spec.Polarity(:)';
 
             % The live view's progress bar tracks this run's own presentation
             % count, which the schedule — not the advance criterion — fixes.
@@ -200,7 +209,13 @@ classdef AcqController < handle
             obj.set_state(mabr.ui.ProgState.BlockComplete);
 
             try
-                files = obj.finalize_run();
+                [files,blocks] = obj.finalize_run();
+                % Announce the blocks themselves first: a viewer should get the
+                % data whether or not the session is writing files.
+                for i = 1:numel(blocks)
+                    notify(obj,'BlockReady',mabr.ui.ProgStateEventData( ...
+                        obj.State,struct('block',blocks(i))));
+                end
                 for i = 1:numel(files)
                     notify(obj,'BlockSaved',mabr.ui.ProgStateEventData( ...
                         obj.State,struct('file',files{i})));
@@ -284,11 +299,14 @@ classdef AcqController < handle
         end
 
         % --- Finalization / save -------------------------------------------
-        function files = finalize_run(obj)
+        function [files,blocks] = finalize_run(obj)
             % Split the run's recording into one Block (and one .abr) per
-            % stimulus that appeared in it, and return the files written.
-            files = {};
-            rb    = obj.Engine.RingBuffer;
+            % stimulus that appeared in it, and return the blocks built and the
+            % files written. There is one block per stimulus present; files is
+            % empty when the Session has no OutputPath.
+            files  = {};
+            blocks = mabr.data.Block.empty;
+            rb     = obj.Engine.RingBuffer;
             [rawSignal,rawTiming] = rb.readBlock();   % chronological, wrap-safe
             if numel(rawSignal) < 2, return; end
 
@@ -303,10 +321,13 @@ classdef AcqController < handle
             % there. A run can end early (Stop/Abort, or an advance criterion),
             % so trust whichever of the two is shorter.
             seq = obj.CurSeq;
+            pol = obj.CurPol;
             n   = min(numel(onsetsRaw),numel(seq));
             if n < 1, return; end
             onsetsRaw = onsetsRaw(1:n);
             seq       = seq(1:n);
+            % Polarity is per presentation, so it truncates with the sequence.
+            if numel(pol) >= n, pol = pol(1:n); else, pol = ones(1,n); end
 
             % Decimate to the analysis rate at finalization so the Recording
             % (and its filter design) are self-consistent. io then saves it
@@ -344,9 +365,14 @@ classdef AcqController < handle
                 stimMeta = struct('Meta',obj.Stimuli.meta(u), ...
                                   'SampleRate',obj.Stimuli.SampleRate);
                 blk = mabr.data.Block(stimMeta,rec,obj.BlockStart);
+                % Per-sweep polarity, in the same order as the Recording's
+                % SweepOnsets, so the offline pipeline can average (or split)
+                % the two polarities of an alternating condition.
+                blk.SweepPolarity = pol(seq == u);
                 blk = blk.computeMetrics();
 
                 obj.Session.addBlock(blk);
+                blocks(end+1) = blk; %#ok<AGROW>
 
                 if ~isempty(obj.Session.OutputPath)
                     files{end+1} = mabr.data.io.writeABR(blk, ...

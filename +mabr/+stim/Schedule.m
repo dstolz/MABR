@@ -27,6 +27,16 @@ classdef Schedule < handle
 %   sampling: each entry is presented exactly its repetition count in all five.
 %   The names say "shuffled" rather than "random" for exactly that reason.
 %
+%   Alternating polarity
+%   -------------------
+%   An entry flagged alternatePolarity (see mabr.stim.StimulusSet) has its
+%   successive presentations multiplied by +1, -1, +1, ... so half of them are
+%   inverted. This SPLITS the entry's repetition count between the two
+%   polarities -- it does not double it. Polarity is assigned per presentation
+%   and travels with it through shuffling, so under a shuffled strategy the
+%   inverted presentations land in shuffled positions too. renderSpec reports
+%   the sign used at each onset in the spec's Polarity field.
+%
 %   The last three INTERMIX different stimuli inside one continuous
 %   acquisition run (isIntermixed is true). MABR records which stimulus fired
 %   at each onset in the rendered spec's StimulusIndex, and the controller
@@ -70,6 +80,7 @@ classdef Schedule < handle
 
     properties (SetAccess = private)
         Runs        (1,:) cell = {}    % each cell: stimulus indices, in play order
+        Polarities  (1,:) cell = {}    % each cell: +1/-1 per onset, same size
         CurrentRun  (1,1) double = 0   % 0 = not started / complete
         RunCounts   (1,:) double = []  % presentations actually recorded, per stimulus
     end
@@ -103,28 +114,36 @@ classdef Schedule < handle
             n    = obj.Set.numStimuli;
             reps = obj.normalizedReps();
 
-            obj.RunCounts = zeros(1,n);
-            obj.Runs      = {};
+            obj.RunCounts  = zeros(1,n);
+            obj.Runs       = {};
+            obj.Polarities = {};
             if n == 0 || ~any(reps > 0), obj.CurrentRun = 0; return; end
 
-            rs = obj.stream();
+            rs  = obj.stream();
+            alt = obj.Set.alternatesPolarity();
 
             switch lower(obj.Strategy)
                 case 'blocked'
-                    obj.Runs = obj.blockRuns(1:n,reps);
+                    [obj.Runs,obj.Polarities] = obj.blockRuns(1:n,reps,alt);
 
                 case 'shuffled-blocks'
-                    obj.Runs = obj.blockRuns(randperm(rs,n),reps);
+                    [obj.Runs,obj.Polarities] = obj.blockRuns(randperm(rs,n),reps,alt);
 
                 case 'interleaved'
-                    obj.Runs = {obj.cycleSequence(reps,false,rs)};
+                    [seq,pol] = obj.cycleSequence(reps,alt,false,rs);
+                    obj.Runs = {seq}; obj.Polarities = {pol};
 
                 case 'shuffled-cycles'
-                    obj.Runs = {obj.cycleSequence(reps,true,rs)};
+                    [seq,pol] = obj.cycleSequence(reps,alt,true,rs);
+                    obj.Runs = {seq}; obj.Polarities = {pol};
 
                 case 'shuffled'
-                    seq = obj.cycleSequence(reps,false,rs);
-                    obj.Runs = {seq(randperm(rs,numel(seq)))};
+                    [seq,pol] = obj.cycleSequence(reps,alt,false,rs);
+                    % One permutation applied to both, so each presentation
+                    % keeps the polarity it was assigned: shuffling the order
+                    % shuffles which onsets are inverted.
+                    p = randperm(rs,numel(seq));
+                    obj.Runs = {seq(p)}; obj.Polarities = {pol(p)};
 
                 otherwise
                     error('mabr:stim:Schedule:strategy', ...
@@ -162,6 +181,14 @@ classdef Schedule < handle
             seq = obj.Runs{r};
         end
 
+        function pol = runPolarity(obj,r)
+            % Polarity (+1/-1) applied at each onset of run r, in order.
+            if nargin < 2 || isempty(r), r = obj.CurrentRun; end
+            assert(r >= 1 && r <= obj.NumRuns,'mabr:stim:Schedule:runRange', ...
+                'Run index %d out of range (1..%d).',r,obj.NumRuns);
+            pol = obj.Polarities{r};
+        end
+
         function recordRun(obj,r,counts)
             % counts: presentations actually acquired, indexed by stimulus.
             if isempty(counts), return; end
@@ -174,6 +201,7 @@ classdef Schedule < handle
             % Build the acquisition play-matrix spec for run r.
             if nargin < 2 || isempty(r), r = obj.CurrentRun; end
             seq = obj.runSequence(r);
+            pol = obj.runPolarity(r);
 
             Fs     = obj.Set.SampleRate;
             period = round(Fs*obj.ISI);
@@ -220,7 +248,7 @@ classdef Schedule < handle
                 i1 = i0 + numel(w) - 1;
                 % Overlapping presentations are summed rather than clipped; the
                 % GUI warns about this up front and the log line above records it.
-                samples(i0:i1) = samples(i0:i1) + w;
+                samples(i0:i1) = samples(i0:i1) + pol(k).*w;
 
                 t = obj.Set.timing(i);
                 if isempty(t)
@@ -248,6 +276,7 @@ classdef Schedule < handle
             spec.SampleRate        = Fs;
             spec.ExpectedOnsets    = onsets;
             spec.StimulusIndex     = seq(:);      % which stimulus at each onset
+            spec.Polarity          = pol(:);      % +1/-1 applied at each onset
             spec.PlayerChannels    = obj.PlayerChannels;
             spec.RecorderChannels  = obj.RecorderChannels;
             spec.TestingFrameDelay = obj.TestingFrameDelay;
@@ -303,22 +332,33 @@ classdef Schedule < handle
             end
         end
 
-        function runs = blockRuns(~,order,reps)
-            runs = {};
+        function [runs,pols] = blockRuns(~,order,reps,alt)
+            runs = {}; pols = {};
             for i = order
-                if reps(i) > 0, runs{end+1} = repmat(i,1,reps(i)); end %#ok<AGROW>
+                if reps(i) <= 0, continue; end
+                runs{end+1} = repmat(i,1,reps(i));  %#ok<AGROW>
+                pols{end+1} = mabr.stim.Schedule.polaritySeries(reps(i),alt(i)); %#ok<AGROW>
             end
         end
 
-        function seq = cycleSequence(~,reps,shuffleWithin,rs)
+        function [seq,pol] = cycleSequence(~,reps,alt,shuffleWithin,rs)
             % Walk cycles of the still-owed stimuli. An entry leaves the cycle
             % once it has been scheduled its full repetition count, so unequal
             % repetition counts stay spread out instead of clumping at the end.
-            seq = [];
+            %
+            % Cycle c is, by construction, the c-th presentation of every entry
+            % still due, so the alternating polarity of an entry is just the
+            % sign of the cycle it appears in.
+            seq = []; pol = [];
             for c = 1:max(reps)
                 due = find(reps >= c);
-                if shuffleWithin, due = due(randperm(rs,numel(due))); end
-                seq = [seq due]; %#ok<AGROW>
+                p   = ones(1,numel(due));
+                if mod(c,2) == 0, p(alt(due)) = -1; end
+                if shuffleWithin
+                    k = randperm(rs,numel(due));
+                    due = due(k); p = p(k);
+                end
+                seq = [seq due]; pol = [pol p]; %#ok<AGROW>
             end
         end
     end
@@ -326,6 +366,14 @@ classdef Schedule < handle
     methods (Static)
         function tf = strategyIntermixes(strategy)
             tf = ismember(lower(strategy),{'interleaved','shuffled-cycles','shuffled'});
+        end
+
+        function p = polaritySeries(n,alternates)
+            % +1/-1 for n successive presentations of one entry. Alternating
+            % splits the SAME n presentations between the two polarities
+            % (ceil(n/2) normal, floor(n/2) inverted) -- it never adds any.
+            p = ones(1,n);
+            if alternates, p(2:2:end) = -1; end
         end
 
         function reps = startingRepetitions(set)

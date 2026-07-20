@@ -115,6 +115,7 @@ c.Schedule.build();                          % required after either change
 c.Session.Subject.ID = 'SUBJ_ID_001';
 c.Session.OutputPath = 'C:\data\subj001';
 
+addlistener(c,'BlockReady',      @(~,e) disp(e.Info.block.Label));
 addlistener(c,'BlockSaved',      @(~,e) fprintf('saved %s\n',e.Info.file));
 addlistener(c,'ScheduleComplete',@(~,~) disp('done'));
 
@@ -134,7 +135,7 @@ c.AdvanceParams = struct('targetSweeps',512,'corrThreshold',0.5, ...
 
 The criterion is ignored under intermixed strategies — see [Extending MABR](Extending.md#defining-when-a-run-ends).
 
-The controller is event-driven throughout — `start()` returns immediately and the schedule proceeds on engine events and a live-view timer. Do not busy-wait on its state; listen to `StateChanged`, `MetricsUpdated`, `BlockSaved`, and `ScheduleComplete`.
+The controller is event-driven throughout — `start()` returns immediately and the schedule proceeds on engine events and a live-view timer. Do not busy-wait on its state; listen to `StateChanged`, `MetricsUpdated`, `BlockReady`, `BlockSaved`, and `ScheduleComplete`.
 
 See [verify_online_advance.m](../tests/verify_online_advance.m) for the same pattern used as an end-to-end test, including how to block until completion in a script.
 

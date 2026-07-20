@@ -53,14 +53,48 @@ Passing a container to the constructor embeds the plot rather than opening a fig
 
 ### TraceOrganizer
 
-[mabr.ui.TraceOrganizer](../+mabr/+ui/TraceOrganizer.m) manages an array of [mabr.ui.Trace](../+mabr/+ui/Trace.m) objects, each holding a waveform, time base, label, colour, vertical offset, and its [Marker](../+mabr/+ui/Marker.m) objects.
+[mabr.ui.TraceOrganizer](../+mabr/+ui/TraceOrganizer.m) manages an array of [mabr.ui.Trace](../+mabr/+ui/Trace.m) objects, each holding a waveform, time base, stimulus ID, label, colour, per-trace amplitude `Gain`, vertical offset, and its [Marker](../+mabr/+ui/Marker.m) objects.
 
 ```matlab
 to = mabr.ui.TraceOrganizer();
 to.addBlock(block);                    % a finalized mabr.data.Block
-to.addTrace(data,time,label);          % or arbitrary data
+to.addTrace(data,time,label,stimID);   % or arbitrary data
 to.markPeaks();
 to.show();
+```
+
+Each trace is labelled on the plot with the stimulus ID `addBlock` reads from `block.Stim.Meta.ID`, falling back to the descriptive label when there is no stimulus metadata.
+
+To have the stack fill in during a run rather than only when reopened, point the organizer at a controller:
+
+```matlab
+to.listenTo(controller);   % adds a trace on every AcqController BlockReady
+to.stopListening();        % detach
+```
+
+`listenTo` tracks one controller at a time — calling it again re-points the listener rather than stacking a second one, so re-opening the view cannot duplicate traces. The handler is wrapped in a try/catch: it runs on the acquisition path, so a plotting error must never propagate back into the controller mid-schedule. New blocks are drawn without raising the figure, so an auto-update cannot steal focus from the live view. `App` wires this up when you open the Trace Organizer.
+
+Every command is reachable three ways — the menu bar, the right-click context menu, and the keyboard — so nothing is discoverable only by memorization; press `F1` in the figure for the shortcut list. Amplitude commands act on the current selection, or on every trace when nothing is selected. Click a trace or its label to select it, shift- or ctrl-click to extend.
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | amplitude larger / smaller |
+| `Shift+Up` / `Shift+Down` | spacing wider / narrower |
+| `Ctrl+Up` / `Ctrl+Down` | move selected trace up / down the stack |
+| `0` | reset amplitude to 1× |
+| `n` | per-trace vs. common normalization |
+| `r` | restack evenly in current visual order |
+| `a` / `Esc` | select all / none |
+| `l` | toggle stimulus ID labels |
+| `p` / `c` | mark peaks / clear markers |
+| `h` / `Delete` | hide / remove selected |
+| `Ctrl+S` / `Ctrl+O` | save / load the view |
+
+`saveView` writes a `.torg` file (a MAT-file holding a `View` struct) containing the waveforms plus the complete display state — gains, offsets, stack order, colours, markers, spacing, normalization mode, and axis limits — so `loadView` reproduces the view exactly as it was saved. Older version-1 `.torg` files still load. Markers are stored as **sample indices** rather than plotted coordinates, so they follow their trace through rescaling, restacking, and a save/load round-trip.
+
+```matlab
+to.saveView('session1.torg');
+to.loadView('session1.torg');          % restored exactly as saved
 ```
 
 `addBlock` reads `block.ADC.SweepMean` and `block.ADC.TimeVector`, so any `mabr.data.Block` — including one loaded from disk with `mabr.data.io.importLegacy` — can be displayed:
@@ -71,4 +105,6 @@ to.addBlock(mabr.data.io.importLegacy('SUBJ_ID_001_Frequency_8kHz_Level_60dB_...
 to.show();
 ```
 
-Interaction uses standard figure `WindowButtonMotionFcn`/`WindowButtonUpFcn` callbacks. The legacy version drove dragging through a `user32.dll` mouse hook and had a broken Group/Marker implementation; both are gone. `YSpacing` and `YScaling` control stack separation and waveform gain.
+Interaction uses standard figure `WindowButtonMotionFcn`/`WindowButtonUpFcn`/`WindowKeyPressFcn` callbacks. The legacy version drove dragging through a `user32.dll` mouse hook and had a broken Group/Marker implementation; both are gone. `YSpacing` and `YScaling` set the stack separation and the fraction of it the largest waveform occupies; `NormalizeEach` switches between one common scale (amplitudes stay comparable across traces) and per-trace normalization.
+
+`tests/verify_trace_organizer.m` covers the labelling, scaling, spacing, selection, marker, keyboard, menu, and save/load behaviour with no hardware.

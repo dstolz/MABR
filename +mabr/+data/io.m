@@ -18,6 +18,12 @@ classdef io
 %   Filenames are built to match the pipeline's default regex:
 %       SUBJ_ID_<id>_Frequency_<f>kHz_Level_<L>dB_<yyMMdd'T'HHmmss>.abr
 %
+%   Two further fields are written for polarity-alternating conditions. The
+%   pipeline above does not read them, but offline analysis needs them to tell
+%   the two polarities apart, and both are always present:
+%       ABR_Data.ADC.SweepPolarity        (+1/-1, one per SweepOnsets entry)
+%       ABR_Data.SIG.alternatePolarity    (0/1, whether the condition alternated)
+%
 %   Save-time ADC decimation (by Recording.DecimationFactor) is preserved
 %   exactly as the legacy save_abr_data did: resample(Data,1,df) and
 %   round(SweepOnsets/df), with ADC.SampleRate = SampleRate/df.
@@ -64,6 +70,14 @@ classdef io
             ABR_Data.ADC.SweepOnsets = onsets;
             ABR_Data.ADC.SweepLength = max(1,round(rec.SweepLength./df));
 
+            % Per-sweep stimulus polarity, aligned with SweepOnsets (decimation
+            % moves onsets but never changes how many there are). Always written
+            % -- all +1 for a fixed-polarity condition -- so offline code can
+            % read the field unconditionally instead of testing for it.
+            pol = block.SweepPolarity(:);
+            if numel(pol) ~= numel(onsets), pol = ones(numel(onsets),1); end
+            ABR_Data.ADC.SweepPolarity = pol;
+
             ABR_Data.StartTime = mabr.data.io.startTimeChar(block.StartTime);
 
             ABR_Data.SIG = mabr.data.io.buildSIG(block);
@@ -100,6 +114,18 @@ classdef io
                 if isfield(meta,p)
                     SIG.(p) = double(mabr.data.io.plainValue(meta.(p)));
                 end
+            end
+
+            % Whether the condition was presented with alternating polarity, as
+            % a plain 0/1 so it reads like any other SIG param. Deliberately NOT
+            % added to informativeParams: those become grouping dimensions in
+            % the offline pipeline, and this is a property of how a condition
+            % was run, not a stimulus parameter that defines a separate one.
+            % The per-sweep detail is in ADC.SweepPolarity.
+            if isfield(meta,'alternatePolarity')
+                SIG.alternatePolarity = double(meta.alternatePolarity);
+            else
+                SIG.alternatePolarity = 0;
             end
 
             if isfield(meta,'Label')
@@ -188,6 +214,9 @@ classdef io
                     end
                 end
                 if isfield(D.SIG,'Label'), meta.Label = D.SIG.Label; end
+                if isfield(D.SIG,'alternatePolarity')
+                    meta.alternatePolarity = logical(D.SIG.alternatePolarity);
+                end
             end
 
             stim = struct('Meta',meta);
@@ -199,6 +228,14 @@ classdef io
             if isfield(D,'StartTime'), st = mabr.data.io.startTimeChar(D.StartTime); end
 
             block = mabr.data.Block(stim,rec,st);
+
+            % Legacy files predate SweepPolarity; a missing field means the
+            % condition was fixed-polarity, not that the information is lost.
+            if isfield(D.ADC,'SweepPolarity') && ~isempty(D.ADC.SweepPolarity)
+                block.SweepPolarity = double(D.ADC.SweepPolarity(:))';
+            else
+                block.SweepPolarity = ones(1,numel(rec.SweepOnsets));
+            end
         end
     end
 
