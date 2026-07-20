@@ -2,7 +2,7 @@ classdef Session < handle
 % mabr.data.Session  Top-level acquisition session.
 %
 %   A handle object holding the session-wide configuration (subject, device,
-%   sample rates), the ordered block queue that drives acquisition, and the
+%   sample rates), the presentation schedule that drives acquisition, and the
 %   array of completed mabr.data.Block results. Replaces the session-level
 %   role that abr.ABR played, minus the tangled Buffer/back-reference model.
 %
@@ -15,7 +15,7 @@ classdef Session < handle
         ADCSampleRate (1,1) double = 12000;
 
         OutputPath    (1,:) char = '';                  % folder for .abr files
-        Queue                                          % mabr.stim.BlockQueue
+        Schedule                                        % mabr.stim.Schedule
 
         Blocks        (1,:) mabr.data.Block             % completed results
         StartTime     (1,:) char = '';

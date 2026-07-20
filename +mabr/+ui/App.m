@@ -16,15 +16,25 @@ classdef App < handle
 
     properties (Constant)
         DefaultRateHz = 21.1;   % stimulus presentation rate (Hz)
+
+        % Display names for mabr.stim.Schedule.Strategies, in the same order
+        % (the dropdown carries the canonical names as ItemsData).
+        StrategyItems = { ...
+            'Blocked — one stimulus per run', ...
+            'Blocked, shuffled run order', ...
+            'Interleaved — A B C A B C …', ...
+            'Interleaved, shuffled each cycle', ...
+            'Fully shuffled'};
     end
 
     properties (SetAccess = private)
         Config
         Controller  mabr.ui.AcqController
-        % Source is deliberately untyped: mabr.stim.StimulusSource is Abstract,
-        % and MATLAB cannot build the implicit default value for a property
-        % typed as an abstract class (it errors at class-definition time).
-        Source      = [];
+        Stimuli     mabr.stim.StimulusSet
+        % Per-stimulus repetition counts. The GUI — not the stimulus package —
+        % owns these; RepetitionsDialog edits them, and onStart hands them to
+        % the schedule.
+        Reps        (1,:) double = []
         LivePlot    mabr.ui.LivePlot
         TraceOrg    mabr.ui.TraceOrganizer
         Listeners
@@ -33,6 +43,7 @@ classdef App < handle
     % --- UI components ------------------------------------------------------
     properties (Access = private)
         UIFigure
+        HelpMenu
         Grid
         SubjectField
         OutputField
@@ -41,12 +52,15 @@ classdef App < handle
         LoadButton
         TestButton
         TestingCheck
+        StrategyDrop
+        RepsField
+        RepsButton
         AdvanceDrop
-        TargetField
         CorrField
         ISIField
         RateField
         OverlapLabel
+        PlanLabel
         StartButton
         PauseButton
         StopButton
@@ -69,6 +83,7 @@ classdef App < handle
                 uialert_or_warn(me.message);
             end
             app.createComponents();
+            app.syncAdvanceEnables();
             if nargout == 0, clear app; end
         end
 
@@ -83,11 +98,15 @@ classdef App < handle
     % ===================================================================
     methods (Access = private)
         function createComponents(app)
-            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 460 560], ...
+            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 470 640], ...
                 'CloseRequestFcn',@(~,~) app.onClose());
 
-            app.Grid = uigridlayout(app.UIFigure,[11 4]);
-            app.Grid.RowHeight   = {30,30,30,25,30,30,30,'1x',30,40,26};
+            app.HelpMenu = uimenu(app.UIFigure,'Text','&Help');
+            uimenu(app.HelpMenu,'Text','MABR Wiki', ...
+                'MenuSelectedFcn',@(~,~) web('https://github.com/dstolz/MABR/wiki','-browser'));
+
+            app.Grid = uigridlayout(app.UIFigure,[13 4]);
+            app.Grid.RowHeight   = {30,30,30,25,30,30,30,30,22,'1x',30,40,26};
             app.Grid.ColumnWidth = {'fit','1x','1x','fit'};
 
             % Row 1: Subject (editable dropdown of previously used IDs)
@@ -119,19 +138,23 @@ classdef App < handle
             app.TestingCheck = uicheckbox(app.Grid,'Text','Testing (loopback, no hardware)','Value',true);
             app.TestingCheck.Layout.Row = 4; app.TestingCheck.Layout.Column = [1 4];
 
-            % Row 5: Advance criterion
-            app.addLabel('Advance',5,1);
-            app.AdvanceDrop = uidropdown(app.Grid, ...
-                'Items',{'Number of Sweeps','Correlation Threshold'}, ...
-                'ValueChangedFcn',@(~,~) app.onAdvanceChanged());
-            app.AdvanceDrop.Layout.Row = 5; app.AdvanceDrop.Layout.Column = [2 4];
+            % Row 5: how stimuli are combined across the bank
+            app.addLabel('Strategy',5,1);
+            app.StrategyDrop = uidropdown(app.Grid, ...
+                'Items',mabr.ui.App.StrategyItems, ...
+                'ItemsData',mabr.stim.Schedule.Strategies, ...
+                'ValueChangedFcn',@(~,~) app.onStrategyChanged());
+            app.StrategyDrop.Layout.Row = 5; app.StrategyDrop.Layout.Column = [2 4];
 
-            % Row 6: Advance params
-            app.addLabel('Target / Thr',6,1);
-            app.TargetField = uieditfield(app.Grid,'numeric','Value',256,'Limits',[1 Inf],'RoundFractionalValues','on');
-            app.TargetField.Layout.Row = 6; app.TargetField.Layout.Column = 2;
-            app.CorrField = uieditfield(app.Grid,'numeric','Value',0.5,'Limits',[0 1],'Enable','off');
-            app.CorrField.Layout.Row = 6; app.CorrField.Layout.Column = 3;
+            % Row 6: repetitions per stimulus entry
+            app.addLabel('Repetitions',6,1);
+            app.RepsField = uieditfield(app.Grid,'numeric','Value',512, ...
+                'Limits',[0 Inf],'RoundFractionalValues','on', ...
+                'ValueChangedFcn',@(~,~) app.onRepsChanged());
+            app.RepsField.Layout.Row = 6; app.RepsField.Layout.Column = 2;
+            app.RepsButton = uibutton(app.Grid,'Text','Per stimulus…', ...
+                'ButtonPushedFcn',@(~,~) app.onRepsDialog());
+            app.RepsButton.Layout.Row = 6; app.RepsButton.Layout.Column = [3 4];
 
             % Row 7: inter-stimulus interval <-> presentation rate (linked)
             app.addLabel('ISI / Rate',7,1);
@@ -148,37 +171,51 @@ classdef App < handle
             app.OverlapLabel = uilabel(app.Grid,'Text','','FontColor',[0.8 0.2 0]);
             app.OverlapLabel.Layout.Row = 7; app.OverlapLabel.Layout.Column = 4;
 
-            % Row 8: live plot region host buttons (spacer row grows)
+            % Row 8: advance criterion. Early stop only applies to a run that
+            % holds one stimulus, so this is disabled for intermixed strategies.
+            app.addLabel('Advance',8,1);
+            app.AdvanceDrop = uidropdown(app.Grid, ...
+                'Items',{'All Repetitions','Correlation Threshold'}, ...
+                'ValueChangedFcn',@(~,~) app.onAdvanceChanged());
+            app.AdvanceDrop.Layout.Row = 8; app.AdvanceDrop.Layout.Column = [2 3];
+            app.CorrField = uieditfield(app.Grid,'numeric','Value',0.5,'Limits',[0 1],'Enable','off');
+            app.CorrField.Layout.Row = 8; app.CorrField.Layout.Column = 4;
+
+            % Row 9: plan summary (runs / presentations / estimated duration)
+            app.PlanLabel = uilabel(app.Grid,'Text','','FontColor',[0.3 0.3 0.3]);
+            app.PlanLabel.Layout.Row = 9; app.PlanLabel.Layout.Column = [1 4];
+
+            % Row 10: live plot region host buttons (spacer row grows)
             app.LiveButton = uibutton(app.Grid,'Text','Show Live Plot','ButtonPushedFcn',@(~,~) app.onShowLive());
-            app.LiveButton.Layout.Row = 8; app.LiveButton.Layout.Column = [1 2];
+            app.LiveButton.Layout.Row = 10; app.LiveButton.Layout.Column = [1 2];
             app.TraceButton = uibutton(app.Grid,'Text','Trace Organizer','ButtonPushedFcn',@(~,~) app.onTraceOrg());
-            app.TraceButton.Layout.Row = 8; app.TraceButton.Layout.Column = [3 4];
+            app.TraceButton.Layout.Row = 10; app.TraceButton.Layout.Column = [3 4];
 
-            % Row 9: metrics
+            % Row 11: metrics
             app.StateLamp = uilamp(app.Grid,'Color',[0.6 0.6 0.6]);
-            app.StateLamp.Layout.Row = 9; app.StateLamp.Layout.Column = 1;
+            app.StateLamp.Layout.Row = 11; app.StateLamp.Layout.Column = 1;
             app.StateLabel = uilabel(app.Grid,'Text','Idle','FontWeight','bold');
-            app.StateLabel.Layout.Row = 9; app.StateLabel.Layout.Column = 2;
+            app.StateLabel.Layout.Row = 11; app.StateLabel.Layout.Column = 2;
             app.SweepLabel = uilabel(app.Grid,'Text','Sweeps: 0');
-            app.SweepLabel.Layout.Row = 9; app.SweepLabel.Layout.Column = 3;
+            app.SweepLabel.Layout.Row = 11; app.SweepLabel.Layout.Column = 3;
             app.CorrLabel = uilabel(app.Grid,'Text','r = —');
-            app.CorrLabel.Layout.Row = 9; app.CorrLabel.Layout.Column = 4;
+            app.CorrLabel.Layout.Row = 11; app.CorrLabel.Layout.Column = 4;
 
-            % Row 10: transport
+            % Row 12: transport
             app.StartButton = uibutton(app.Grid,'Text','Start','BackgroundColor',[0.6 0.9 0.6], ...
                 'ButtonPushedFcn',@(~,~) app.onStart());
-            app.StartButton.Layout.Row = 10; app.StartButton.Layout.Column = 1;
+            app.StartButton.Layout.Row = 12; app.StartButton.Layout.Column = 1;
             app.PauseButton = uibutton(app.Grid,'Text','Pause','Enable','off','ButtonPushedFcn',@(~,~) app.onPause());
-            app.PauseButton.Layout.Row = 10; app.PauseButton.Layout.Column = 2;
-            app.StopButton = uibutton(app.Grid,'Text','Stop Block','Enable','off','ButtonPushedFcn',@(~,~) app.onStopBlock());
-            app.StopButton.Layout.Row = 10; app.StopButton.Layout.Column = 3;
+            app.PauseButton.Layout.Row = 12; app.PauseButton.Layout.Column = 2;
+            app.StopButton = uibutton(app.Grid,'Text','Stop Run','Enable','off','ButtonPushedFcn',@(~,~) app.onStopBlock());
+            app.StopButton.Layout.Row = 12; app.StopButton.Layout.Column = 3;
             app.AbortButton = uibutton(app.Grid,'Text','Abort','Enable','off','BackgroundColor',[0.95 0.7 0.7], ...
                 'ButtonPushedFcn',@(~,~) app.onAbort());
-            app.AbortButton.Layout.Row = 10; app.AbortButton.Layout.Column = 4;
+            app.AbortButton.Layout.Row = 12; app.AbortButton.Layout.Column = 4;
 
-            % Row 11: status line
+            % Row 13: status line
             app.StatusLabel = uilabel(app.Grid,'Text','Ready.','FontColor',[0.3 0.3 0.3]);
-            app.StatusLabel.Layout.Row = 11; app.StatusLabel.Layout.Column = [1 4];
+            app.StatusLabel.Layout.Row = 13; app.StatusLabel.Layout.Column = [1 4];
         end
 
         function addLabel(app,txt,r,c)
@@ -248,30 +285,83 @@ classdef App < handle
         end
 
         function onLoadSource(app)
-            [fn,pn] = uigetfile({'*.mat','Stimulus blocks (*.mat)'},'Load stimulus source');
+            [fn,pn] = uigetfile({'*.mat','Stimulus definition (*.mat)'},'Load stimuli');
             figure(app.UIFigure);
             if isequal(fn,0), return; end
             try
-                S = load(fullfile(pn,fn));
-                blocks = pick_blocks(S);
-                app.Source = mabr.stim.PrecomputedSource(blocks);
-                app.setSourceLabel();
-                app.checkOverlap();
+                app.adoptStimuli(mabr.stim.StimulusSet.fromFile(fullfile(pn,fn),app.Config));
+                app.setStatus(sprintf('Loaded %d stimuli from %s',app.Stimuli.numStimuli,fn));
             catch me
                 app.setStatus(['Load failed: ' me.message]);
             end
         end
 
         function onTestSource(app)
-            app.Source = mabr.stim.demoSource(app.Config);
+            app.adoptStimuli(mabr.stim.demoStimuli(app.Config));
+            app.setStatus('Loaded built-in test stimuli.');
+        end
+
+        function adoptStimuli(app,set)
+            % Take on a new stimulus bank and reset the repetition counts to
+            % whatever the bank suggests (its own Repetitions field, else the
+            % schedule default).
+            app.Stimuli = set;
+            app.Reps    = mabr.stim.Schedule.startingRepetitions(set);
+            if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
             app.setSourceLabel();
-            app.setStatus('Loaded built-in test stimulus.');
             app.checkOverlap();
+            app.refreshPlan();
         end
 
         function onAdvanceChanged(app)
-            isCorr = strcmp(app.AdvanceDrop.Value,'Correlation Threshold');
-            app.CorrField.Enable = onOff(isCorr);
+            isCorr    = strcmp(app.AdvanceDrop.Value,'Correlation Threshold');
+            canEarly  = ~mabr.stim.Schedule.strategyIntermixes(app.StrategyDrop.Value);
+            app.CorrField.Enable = onOff(isCorr && canEarly);
+        end
+
+        function onStrategyChanged(app)
+            intermixed = mabr.stim.Schedule.strategyIntermixes(app.StrategyDrop.Value);
+            app.syncAdvanceEnables();
+            if intermixed
+                app.setStatus(['Intermixed runs play to completion — ' ...
+                    'correlation early-stop is available for blocked strategies only.']);
+            end
+            app.refreshPlan();
+        end
+
+        function syncAdvanceEnables(app)
+            % Early stop is unavailable once a run mixes stimuli: stopping it
+            % would truncate whichever stimuli fell last in the sequence.
+            % Called from transport() too, so it must not touch the status line.
+            if mabr.stim.Schedule.strategyIntermixes(app.StrategyDrop.Value)
+                app.AdvanceDrop.Value  = 'All Repetitions';
+                app.AdvanceDrop.Enable = 'off';
+            else
+                app.AdvanceDrop.Enable = 'on';
+            end
+            app.onAdvanceChanged();
+        end
+
+        function onRepsChanged(app)
+            % The plain field is the "same for all" shortcut; it overwrites any
+            % per-stimulus values set through the dialog.
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
+            app.Reps = repmat(app.RepsField.Value,1,app.Stimuli.numStimuli);
+            app.refreshPlan();
+        end
+
+        function onRepsDialog(app)
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0
+                app.setStatus('Load stimuli first.'); return
+            end
+            r = mabr.ui.RepetitionsDialog(app.Stimuli,app.Reps,app.ISIField.Value/1e3);
+            figure(app.UIFigure);
+            if isempty(r), return; end        % cancelled
+            app.Reps = r;
+            % Keep the shortcut field honest: show the common value, or blank
+            % out to the first entry when they differ.
+            app.RepsField.Value = r(1);
+            app.refreshPlan();
         end
 
         % --- ISI <-> rate ---------------------------------------------------
@@ -280,34 +370,64 @@ classdef App < handle
         function onISIChanged(app)
             app.RateField.Value = 1e3/app.ISIField.Value;
             app.checkOverlap();
+            app.refreshPlan();
         end
 
         function onRateChanged(app)
             app.ISIField.Value = 1e3/app.RateField.Value;
             app.checkOverlap();
+            app.refreshPlan();
         end
 
         function checkOverlap(app)
-            % Warn when the stimulus is longer than the gap between onsets, so
-            % the next sweep would start before the current one has finished.
+            % Warn when the longest stimulus does not fit inside the ISI, so
+            % the next presentation would start before this one has finished.
             app.OverlapLabel.Text = '';
-            if isempty(app.Source), return; end
-            try
-                stimMs = 1e3*mabr.stim.BlockQueue.sourceStimulusDuration(app.Source);
-            catch
-                return
-            end
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
+            stimMs = 1e3*app.Stimuli.maxDuration();
             if stimMs > app.ISIField.Value
                 app.OverlapLabel.Text = sprintf('overlap! %.1f ms stim',stimMs);
-                app.setStatus(sprintf(['Stimulus is %.2f ms but the ISI is only %.2f ms ' ...
-                    '(%.2f Hz) — sweeps will overlap. Lower the rate to %.2f Hz or below.'], ...
+                app.setStatus(sprintf(['Longest stimulus is %.2f ms but the ISI is only ' ...
+                    '%.2f ms (%.2f Hz) — presentations will overlap and be summed. ' ...
+                    'Lower the rate to %.2f Hz or below.'], ...
                     stimMs,app.ISIField.Value,app.RateField.Value,1e3/stimMs));
             end
         end
 
+        function refreshPlan(app)
+            % Show what the current strategy/repetitions/ISI actually buy: how
+            % many runs, how many presentations, and roughly how long.
+            app.PlanLabel.Text = '';
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
+            try
+                sch = app.buildSchedule();
+                s   = sch.summary();
+            catch me
+                app.PlanLabel.Text = ['plan error: ' me.message];
+                return
+            end
+            if s.intermixed, kind = 'intermixed'; else, kind = 'blocked'; end
+            app.PlanLabel.Text = sprintf( ...
+                '%d runs (%s)  ·  %d presentations  ·  ~%s', ...
+                s.numRuns,kind,s.presentations,durationText(s.duration));
+        end
+
+        function sch = buildSchedule(app)
+            % One place that turns the GUI's settings into a schedule, shared
+            % by the plan preview and onStart so they cannot drift apart.
+            sch             = mabr.stim.Schedule(app.Stimuli,app.Config);
+            sch.Strategy    = app.StrategyDrop.Value;
+            sch.Repetitions = app.Reps;
+            sch.ISI         = app.ISIField.Value/1e3;      % ms -> s
+            sch.build();
+        end
+
         function onStart(app)
-            if isempty(app.Source)
-                app.setStatus('Load a stimulus source first.'); return
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0
+                app.setStatus('Load stimuli first.'); return
+            end
+            if sum(app.Reps) < 1
+                app.setStatus('Nothing to run — every stimulus has 0 repetitions.'); return
             end
 
             % Lock the entire UI up front: bringing the engine up blocks this
@@ -327,7 +447,14 @@ classdef App < handle
                 c = app.Controller;
                 c.Session.Subject.ID = app.SubjectField.Value;
                 c.Session.OutputPath = app.OutputField.Value;
-                c.setSource(app.Source);
+                c.setStimuli(app.Stimuli);
+
+                % The controller builds its own schedule in setStimuli; replace
+                % it with the one the GUI has been previewing.
+                c.Schedule.Strategy    = app.StrategyDrop.Value;
+                c.Schedule.Repetitions = app.Reps;
+                c.Schedule.ISI         = app.ISIField.Value/1e3;   % ms -> s
+                c.Schedule.build();
 
                 if strcmp(app.AdvanceDrop.Value,'Correlation Threshold')
                     c.AdvanceFcn = @mabr.stim.advance.corr_threshold;
@@ -335,16 +462,15 @@ classdef App < handle
                     c.AdvanceFcn = @mabr.stim.advance.num_sweeps;
                 end
                 p = c.AdvanceParams;
-                p.targetSweeps  = app.TargetField.Value;
                 p.corrThreshold = app.CorrField.Value;
                 c.AdvanceParams = p;
-                c.Queue.TargetSweeps  = app.TargetField.Value;
-                c.Queue.SweepInterval = app.ISIField.Value/1e3;   % ms -> s
 
                 if isempty(app.LivePlot) || ~isvalid(app.LivePlot), app.onShowLive(); end
                 c.setLivePlot(app.LivePlot);
 
-                app.setStatus(sprintf('Starting schedule (%d blocks)…',app.Source.numBlocks));
+                s = c.Schedule.summary();
+                app.setStatus(sprintf('Starting schedule (%d runs, %d presentations, ~%s)…', ...
+                    s.numRuns,s.presentations,durationText(s.duration)));
                 c.start();
             catch me
                 app.transport(false);      % unlock so the user can fix and retry
@@ -432,7 +558,8 @@ classdef App < handle
             % Settings that must not change once a run is under way.
             h = {app.SubjectField, app.OutputField, app.BrowseButton, ...
                  app.LoadButton, app.TestButton, app.TestingCheck, ...
-                 app.AdvanceDrop, app.TargetField, app.CorrField, ...
+                 app.StrategyDrop, app.RepsField, app.RepsButton, ...
+                 app.AdvanceDrop, app.CorrField, ...
                  app.ISIField, app.RateField};
         end
 
@@ -461,14 +588,14 @@ classdef App < handle
             app.TraceButton.Enable  = 'on';
             if ~running
                 app.PauseButton.Text = 'Pause';
-                app.onAdvanceChanged();       % CorrField follows the criterion
+                app.syncAdvanceEnables();     % re-derives the Advance/Corr enables
             end
             drawnow limitrate
         end
 
         function setSourceLabel(app)
-            n = app.Source.numBlocks;
-            app.SourceLabel.Text = sprintf('%d blocks',n);
+            n = app.Stimuli.numStimuli;
+            app.SourceLabel.Text = sprintf('%d stimuli',n);
             app.SourceLabel.FontColor = [0 0.5 0];
         end
 
@@ -495,18 +622,15 @@ for i = 1:numel(controls)
 end
 end
 
-function blocks = pick_blocks(S)
-% Extract a struct array of block specs from a loaded .mat.
-fn = fieldnames(S);
-blocks = [];
-for i = 1:numel(fn)
-    v = S.(fn{i});
-    if isstruct(v) && isfield(v,'samples') && isfield(v,'SampleRate')
-        blocks = v; return
-    end
+function s = durationText(secs)
+% Compact human-readable duration for the plan summary / status line.
+if secs < 90
+    s = sprintf('%.0f s',secs);
+elseif secs < 3600
+    s = sprintf('%d min %02d s',floor(secs/60),round(mod(secs,60)));
+else
+    s = sprintf('%d h %02d min',floor(secs/3600),round(mod(secs,3600)/60));
 end
-error('mabr:ui:App:noBlocks', ...
-    'The .mat file has no struct array of block specs (needs samples + SampleRate).');
 end
 
 function [c,txt] = stateAppearance(state)

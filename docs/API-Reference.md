@@ -29,39 +29,53 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 
 | Item | Description |
 |------|-------------|
-| [`mabr.stim.StimulusSource`](../+mabr/+stim/StimulusSource.m) | **Abstract contract** MABR consumes for stimulus delivery. Implement `numBlocks(obj)` and `getBlock(obj,idx)`. Block spec fields are documented in the file header and in [Extending MABR](Extending.md#the-block-spec). |
-| `StimulusSource.validateBlock(blk)` | Static. Validates and normalizes a block spec; errors with specific identifiers on a bad one. |
-| [`mabr.stim.PrecomputedSource`](../+mabr/+stim/PrecomputedSource.m) | Reference adapter wrapping a struct array of block specs. The usual integration point for an external stimulus package. |
-| [`mabr.stim.demoSource`](../+mabr/+stim/demoSource.m) | Built-in tone-pip source over a Frequency × Level grid. **Testing and demos only — uncalibrated.** Also the clearest worked example of the contract. |
-| [`mabr.stim.BlockQueue`](../+mabr/+stim/BlockQueue.m) | Holds a source and walks its schedule; renders each block into the 2-channel play matrix the worker streams. |
+| [`mabr.stim.StimulusSet`](../+mabr/+stim/StimulusSet.m) | **The contract.** A bank of single stimuli, wrapping the struct array the external package supplies (`signal` + `ID` per entry, everything else passed through). Inert — it holds waveforms and nothing about presentation. |
+| [`mabr.stim.Schedule`](../+mabr/+stim/Schedule.m) | **Owns presentation.** Turns a `StimulusSet` plus ISI, repetitions, and a combination strategy into ordered runs, and renders each into the 2-channel play matrix the worker streams. |
+| [`mabr.stim.demoStimuli`](../+mabr/+stim/demoStimuli.m) | Built-in tone-pip bank over a Frequency × Level grid. **Testing and demos only — uncalibrated.** Also the clearest worked example of the contract. |
 
-**`BlockQueue` surface**
+**`StimulusSet` surface**
 
 | Member | Description |
 |--------|-------------|
-| `numBlocks()`, `current()`, `advance()`, `reset()`, `isComplete()` | Schedule walk; `advance` returns `[]` when finished |
-| `renderSpec(idx)` | Build the acquisition spec for a block — the argument to `Engine.prep` |
-| `targetSweeps(idx)` | Per-block target, from `Meta.NumSweeps` or the queue default |
-| `recordRun(idx,nSweeps)` | Record how many sweeps a block actually produced |
-| `Order`, `Selected` | Play order and per-block enable — the hooks for randomized or interleaved schedules |
-| `SweepInterval` | Inter-stimulus interval (s, onset-to-onset). Blocks are re-tiled at this rate; `0` keeps the source's own timing. Default `1/21.1` |
-| `stimulusDuration([idx])` | Longest single-sweep duration (s) — compare against `SweepInterval` to detect overlap |
+| `numStimuli()`, `IDs()`, `get(i)`, `signal(i)`, `id(i)`, `timing(i)` | The bank and its entries |
+| `duration([i])`, `maxDuration()` | Single-presentation duration (s); `maxDuration` is the worst case for ISI overlap |
+| `defaultRepetitions()` | Per-entry `Repetitions` where supplied, else `0` |
+| `meta(i)` | Metadata struct for entry `i`: `ID`, every passthrough field, plus derived `informativeParams` and `Label` |
+| `SampleRate` | Common DAC rate; construction errors unless it equals `Config.DACSampleRate` |
+| `validate(s,idx,cfg)` | Static. Validates and normalizes one entry; specific error identifiers on a bad one |
+| `fromFile(ffn,[cfg])` | Static. Loads a stimulus definition from a `.mat` — what the GUI's **Load .mat…** uses |
+
+**`Schedule` surface**
+
+| Member | Description |
+|--------|-------------|
+| `Strategies` | Constant. `blocked`, `shuffled-blocks`, `interleaved`, `shuffled-cycles`, `shuffled`. All are permutations of a fixed multiset — never probabilistic sampling |
+| `ISI` | Inter-stimulus interval (s, onset-to-onset). Default `1/21.1` |
+| `Repetitions` | Per-entry repetition counts; a scalar is broadcast to every entry |
+| `Strategy`, `Seed` | How entries combine, and the shuffle seed (`[]` = fresh shuffle, via a private `RandStream`) |
+| `build()` | (Re)build `Runs` from `Repetitions` + `Strategy`. **Required after changing either** |
+| `NumRuns`, `current()`, `advance()`, `reset()`, `isComplete()` | Run walk; `advance` returns `[]` when finished |
+| `runSequence(r)` | The stimulus index presented at each onset of run `r` |
+| `renderSpec(r)` | Build the acquisition spec for run `r` — the argument to `Engine.prep` |
+| `isIntermixed()` | True when one run mixes stimuli (the last three strategies) |
+| `summary()` | Plan overview: `numRuns`, `presentations`, `repetitions`, `duration` (s), `intermixed` |
+| `overlaps()` | True when the longest stimulus does not fit inside the ISI |
+| `recordRun(r,counts)` | Record presentations actually acquired, per stimulus |
 | `SilencePad`, `PlayerChannels`, `RecorderChannels`, `Device` | Padding and device/channel mapping |
 | `TestingFrameDelay` | Per-frame pause used to pace loopback in tests only |
-| `buildSpec(blk,cfg,silencePad,sweepInterval)` | Static. Re-tiles at `sweepInterval`, synthesizes the timing channel, pads, and builds the spec |
-| `retile(blk,sweepInterval)` | Static. Re-lays a block's sweep waveform out at the given ISI, keeping its sweep count |
-| `sweepWaveform(blk)` | Static. Recovers the single-sweep waveform from an already-tiled block |
-| `sourceStimulusDuration(source,[idx])` | Static. `stimulusDuration` over a source, for callers with no queue yet |
-| `resolveOnsets(blk,N)` | Static. Resolves `SweepOnsets` or `SweepRate` into onset indices |
+| `strategyIntermixes(s)` | Static. Whether strategy `s` intermixes — used by the GUI to gate early stop |
+| `startingRepetitions(set)` | Static. Per-entry `Repetitions` where supplied, else `512` |
+
+`renderSpec` adds `StimulusIndex` to the spec — the stimulus behind each onset, which `AcqController` uses to de-interleave an intermixed run at save time. It errors with `mabr:stim:Schedule:tooLong` if the run would exceed `Config.maxInputBufferLength`, checked **before** allocating.
 
 ### Advance criteria — `+mabr/+stim/+advance/`
 
-Pure predicates over a context struct; return `true` to end the block.
+Pure predicates over a context struct; return `true` to end the run. Evaluated **only for blocked strategies** — see [Extending MABR](Extending.md#defining-when-a-run-ends).
 
 | Item | Description |
 |------|-------------|
 | [`num_sweeps(ctx)`](../+mabr/+stim/+advance/num_sweeps.m) | True once `ctx.numSweeps >= ctx.targetSweeps`. |
-| [`corr_threshold(ctx)`](../+mabr/+stim/+advance/corr_threshold.m) | True once `ctx.corr >= ctx.corrThreshold` after `ctx.minSweeps`, or at `ctx.maxSweeps`. Enables mid-block early stopping. |
+| [`corr_threshold(ctx)`](../+mabr/+stim/+advance/corr_threshold.m) | True once `ctx.corr >= ctx.corrThreshold` after `ctx.minSweeps`, or at `ctx.maxSweeps`. Enables mid-run early stopping. |
 
 ## Acquisition — `+mabr/+acq/`
 
@@ -173,14 +187,16 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 |--------|-------------|
 | `AcqController(cfg,testing)` | Construct; builds the Engine and the ~20 Hz live timer |
 | `waitUntilReady(timeout)` | Forwards to the Engine handshake |
-| `setSource(source)` | Build a `BlockQueue` from a `StimulusSource` |
+| `setStimuli(stimuli)` | Adopt a `StimulusSet` (or the raw struct array) and build a default `Schedule` to configure |
 | `setLivePlot(lp)` | Attach a `LivePlot` (or an embedded one) |
 | `start()`, `pauseAcq()`, `resumeAcq()`, `stopBlock()`, `abort()` | User actions. `stopBlock` continues the schedule; `abort` halts it — both save |
 | `Window` | ADC window in seconds relative to onset (default `[0 0.01]`) |
-| `AdvanceFcn`, `AdvanceParams` | The criterion and its context |
+| `AdvanceFcn`, `AdvanceParams` | The criterion and its context. `targetSweeps` is overwritten per run with that run's presentation count |
 | `UseBandpass`, `UseNotch` | Filter chain applied at finalization |
-| `Engine`, `Session`, `Queue`, `LivePlot`, `State`, `Testing` | Read-only properties |
+| `Engine`, `Session`, `Stimuli`, `Schedule`, `LivePlot`, `State`, `Testing` | Read-only properties |
 | events `StateChanged`, `MetricsUpdated`, `BlockSaved`, `ScheduleComplete` | The front-end contract |
+
+At finalization the run's sweeps are split by `Schedule.runSequence`, yielding **one `Block` and one `.abr` per stimulus** that appeared in it. A homogeneous run saves the continuous trace; an intermixed one saves each stimulus's sweep windows concatenated, so files do not each carry a full copy of the shared recording.
 
 **`LivePlot`** — `LivePlot(parent)` (omit `parent` for its own figure), `update(postSweep,tvec,R,target)`, `reset()`.
 

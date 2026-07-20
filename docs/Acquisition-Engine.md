@@ -69,7 +69,7 @@ Both are enumerations sent as messages. They are never written into shared memor
 
 ## The Prep payload
 
-`prep()` takes the struct that [BlockQueue.renderSpec](../+mabr/+stim/BlockQueue.m) produces:
+`prep()` takes the struct that [Schedule.renderSpec](../+mabr/+stim/Schedule.m) produces:
 
 | Field | Type | Meaning |
 |-------|------|---------|
@@ -79,9 +79,15 @@ Both are enumerations sent as messages. They are never written into shared memor
 | `RecorderChannels` | `[1x2]` | Device input channels (default `[1 2]`) |
 | `Device` | char | Optional ASIO device name |
 | `ExpectedOnsets` | `[k x 1]` | Nominal onsets, for reference |
+| `StimulusIndex` | `[k x 1]` | Which stimulus is presented at each onset |
 | `TestingFrameDelay` | scalar | Loopback pacing, tests only |
 
-`BlockQueue.buildSpec` pads the matrix to a whole number of frames and brackets it with silence for device settling. It **errors** if the block's sample rate differs from `Config.DACSampleRate` rather than resampling — the ring buffer is clocked at the DAC rate and downstream windowing assumes it, so silently mis-windowing is worse than failing.
+The worker ignores `ExpectedOnsets` and `StimulusIndex` entirely — it just streams the matrix. `StimulusIndex` exists for the **client's** finalization step: it is how `AcqController` maps recorded sweeps back to the stimulus that produced them when a run intermixes conditions.
+
+`renderSpec` pads the matrix to a whole number of frames and brackets it with silence for device settling. Two things it refuses rather than papers over:
+
+- A stimulus sample rate differing from `Config.DACSampleRate` (rejected at `StimulusSet` construction) — the ring buffer is clocked at the DAC rate and downstream windowing assumes it, so silently mis-windowing is worse than failing.
+- A run longer than `Config.maxInputBufferLength` (`mabr:stim:Schedule:tooLong`) — the recording would wrap and silently lose the earliest sweeps. The check runs before any allocation, so an over-ambitious plan reports the real problem instead of an out-of-memory error.
 
 ## The streaming loop
 
@@ -154,7 +160,8 @@ Pass `[]` or `struct()` as `state` to reset. The pre-onset window is the baselin
 | `handshakeTimeout` | Pool could not start, or the worker cannot resolve `+mabr` |
 | `workerFailed` at startup | Worker errored during launch; the message carries the original error |
 | `notPrepared` | `Run` arrived before `Prep` |
-| `sampleRate` error from BlockQueue | Source block rate ≠ `Config.DACSampleRate` |
+| `sampleRate` error from StimulusSet | Stimulus rate ≠ `Config.DACSampleRate` |
+| `tooLong` error from Schedule | The run exceeds the ring buffer — cut repetitions, shorten the ISI, or use a blocked strategy |
 | `readOnly` from RingBuffer | Something tried to write through the client's view |
 | No onsets found at finalization | Timing channel not recorded — check input channel mapping |
 

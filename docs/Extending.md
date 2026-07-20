@@ -1,109 +1,92 @@
 # Extending MABR
 
-The three extension points, in order of how often they are used: supplying stimuli, defining when a block ends, and building a different front end.
+The three extension points, in order of how often they are used: supplying stimuli, defining when a run ends, and building a different front end.
 
 ## Supplying stimuli
 
-This is the main integration point. MABR consumes calibrated waveforms through [mabr.stim.StimulusSource](../+mabr/+stim/StimulusSource.m), an abstract two-method contract:
+This is the main integration point, and the contract is deliberately small: **you supply single waveforms, MABR decides how they are presented.**
+
+Hand MABR a plain struct array. Each element is **one** stimulus — one presentation, not a repeated train:
 
 ```matlab
-n   = numBlocks(obj)      % how many blocks in this session
-blk = getBlock(obj,idx)   % the spec struct for block idx
+stim(1).signal = [ ... ];        % one presentation, calibrated
+stim(1).ID     = "8kHz_60dB";
+...
+stim(N).signal = [ ... ];
+stim(N).ID     = "click_rare";
 ```
 
-### The block spec
+### The stimulus entry
 
-Each `getBlock` returns a struct. **Required:**
+**Required:**
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `samples` | `[N x 1] single` | The calibrated signal channel |
-| `SampleRate` | scalar double | DAC rate; **must equal `Config.DACSampleRate`** |
+| `signal` | `[N x 1]` numeric | One calibrated presentation. No repetition, no inter-stimulus padding, no timing channel. |
+| `ID` | string or char | Names the condition. Drives the `.abr` filename and the de-interleaving of intermixed runs. |
 
-**Sweep timing — one of:**
+**Optional, interpreted by MABR:**
 
 | Field | Meaning |
 |-------|---------|
-| `SweepOnsets` | `[k x 1]` onset sample indices into `samples` |
-| `SweepRate` | Sweeps per second, optionally with `NumSweeps` |
+| `SampleRate` | DAC rate; defaults to `Config.DACSampleRate` and **must equal** it |
+| `Repetitions` | Starting repetition count the GUI picks up (the operator can still change it) |
+| `Timing` | `[N x 1]` your own timing channel for this stimulus; otherwise MABR synthesizes a unit pulse at the onset |
 
-**Should provide** — `Meta`, a struct that drives display and the saved file:
-
-| Field | Purpose |
-|-------|---------|
-| `Frequency`, `Level` | Numeric; drive the filename the offline pipeline parses |
-| `Polarity` | Stimulus polarity |
-| `Label` | Cellstr, for display and for `SIG.Label` |
-| `informativeParams` | Cellstr naming the numeric fields to persist |
-| `NumSweeps` | Per-block override of the queue's target |
-
-**May provide** — `Timing` (`[N x 1] single`, your own timing channel; otherwise MABR synthesizes one pulse per onset) and `Device` (ASIO device name override).
-
-`StimulusSource.validateBlock` is a static helper that checks and normalizes a spec; call it in your own source if you want the same errors MABR would raise.
-
-### The quickest route
-
-If your package can produce a struct array of specs, you do not need to write a class at all — [mabr.stim.PrecomputedSource](../+mabr/+stim/PrecomputedSource.m) wraps one:
+**Every other field passes straight through** into the block metadata and on to the saved `.abr`. Numeric scalars are additionally advertised as `informativeParams`, so the offline pipeline picks them up without any extra declaration:
 
 ```matlab
-blocks = struct('samples',{},'SampleRate',{},'SweepOnsets',{},'Meta',{});
-for k = 1:numel(conditions)
-    blocks(end+1) = struct( ...
-        'samples',     myCalibratedWaveform(conditions(k)), ...
-        'SampleRate',  192000, ...
-        'SweepOnsets', myOnsets(conditions(k)), ...
-        'Meta',        struct('Frequency',conditions(k).f, ...
-                              'Level',    conditions(k).L, ...
-                              'Polarity', 1, ...
-                              'NumSweeps',512, ...
-                              'informativeParams',{{'Frequency','Level'}}, ...
-                              'Label',{{sprintf('%g kHz',conditions(k).f), ...
-                                        sprintf('%g dB', conditions(k).L)}}));
-end
-source = mabr.stim.PrecomputedSource(blocks);
+stim(k).Frequency = 8;      % -> SIG.Frequency, and an informativeParam
+stim(k).Level     = 60;     % -> SIG.Level,     and an informativeParam
+stim(k).Notes     = 'left'; % -> carried along, not an informativeParam
 ```
 
-Save that struct array to a `.mat` file and the GUI's **Load .mat…** button will pick it up. [mabr.stim.demoSource](../+mabr/+stim/demoSource.m) is a complete worked example — read it before writing your own.
+Supplying `Frequency` and `Level` specifically makes the written filename match the offline pipeline's default regex; without them MABR falls back to `ID`. See [Data Files](Data-Files.md).
 
-### A custom source class
+### Loading it
 
-Subclass when blocks should be generated lazily, streamed from disk, or reordered adaptively:
+Save the struct array to a `.mat` file and the GUI's **Load .mat…** button picks it up — [mabr.stim.StimulusSet.fromFile](../+mabr/+stim/StimulusSet.m) finds any variable that is a struct array with `signal` and `ID`. Headlessly:
 
 ```matlab
-classdef MySource < mabr.stim.StimulusSource
-    properties (SetAccess = private)
-        Conditions
-    end
-    methods
-        function obj = MySource(conditions)
-            obj.Conditions = conditions;
-        end
-        function n = numBlocks(obj)
-            n = numel(obj.Conditions);
-        end
-        function blk = getBlock(obj,idx)
-            c = obj.Conditions(idx);
-            blk = mabr.stim.StimulusSource.validateBlock(struct( ...
-                'samples',    renderWaveform(c), ...
-                'SampleRate', 192000, ...
-                'SweepOnsets',renderOnsets(c), ...
-                'Meta',       c.meta));
-        end
-    end
-end
+set = mabr.stim.StimulusSet(stim);       % validates and normalizes
 ```
 
-`getBlock` is called at least twice per block (once by `targetSweeps`, once by `renderSpec`), so cache anything expensive.
+[mabr.stim.demoStimuli](../+mabr/+stim/demoStimuli.m) is a complete worked example — read it before writing your own.
 
-### What MABR adds
+### What MABR decides
 
-[BlockQueue](../+mabr/+stim/BlockQueue.m) turns your spec into what the worker streams: it pairs your signal with a **synthesized timing channel** (a unit pulse at each onset), brackets the result with silence for device settling, pads to a whole number of frames, and attaches channel mappings. MABR owns the timing contract because sweep extraction depends on it — see [Architecture](Architecture.md#what-mabr-does-not-do).
+Everything about *presentation* is MABR's, not yours. [mabr.stim.Schedule](../+mabr/+stim/Schedule.m) owns three settings, all driven from the GUI:
 
-MABR also owns the **presentation rate**. Whatever rate you tiled your block at, `BlockQueue` extracts the single-sweep waveform back out (first onset to the next, trailing silence trimmed) and re-tiles it at `SweepInterval` — the inter-stimulus interval in seconds, set from the GUI's linked ISI/rate fields and defaulting to 21.1 Hz. Your `SweepOnsets` are the fallback used only when `SweepInterval` is `0`. If your stimulus is longer than the interval the operator picks, the sweeps are summed where they overlap and the condition is logged; the GUI warns before acquisition starts.
+| Setting | Meaning |
+|---------|---------|
+| `ISI` | Spacing between successive onsets (s, onset-to-onset). GUI shows it as linked ISI/rate fields, default 21.1 Hz. |
+| `Repetitions` | How many times each entry is presented. One value for all, or one per entry. |
+| `Strategy` | How entries are combined across the array. |
 
-`BlockQueue` also controls schedule order (`Order`), which blocks are enabled (`Selected`), padding (`SilencePad`), and channel mapping (`PlayerChannels`, `RecorderChannels`). Reordering `Order` is how you would implement a randomized or interleaved schedule.
+The strategies:
 
-## Defining when a block ends
+| Strategy | Runs | Shape |
+|----------|------|-------|
+| `blocked` | one per stimulus | `A A A … / B B B … / C C C …`, in array order |
+| `shuffled-blocks` | one per stimulus | same, but the order of the runs is shuffled |
+| `interleaved` | one | `A B C A B C …` |
+| `shuffled-cycles` | one | as interleaved, each cycle shuffled independently |
+| `shuffled` | one | the whole multiset shuffled uniformly |
+
+All five are permutations of a **fixed multiset**, never probabilistic sampling — every entry is presented exactly its repetition count under any strategy. The names say "shuffled" rather than "random" for precisely that reason.
+
+The last three **intermix** different stimuli inside one continuous acquisition run. MABR records which stimulus fired at each onset (`spec.StimulusIndex`) and de-interleaves the recorded sweeps at save time, so **each stimulus ID still gets its own `.abr` file** regardless of presentation order. An entry that has met its repetition count drops out of later cycles, so unequal counts stay spread out instead of clumping at the end.
+
+Set `Seed` for a reproducible order; leave it empty for a fresh shuffle each time. A private `RandStream` is used either way, so building a plan never perturbs global `rng`.
+
+`Schedule` also renders the play matrix: it pairs your signal with a **synthesized timing channel**, brackets the result with silence for device settling, pads to a whole number of frames, and attaches channel mappings (`SilencePad`, `PlayerChannels`, `RecorderChannels`, `Device`). MABR owns the timing contract because sweep extraction depends on it — see [Architecture](Architecture.md#what-mabr-does-not-do).
+
+Two constraints worth knowing:
+
+- If a stimulus is longer than the ISI, presentations are **summed** where they overlap and the condition is logged; the GUI warns before acquisition starts.
+- One run is recorded in one ring-buffer pass, so a run may not exceed `Config.maxInputBufferLength` (~5.8 min at 192 kHz). `renderSpec` refuses with `mabr:stim:Schedule:tooLong` rather than silently discarding the earliest sweeps. Intermixed strategies put every presentation in one run, so this is the ceiling that bites first — the GUI's plan summary shows the estimated duration before you start.
+
+## Defining when a run ends
 
 An advance criterion is a **pure predicate over a context struct**:
 
@@ -111,7 +94,9 @@ An advance criterion is a **pure predicate over a context struct**:
 function done = my_criterion(ctx)
 ```
 
-`AcqController` calls it on every live tick with a context built from `AdvanceParams` plus the current `numSweeps` and `corr`. Return `true` to end the block; the controller sends `Stop` and the worker halts within one frame.
+`AcqController` calls it on every live tick with a context built from `AdvanceParams` plus the current `numSweeps` and `corr`. Return `true` to end the run; the controller sends `Stop` and the worker halts within one frame.
+
+**Criteria only run for blocked strategies.** An intermixed run pools sweeps from different conditions, so a correlation over it is meaningless, and stopping it early would truncate whichever stimuli happened to fall last in the sequence. `AcqController` therefore skips the criterion entirely when `Schedule.isIntermixed()` is true, and the GUI disables the control. Those runs always play to completion.
 
 Two are supplied:
 
@@ -134,7 +119,7 @@ c.AdvanceParams = struct('snrTarget',10,'maxSweeps',2048, ...
                          'targetSweeps',2048,'corrThreshold',0.5,'minSweeps',64);
 ```
 
-Two rules. **Always include a hard cap** — a criterion that never fires runs until the stimulus is exhausted. And **keep it cheap and side-effect-free**: it runs 20 times a second on the GUI thread. If you need a metric the controller does not compute, add it to `live_tick_body` from a [+metrics](../+mabr/+metrics/) function rather than recomputing it inside the predicate.
+Two rules. **Always include a hard cap** — a criterion that never fires runs until the scheduled repetitions are exhausted. And **keep it cheap and side-effect-free**: it runs 20 times a second on the GUI thread. If you need a metric the controller does not compute, add it to `live_tick_body` from a [+metrics](../+mabr/+metrics/) function rather than recomputing it inside the predicate.
 
 To expose a new criterion in the GUI, add it to the `AdvanceDrop` items and the mapping in `App.onStart`.
 
@@ -146,10 +131,19 @@ To expose a new criterion in the GUI, add it to the `AdvanceDrop` items and the 
 |-------|---------|---------|
 | `StateChanged` | `ProgStateEventData.State` | Program flow changed |
 | `MetricsUpdated` | `.Info` = `numSweeps`, `corr` | Live metrics |
-| `BlockSaved` | `.Info.file` | A block was written |
+| `BlockSaved` | `.Info.file` | A block was written — fires **once per stimulus** recovered from the run |
 | `ScheduleComplete` | — | Schedule finished |
 
-Public surface: `setSource`, `setLivePlot`, `waitUntilReady`, `start`, `pauseAcq`, `resumeAcq`, `stopBlock`, `abort`, and the settable properties `Window`, `AdvanceFcn`, `AdvanceParams`, `UseBandpass`, `UseNotch`.
+Public surface: `setStimuli`, `setLivePlot`, `waitUntilReady`, `start`, `pauseAcq`, `resumeAcq`, `stopBlock`, `abort`, and the settable properties `Window`, `AdvanceFcn`, `AdvanceParams`, `UseBandpass`, `UseNotch`. `setStimuli` accepts either a `StimulusSet` or the raw struct array, and builds a default `Schedule` you then configure:
+
+```matlab
+c.setStimuli(stim);                      % struct array or StimulusSet
+c.Schedule.Strategy    = 'shuffled-cycles';
+c.Schedule.Repetitions = 512;            % scalar, or one value per stimulus
+c.Schedule.ISI         = 1/21.1;
+c.Schedule.build();                      % required after changing either
+c.start();
+```
 
 For an embedded live view, pass a container to `LivePlot` and hand it over with `setLivePlot`:
 
@@ -170,11 +164,14 @@ eng.waitUntilReady();
 addlistener(eng,'BlockCompleted',@(~,~) onDone());
 addlistener(eng,'WorkerError',   @(~,e) warning(e.Identifier,'%s',e.Message));
 
-spec = mabr.stim.BlockQueue.buildSpec(myBlock,mabr.Config,0.25);
+sch = mabr.stim.Schedule(mabr.stim.StimulusSet(stim));
+sch.Repetitions = 512; sch.ISI = 1/21.1; sch.build();
+
+spec = sch.renderSpec(1);
 eng.prep(spec); eng.run();
 ```
 
-You then own finalization: read the ring buffer, find onsets, decimate, build a `Recording`, and save. `AcqController.finalize_block` is the reference implementation — copy its ordering, particularly the `max(1,...)` floor on decimated onsets. See [Acquisition Engine](Acquisition-Engine.md) for the full protocol.
+You then own finalization: read the ring buffer, find onsets, pair them with `spec.StimulusIndex`, decimate, build a `Recording` per stimulus, and save. `AcqController.finalize_run` is the reference implementation — copy its ordering, particularly the `max(1,...)` floor on decimated onsets and the truncation to `min(numel(onsets),numel(seq))` that tolerates an early stop. See [Acquisition Engine](Acquisition-Engine.md) for the full protocol.
 
 ## Adding a metric
 

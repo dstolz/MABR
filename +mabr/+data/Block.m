@@ -1,15 +1,19 @@
 classdef Block
 % mabr.data.Block  One stimulus condition's acquired result.
 %
-%   A value container bundling everything produced by acquiring a single
-%   block: the stimulus metadata handed in by the external stimulus package,
-%   the recorded ADC signal channel (a mabr.data.Recording), optional timing
-%   channel, computed live metrics, and the block start time.
+%   A value container bundling everything produced for one stimulus: the
+%   stimulus metadata handed in by the external stimulus package, the recorded
+%   ADC signal channel (a mabr.data.Recording), optional timing channel,
+%   computed live metrics, and the start time of the run it came from.
 %
-%   Stim is the metadata struct from mabr.stim.StimulusSource.getBlock (see
-%   that contract): SampleRate, sweep timing, and a Meta substruct carrying
-%   frequency/level/polarity/label/informativeParams used for display and for
-%   the offline-compatible .abr write.
+%   One acquisition run yields one Block per stimulus it presented — usually
+%   just one (blocked strategies), but an intermixed run is de-interleaved by
+%   mabr.ui.AcqController into a Block per stimulus ID.
+%
+%   Stim is struct('Meta',...,'SampleRate',...), where Meta comes from
+%   mabr.stim.StimulusSet.meta: the stimulus ID plus every passthrough field
+%   the external package supplied, with informativeParams/Label driving
+%   display and the offline-compatible .abr write.
 %
 % Daniel Stolzberg (c) 2019-2026
 

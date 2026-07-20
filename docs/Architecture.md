@@ -48,9 +48,13 @@ Plus [mabr.Config](../+mabr/Config.m) at the root: a plain **value** object hold
 
 ## What MABR does not do
 
-**MABR does not generate or calibrate stimuli.** An external package supplies pre-computed, calibrated waveforms through the [StimulusSource](../+mabr/+stim/StimulusSource.m) contract. This is the single most important boundary in the system: it keeps acoustic calibration — which is rig-specific, changes over time, and needs its own validation — out of the acquisition path entirely.
+**MABR does not generate or calibrate stimuli.** An external package supplies pre-computed, calibrated waveforms through the [StimulusSet](../+mabr/+stim/StimulusSet.m) contract — a struct array in which each entry is **one** presentation (`signal` + `ID`). This is the single most important boundary in the system: it keeps acoustic calibration — which is rig-specific, changes over time, and needs its own validation — out of the acquisition path entirely.
 
-MABR does own **one** piece of the stimulus: the **timing pulse channel**. [BlockQueue](../+mabr/+stim/BlockQueue.m) synthesizes a unit pulse at each sweep onset and pairs it with the external signal channel to form the 2-channel play matrix. That pulse is recorded back on a second input channel and is what sweep extraction keys off, so MABR must own the contract to guarantee sweeps are cut where they were actually played, not where they were nominally scheduled.
+The boundary is drawn at *what the sound is*, not *when it is played*. **MABR owns presentation entirely**: the inter-stimulus interval, how many times each entry repeats, and how entries are combined across the bank (blocked, interleaved, shuffled) are all decided by [Schedule](../+mabr/+stim/Schedule.m) from settings the operator picks in the GUI. A stimulus package that also chose the timing would make experimental design a property of a calibration artifact, which is exactly backwards.
+
+MABR also owns the **timing pulse channel**. `Schedule` synthesizes a unit pulse at each onset and pairs it with the external signal channel to form the 2-channel play matrix. That pulse is recorded back on a second input channel and is what sweep extraction keys off, so MABR must own the contract to guarantee sweeps are cut where they were actually played, not where they were nominally scheduled.
+
+Because a run may intermix stimuli, `Schedule` also records which stimulus fired at each onset. [AcqController](../+mabr/+ui/AcqController.m) uses that to de-interleave the recording at save time, so the on-disk unit stays **one file per stimulus condition** no matter how the presentation was ordered — the offline pipeline never learns that interleaving happened.
 
 **MABR does not do offline analysis.** The `abr_analysis/` pipeline is separate and function-based — see [Offline Analysis](Offline-Analysis.md). The coupling between them is the `.abr` file format and filename convention, documented in [Data Files](Data-Files.md) and enforced by a test.
 

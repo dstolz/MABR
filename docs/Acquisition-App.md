@@ -29,24 +29,50 @@ The window is a single column of controls, top to bottom: session identity, stim
 
 ## Stimulus
 
-**Load .mat…** — Loads a `.mat` file of pre-computed, calibrated blocks supplied by your external stimulus package. The file should contain a struct array of block specifications; MABR finds it in the loaded variables. Required fields per block are listed in [Extending MABR](Extending.md#supplying-stimuli).
+**Load .mat…** — Loads a `.mat` file of pre-computed, calibrated stimuli supplied by your external stimulus package. The file should contain a struct array in which each entry is **one** stimulus — a `signal` and an `ID`. MABR finds it among the loaded variables. Fields are listed in [Extending MABR](Extending.md#the-stimulus-entry).
 
-**Test Stimulus** — Loads the built-in tone-pip grid (8 and 16 kHz × 30 and 60 dB, 256 sweeps each). **Uncalibrated** — for testing the software and signal chain only.
+Note what the file does *not* contain: repetition counts, spacing, or ordering. Those are yours to choose here, per session, and are described below.
 
-The label between the two buttons shows `(none loaded)` in red until a source is loaded, then the block count.
+**Test Stimulus** — Loads the built-in tone-pip grid (8 and 16 kHz × 30 and 60 dB). **Uncalibrated** — for testing the software and signal chain only.
+
+The label between the two buttons shows `(none loaded)` in red until stimuli are loaded, then the stimulus count.
+
+## Presentation
+
+**Strategy** — How the stimuli in the bank are combined:
+
+| Setting | Behavior |
+|---------|----------|
+| Blocked — one stimulus per run | All repetitions of the first stimulus, then all of the second, and so on |
+| Blocked, shuffled run order | The same, but which stimulus goes first is shuffled |
+| Interleaved — A B C A B C … | One continuous run cycling through every stimulus |
+| Interleaved, shuffled each cycle | The same, with each cycle's order shuffled independently |
+| Fully shuffled | One continuous run, every presentation shuffled |
+
+The last three **intermix** stimuli within a single continuous run, which removes drift and order effects from the comparison between conditions. You still get one `.abr` file per stimulus: MABR knows which stimulus it played at every onset and separates the sweeps when it saves.
+
+Shuffling only reorders — it never resamples. Every stimulus is presented exactly the number of times you asked for under any of the five strategies, so the counts are identical whichever you pick; only the order changes.
+
+**Repetitions** — How many times each stimulus is presented. The number field applies one value to every stimulus. **Per stimulus…** opens a small editor where you can either keep one value for the whole bank or give each stimulus its own count; it shows the running total and estimated acquisition time as you type. Stimuli with unequal counts drop out of the cycle once they are done, so the extra repetitions of the others stay spread out rather than clumping at the end.
+
+**ISI / Rate** — The inter-stimulus interval, onset to onset. The two fields are two views of one number — edit either and the other follows. If the longest stimulus does not fit inside the interval, a red `overlap!` warning appears and the status line tells you the highest rate that would fit; MABR will still run, summing the overlap, but this is almost always a mistake.
+
+**Plan summary** — The grey line below shows what the current settings actually buy: how many runs, how many presentations in total, and roughly how long it will take. Check it before pressing Start.
 
 ## Acquisition settings
 
 **Testing (loopback, no hardware)** — On by default. Runs the entire program with no audio device: the outgoing stimulus is fed back as the incoming recording, plus a trace of noise. Everything else behaves normally, including saving files. Untick for real recordings. Toggling this rebuilds the background worker.
 
-**Advance** — When to move to the next condition:
+**Advance** — When to end a run early:
 
 | Setting | Behavior |
 |---------|----------|
-| Number of Sweeps | Run each condition until the target sweep count is reached |
+| All Repetitions | Play every scheduled repetition |
 | Correlation Threshold | Stop as soon as the online response correlation reaches the threshold, subject to a minimum sweep count |
 
-**Target / Thr** — Two number fields. The first is the target sweep count (used by both criteria — under the correlation criterion it still bounds how long a condition may run). The second is the correlation threshold, 0 to 1, and is only enabled when the correlation criterion is selected. 0.5 is a reasonable starting point.
+The threshold field (0 to 1, 0.5 is a reasonable starting point) is enabled only when the correlation criterion is selected.
+
+**Correlation early-stop is available for blocked strategies only.** When you pick an intermixed strategy the Advance control greys out: a correlation computed across mixed conditions is not meaningful, and stopping such a run would truncate whichever stimuli happened to fall last in the sequence, unbalancing the design. Those runs always play to completion.
 
 ## Viewers
 
@@ -58,9 +84,9 @@ The label between the two buttons shows `(none loaded)` in red until a source is
 
 **Lamp and state label** — The current program state: Idle, PrepBlock, Acquire, BlockComplete, AdvanceBlock, SchedComplete, or Error.
 
-**Sweeps** — Sweeps detected in the current condition so far.
+**Sweeps** — Sweeps detected in the current run so far. In an intermixed run this counts every presentation, not one condition's share.
 
-**r** — The current online correlation, the same value the live plot's bar shows. Under the correlation criterion, the condition ends when this reaches your threshold.
+**r** — The current online correlation, the same value the live plot's bar shows. Under the correlation criterion, the run ends when this reaches your threshold. In an intermixed run it is shown for information only and never stops the run.
 
 **Status line** (bottom) — The most recent event: worker startup, files saved, errors.
 
@@ -68,16 +94,16 @@ The label between the two buttons shows `(none loaded)` in red until a source is
 
 | Button | Effect |
 |--------|--------|
-| **Start** | Begin the schedule from the first condition |
+| **Start** | Begin the schedule from the first run |
 | **Pause** / **Resume** | Suspend playback in place, keeping the audio device open |
-| **Stop Block** | End the current condition now, save it, continue to the next |
-| **Abort** | End the current condition now, save it, halt the schedule |
+| **Stop Run** | End the current run now, save it, continue to the next |
+| **Abort** | End the current run now, save it, halt the schedule |
 
-Stop Block and Abort both save what was recorded. Neither discards data.
+Stop Run and Abort both save what was recorded. Neither discards data. Stopping an intermixed run early is allowed but leaves the conditions unbalanced — the stimuli late in the sequence will have fewer sweeps than the rest.
 
 ## Closing
 
-Closing the window shuts down the background acquisition worker and releases the audio device. If you close mid-recording, the condition in progress is not saved — use Abort first.
+Closing the window shuts down the background acquisition worker and releases the audio device. If you close mid-recording, the run in progress is not saved — use Abort first.
 
 ---
 
@@ -85,7 +111,11 @@ Closing the window shuts down the background acquisition worker and releases the
 
 [mabr.ui.App](../+mabr/+ui/App.m) is a programmatic `uifigure` and is deliberately dumb: it constructs an [AcqController](../+mabr/+ui/AcqController.m), forwards button presses to controller methods, and updates labels from controller events. It holds no acquisition state of its own and never touches the [Engine](../+mabr/+acq/Engine.m) or the ring buffer directly.
 
-Layout lives in `createComponents` and is treated as generated code — a rewrite of the layout should not need to touch the callbacks. Logic lives in the `on*` callbacks and event handlers below it.
+It does own the **presentation settings** — the stimulus bank, per-stimulus repetition counts, strategy, and ISI — because those are experiment design, not acquisition state. `buildSchedule` is the single place that turns them into a [Schedule](../+mabr/+stim/Schedule.m); both the live plan-summary preview and `onStart` go through it, so the preview cannot drift from what actually runs.
+
+[mabr.ui.RepetitionsDialog](../+mabr/+ui/RepetitionsDialog.m) is a self-contained modal returning a repetition vector (or `[]` on cancel). It is a plain function, not a class — it holds no state beyond the window's lifetime.
+
+Layout lives in `createComponents` and is treated as generated code — a rewrite of the layout should not need to touch the callbacks. Logic lives in the `on*` callbacks and event handlers below it. `syncAdvanceEnables` is deliberately separate from `onStrategyChanged`: `transport()` calls it too, and it must not write to the status line there.
 
 The four events the app listens for:
 
@@ -93,7 +123,7 @@ The four events the app listens for:
 |-------|---------|--------------|
 | `StateChanged` | `ProgStateEventData.State` | Lamp colour, state label, button enable states |
 | `MetricsUpdated` | `.Info` = `numSweeps`, `corr` | Sweep and correlation labels |
-| `BlockSaved` | `.Info.file` | Status line; adds the block to the Trace Organizer |
+| `BlockSaved` | `.Info.file` | Status line; adds the block to the Trace Organizer. Fires once per stimulus recovered from the run, so an intermixed run raises it several times |
 | `ScheduleComplete` | — | Status line; resets transport buttons |
 
 `ensureController` rebuilds the controller when the Testing checkbox changes, since testing mode is fixed at Engine construction. It is also where the one-time `waitUntilReady(120)` handshake happens — the only bounded wait in the program, and the reason the first Start is slower than the rest.

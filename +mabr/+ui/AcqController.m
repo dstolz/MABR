@@ -1,20 +1,30 @@
 classdef AcqController < handle
 % mabr.ui.AcqController  Wires the UI to the acquisition engine.
 %
-%   Owns the mabr.acq.Engine, the mabr.data.Session, the mabr.stim.BlockQueue,
+%   Owns the mabr.acq.Engine, the mabr.data.Session, the mabr.stim.Schedule,
 %   and the live view. Translates user actions into engine commands and engine
 %   events into UI updates and program-state transitions. There is NO global
 %   state and NO busy-wait: engine State transitions arrive as events, and a
 %   single ~20 Hz timer refreshes the live view from the ring buffer.
 %
 %   Because the worker polls commands every frame, an online advance criterion
-%   (e.g. mabr.stim.advance.corr_threshold) can stop a block early the moment
-%   a response is detected — the capability the legacy design could not offer.
+%   (e.g. mabr.stim.advance.corr_threshold) can stop a run early the moment a
+%   response is detected — the capability the legacy design could not offer.
+%   That applies only to BLOCKED strategies, where a run holds one stimulus.
+%   An intermixed run (interleaved / random) always plays to completion:
+%   stopping it early would truncate whichever stimuli happened to fall last
+%   in the sequence, unbalancing the design.
+%
+%   A run may contain more than one stimulus. At finalization the recorded
+%   sweeps are de-interleaved by mabr.stim.Schedule's per-onset stimulus
+%   index, so each stimulus ID still becomes its own mabr.data.Block and its
+%   own .abr file regardless of how the presentation was ordered.
 %
 %   Events the App can listen to:
 %       StateChanged     - program flow changed (mabr.ui.ProgStateEventData)
 %       MetricsUpdated   - live metrics changed (ProgStateEventData.Info)
-%       BlockSaved       - a block was written (.Info.file)
+%       BlockSaved       - a block was written (.Info.file); fires once per
+%                          stimulus recovered from the run
 %       ScheduleComplete - the whole schedule finished
 %
 % Daniel Stolzberg (c) 2019-2026
@@ -23,7 +33,8 @@ classdef AcqController < handle
         Config
         Engine      mabr.acq.Engine
         Session     mabr.data.Session
-        Queue       mabr.stim.BlockQueue
+        Stimuli     mabr.stim.StimulusSet
+        Schedule    mabr.stim.Schedule
         LivePlot    mabr.ui.LivePlot
         State (1,1) mabr.ui.ProgState = mabr.ui.ProgState.Idle
         Testing (1,1) logical = false
@@ -43,6 +54,8 @@ classdef AcqController < handle
         SweepState (1,1) struct = struct();
         CurMetrics (1,1) struct = struct('numSweeps',0,'corr',0);
         BlockStart (1,:) char = '';
+        CurRun     (1,1) double = 0;    % index of the run being acquired
+        CurSeq     (1,:) double = [];   % stimulus index at each of its onsets
         HaltAfterBlock (1,1) logical = false;
         Listeners
     end
@@ -91,9 +104,14 @@ classdef AcqController < handle
         end
 
         % --- Configuration --------------------------------------------------
-        function setSource(obj,source)
-            obj.Queue = mabr.stim.BlockQueue(source,obj.Config);
-            obj.Queue.TargetSweeps = obj.AdvanceParams.targetSweeps;
+        function setStimuli(obj,stimuli)
+            % stimuli: a mabr.stim.StimulusSet, or the raw struct array the
+            % external package supplies (signal + ID per entry).
+            if ~isa(stimuli,'mabr.stim.StimulusSet')
+                stimuli = mabr.stim.StimulusSet(stimuli,obj.Config);
+            end
+            obj.Stimuli  = stimuli;
+            obj.Schedule = mabr.stim.Schedule(stimuli,obj.Config);
         end
 
         function setLivePlot(obj,lp)
@@ -102,11 +120,13 @@ classdef AcqController < handle
 
         % --- User actions ---------------------------------------------------
         function start(obj)
-            assert(~isempty(obj.Queue),'mabr:ui:AcqController:noSource', ...
-                'No stimulus source set. Call setSource() first.');
+            assert(~isempty(obj.Schedule),'mabr:ui:AcqController:noStimuli', ...
+                'No stimuli set. Call setStimuli() first.');
+            assert(obj.Schedule.NumRuns > 0,'mabr:ui:AcqController:emptySchedule', ...
+                'The schedule is empty — every stimulus has 0 repetitions.');
             obj.HaltAfterBlock = false;
-            obj.Queue.reset();
-            obj.begin_current_block();
+            obj.Schedule.reset();
+            obj.begin_current_run();
         end
 
         function pauseAcq(obj),  obj.Engine.pause();  end
@@ -127,9 +147,9 @@ classdef AcqController < handle
 
     methods (Access = private)
         % --- Program flow ---------------------------------------------------
-        function begin_current_block(obj)
-            idx = obj.Queue.current();
-            if isempty(idx) || idx == 0
+        function begin_current_run(obj)
+            r = obj.Schedule.current();
+            if isempty(r) || r == 0
                 obj.set_state(mabr.ui.ProgState.SchedComplete);
                 notify(obj,'ScheduleComplete');
                 return
@@ -141,7 +161,16 @@ classdef AcqController < handle
             obj.BlockStart = char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss'));
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot), obj.LivePlot.reset(); end
 
-            spec = obj.Queue.renderSpec(idx);
+            spec = obj.Schedule.renderSpec(r);
+            obj.CurRun = r;
+            obj.CurSeq = spec.StimulusIndex(:)';
+
+            % The live view's progress bar tracks this run's own presentation
+            % count, which the schedule — not the advance criterion — fixes.
+            p = obj.AdvanceParams;
+            p.targetSweeps = numel(obj.CurSeq);
+            obj.AdvanceParams = p;
+
             obj.Engine.prep(spec);
             obj.Engine.run();
         end
@@ -160,9 +189,11 @@ classdef AcqController < handle
             obj.set_state(mabr.ui.ProgState.BlockComplete);
 
             try
-                ffn = obj.finalize_block();
-                if ~isempty(ffn), notify(obj,'BlockSaved',mabr.ui.ProgStateEventData( ...
-                        obj.State,struct('file',ffn))); end
+                files = obj.finalize_run();
+                for i = 1:numel(files)
+                    notify(obj,'BlockSaved',mabr.ui.ProgStateEventData( ...
+                        obj.State,struct('file',files{i})));
+                end
             catch me
                 mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
             end
@@ -173,12 +204,12 @@ classdef AcqController < handle
             end
 
             obj.set_state(mabr.ui.ProgState.AdvanceBlock);
-            nextIdx = obj.Queue.advance();
-            if isempty(nextIdx)
+            nextRun = obj.Schedule.advance();
+            if isempty(nextRun)
                 obj.set_state(mabr.ui.ProgState.SchedComplete);
                 notify(obj,'ScheduleComplete');
             else
-                obj.begin_current_block();
+                obj.begin_current_run();
             end
         end
 
@@ -221,9 +252,14 @@ classdef AcqController < handle
 
             notify(obj,'MetricsUpdated',mabr.ui.ProgStateEventData(obj.State,obj.CurMetrics));
 
-            % Online advance: stop the block early if the criterion is met.
-            if obj.State == mabr.ui.ProgState.Acquire && obj.advance_met()
-                mabr.log.vprintf(1,'Advance criterion met at %d sweeps (r=%.3f); stopping block', ...
+            % Online advance: stop the run early if the criterion is met. Only
+            % meaningful when the run holds a single stimulus — pooling an
+            % intermixed run's sweeps would compare different conditions, and
+            % stopping it would truncate whichever stimuli fell last in the
+            % sequence. Those runs play out in full.
+            if obj.State == mabr.ui.ProgState.Acquire ...
+                    && ~obj.Schedule.isIntermixed() && obj.advance_met()
+                mabr.log.vprintf(1,'Advance criterion met at %d sweeps (r=%.3f); stopping run', ...
                     obj.CurMetrics.numSweeps,R);
                 obj.Engine.stop();
             end
@@ -237,9 +273,11 @@ classdef AcqController < handle
         end
 
         % --- Finalization / save -------------------------------------------
-        function ffn = finalize_block(obj)
-            ffn = '';
-            rb   = obj.Engine.RingBuffer;
+        function files = finalize_run(obj)
+            % Split the run's recording into one Block (and one .abr) per
+            % stimulus that appeared in it, and return the files written.
+            files = {};
+            rb    = obj.Engine.RingBuffer;
             [rawSignal,rawTiming] = rb.readBlock();   % chronological, wrap-safe
             if numel(rawSignal) < 2, return; end
 
@@ -250,33 +288,62 @@ classdef AcqController < handle
             onsetsRaw = mabr.metrics.find_timing_onsets(rawTiming,round(0.002*Fs),0.1);
             if isempty(onsetsRaw), return; end
 
+            % Pair each recorded onset with the stimulus the schedule placed
+            % there. A run can end early (Stop/Abort, or an advance criterion),
+            % so trust whichever of the two is shorter.
+            seq = obj.CurSeq;
+            n   = min(numel(onsetsRaw),numel(seq));
+            if n < 1, return; end
+            onsetsRaw = onsetsRaw(1:n);
+            seq       = seq(1:n);
+
             % Decimate to the analysis rate at finalization so the Recording
             % (and its filter design) are self-consistent. io then saves it
             % as-is (DecimationFactor = 1) yielding the same offline-format
             % 12 kHz .abr the legacy save_abr_data produced.
             adcData  = single(resample(double(rawSignal),1,df));
-            onsets   = max(1,round(onsetsRaw./df));
+            onsets   = max(1,round(onsetsRaw(:)./df));
             sweepLen = max(1,round(adcFs*diff(obj.Window)));
 
-            rec = mabr.data.Recording(adcFs,adcData,onsets,sweepLen,1);
-            rec.UseBandpass = obj.UseBandpass;
-            rec.UseNotch    = obj.UseNotch;
-            rec = rec.designFilters();
+            present = unique(seq,'stable');
+            counts  = zeros(1,obj.Stimuli.numStimuli);
 
-            idx     = obj.Queue.current();
-            srcBlk  = obj.Queue.Source.getBlock(idx);
-            % keep only lightweight metadata on the Block (not the waveform)
-            stimMeta = struct('Meta',mabr.ui.AcqController.getdef(srcBlk,'Meta',struct()), ...
-                              'SampleRate',srcBlk.SampleRate);
-            blk = mabr.data.Block(stimMeta,rec,obj.BlockStart);
-            blk = blk.computeMetrics();
+            for u = present
+                sel = onsets(seq == u);
+                counts(u) = numel(sel);
 
-            obj.Session.addBlock(blk);
-            obj.Queue.recordRun(idx,numel(onsets));
+                if isscalar(present)
+                    % Homogeneous run: save the continuous trace, exactly as
+                    % the one-block-per-condition path always has.
+                    data = adcData;
+                else
+                    % Intermixed run: keep only this stimulus's sweep windows,
+                    % so each .abr carries its own data instead of N copies of
+                    % one shared trace. Still plain Data + SweepOnsets, so the
+                    % offline pipeline reads it unchanged.
+                    [data,sel] = mabr.ui.AcqController.compact_sweeps(adcData,sel,sweepLen);
+                end
 
-            if ~isempty(obj.Session.OutputPath)
-                ffn = mabr.data.io.writeABR(blk,obj.Session.OutputPath,obj.Session.Subject.ID);
+                rec = mabr.data.Recording(adcFs,data,sel,sweepLen,1);
+                rec.UseBandpass = obj.UseBandpass;
+                rec.UseNotch    = obj.UseNotch;
+                rec = rec.designFilters();
+
+                % keep only lightweight metadata on the Block (not the waveform)
+                stimMeta = struct('Meta',obj.Stimuli.meta(u), ...
+                                  'SampleRate',obj.Stimuli.SampleRate);
+                blk = mabr.data.Block(stimMeta,rec,obj.BlockStart);
+                blk = blk.computeMetrics();
+
+                obj.Session.addBlock(blk);
+
+                if ~isempty(obj.Session.OutputPath)
+                    files{end+1} = mabr.data.io.writeABR(blk, ...
+                        obj.Session.OutputPath,obj.Session.Subject.ID); %#ok<AGROW>
+                end
             end
+
+            obj.Schedule.recordRun(obj.CurRun,counts);
         end
 
         % --- Helpers --------------------------------------------------------
@@ -299,8 +366,20 @@ classdef AcqController < handle
     end
 
     methods (Static, Access = private)
-        function v = getdef(s,f,d)
-            if isstruct(s) && isfield(s,f) && ~isempty(s.(f)), v = s.(f); else, v = d; end
+        function [data,newOnsets] = compact_sweeps(src,onsets,sweepLen)
+            % Concatenate just the sweep windows at `onsets` into a new trace,
+            % returning it with the onsets that index into it. Used to split an
+            % intermixed run so each stimulus's .abr holds only its own sweeps.
+            n         = numel(onsets);
+            data      = zeros(n*sweepLen,1,'single');
+            newOnsets = zeros(n,1);
+            for k = 1:n
+                i0 = onsets(k);
+                i1 = min(i0+sweepLen-1,numel(src));
+                d0 = (k-1)*sweepLen + 1;
+                data(d0:d0+(i1-i0)) = src(i0:i1);
+                newOnsets(k) = d0;
+            end
         end
     end
 end

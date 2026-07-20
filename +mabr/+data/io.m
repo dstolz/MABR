@@ -140,7 +140,12 @@ classdef io
                 lStr = strrep(sprintf('%g',lvl),'.','_');
                 fn = sprintf('%s_Frequency_%skHz_Level_%sdB_%s.abr',subj,fStr,lStr,t);
             else
-                if isfield(meta,'Label') && ~isempty(meta.Label)
+                % No Frequency/Level to match the pipeline's default regex, so
+                % fall back to the stimulus ID — which every entry supplies and
+                % which is far more legible than a joined Label.
+                if isfield(meta,'ID') && ~isempty(meta.ID)
+                    lbl = char(string(meta.ID));
+                elseif isfield(meta,'Label') && ~isempty(meta.Label)
                     lbl = char(join(string(meta.Label),'_'));
                 else
                     lbl = 'block';

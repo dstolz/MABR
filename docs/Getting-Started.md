@@ -103,13 +103,17 @@ cfg = mabr.Config;
 c   = mabr.ui.AcqController(cfg,true);      % true = loopback/testing
 c.waitUntilReady(120);                       % one-time worker handshake
 
-c.setSource(mabr.stim.demoSource(cfg));      % any mabr.stim.StimulusSource
+% a bank of single stimuli — struct array or mabr.stim.StimulusSet
+c.setStimuli(mabr.stim.demoStimuli(cfg));
+
+% presentation is MABR's to choose, not the stimulus package's
+c.Schedule.Strategy    = 'shuffled-cycles'; % intermix the conditions
+c.Schedule.Repetitions = 512;               % scalar, or one value per stimulus
+c.Schedule.ISI         = 1/21.1;            % seconds, onset-to-onset
+c.Schedule.build();                          % required after either change
+
 c.Session.Subject.ID = 'SUBJ_ID_001';
 c.Session.OutputPath = 'C:\data\subj001';
-
-c.AdvanceFcn    = @mabr.stim.advance.corr_threshold;
-c.AdvanceParams = struct('targetSweeps',512,'corrThreshold',0.5, ...
-                         'minSweeps',32,'maxSweeps',Inf);
 
 addlistener(c,'BlockSaved',      @(~,e) fprintf('saved %s\n',e.Info.file));
 addlistener(c,'ScheduleComplete',@(~,~) disp('done'));
@@ -117,10 +121,23 @@ addlistener(c,'ScheduleComplete',@(~,~) disp('done'));
 c.start();
 ```
 
+That produces one `.abr` per stimulus even though every condition was played in a single intermixed run — `AcqController` de-interleaves the sweeps on the way out.
+
+For a blocked schedule you can additionally arm an early-stop criterion, which ends each run as soon as the response is good enough:
+
+```matlab
+c.Schedule.Strategy = 'blocked';  c.Schedule.build();
+c.AdvanceFcn    = @mabr.stim.advance.corr_threshold;
+c.AdvanceParams = struct('targetSweeps',512,'corrThreshold',0.5, ...
+                         'minSweeps',32,'maxSweeps',Inf);
+```
+
+The criterion is ignored under intermixed strategies — see [Extending MABR](Extending.md#defining-when-a-run-ends).
+
 The controller is event-driven throughout — `start()` returns immediately and the schedule proceeds on engine events and a live-view timer. Do not busy-wait on its state; listen to `StateChanged`, `MetricsUpdated`, `BlockSaved`, and `ScheduleComplete`.
 
 See [verify_online_advance.m](../tests/verify_online_advance.m) for the same pattern used as an end-to-end test, including how to block until completion in a script.
 
 ### Where the pieces live
 
-`AcqController` owns three things and mediates between them: an [Engine](../+mabr/+acq/Engine.m) (hardware), a [BlockQueue](../+mabr/+stim/BlockQueue.m) (what to play), and a [Session](../+mabr/+data/Session.m) (what came back). [Architecture](Architecture.md) explains the boundaries; [Extending MABR](Extending.md) covers replacing any of them.
+`AcqController` mediates between an [Engine](../+mabr/+acq/Engine.m) (hardware), a [StimulusSet](../+mabr/+stim/StimulusSet.m) (what the sounds are), a [Schedule](../+mabr/+stim/Schedule.m) (when and in what order they play), and a [Session](../+mabr/+data/Session.m) (what came back). [Architecture](Architecture.md) explains the boundaries; [Extending MABR](Extending.md) covers replacing any of them.

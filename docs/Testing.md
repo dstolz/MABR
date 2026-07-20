@@ -41,9 +41,9 @@ This is the test that protects the core promise of the design: commands are hono
 
 ### verify_online_advance
 
-[tests/verify_online_advance.m](../tests/verify_online_advance.m) — early stopping, in two parts. Part A checks the advance predicates in isolation. Part B drives the real `AcqController` in loopback with the demo stimulus and the correlation criterion, and asserts the block completes with far fewer sweeps than the stimulus provides.
+[tests/verify_online_advance.m](../tests/verify_online_advance.m) — early stopping and intermixing, in three parts. Part A checks the advance predicates in isolation. Part B drives the real `AcqController` in loopback with a **blocked** schedule and the correlation criterion, and asserts the run completes with far fewer sweeps than were scheduled. Part C schedules two stimuli with `shuffled-cycles` and asserts that one continuous intermixed run is de-interleaved back into one `Block` per stimulus ID, each with its full repetition count — and that the armed criterion does *not* fire, since intermixed runs play to completion.
 
-Part B is the only test that exercises the full stack — controller, engine, worker, ring buffer, extraction, criterion, finalization, save — in one pass.
+Parts B and C are the only tests that exercise the full stack — controller, engine, worker, ring buffer, extraction, criterion, de-interleaving, finalization, save — in one pass.
 
 ## Writing a new verification
 
@@ -52,9 +52,13 @@ Follow the existing pattern: a plain function, no test framework, `fprintf` a ba
 Two conventions matter for keeping tests hardware-free and deterministic:
 
 - **Construct the engine with `testing = true`.** `mabr.acq.Engine(cfg,true)` or `mabr.ui.AcqController(cfg,true)` runs the entire program with no device, feeding the outgoing frame back as the recorded frame.
-- **Use `TestingFrameDelay` to pace loopback.** Without a device, loopback runs as fast as MATLAB can loop, which can starve the 20 Hz live-view timer that evaluates advance criteria. `BlockQueue.TestingFrameDelay` inserts a per-frame pause so timing-dependent behaviour is observable. It has no effect outside testing mode.
+- **Use `TestingFrameDelay` to pace loopback.** Without a device, loopback runs as fast as MATLAB can loop, which can starve the 20 Hz live-view timer that evaluates advance criteria. `Schedule.TestingFrameDelay` inserts a per-frame pause so timing-dependent behaviour is observable. It has no effect outside testing mode.
 
-Prefer building deterministic stimuli inline (as `verify_engine_loopback` does with a 1 kHz tone and fixed onsets) over relying on `demoSource`, unless you are specifically testing the demo path.
+- **Set `Schedule.Seed` for a reproducible order.** Shuffled strategies otherwise reshuffle each time, which makes a failure hard to reproduce. `verify_online_advance` pins it so the intermixed assertions are deterministic.
+
+- **Reuse one `AcqController` across test phases.** A second `Engine` maps the same ring-buffer files and contends for the single-process pool. `verify_online_advance` runs both its end-to-end phases through one controller, recording `Session.NumBlocks` beforehand to tell the new blocks apart.
+
+Prefer building deterministic stimuli inline (as `verify_engine_loopback` does with a 1 kHz tone and fixed onsets) over relying on `demoStimuli`, unless you are specifically testing the demo path.
 
 ## What is not covered
 

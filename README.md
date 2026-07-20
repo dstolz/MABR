@@ -10,7 +10,9 @@
 
 MABR plays a calibrated stimulus, records the evoked response in lock-step with it, and saves each stimulus condition to its own file as soon as it finishes. A live view shows the response averaging together as it accumulates, and conditions can stop automatically the moment a reproducible response is detected rather than always running a fixed number of sweeps. A separate batch pipeline turns folders of saved recordings into hearing thresholds.
 
-MABR does **not** generate or calibrate sounds. An external package supplies pre-computed, calibrated waveforms through a small documented contract, which keeps rig-specific acoustic calibration out of the acquisition path. A built-in uncalibrated tone-pip source is included so the software can be run and tested without one.
+MABR does **not** generate or calibrate sounds. An external package supplies pre-computed, calibrated waveforms through a small documented contract — a struct array in which each entry is one stimulus (`signal` + `ID`) — which keeps rig-specific acoustic calibration out of the acquisition path. A built-in uncalibrated tone-pip bank is included so the software can be run and tested without one.
+
+MABR **does** own presentation: the inter-stimulus interval, how many times each stimulus repeats, and how stimuli are combined (blocked, interleaved, or shuffled) are all chosen in the app, per session. Shuffled and interleaved schedules intermix conditions within a single continuous run to remove drift and order effects; MABR separates the recorded sweeps afterwards, so you still get one file per stimulus condition. Shuffling reorders a fixed set of presentations — it never changes how many times a stimulus is played.
 
 ## Requirements
 
@@ -44,7 +46,7 @@ Full documentation is in [`docs/`](docs/), written at two levels — a plain-lan
 | ---- | ------ |
 | [Architecture](docs/Architecture.md) | How the pieces fit and why |
 | [Acquisition Engine](docs/Acquisition-Engine.md) | Worker, ring buffer, command/state protocol |
-| [Extending MABR](docs/Extending.md) | Stimulus sources, advance criteria, custom front ends |
+| [Extending MABR](docs/Extending.md) | Supplying stimuli, presentation strategies, advance criteria, custom front ends |
 | [API Reference](docs/API-Reference.md) | Every class and function, with links |
 | [Testing](docs/Testing.md) | The no-hardware verification suite |
 
@@ -55,7 +57,7 @@ MABR.m              launcher
 +mabr/              the toolbox
   +acq/               acquisition engine (parpool worker + ring buffer)
   +data/              data model and .abr file IO
-  +stim/              stimulus contract, block queue, advance criteria
+  +stim/              stimulus contract, presentation schedule, advance criteria
   +metrics/           pure, tested signal metrics
   +ui/                acquisition app, live plot, trace organizer
   +log/               verbosity-gated logging
