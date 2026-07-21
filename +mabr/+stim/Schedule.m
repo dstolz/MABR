@@ -46,6 +46,15 @@ classdef Schedule < handle
 %   online correlation-threshold advance is unavailable in those modes and the
 %   run always plays to completion.
 %
+%   Artifact make-up
+%   ----------------
+%   When mabr.ArtifactPolicy.Repeat is set, the controller calls appendMakeup
+%   after finalizing a run to re-present whatever that run lost to artifact.
+%   Make-up runs are appended to the end of the plan (a run's play matrix is
+%   rendered before streaming starts and cannot grow mid-flight), hold one
+%   stimulus each, and are bounded by MakeupLimit. reset() drops them, so a
+%   re-started schedule always begins from the plan build() produced.
+%
 %   Typical walk (driven by mabr.ui.AcqController):
 %       sch = mabr.stim.Schedule(stimulusSet,cfg);
 %       sch.ISI = 0.0474; sch.Strategy = 'shuffled-cycles';
@@ -76,13 +85,22 @@ classdef Schedule < handle
         RecorderChannels (1,2) double = [1 2]   % [ADCsignal ADCtiming]
         Device           (1,:) char   = ''
         TestingFrameDelay (1,1) double = 0      % s/frame; loopback pacing, tests only
+
+        % Ceiling on artifact make-up (see appendMakeup), as a multiple of each
+        % stimulus's scheduled repetitions. 1 means a condition can at most be
+        % presented twice over: enough to recover a realistic artifact rate,
+        % while a permanently noisy electrode -- where every make-up sweep is
+        % rejected too, asking for yet more -- still terminates.
+        MakeupLimit      (1,1) double {mustBeNonnegative} = 1
     end
 
     properties (SetAccess = private)
         Runs        (1,:) cell = {}    % each cell: stimulus indices, in play order
         Polarities  (1,:) cell = {}    % each cell: +1/-1 per onset, same size
+        IsMakeup    (1,:) logical = false(1,0)  % parallel to Runs; appended make-up?
         CurrentRun  (1,1) double = 0   % 0 = not started / complete
         RunCounts   (1,:) double = []  % presentations actually recorded, per stimulus
+        MakeupUsed  (1,:) double = []  % make-up presentations appended, per stimulus
     end
 
     properties (Dependent)
@@ -115,8 +133,10 @@ classdef Schedule < handle
             reps = obj.normalizedReps();
 
             obj.RunCounts  = zeros(1,n);
+            obj.MakeupUsed = zeros(1,n);
             obj.Runs       = {};
             obj.Polarities = {};
+            obj.IsMakeup   = false(1,0);
             if n == 0 || ~any(reps > 0), obj.CurrentRun = 0; return; end
 
             rs  = obj.stream();
@@ -151,11 +171,23 @@ classdef Schedule < handle
                         obj.Strategy,strjoin(mabr.stim.Schedule.Strategies,', '));
             end
 
+            obj.IsMakeup = false(1,numel(obj.Runs));
             obj.reset();
         end
 
         function reset(obj)
-            obj.RunCounts(:) = 0;
+            % Make-up runs belong to the acquisition that produced them, not to
+            % the plan, so re-starting drops them: reset() returns the schedule
+            % to exactly the state build() left it in, and the make-up budget
+            % starts over with it.
+            m = obj.IsMakeup;
+            if any(m)
+                obj.Runs(m)       = [];
+                obj.Polarities(m) = [];
+                obj.IsMakeup(m)   = [];
+            end
+            obj.RunCounts(:)  = 0;
+            obj.MakeupUsed(:) = 0;
             if isempty(obj.Runs), obj.CurrentRun = 0; else, obj.CurrentRun = 1; end
         end
 
@@ -194,6 +226,58 @@ classdef Schedule < handle
             if isempty(counts), return; end
             obj.RunCounts = obj.RunCounts + counts(:)';
             mabr.log.vprintf(2,'Run %d recorded (%s)',r,mat2str(counts(:)'));
+        end
+
+        function added = appendMakeup(obj,counts)
+            % Append run(s) re-presenting sweeps lost to artifact.
+            %
+            %   added = appendMakeup(counts) appends make-up presentations for
+            %   each stimulus, counts(i) of stimulus i, and returns how many
+            %   were actually appended (MakeupLimit can cap it below what was
+            %   asked). Called by mabr.ui.AcqController at finalization when
+            %   mabr.ArtifactPolicy.Repeat is set.
+            %
+            %   The make-up goes at the END of the plan rather than extending
+            %   the run that lost the sweeps: a run's play matrix is rendered
+            %   in full before the worker starts streaming it and cannot grow
+            %   mid-flight. Appending also keeps every condition's first pass
+            %   ahead of any second, so a session cut short still covers the
+            %   whole design rather than over-sampling its early conditions.
+            %
+            %   One make-up run holds ONE stimulus even under an intermixed
+            %   strategy: it exists to recover a specific condition's losses,
+            %   and one stimulus per run keeps that accounting exact.
+            added = zeros(1,obj.Set.numStimuli);
+            if isempty(counts) || ~any(counts > 0), return; end
+
+            counts = max(0,round(counts(:)'));
+            if numel(counts) < numel(added), counts(end+1:numel(added)) = 0; end
+            counts = counts(1:numel(added));
+
+            reps   = obj.normalizedReps();
+            alt    = obj.Set.alternatesPolarity();
+            budget = floor(obj.MakeupLimit.*reps) - obj.MakeupUsed;
+
+            for i = find(counts > 0)
+                k = min(counts(i),max(0,budget(i)));
+                if k < counts(i)
+                    mabr.log.vprintf(0,1, ...
+                        ['Artifact make-up for stimulus %d capped at %d of %d ' ...
+                         'requested presentations (limit %g x %d scheduled). ' ...
+                         'Artifacts are outpacing recovery — check the electrode.'], ...
+                        i,k,counts(i),obj.MakeupLimit,reps(i));
+                end
+                if k <= 0, continue; end
+
+                obj.Runs{end+1}       = repmat(i,1,k);
+                obj.Polarities{end+1} = mabr.stim.Schedule.polaritySeries(k,alt(i));
+                obj.IsMakeup(end+1)   = true;
+                obj.MakeupUsed(i)     = obj.MakeupUsed(i) + k;
+                added(i)              = k;
+
+                mabr.log.vprintf(1,'Appended make-up run %d: %d x stimulus %d', ...
+                    numel(obj.Runs),k,i);
+            end
         end
 
         % --- Rendering --------------------------------------------------------

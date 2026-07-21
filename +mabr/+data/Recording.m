@@ -61,6 +61,7 @@ classdef Recording
         SweepDuration
         TimeVector
         ProcessedData      % Data with the (designed) filter chain applied
+        ValidSweeps        % logical per SweepOnsets: window lies inside Data
         SweepData
         NumSweeps
         SweepMean
@@ -136,12 +137,22 @@ classdef Recording
         function n = get.NumArtifacts(obj),  n = nnz(obj.IsArtifact);             end
 
         % --- Segmentation --------------------------------------------------
+        function v = get.ValidSweeps(obj)
+            % Which SweepOnsets have their whole window inside Data. A run cut
+            % short can leave the last onset's window running off the end;
+            % those sweeps are absent from SweepData, so anything computed
+            % per-sweep (IsArtifact) must be mapped back through this mask
+            % rather than assumed to align with SweepOnsets.
+            idx = obj.sweep_index();
+            if isempty(idx), v = false(0,1); return; end
+            v = ~any(idx > obj.N | idx < 1,1)';
+        end
+
         function s = get.SweepData(obj)
             idx = obj.sweep_index();
             if isempty(idx), s = single([]); return; end
             x = obj.ProcessedData;
-            valid = ~any(idx > obj.N | idx < 1,1);
-            s = x(idx(:,valid));
+            s = x(idx(:,obj.ValidSweeps));
             if size(s,2) == 1 && size(s,1) ~= obj.SweepLength, s = s'; end
         end
 

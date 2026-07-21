@@ -53,6 +53,10 @@ classdef AcqController < handle
                                             'minSweeps',32,'maxSweeps',Inf);
         UseBandpass   (1,1) logical = true;
         UseNotch      (1,1) logical = true;
+        % How sweeps are judged for artifact, and whether losses are made up.
+        % Applied at finalization (see finalize_run); mabr.ui.App loads the
+        % user's remembered choice into it at Start.
+        Artifacts     (1,1) mabr.ArtifactPolicy = mabr.ArtifactPolicy;
     end
 
     properties (Access = private)
@@ -339,6 +343,7 @@ classdef AcqController < handle
 
             present = unique(seq,'stable');
             counts  = zeros(1,obj.Stimuli.numStimuli);
+            lost    = zeros(1,obj.Stimuli.numStimuli);   % sweeps rejected, per stimulus
 
             for u = present
                 sel = onsets(seq == u);
@@ -361,6 +366,23 @@ classdef AcqController < handle
                 rec.UseNotch    = obj.UseNotch;
                 rec = rec.designFilters();
 
+                % Judge each sweep AFTER filtering: baseline drift in a raw
+                % trace trips a voltage threshold on its own. Rejected sweeps
+                % are marked, never dropped — the samples still reach the .abr
+                % file so an offline reanalysis can make its own call.
+                %
+                % Map back through ValidSweeps so the flags stay aligned with
+                % SweepOnsets even when a truncated run left the last window
+                % short (those sweeps are absent from SweepData entirely).
+                flags = false(numel(sel),1);
+                flags(rec.ValidSweeps) = obj.Artifacts.detect(rec.SweepData);
+                rec.IsArtifact = flags;
+                lost(u)        = rec.NumArtifacts;
+                if lost(u) > 0
+                    mabr.log.vprintf(1,'Stimulus %d: %d of %d sweeps rejected (%s)', ...
+                        u,lost(u),numel(sel),obj.Artifacts.describe());
+                end
+
                 % keep only lightweight metadata on the Block (not the waveform)
                 stimMeta = struct('Meta',obj.Stimuli.meta(u), ...
                                   'SampleRate',obj.Stimuli.SampleRate);
@@ -381,6 +403,13 @@ classdef AcqController < handle
             end
 
             obj.Schedule.recordRun(obj.CurRun,counts);
+
+            % Win back what the artifacts cost, if asked to. The schedule
+            % appends the make-up to the end of the plan and caps it, so this
+            % converges even when the rejection rate stays high.
+            if obj.Artifacts.Repeat && any(lost > 0)
+                obj.Schedule.appendMakeup(lost);
+            end
         end
 
         % --- Helpers --------------------------------------------------------

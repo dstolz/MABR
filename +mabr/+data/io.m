@@ -78,6 +78,16 @@ classdef io
             if numel(pol) ~= numel(onsets), pol = ones(numel(onsets),1); end
             ABR_Data.ADC.SweepPolarity = pol;
 
+            % Which sweeps acquisition judged to be artifact, aligned with
+            % SweepOnsets the same way. Always written -- all false when
+            % rejection was off -- so offline code can read it unconditionally.
+            % Flagged sweeps are NOT removed from ADC.Data: the flag records
+            % the judgement and leaves the samples intact, so a reanalysis can
+            % override it or apply abr_analysis/rejectArtifacts instead.
+            art = logical(rec.IsArtifact(:));
+            if numel(art) ~= numel(onsets), art = false(numel(onsets),1); end
+            ABR_Data.ADC.IsArtifact = art;
+
             ABR_Data.StartTime = mabr.data.io.startTimeChar(block.StartTime);
 
             ABR_Data.SIG = mabr.data.io.buildSIG(block);
@@ -198,6 +208,13 @@ classdef io
 
             rec = mabr.data.Recording(double(D.ADC.SampleRate), ...
                 D.ADC.Data, double(D.ADC.SweepOnsets), swLen);
+
+            % Legacy files predate artifact flagging; a missing field means no
+            % sweep was rejected, not that the judgement is unknown.
+            if isfield(D.ADC,'IsArtifact') && ...
+                    numel(D.ADC.IsArtifact) == numel(rec.SweepOnsets)
+                rec.IsArtifact = logical(D.ADC.IsArtifact(:));
+            end
 
             % Reconstruct stimulus metadata (handles both plain-numeric SIG
             % from the new writer and sigProp-struct SIG from legacy files).

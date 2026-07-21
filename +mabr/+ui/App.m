@@ -39,8 +39,14 @@ classdef App < handle
         % owns these; RepetitionsDialog edits them, and onStart hands them to
         % the schedule.
         Reps        (1,:) double = []
+        % Artifact criterion, and what to do about a sweep that fails it. The
+        % GUI owns this; it is remembered across sessions in MATLAB prefs
+        % (mabr.ArtifactPolicy.loadPrefs) so a rig keeps whatever suits its
+        % electrode chain, and onStart hands it to the controller.
+        Artifacts   (1,1) mabr.ArtifactPolicy = mabr.ArtifactPolicy
         LivePlot    mabr.ui.LivePlot
         TraceOrg    mabr.ui.TraceOrganizer
+        StimViewer  mabr.ui.StimulusViewer
         Listeners
     end
 
@@ -62,6 +68,10 @@ classdef App < handle
         RepsButton
         AdvanceDrop
         CorrField
+        ArtifactDrop
+        ArtifactField
+        ArtifactRepeatCheck
+        ArtifactLabel
         ISIField
         RateField
         OverlapLabel
@@ -75,6 +85,8 @@ classdef App < handle
         SweepLabel
         CorrLabel
         StatusLabel
+        % Sweeps rejected so far this schedule, for the Run panel readout.
+        ArtifactCount (1,1) double = 0
     end
 
     methods
@@ -85,8 +97,10 @@ classdef App < handle
             catch me
                 uialert_or_warn(me.message);
             end
+            app.Artifacts = mabr.ArtifactPolicy.loadPrefs();
             app.createComponents();
             app.syncAdvanceEnables();
+            app.syncArtifactFields();
             app.openViewers();
             if nargout == 0, clear app; end
         end
@@ -99,6 +113,7 @@ classdef App < handle
             try, delete(app.Controller); end %#ok<TRYNC>
             try, delete(app.TraceOrg);   end %#ok<TRYNC>
             try, delete(app.LivePlot);   end %#ok<TRYNC>
+            try, delete(app.StimViewer); end %#ok<TRYNC>
             try, delete(app.UIFigure);   end %#ok<TRYNC>
         end
     end
@@ -106,7 +121,7 @@ classdef App < handle
     % ===================================================================
     methods (Access = private)
         function createComponents(app)
-            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 640], ...
+            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 700], ...
                 'CloseRequestFcn',@(~,~) app.onClose());
 
             app.HelpMenu = uimenu(app.UIFigure,'Text','&Help');
@@ -124,7 +139,7 @@ classdef App < handle
             % not see through a panel to its nested grid.
             app.Grid = uigridlayout(app.UIFigure,[7 1]);
             app.Grid.ColumnWidth = {'1x'};
-            app.Grid.RowHeight   = {96,60,166,90,'1x',96,22};
+            app.Grid.RowHeight   = {96,60,166,150,'1x',96,22};
             app.Grid.RowSpacing  = 8;
             app.Grid.Padding     = [10 10 10 6];
 
@@ -249,7 +264,7 @@ classdef App < handle
         end
 
         function buildAcquisitionPanel(app,row)
-            g = app.panelGrid('Acquisition',row,{24,24},{app.LabelWidth,'1x','1x'});
+            g = app.panelGrid('Acquisition',row,{24,24,24,24},{app.LabelWidth,'1x','1x'});
 
             app.TestingCheck = uicheckbox(g,'Text','Testing (loopback, no hardware)','Value',true, ...
                 'Tooltip','Run the whole engine without an audio device. Changing this rebuilds the worker.');
@@ -269,6 +284,34 @@ classdef App < handle
                 'ValueDisplayFormat','stop at r ≥ %.2f','Enable','off', ...
                 'Tooltip','Correlation the running average must reach for the run to stop early.');
             app.CorrField.Layout.Row = 2; app.CorrField.Layout.Column = 3;
+
+            % One threshold field serves both criteria -- they are alternatives,
+            % never both at once, and two fields with only one ever live read as
+            % a setting the user had forgotten to fill in. The display format
+            % says which criterion the number belongs to, so the pair needs no
+            % separate unit label (same trick as ISI/Rate above).
+            app.addLabel(g,'Artifacts',3,1);
+            app.ArtifactDrop = uidropdown(g, ...
+                'Items',mabr.ArtifactPolicy.ModeItems, ...
+                'ItemsData',mabr.ArtifactPolicy.Modes, ...
+                'Value',app.Artifacts.Mode, ...
+                'Tooltip',['How a sweep is judged contaminated. Rejected sweeps are always ' ...
+                           'marked and saved -- never silently discarded.'], ...
+                'ValueChangedFcn',@(~,~) app.onArtifactModeChanged());
+            app.ArtifactDrop.Layout.Row = 3; app.ArtifactDrop.Layout.Column = 2;
+            app.ArtifactField = uieditfield(g,'numeric','Limits',[eps Inf], ...
+                'Tooltip','Sweeps beyond this are rejected. Each criterion keeps its own value.', ...
+                'ValueChangedFcn',@(~,~) app.onArtifactThresholdChanged());
+            app.ArtifactField.Layout.Row = 3; app.ArtifactField.Layout.Column = 3;
+
+            app.ArtifactRepeatCheck = uicheckbox(g, ...
+                'Text','Repeat sweeps lost to artifact','Value',app.Artifacts.Repeat, ...
+                'Tooltip',['On: re-present each rejected sweep in a make-up run appended to ' ...
+                           'the end of the schedule, so every condition still reaches its ' ...
+                           'requested count. Off: just count them.'], ...
+                'ValueChangedFcn',@(~,~) app.onArtifactRepeatChanged());
+            app.ArtifactRepeatCheck.Layout.Row = 4;
+            app.ArtifactRepeatCheck.Layout.Column = [2 3];
         end
 
         function buildRunPanel(app,row)
@@ -276,17 +319,23 @@ classdef App < handle
 
             % Readout and transport share a panel: what the run is doing and
             % what you can do about it belong to the same glance.
-            s = uigridlayout(g,[1 4]);
+            s = uigridlayout(g,[1 5]);
             s.Layout.Row = 1; s.Layout.Column = [1 4];
             % Fixed width for the state label rather than 'fit', so the sweep
             % count does not slide sideways as the state text changes length.
-            s.ColumnWidth   = {18,118,'1x','fit'};
+            s.ColumnWidth   = {18,112,'1x','fit','fit'};
             s.Padding       = [0 0 0 0];
             s.ColumnSpacing = 8;
             app.StateLamp  = uilamp(s,'Color',[0.6 0.6 0.6]);
             app.StateLabel = uilabel(s,'Text','Idle','FontWeight','bold');
             app.SweepLabel = uilabel(s,'Text','Sweeps: 0');
             app.CorrLabel  = uilabel(s,'Text','r = —','HorizontalAlignment','right');
+            % Rejection count lives beside the other live readouts rather than
+            % in the status line, which the per-block "Saved ..." messages would
+            % otherwise overwrite as soon as it appeared.
+            app.ArtifactLabel = uilabel(s,'Text','','HorizontalAlignment','right', ...
+                'FontColor',[0.8 0.2 0], ...
+                'Tooltip','Sweeps rejected as artifact so far this schedule.');
 
             app.StartButton = uibutton(g,'Text','Start','BackgroundColor',[0.6 0.9 0.6], ...
                 'FontWeight','bold','ButtonPushedFcn',@(~,~) app.onStart());
@@ -306,17 +355,20 @@ classdef App < handle
         end
 
         function buildToolbar(app)
-            % The viewers are always open, so their entries here are "bring to
-            % front" rather than "show" -- they reopen a window only if the
-            % user closed one. Lettered glyphs (L/T/?) instead of pictograms:
-            % there is no pictogram for "trace organizer" that reads better
-            % than its initial at 16 px.
+            % The acquisition viewers are always open, so their entries here
+            % are "bring to front" rather than "show" -- they reopen a window
+            % only if the user closed one. The stimulus viewer is the
+            % exception: it inspects what is about to be played rather than
+            % what is coming back, so it opens on demand. Lettered glyphs
+            % (L/T/S/?) instead of pictograms: there is no pictogram for
+            % "trace organizer" that reads better than its initial at 16 px.
             ink  = [0.16 0.26 0.42];
             help = [0.35 0.35 0.35];
 
             app.Toolbar = uitoolbar(app.UIFigure);
             app.toolButton('L',ink, 'Live plot',       @() app.onShowLive());
             app.toolButton('T',ink, 'Trace organizer', @() app.onTraceOrg());
+            app.toolButton('S',ink, 'Stimulus viewer', @() app.onStimViewer());
             app.toolButton('?',help,'Help (MABR wiki)',@() app.openHelp(),true);
         end
 
@@ -380,6 +432,7 @@ classdef App < handle
             app.Listeners = [ ...
                 addlistener(app.Controller,'StateChanged',   @(~,e) app.onState(e)); ...
                 addlistener(app.Controller,'MetricsUpdated', @(~,e) app.onMetrics(e)); ...
+                addlistener(app.Controller,'BlockReady',     @(~,e) app.onBlockReady(e)); ...
                 addlistener(app.Controller,'BlockSaved',     @(~,e) app.onBlockSaved(e)); ...
                 addlistener(app.Controller,'ScheduleComplete',@(~,~) app.onScheduleComplete())];
             % An organizer left open across a controller rebuild would still be
@@ -422,6 +475,11 @@ classdef App < handle
             app.Stimuli = set;
             app.Reps    = mabr.stim.Schedule.startingRepetitions(set);
             if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
+            % An open stimulus viewer shows the bank that is loaded, not the
+            % one that was loaded when it was opened.
+            if ~isempty(app.StimViewer) && isvalid(app.StimViewer)
+                app.StimViewer.setStimuli(set);
+            end
             app.setSourceLabel();
             app.checkOverlap();
             app.refreshPlan();
@@ -454,6 +512,61 @@ classdef App < handle
                 app.AdvanceDrop.Enable = 'on';
             end
             app.onAdvanceChanged();
+        end
+
+        % --- Artifact rejection ---------------------------------------------
+        % The policy object is the source of truth; these keep the three
+        % controls and the saved prefs agreeing with it.
+        function onArtifactModeChanged(app)
+            % Hand the field's current value back to the criterion that owned
+            % it BEFORE switching, so toggling voltage -> RMS -> voltage does
+            % not overwrite one threshold with the other's number.
+            app.Artifacts = app.Artifacts.setThreshold(app.ArtifactField.Value/1e3);
+            app.Artifacts.Mode = app.ArtifactDrop.Value;
+            app.syncArtifactFields();
+            app.saveArtifactPrefs();
+            app.setStatus(['Artifact rejection: ' app.Artifacts.describe() '.']);
+        end
+
+        function onArtifactThresholdChanged(app)
+            app.Artifacts = app.Artifacts.setThreshold(app.ArtifactField.Value/1e3);
+            app.saveArtifactPrefs();
+        end
+
+        function onArtifactRepeatChanged(app)
+            app.Artifacts.Repeat = app.ArtifactRepeatCheck.Value;
+            app.saveArtifactPrefs();
+        end
+
+        function syncArtifactFields(app)
+            % Push the policy into the controls: the right threshold, captioned
+            % for the criterion reading it, and both dependent controls dead
+            % when nothing is being rejected. Called from transport() too,
+            % which re-enables every config control indiscriminately.
+            p = app.Artifacts;
+            switch p.Mode
+                case 'voltage'
+                    app.ArtifactField.ValueDisplayFormat = '± %.4g mV';
+                    app.ArtifactField.Value = 1e3*p.VoltageThreshold;
+                case 'rms'
+                    app.ArtifactField.ValueDisplayFormat = 'RMS > %.4g mV';
+                    app.ArtifactField.Value = 1e3*p.RMSThreshold;
+            end
+            app.ArtifactField.Enable       = onOff(p.Enabled);
+            app.ArtifactRepeatCheck.Enable = onOff(p.Enabled);
+            app.ArtifactRepeatCheck.Value  = p.Repeat;
+        end
+
+        function saveArtifactPrefs(app)
+            mabr.ArtifactPolicy.savePrefs(app.Artifacts);
+        end
+
+        function setArtifactReadout(app)
+            if app.ArtifactCount > 0
+                app.ArtifactLabel.Text = sprintf('rejected: %d',app.ArtifactCount);
+            else
+                app.ArtifactLabel.Text = '';
+            end
         end
 
         function onRepsChanged(app)
@@ -579,6 +692,10 @@ classdef App < handle
                 p.corrThreshold = app.CorrField.Value;
                 c.AdvanceParams = p;
 
+                c.Artifacts = app.Artifacts;
+                app.ArtifactCount = 0;        % readout counts this schedule only
+                app.setArtifactReadout();
+
                 if isempty(app.LivePlot) || ~isvalid(app.LivePlot), app.onShowLive(); end
                 c.setLivePlot(app.LivePlot);
 
@@ -668,9 +785,43 @@ classdef App < handle
             delete(app.TraceOrg.Figure);
         end
 
+        function onStimViewer(app)
+            % Unlike the acquisition viewers this one is built on first press,
+            % and it always shows the bank currently loaded -- reopening it
+            % after loading a different bank must not show the old waveforms.
+            % Asked before building, because the constructor opens the window
+            % itself -- checking afterwards would always say "not new".
+            isNewWindow = isempty(app.StimViewer) || ~isvalid(app.StimViewer) ...
+                || ~app.StimViewer.isvalidView();
+            if isempty(app.StimViewer) || ~isvalid(app.StimViewer)
+                app.StimViewer = mabr.ui.StimulusViewer(app.Stimuli);
+            end
+            app.StimViewer.show();
+            % Only on a genuine change: setStimuli resets the selection, and a
+            % plain raise must not throw away the entry the user was looking at.
+            if ~isequal(app.StimViewer.Stimuli,app.Stimuli)
+                app.StimViewer.setStimuli(app.Stimuli);
+            end
+            if isNewWindow
+                f = app.StimViewer.Figure;
+                mabr.ui.WindowPos.restore(f,'StimulusViewer', ...
+                    app.defaultViewerPos('StimulusViewer'));
+                f.CloseRequestFcn = @(~,~) app.closeStimViewer();
+            end
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0
+                app.setStatus('No stimulus bank loaded yet — the viewer will fill in once you load one.');
+            end
+        end
+
+        function closeStimViewer(app)
+            mabr.ui.WindowPos.remember(app.StimViewer.Figure,'StimulusViewer');
+            delete(app.StimViewer);
+        end
+
         function rememberViewerPositions(app)
             try, mabr.ui.WindowPos.remember(app.LivePlot.Figure,'LivePlot'); end %#ok<TRYNC>
             try, mabr.ui.WindowPos.remember(app.TraceOrg.Figure,'TraceOrganizer'); end %#ok<TRYNC>
+            try, mabr.ui.WindowPos.remember(app.StimViewer.Figure,'StimulusViewer'); end %#ok<TRYNC>
         end
 
         function pos = defaultViewerPos(app,name)
@@ -683,6 +834,10 @@ classdef App < handle
             switch name
                 case 'TraceOrganizer'
                     pos = [a(1)+a(3)+gap, a(2), 640, a(4)];
+                case 'StimulusViewer'
+                    % On demand and transient, so it cascades off the main
+                    % window rather than claiming a slot in the run layout.
+                    pos = [a(1)+40, a(2)-40, 820, 500];
                 otherwise   % live plot, top-aligned with the main window
                     pos = [a(1)+a(3)+gap+640+gap, a(2)+a(4)-280, 640, 280];
             end
@@ -709,6 +864,15 @@ classdef App < handle
             app.CorrLabel.Text  = sprintf('r = %.3f',e.Info.corr);
         end
 
+        function onBlockReady(app,e)
+            % Fires once per stimulus recovered from the run, whether or not it
+            % was saved, so the rejection tally covers unsaved sessions too.
+            n = e.Info.block.ADC.NumArtifacts;
+            if n < 1, return; end
+            app.ArtifactCount = app.ArtifactCount + n;
+            app.setArtifactReadout();
+        end
+
         function onBlockSaved(app,e)
             [~,fn,ext] = fileparts(e.Info.file);
             app.setStatus(['Saved ' fn ext]);
@@ -731,6 +895,7 @@ classdef App < handle
                  app.LoadButton, app.TestButton, app.TestingCheck, ...
                  app.StrategyDrop, app.RepsField, app.RepsButton, ...
                  app.AdvanceDrop, app.CorrField, ...
+                 app.ArtifactDrop, app.ArtifactField, app.ArtifactRepeatCheck, ...
                  app.ISIField, app.RateField};
         end
 
@@ -760,6 +925,7 @@ classdef App < handle
             if ~running
                 app.PauseButton.Text = 'Pause';
                 app.syncAdvanceEnables();     % re-derives the Advance/Corr enables
+                app.syncArtifactFields();     % ... and the artifact enables
             end
             drawnow limitrate
         end
@@ -812,6 +978,23 @@ classdef App < handle
                             '......XXX.......'
                             '......XXX.......'
                             '......XXX.......'
+                            '................'
+                            '................'
+                            '................'};
+                case 'S'
+                    rows = {'................'
+                            '................'
+                            '...XXXXXXXXXX...'
+                            '...XXXXXXXXXX...'
+                            '...XX...........'
+                            '...XX...........'
+                            '...XXXXXXXXXX...'
+                            '...XXXXXXXXXX...'
+                            '...........XX...'
+                            '...........XX...'
+                            '...XXXXXXXXXX...'
+                            '...XXXXXXXXXX...'
+                            '................'
                             '................'
                             '................'
                             '................'};
