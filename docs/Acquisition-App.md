@@ -30,7 +30,7 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
  └───────────────────────────────────────────────────┘
  ┌ Run ─────────────────────────────────────────────┐
  │  (o) Acquire       Sweeps: 128           r = 0.42 │
- │  [ Start ] [ Pause ] [ Stop Run ] [ Abort ]       │
+ │  [ Start ] [ Pause ] [ Advance ] [ Abort ]       │
  └───────────────────────────────────────────────────┘
  Saved SUBJ_ID_001_Frequency_8kHz_Level_30dB_....abr
 ```
@@ -122,10 +122,10 @@ The toolbar is never disabled — raising a viewer is safe at any time, includin
 |--------|--------|
 | **Start** | Begin the schedule from the first run |
 | **Pause** / **Resume** | Suspend playback in place, keeping the audio device open |
-| **Stop Run** | End the current run now, save it, continue to the next |
+| **Advance** | End the current run now, save it, continue to the next |
 | **Abort** | End the current run now, save it, halt the schedule |
 
-Stop Run and Abort both save what was recorded. Neither discards data. Stopping an intermixed run early is allowed but leaves the conditions unbalanced — the stimuli late in the sequence will have fewer sweeps than the rest.
+Advance and Abort both save what was recorded. Neither discards data. Stopping an intermixed run early is allowed but leaves the conditions unbalanced — the stimuli late in the sequence will have fewer sweeps than the rest.
 
 ## Closing
 

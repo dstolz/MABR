@@ -36,7 +36,7 @@ This control is **greyed out and forced to *All Repetitions* for intermixed stra
 | --- | --- |
 | **Start** | Builds the schedule and begins the first run. First start is slow — the parallel pool and worker handshake take tens of seconds; progress appears in the status line. |
 | **Pause** | Suspends streaming; the worker stays warm. |
-| **Stop Run** | Ends the current run early and saves it, then advances to the next. |
+| **Advance** | Ends the current run early and saves it, then advances to the next. |
 | **Abort** | Ends the whole schedule. |
 
 The lamp, state label, sweep count, and `r =` correlation readout track the controller's `mabr.ui.ProgState` (Idle → PrepBlock → Acquire → BlockComplete → AdvanceBlock → SchedComplete, or Error). The whole path is event-driven — no busy-waits.

@@ -4,7 +4,7 @@
 
 **Windows.** MABR is Windows-only. It checks this at launch and refuses to start elsewhere.
 
-**MATLAB R2019b (9.7) or newer**, plus these toolboxes:
+**MATLAB R2021b (9.11) or newer**, plus these toolboxes:
 
 | Toolbox | Minimum version | Why |
 |---------|-----------------|-----|
@@ -12,6 +12,8 @@
 | Audio Toolbox | 1.5 | The ASIO full-duplex audio interface |
 | DSP System Toolbox | 9.1 | Streaming support |
 | Parallel Computing Toolbox | 6.13 | Acquisition runs on a parallel worker |
+
+The R2021b floor comes from the GUI: `mabr.ui.App` puts a `uitoolbar` on a `uifigure`, which is only supported from R2021b. Everything outside `+mabr/+ui` still runs on R2019b.
 
 The Parallel Computing Toolbox is not optional — the acquisition engine runs on a parallel pool worker, and MABR will not acquire without it.
 

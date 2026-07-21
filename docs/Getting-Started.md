@@ -42,8 +42,10 @@ Once loaded, the label next to **Stimulus** turns from red to a block count.
 
 The **Advance** dropdown controls when MABR moves from one condition to the next:
 
-- **Number of Sweeps** — run each condition for a fixed count (set it in the first number field, e.g. 256 or 512). Simple and predictable; every condition takes the same time.
-- **Correlation Threshold** — stop as soon as the response becomes reproducible. MABR continuously compares the response window against the pre-stimulus baseline; when that contrast reaches the threshold you set (the second field, 0–1), the condition ends early and the next one starts.
+- **All Repetitions** — play every repetition you asked for, however many that is. The count comes from **Repetitions** in the Presentation panel (e.g. 256 or 512). Simple and predictable; every condition takes the same time.
+- **Correlation Threshold** — stop as soon as the response becomes reproducible. MABR continuously compares the response window against the pre-stimulus baseline; when that contrast reaches the threshold in the **stop at r ≥** field beside the dropdown (0–1), the condition ends early and the next one starts.
+
+**Correlation Threshold is available for blocked strategies only.** Pick an intermixed strategy and the dropdown greys out and reverts to **All Repetitions** — stopping a run that pools several conditions would truncate whichever stimuli happened to fall last, unbalancing the design.
 
 The correlation option can meaningfully shorten a session, because strong conditions (loud levels, near-threshold frequencies) finish in a fraction of the sweeps that weak ones need. It cannot fire before a minimum number of sweeps have been collected, so it will not stop on a lucky-looking handful of traces.
 
@@ -66,7 +68,7 @@ Click **Start**. In order, MABR will:
 While it runs:
 
 - **Pause** suspends playback in place and keeps the audio device open; the button becomes **Resume**.
-- **Stop Block** ends the current condition early, saves it, and continues with the next one. Useful when a condition is clearly done or clearly bad.
+- **Advance** ends the current run early, saves it, and continues with the next one. Useful when a condition is clearly done or clearly bad.
 - **Abort** ends the current condition, saves it, and stops the whole schedule.
 
 Nothing is discarded by any of these — whatever was recorded before you pressed the button is saved.

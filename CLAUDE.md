@@ -11,7 +11,7 @@ The acquisition app was **rewritten ground-up** into a single `+mabr` namespace 
 ## Running & developing
 
 - **Launch the app:** run `MABR` from the MATLAB command window. `MABR.m` genpath-adds every subfolder (except `.git`) and opens `mabr.ui.App`.
-- **Requires** (see `mabr.Config.RequiredToolboxes`): MATLAB ≥ 9.5 (R2018b), Signal Processing ≥ 8.1, Audio Toolbox ≥ 1.5, DSP System Toolbox ≥ 9.1, **Parallel Computing Toolbox** (new — the acquisition engine runs on a parpool worker). Audio I/O expects an **ASIO** device via `audioPlayerRecorder`.
+- **Requires** (see `mabr.Config.RequiredToolboxes`): MATLAB ≥ 9.11 (R2021b — `uitoolbar` on a `uifigure`), Signal Processing ≥ 8.1, Audio Toolbox ≥ 1.5, DSP System Toolbox ≥ 9.1, **Parallel Computing Toolbox** (new — the acquisition engine runs on a parpool worker). Audio I/O expects an **ASIO** device via `audioPlayerRecorder`.
 - **Verification (no hardware):** `tests/run_all_verifications.m` runs the suite — engine loopback, `.abr` round-trip through the offline pipeline, legacy import, and the online-advance early-stop. Individual scripts: `verify_engine_loopback`, `verify_data_roundtrip`, `verify_legacy_import`, `verify_online_advance`. All run in TESTING loopback mode with no audio device.
 - **Verbosity/logging:** code logs through `mabr.log.vprintf(level, [red], fmt, ...)` gated on global `GVerbosity` (-1…3). `mabr.log.vprintf(0,1,...)` prints a critical message in red. Logs also go to `.error_logs/`.
 

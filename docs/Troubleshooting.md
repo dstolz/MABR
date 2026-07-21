@@ -51,7 +51,7 @@ Confirm the software side is fine by ticking **Testing** and running: if sweeps 
 
 ## During a session
 
-**A condition never ends** — Under the correlation criterion, the threshold may be unreachable for that condition. The target sweep count still bounds the block; if it is very large, the block runs a long time. Press **Stop Block** to move on. For custom criteria, always include a hard cap.
+**A condition never ends** — Under the correlation criterion, the threshold may be unreachable for that condition. The repetition count still bounds the run; if it is very large, the run takes a long time. Press **Advance** to move on. For custom criteria, always include a hard cap.
 
 **Everything froze mid-block** — The live view runs on a timer that is protected against transient errors, so a frozen display usually means MATLAB itself is blocked. Check the command window for errors and `.error_logs/` for the day's log.
 
