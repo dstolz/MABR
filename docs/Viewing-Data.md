@@ -1,19 +1,22 @@
 # Viewing Data
 
-MABR has two viewers: a live plot for the condition being recorded now, and the Trace Organizer for comparing finished conditions. Both open with the app and are laid out beside the main window; the **L** and **T** toolbar buttons raise them, and where you leave them is remembered across sessions.
+MABR has two viewers: a live plot for the condition being recorded now, and the Trace Organizer for comparing finished conditions. Both open with the app and are laid out beside the main window; the trace-on-axes and stacked-traces toolbar buttons raise them, and where you leave them is remembered across sessions.
 
 ## Live Plot
 
-Opens with the app, and is raised by the **L** toolbar button or by pressing Start. Closing it discards the window; **L** builds a fresh one.
+Opens with the app, and is raised by the trace-on-axes toolbar button or by pressing Start. Closing it discards the window; the button builds a fresh one.
 
-Two panels:
+**Latest sweep** — across the top, on its own axes: the most recent single sweep. A sanity check on the raw signal — if it is railing, flat, or dominated by 60 Hz, something is wrong with the electrodes or grounding. It turns **red** when that sweep was the one rejected. It keeps its own axes because a single sweep is tens of times the size of an average; sharing an axis would flatten the means below it. The title names the condition the sweep came from and the sweep count so far.
 
-**Trace panel** — Two waveforms over the response window:
+**Running means** — below it, one average per stimulus **the current run is presenting**, over the sweeps that passed the artifact criterion. This is the ABR taking shape: early on mostly noise, then the time-locked response emerges as the background flattens. A blocked run presents one stimulus, so there is one mean; an interleaved or shuffled run presents several at once, and each gets its own average rather than being pooled into one meaningless trace.
 
-- **Black** — the running average of every sweep collected so far in this condition. This is the ABR taking shape. Early on it is mostly noise; as sweeps accumulate the time-locked response emerges and the background flattens.
-- **Blue** — the most recent single sweep, shown faintly. Useful as a sanity check on the raw signal: if it is railing, flat, or dominated by 60 Hz, something is wrong with the electrodes or grounding.
+**Controls** — the strip along the bottom of the window:
 
-The title shows the sweep count and, when using the correlation criterion, the current correlation. The vertical scale adapts automatically and the units are labeled.
+- **Means: Overlaid / Separate** — all the averages on one axes (easiest for comparing them directly), or one small panel each, titled with its stimulus ID and running count (easiest when there are many, or when they differ hugely in size).
+- **Time (ms)** — the displayed window, `-2` to `10` by default. Negative time is the pre-onset baseline, which is what tells you what "no response" looks like on this preparation today. Widening past what was recorded simply stops at the recorded edge.
+- **Amplitude** — *Auto (each)* scales every stimulus to its own peak, which is what you want when levels differ by 40 dB; *Auto (shared)* holds them all to one scale, which is the only way an amplitude difference between conditions is visible; *Manual* pins the scale to a ± value you type, so it stops moving between refreshes. Overlaid means share an axis and so share a scale — *each* behaves as *shared* there. The latest-sweep axes always scales itself, Manual included.
+
+**Artifact readout** — when sweeps are being rejected, a red `N rejected (x%)` appears in the top-left corner of the latest-sweep panel, and the count also accumulates in the Run panel's `rejected:` readout beside the sweep count. Nothing appears while every sweep is being kept. A rate climbing through a few percent usually means the preparation needs attention rather than more sweeps. What the live view shows is a *preview* of the criterion applied to the sweeps as they arrive; the recorded verdict is made when the condition finalizes, and only that one reaches the file.
 
 **Correlation bar** — A single bar showing how reproducible the response currently is, on a 0–1 scale, with your threshold marked. It compares the split-half consistency of the response window against that of the pre-stimulus baseline, so it reflects genuine time-locked signal rather than sweeps merely looking alike. When the bar reaches the marked threshold, the correlation advance criterion fires and the condition ends.
 
@@ -21,7 +24,7 @@ The plot refreshes about 20 times per second and resets at the start of each con
 
 ## Trace Organizer
 
-Opens with the app, and is raised by the **T** toolbar button. Closing it only disposes the window — the traces are kept, and **T** brings them back. It stacks the mean waveform of every completed condition on one time axis so you can read a series — usually a level series at one frequency — as a whole.
+Opens with the app, and is raised by the stacked-traces toolbar button. Closing it only disposes the window — the traces are kept, and the button brings them back. It stacks the mean waveform of every completed condition on one time axis so you can read a series — usually a level series at one frequency — as a whole.
 
 **What you can do:**
 
@@ -39,15 +42,39 @@ Reading a level series: as level decreases, the response amplitude shrinks and i
 
 ### LivePlot
 
-[mabr.ui.LivePlot](../+mabr/+ui/LivePlot.m) owns its figure and two axes. It is passive — it draws whatever it is handed and holds no acquisition state:
+[mabr.ui.LivePlot](../+mabr/+ui/LivePlot.m) owns its figure, split into a **latest-sweep** axes across the top (with the correlation bar beside it) and, below, **one running mean per stimulus the current run is presenting**. It is passive — it draws whatever it is handed and holds no acquisition state:
 
 ```matlab
 lp = mabr.ui.LivePlot();              % or LivePlot(parentContainer) to embed
-lp.update(postSweep,tvec,R,target);   % postSweep = [nSweeps x nSamples]
+lp.update(sweeps,tvec,R,target,bad,info);   % sweeps = [nSweeps x nSamples]
 lp.reset();                           % clear between blocks
 ```
 
-`AcqController.live_tick_body` calls `update` from a single ~20 Hz `timer` (`ExecutionMode` `fixedSpacing`, `BusyMode` `drop`), which is the only timer in the program. The tick body is wrapped in a try/catch so a transient draw error cannot kill the timer and freeze the live view.
+`sweeps` is the baseline and the response as one contiguous segment (`[pre post]` from [extract_sweeps](../+mabr/+metrics/extract_sweeps.m), whose fifth output `tvec` gives the matching time base in seconds) — pre-onset samples are what a negative time base has to draw. `info` carries the per-sweep stimulus identity:
+
+| Field | Meaning |
+| --- | --- |
+| `.StimIndex` | `[1 x nSweeps]` the stimulus behind each sweep |
+| `.Stimuli` | `[1 x nStim]` the stimuli this run presents, in layout order |
+| `.Labels` | `{1 x nStim}` display label for each |
+| `.DetrendPoly`, `.SmoothSpan` | cosmetic post-processing of the means |
+
+Omit `info` and every sweep counts as one condition, which is the old single-mean view. `AcqController.live_info` builds it from `Schedule.renderSpec`'s per-onset stimulus index — the same pairing `finalize_run` de-interleaves by, so a live panel and the block eventually saved for that stimulus contain the same sweeps.
+
+Display settings are public properties, and the control strip along the bottom of the window writes exactly those — so a script can drive the view the same way the user can:
+
+| Property | Default | Effect |
+| --- | --- | --- |
+| `Layout` | `'overlay'` | Means overlaid on one axes, or `'separate'` — one small axes each, titled with its stimulus ID and running count |
+| `TimeBase` | `[-2 10]` ms | Displayed window, clamped to what was actually recorded |
+| `AmpMode` | `'common'` | `'each'` (every stimulus to its own peak), `'common'` (one shared scale — the only way an amplitude difference between conditions is visible), `'manual'` |
+| `ManualLimit` | `5e-6` V | The ± limit `'manual'` pins the mean axes to. Switching into Manual seeds it from what is on screen |
+
+Overlaid means share an axes and therefore one scale, so `'each'` behaves as `'common'` there. The latest-sweep axes always autoscales, `'manual'` included: it is a single sweep, tens of times the size of a mean, and a limit chosen to frame the averages would clip it away entirely.
+
+`AcqController.live_tick_body` calls `update` from a single ~20 Hz `timer` (`ExecutionMode` `fixedSpacing`, `BusyMode` `drop`), which is the only timer in the program. The tick body is wrapped in a try/catch so a transient draw error cannot kill the timer and freeze the live view. The axes are rebuilt only when the run's stimulus list or the layout changes, never on a plain refresh.
+
+[tests/verify_live_plot.m](../tests/verify_live_plot.m) covers all of this without hardware.
 
 Passing a container to the constructor embeds the plot rather than opening a figure, which is the hook for a docked or multi-panel UI.
 
@@ -97,7 +124,7 @@ to.saveView('session1.torg');
 to.loadView('session1.torg');          % restored exactly as saved
 ```
 
-`addBlock` reads `block.ADC.SweepMean` and `block.ADC.TimeVector`, so any `mabr.data.Block` — including one loaded from disk with `mabr.data.io.importLegacy` — can be displayed:
+`addBlock` reads `block.ADC.SweepMean` and `block.ADC.TimeVector`, so any `mabr.data.Block` — including one loaded from disk with `mabr.data.io.importLegacy` — can be displayed. `SweepMean` averages only the sweeps that survived artifact rejection (`Recording.CleanSweepData`), so a trace here never carries one the acquisition threw out; a block whose sweeps were *all* rejected has no mean to draw and is skipped with a log message rather than stacked as an empty trace.
 
 ```matlab
 to = mabr.ui.TraceOrganizer();

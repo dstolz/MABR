@@ -28,7 +28,21 @@ classdef StimulusSet < handle
 %                                  unchanged, it is only split between the two
 %                                  polarities (see mabr.stim.Schedule).
 %
-%   Numeric scalar extras are additionally advertised as informativeParams so
+%       informativeParams (1,:) cellstr  the passthrough fields that identify
+%                                  this condition, declared explicitly. When
+%                                  absent MABR infers the list -- every numeric
+%                                  scalar extra -- which is right for a
+%                                  hand-built bank whose only extras ARE its
+%                                  parameters. A generator emits far more than
+%                                  that (a stimgen variant carries Duration,
+%                                  WindowDuration, OnsetPhase, ...), and every
+%                                  name on this list becomes a grouping
+%                                  dimension in the offline pipeline, so a
+%                                  source that knows which of its parameters
+%                                  actually vary should say so rather than let
+%                                  MABR guess from types.
+%
+%   Numeric scalar extras are otherwise advertised as informativeParams so
 %   the offline pipeline picks them up (see mabr.data.io.buildSIG).
 %
 %   MABR -- not the stimulus package -- owns presentation. The spacing between
@@ -44,17 +58,32 @@ classdef StimulusSet < handle
     properties (Constant, Access = private)
         % Fields MABR interprets itself; everything else is passthrough metadata.
         ReservedFields = {'signal','ID','SampleRate','Repetitions','Timing', ...
-                          'alternatePolarity'};
+                          'alternatePolarity','informativeParams'};
     end
 
     properties (SetAccess = private)
         Stimuli    (1,:) struct     % validated, normalized struct array
         SampleRate (1,1) double     % common DAC rate for every entry
+
+        % Where this bank came from. Not part of the stimulus contract -- no
+        % entry carries it and nothing in acquisition reads it -- but a
+        % calibrated stimgen bank and the uncalibrated demo bank are otherwise
+        % indistinguishable once they are struct arrays, which is exactly the
+        % confusion worth being unable to have. mabr.ui.App shows it beside the
+        % entry count and mabr.data.io writes it into the .abr as provenance.
+        %   Kind         'stimgen' | 'file' | 'demo' | '' (unknown)
+        %   File         source path, where there was one
+        %   Calibration  .esgc file the waveforms were built against, if any
+        %   Generated    datetime the bank was materialized
+        Source     (1,1) struct = struct('Kind','','File','','Calibration','','Generated',NaT)
     end
 
     methods
-        function obj = StimulusSet(stim,cfg)
+        function obj = StimulusSet(stim,cfg,source)
             if nargin < 2 || isempty(cfg), cfg = mabr.Config; end
+            if nargin >= 3 && ~isempty(source)
+                obj.Source = mabr.stim.StimulusSet.normalizeSource(source);
+            end
             if nargin < 1 || isempty(stim)
                 obj.Stimuli    = struct([]);
                 obj.SampleRate = cfg.DACSampleRate;
@@ -184,6 +213,15 @@ classdef StimulusSet < handle
                 if isnumeric(v) && isscalar(v), ip{end+1} = f; end %#ok<AGROW>
             end
 
+            % A declared list wins over the inferred one. Keep only names that
+            % actually arrived as fields: a generator naming a parameter it
+            % then failed to pass through would otherwise put a phantom
+            % grouping dimension into every .abr it wrote.
+            if isfield(s,'informativeParams') && ~isempty(s.informativeParams)
+                declared = cellstr(s.informativeParams);
+                ip = declared(ismember(declared,extra));
+            end
+
             m.informativeParams = ip(:)';
 
             lbl = cell(1,numel(ip));
@@ -237,6 +275,14 @@ classdef StimulusSet < handle
                 'Stimulus entry %d: alternatePolarity must be a logical scalar.',idx);
             s.alternatePolarity = logical(s.alternatePolarity);
 
+            if isfield(s,'informativeParams') && ~isempty(s.informativeParams)
+                assert(iscellstr(s.informativeParams) || isstring(s.informativeParams), ...
+                    'mabr:stim:StimulusSet:badInformativeParams', ...
+                    ['Stimulus entry %d: informativeParams must be a cellstr or ' ...
+                     'string array of field names.'],idx);
+                s.informativeParams = cellstr(s.informativeParams(:)');
+            end
+
             if isfield(s,'Timing') && ~isempty(s.Timing)
                 s.Timing = single(s.Timing(:));
                 assert(numel(s.Timing) == numel(s.signal), ...
@@ -247,23 +293,95 @@ classdef StimulusSet < handle
         end
 
         function set = fromFile(ffn,cfg)
-            % Load a stimulus definition from a .mat file. Accepts either a
-            % saved StimulusSet or any variable that is a struct array with
-            % signal + ID fields.
+            % Load a stimulus definition from file. A .spl is a stimgen bank
+            % (parameters, regenerated at the DAC rate -- see
+            % mabr.stim.fromStimgen); anything else is read as a .mat holding
+            % either a saved StimulusSet or a struct array with signal + ID.
             if nargin < 2 || isempty(cfg), cfg = mabr.Config; end
+
+            [~,~,ext] = fileparts(ffn);
+            if strcmpi(ext,'.spl')
+                set = mabr.stim.fromStimgen(ffn,cfg);
+                return
+            end
+
             S  = load(ffn);
             fn = fieldnames(S);
+            src = struct('Kind','file','File',char(ffn));
             for i = 1:numel(fn)
                 v = S.(fn{i});
                 if isa(v,'mabr.stim.StimulusSet'), set = v; return; end
                 if isstruct(v) && isfield(v,'signal') && isfield(v,'ID')
-                    set = mabr.stim.StimulusSet(v,cfg);
+                    set = mabr.stim.StimulusSet(v,cfg,src);
                     return
                 end
             end
             error('mabr:stim:StimulusSet:noStimuli', ...
                 ['"%s" contains no stimulus definition (needs a struct array ' ...
                  'with "signal" and "ID" fields).'],ffn);
+        end
+
+        function s = emptySource()
+            s = struct('Kind','','File','','Calibration','','Generated',NaT);
+        end
+
+        function s = normalizeSource(src)
+            % Fill a partial source description out to the full field set, so
+            % every StimulusSet carries the same shape whatever built it.
+            s = mabr.stim.StimulusSet.emptySource();
+            if ~isstruct(src) || ~isscalar(src), return; end
+            f = intersect(fieldnames(src),fieldnames(s),'stable');
+            for i = 1:numel(f), s.(f{i}) = src.(f{i}); end
+        end
+    end
+
+    methods
+        function s = describeSource(obj)
+            % One-line provenance for the status line / bank label, in the
+            % shape of FilterPolicy.describe and AudioSettings.describe.
+            src = obj.Source;
+            switch lower(src.Kind)
+                case 'stimgen', s = 'stimgen';
+                case 'demo',    s = 'built-in demo';
+                case 'file'
+                    [~,n,e] = fileparts(src.File);
+                    s = [n e];
+                otherwise, s = '';
+            end
+            % Both suffixes hang off a named source. With no Kind there is
+            % nothing to qualify, and a bare "(uncalibrated)" would read as a
+            % claim about a bank we know nothing about -- most banks predate
+            % this field entirely.
+            if isempty(s), return; end
+
+            if ~isempty(src.Calibration)
+                [~,n,e] = fileparts(src.Calibration);
+                s = sprintf('%s, cal %s',s,[n e]);
+            else
+                [cal,known] = obj.isCalibrated();
+                if known && ~cal, s = [s ' (uncalibrated)']; end
+            end
+        end
+
+        function [tf,known] = isCalibrated(obj)
+            % tf    - every entry says it was built against a measurement
+            % known - the bank said anything about calibration at all
+            %
+            % A bank is a unit here: half-calibrated is not a state worth
+            % reporting as calibrated, since the levels across it are then not
+            % comparable.
+            %
+            % The second output is what keeps the first honest. A bank that
+            % never carried the field -- any .mat from an external package,
+            % anything written before this existed -- is UNKNOWN, not
+            % uncalibrated, and callers must not label it either way. Treating
+            % silence as "uncalibrated" would put a warning on a properly
+            % calibrated bank, which is worse than saying nothing: it teaches
+            % people to ignore the warning that matters.
+            tf = false;
+            known = obj.numStimuli > 0 && isfield(obj.Stimuli,'Calibrated');
+            if ~known, return; end
+            tf = all(logical([obj.Stimuli.Calibrated]));
         end
     end
 end

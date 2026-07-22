@@ -164,6 +164,36 @@ Pass `[]` or `struct()` as `state` to reset. The pre-onset window is the baselin
 | `sampleRate` error from StimulusSet | Stimulus rate ≠ `Config.DACSampleRate` |
 | `tooLong` error from Schedule | The run exceeds the ring buffer — cut repetitions, shorten the ISI, or use a blocked strategy |
 | `readOnly` from RingBuffer | Something tried to write through the client's view |
-| No onsets found at finalization | Timing channel not recorded — check input channel mapping |
+| `timingNotDetected` at Start | Pre-run self-test found no timing pulse — see below |
 
 Worker errors are logged in red via `mabr.log.vprintf(0,1,...)` and surface as `WorkerError` events.
+
+## Timing loop-back self-test
+
+`mabr.ui.AcqController.start()` streams a short synthetic timing-only block
+(silence on the signal column, a few unit pulses on the timing column)
+through the real `Engine.prep`/`run` path before the first real block of a
+session, and confirms at least one pulse comes back on the timing input
+channel via `mabr.metrics.find_timing_onsets`. If none does, `start()` throws
+`mabr:ui:AcqController:timingNotDetected` immediately, rather than letting a
+whole block stream and `finalize_run` discover it found no onsets at all — a
+broken or mis-mapped loop-back cable is "the most common rig problem" (see
+[Troubleshooting](Troubleshooting.md)).
+
+The check runs unconditionally, including in `Testing` mode: `worker_loop`'s
+loopback branch passes the timing column straight through, so it trivially
+passes there too, exercising the identical code path a real device would use.
+A private `SelfTestActive` flag makes the synthetic block invisible to
+`on_engine_state`/`on_block_completed`, so it never reaches `ProgState`, the
+live timer, or `finalize_run`/`Schedule`/`Session` bookkeeping, and
+`stream_block`'s own `rb.reset()` at the start of the next `Run` discards its
+ring-buffer contents automatically.
+
+The result is cached per `Device`/`PlayerChannels`/`RecorderChannels`
+(`AcqController.VerifiedAudioConfig`), not per controller: `mabr.ui.App`
+reuses one `AcqController` across `Start` clicks
+([App.m:ensureController](../+mabr/+ui/App.m)), and `Device`/channel mapping
+is a "config control" the user can still change between runs (via
+`mabr.ui.AudioSettingsDialog`) even though it locks during acquisition — so
+the check re-runs whenever those three values differ from what was last
+confirmed, and is skipped otherwise.

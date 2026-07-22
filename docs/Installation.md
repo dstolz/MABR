@@ -19,7 +19,9 @@ The Parallel Computing Toolbox is not optional — the acquisition engine runs o
 
 **An ASIO sound device.** MABR talks to your hardware through MATLAB's `audioPlayerRecorder`, which requires an ASIO driver. Consumer sound cards using WDM/DirectSound will not work. You need two output channels (stimulus + timing pulse) and two input channels (electrode signal + timing pulse recorded back).
 
-**An external stimulus package.** MABR does not generate or calibrate sounds — see [Architecture](Architecture.md#what-mabr-does-not-do). You supply pre-computed, calibrated waveforms. For testing and for a first look at the software, a built-in demo stimulus is included, so you can skip this to start with.
+**A stimulus package.** MABR does not generate or calibrate sounds — see [Architecture](Architecture.md#what-mabr-does-not-do). [stimgen](https://github.com/dstolz/stimgen) ships with MABR as a submodule and does both; clone with `--recurse-submodules`, or run `git submodule update --init` if you already cloned. You can also supply pre-computed waveforms from anywhere else through the [stimulus contract](Extending.md#the-stimulus-entry). For testing and for a first look at the software, a built-in demo bank is included, so you can skip all of this to start with.
+
+stimgen needs MATLAB R2021a, below MABR's own floor, so it adds no version requirement. If the submodule is missing, MABR still runs — the **Design…** button and **Settings ▸ Calibration…** grey out and say why.
 
 ## Setup
 

@@ -11,14 +11,17 @@ function verify_artifact_rejection()
 %   truncated run leaves the last sweep window short, survive the .abr writer,
 %   and are excluded from a Block's metrics.
 %   Part D (scheduling): mabr.stim.Schedule.appendMakeup appends runs, honours
-%   MakeupLimit, and reset() drops them.
+%   MakeupLimit, and reset()/dropPendingMakeup() drop them.
 %   Part E (end-to-end): drive the real controller in TESTING loopback with a
 %   threshold that rejects EVERY sweep, and confirm the make-up loop still
 %   terminates inside the cap — the property that keeps a noisy electrode from
 %   making a session run forever.
+%   Part F (end-to-end): change the policy from the middle of a running
+%   schedule, as the GUI now lets the user do, and confirm it applies from the
+%   next block on while withdrawing make-up runs it had already queued.
 %
-%   Parts A-D need no hardware and no parallel pool; Part E needs the Parallel
-%   Computing Toolbox. Run:  >> verify_artifact_rejection
+%   Parts A-D need no hardware and no parallel pool; Parts E-F need the
+%   Parallel Computing Toolbox. Run:  >> verify_artifact_rejection
 %
 % Daniel Stolzberg (c) 2026
 
@@ -121,7 +124,26 @@ assert(numel(S.ADC.Data) == 1000, ...
 
 blk = blk.computeMetrics();
 assert(isfinite(blk.Metrics.rms),'metrics should still compute with a sweep excluded');
-fprintf('  PASS Part C: flags align, persist, and exclude from metrics\n');
+
+% The flagged sweep must not reach anything descriptive: SweepData still holds
+% every sweep, CleanSweepData and the mean built on it hold only the kept ones.
+% This is what the trace organizer plots, so a rejected sweep cannot make it
+% into a displayed average.
+rec2 = mabr.data.Recording(12000,[zeros(300,1); 10*ones(100,1)],[1;101;201;301],100,1);
+rec2.IsArtifact = [false;false;false;true];
+assert(size(rec2.SweepData,2) == 4,'SweepData must keep every sweep');
+assert(size(rec2.CleanSweepData,2) == 3 && rec2.NumCleanSweeps == 3, ...
+    'CleanSweepData must drop the flagged sweep');
+assert(all(rec2.SweepMean == 0), ...
+    'SweepMean averaged the artifact sweep: max |mean| = %g',max(abs(rec2.SweepMean)));
+
+% With every sweep rejected there is no mean to report, and an all-NaN one
+% says so (the trace organizer skips it) rather than plotting a false zero.
+rec2.IsArtifact = true(4,1);
+assert(rec2.NumCleanSweeps == 0 && all(isnan(rec2.SweepMean)) ...
+    && numel(rec2.SweepMean) == rec2.SweepLength, ...
+    'a fully rejected recording should give an all-NaN mean of the right length');
+fprintf('  PASS Part C: flags align, persist, and exclude from metrics and the mean\n');
 
 % ---- Part D: make-up scheduling and its cap -----------------------------
 stim = mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',[30 60]);
@@ -145,12 +167,36 @@ assert(added(1) == 0,'budget was exhausted; nothing more may be appended');
 sch.reset();
 assert(sch.NumRuns == 2 && ~any(sch.IsMakeup) && ~any(sch.MakeupUsed), ...
     'reset() must return the schedule to its built state');
-fprintf('  PASS Part D: make-up appends, caps at MakeupLimit, and resets\n');
+
+% Withdrawing make-up mid-schedule (the user clears Repeat while running):
+% runs not yet reached go, the budget they held is refunded.
+sch.appendMakeup([4 0]);
+assert(sch.NumRuns == 3 && sch.MakeupUsed(1) == 4);
+assert(sch.dropPendingMakeup() == 1,'the pending make-up run should be dropped');
+assert(sch.NumRuns == 2 && ~any(sch.IsMakeup) && sch.MakeupUsed(1) == 0, ...
+    'dropping a pending make-up must refund its budget');
+
+% ... but the make-up run actually being acquired is left alone: its data
+% exists, and re-indexing under a running acquisition would lose it.
+sch.appendMakeup([4 0]);
+while sch.current() < sch.NumRuns, sch.advance(); end   % sit on the make-up run
+assert(sch.IsMakeup(sch.current()),'expected to be sitting on the make-up run');
+assert(sch.dropPendingMakeup() == 0,'the current run must not be dropped');
+assert(sch.NumRuns == 3,'dropPendingMakeup removed the run in progress');
+
+% Nor may a finished schedule lose the make-up runs it already played --
+% "pending" is empty once CurrentRun has walked off the end.
+sch.advance();
+assert(sch.current() == 0 && sch.isComplete(),'expected a completed schedule');
+assert(sch.dropPendingMakeup() == 0 && sch.NumRuns == 3, ...
+    'a completed schedule has nothing pending to drop');
+sch.reset();
+fprintf('  PASS Part D: make-up appends, caps at MakeupLimit, drops, and resets\n');
 
 % ---- Part E: end-to-end, worst case ------------------------------------
 reps = 6;
 ctrl = mabr.ui.AcqController(cfg,true);
-cleaner = onCleanup(@() delete(ctrl)); %#ok<NASGU>
+cleaner = onCleanup(@() delete(ctrl));
 ctrl.waitUntilReady();
 
 ctrl.setStimuli(mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',60));
@@ -196,7 +242,50 @@ assert(b.ADC.NumArtifacts == b.NumSweeps,'artifacts should still be counted');
 fprintf('  PASS Part E: counting-only counts %d artifacts and schedules no make-up\n', ...
     b.ADC.NumArtifacts);
 
+% ---- Part F: changing the policy mid-schedule ---------------------------
+% The criterion is applied at finalization, never in the live path, so the
+% GUI leaves its artifact controls live during a run. Here the policy is
+% swapped from the middle of the acquisition — from a BlockReady callback,
+% exactly where a user's click would land — and both consequences are
+% checked: later blocks are judged by the new rule, and the make-up runs the
+% old rule had already queued are withdrawn.
+ctrl.setStimuli(mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',[30 60]));
+ctrl.Schedule.Strategy    = 'blocked';
+ctrl.Schedule.Repetitions = 4;
+ctrl.Schedule.ISI         = 0.02;
+ctrl.Schedule.build();
+ctrl.Schedule.TestingFrameDelay = 0.002;
+
+ctrl.Artifacts = mabr.ArtifactPolicy('voltage',1e-9,true);   % reject everything
+
+n0      = ctrl.Session.NumBlocks;
+flipped = false;
+lh = addlistener(ctrl,'BlockReady',@(~,~) flip_policy());
+lhc = onCleanup(@() delete(lh));
+
+run_schedule(ctrl,120);
+
+assert(flipped,'the mid-schedule policy change never ran');
+got = ctrl.Session.NumBlocks - n0;
+assert(got == 2,'expected the 2 planned runs and no make-up, got %d blocks',got);
+assert(~any(ctrl.Schedule.IsMakeup), ...
+    'the queued make-up run should have been withdrawn with Repeat');
+first = ctrl.Session.Blocks(n0+1);
+last  = ctrl.Session.Blocks(end);
+assert(first.ADC.NumArtifacts == first.NumSweeps, ...
+    'the block finalized BEFORE the change should keep its old verdict');
+assert(last.ADC.NumArtifacts == 0, ...
+    'the block finalized AFTER the change should be judged by the new policy');
+fprintf('  PASS Part F: mid-schedule change applies forward and withdraws make-up\n');
+
 fprintf('== verify_artifact_rejection PASSED ==\n');
+
+    function flip_policy()
+        % Stand down on the first block only: rejection off, make-up off.
+        if flipped, return; end
+        flipped = true;
+        ctrl.Artifacts = mabr.ArtifactPolicy('none',[],false);
+    end
 end
 
 

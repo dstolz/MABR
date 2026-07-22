@@ -42,6 +42,7 @@ uniform = all(reps0 == reps0(1));
 fig = uifigure('Name','Repetitions','Position',[100 100 440 480], ...
     'WindowStyle','modal','Resize','off', ...
     'CloseRequestFcn',@(~,~) onCancel());
+mabr.ui.WindowPos.restore(fig,'RepetitionsDialog',fig.Position);
 
 g = uigridlayout(fig,[5 3]);
 g.RowHeight   = {30,30,'1x','fit',34};
@@ -138,11 +139,13 @@ uiwait(fig);
 
     function onOK()
         reps = currentReps();
+        mabr.ui.WindowPos.remember(fig,'RepetitionsDialog');
         delete(fig);
     end
 
     function onCancel()
         reps = [];
+        mabr.ui.WindowPos.remember(fig,'RepetitionsDialog');
         delete(fig);
     end
 end

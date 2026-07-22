@@ -56,6 +56,15 @@ ctrl.Schedule.build();
 ctrl.Schedule.TestingFrameDelay = 0.004;   % pace loopback so the 20 Hz timer keeps up
 
 ctrl.Window = [0 0.01];
+
+% The live correlation is computed on the FILTERED sweeps, which is right on
+% a rig — the criterion should judge the band the response lives in — but
+% wrong here: in loopback the "recording" IS the stimulus, an 8 kHz pip that
+% the live path's decimation aliases down to 4 kHz. The default 10-3000 Hz
+% chain would remove it entirely and leave the correlation nothing to find.
+% Filtering is not what this test is about, so switch it off.
+ctrl.Filters = mabr.FilterPolicy(false,false,false);
+
 ctrl.AdvanceFcn    = @mabr.stim.advance.corr_threshold;
 ctrl.AdvanceParams = struct('corrThreshold',0.3,'minSweeps',16,'maxSweeps',Inf,'targetSweeps',reps);
 ctrl.Session.OutputPath = '';               % don't write files for this test
@@ -93,7 +102,26 @@ assert(any(diff(seq) ~= 0),'Sequence is not actually intermixed');
 ctrl.AdvanceFcn    = @mabr.stim.advance.corr_threshold;
 ctrl.AdvanceParams = struct('corrThreshold',0.01,'minSweeps',4,'maxSweeps',Inf,'targetSweeps',2*repsC);
 
+% An intermixed run is exactly where the live view has to keep the conditions
+% apart, so attach one and confirm the controller hands it the per-sweep
+% stimulus identity (and a baseline to plot the negative time base from).
+lp = mabr.ui.LivePlot();
+cleanLP = onCleanup(@() delete(lp));
+lp.Layout = 'separate';
+ctrl.setLivePlot(lp);
+
 run_schedule(ctrl,90);
+
+assert(numel(lp.axMean) == 2, ...
+    'the live view showed %d mean panels for a 2-stimulus run',numel(lp.axMean));
+panelIDs = arrayfun(@(a) string(extractBefore(a.Title.String,'  (n=')),lp.axMean);
+assert(isempty(setdiff(panelIDs,arrayfun(@(b) string(b.Stim.Meta.ID), ...
+    ctrl.Session.Blocks(n0+1:end)))), ...
+    'the live panels are not the stimuli the run presented (%s)',strjoin(panelIDs,', '));
+latest = findobj(lp.axLatest,'Type','line');
+latest = latest(arrayfun(@(h) numel(h.XData) > 2,latest));
+assert(~isempty(latest) && latest(1).XData(1) < 0, ...
+    'the live view was handed no pre-onset baseline, so a negative time base is empty');
 
 newBlocks = ctrl.Session.Blocks(n0+1:end);
 assert(numel(newBlocks) == 2, ...

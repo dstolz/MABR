@@ -96,6 +96,19 @@ try
             case mabr.acq.Cmd.Stop
                 send_state(resultQueue,mabr.acq.State.Ready);
 
+            case mabr.acq.Cmd.Release
+                % Hand the ASIO device back without tearing down the worker.
+                % Clearing `prepared` too, so a later Run cannot stream against
+                % a device that is no longer open -- it must Prep again, which
+                % is what reopens it.
+                if ~isempty(apr)
+                    try, release(apr); end %#ok<TRYNC>
+                    apr = [];
+                end
+                prepared = [];
+                mabr.log.vprintf(1,'Worker released the audio device.');
+                send_state(resultQueue,mabr.acq.State.Idle);
+
             case mabr.acq.Cmd.Kill
                 running = false;
         end

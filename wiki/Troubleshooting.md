@@ -51,7 +51,7 @@ See [[Stimulus Package Contract]].
 
 **Sweep onsets look wrong or empty.** Sweep extraction reads the **timing channel**, which MABR synthesizes as one pulse per onset (or merges from an entry's explicit `Timing`). Confirm the recorder channel mapping — `Schedule.RecorderChannels` is `[ADCsignal ADCtiming]`.
 
-**Filtering appears not to be applied.** `mabr.data.Recording` filtering is explicit and opt-in: call `designFilters()`. Before that, raw `Data` is used throughout. See [[Data Format]].
+**Filtering appears not to be applied.** `mabr.data.Recording` filtering is explicit and opt-in: set `Filters` (a `mabr.FilterPolicy`) and call `designFilters()`. Before that, raw `Data` is used throughout. During acquisition the app does this for you from the **Filters…** dialog in the Acquisition panel. See [[Data Format]].
 
 **`mabr:data:io:noABRData`** — the file contains no `ABR_Data` struct. `.abr` files are MAT-files; load with `load(file,'-mat')`.
 

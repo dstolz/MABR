@@ -6,11 +6,20 @@
 >> MABR        % launch the acquisition app
 ```
 
+Clone with submodules — MABR ships [stimgen](https://github.com/dstolz/stimgen) at `external/stimgen`:
+
+```bash
+git clone --recurse-submodules https://github.com/dstolz/MABR
+# already cloned? →  git submodule update --init
+```
+
 ## What it does
 
 MABR plays a calibrated stimulus, records the evoked response in lock-step with it, and saves each stimulus condition to its own file as soon as it finishes. A live view shows the response averaging together as it accumulates, and conditions can stop automatically the moment a reproducible response is detected rather than always running a fixed number of sweeps. A separate batch pipeline turns folders of saved recordings into hearing thresholds.
 
-MABR does **not** generate or calibrate sounds. An external package supplies pre-computed, calibrated waveforms through a small documented contract — a struct array in which each entry is one stimulus (`signal` + `ID`) — which keeps rig-specific acoustic calibration out of the acquisition path. A built-in uncalibrated tone-pip bank is included so the software can be run and tested without one.
+MABR does **not** generate or calibrate sounds. An external package supplies pre-computed, calibrated waveforms through a small documented contract — a struct array in which each entry is one stimulus (`signal` + `ID`) — which keeps rig-specific acoustic calibration out of the acquisition path.
+
+[**stimgen**](https://github.com/dstolz/stimgen) is that package, and the suggested one: it ships as a submodule, builds parameterized stimuli (tones, noise, AM/FM, swept sines, click trains), and calibrates the rig. **Design…** in the Stimulus panel opens its bank editor and adopts what you build; **Settings ▸ Calibration…** measures your speaker through MABR's own ASIO device and channel map. Every stimulus is regenerated at MABR's 192 kHz DAC rate rather than resampled. The contract is still the struct array, though — a bank built any other way is a first-class bank, `Load bank…` reads plain `.mat` files, and a built-in uncalibrated tone-pip bank is included so the software runs and tests with no stimulus package at all.
 
 MABR **does** own presentation: the inter-stimulus interval, how many times each stimulus repeats, and how stimuli are combined (blocked, interleaved, or shuffled) are all chosen in the app, per session. Shuffled and interleaved schedules intermix conditions within a single continuous run to remove drift and order effects; MABR separates the recorded sweeps afterwards, so you still get one file per stimulus condition. Shuffling reorders a fixed set of presentations — it never changes how many times a stimulus is played.
 

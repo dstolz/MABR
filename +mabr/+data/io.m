@@ -138,6 +138,18 @@ classdef io
                 SIG.alternatePolarity = 0;
             end
 
+            % How this waveform was made, for the same reasons and under the
+            % same rule as alternatePolarity above: recorded because offline
+            % analysis and reproduction need it, and kept OUT of
+            % informativeParams because a generator's class or a variant's
+            % ordinal is not a condition -- promoting either would split an
+            % otherwise-single group in the offline pipeline. Calibrated is the
+            % one that decides whether the levels in this file mean anything
+            % (see mabr.stim.fromStimgen).
+            for f = {'StimClass','VariantIndex','Calibrated','CalibrationTime'}
+                if isfield(meta,f{1}), SIG.(f{1}) = meta.(f{1}); end
+            end
+
             if isfield(meta,'Label')
                 SIG.Label = meta.Label;
             else

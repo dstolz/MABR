@@ -116,7 +116,9 @@ classdef TraceOrganizer < handle
         % --- Adding data ----------------------------------------------------
         function addBlock(obj,block)
             % Add the mean sweep of a finalized mabr.data.Block, labelled with
-            % the stimulus ID the stimulus package supplied.
+            % the stimulus ID the stimulus package supplied. SweepMean averages
+            % only the sweeps that survived artifact rejection, so a trace here
+            % never carries a sweep the acquisition threw out.
             try
                 m   = block.ADC.SweepMean;
                 t   = block.ADC.TimeVector;
@@ -124,7 +126,13 @@ classdef TraceOrganizer < handle
             catch
                 return
             end
-            if isempty(m), return; end
+            % Every sweep rejected leaves no mean to draw (SweepMean is all
+            % NaN). Say so rather than stacking an invisible trace the user
+            % would have to work out the absence of.
+            if isempty(m) || ~any(isfinite(m))
+                mabr.log.vprintf(0,1,'Trace organizer: skipping "%s" — every sweep was rejected as artifact',lbl);
+                return
+            end
             sid = '';
             try
                 sid = char(string(block.Stim.Meta.ID));

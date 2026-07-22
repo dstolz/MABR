@@ -37,8 +37,12 @@ nPip = round(Fs*opts.PipDuration);
 t   = (0:nPip-1)'/Fs;
 win = window(@blackmanharris,nPip);
 
+% Calibrated is stated rather than left absent: this bank KNOWS it is
+% uncalibrated, and an absent field means "never said", which viewers must not
+% read as either answer (see mabr.stim.StimulusSet.isCalibrated). Saying so is
+% what turns the bank label amber.
 stim = struct('signal',{},'ID',{},'SampleRate',{},'Repetitions',{}, ...
-              'Frequency',{},'Level',{},'Polarity',{});
+              'Frequency',{},'Level',{},'Polarity',{},'Calibrated',{});
 
 for f = opts.Frequencies
     pip0 = sin(2*pi*f*1000*t).*win;         % gated tone pip
@@ -52,9 +56,11 @@ for f = opts.Frequencies
             'Repetitions', opts.Repetitions, ...
             'Frequency',   f, ...           % kHz
             'Level',       L, ...           % dB
-            'Polarity',    1); %#ok<AGROW>
+            'Polarity',    1, ...
+            'Calibrated',  false); %#ok<AGROW>
     end
 end
 
-set = mabr.stim.StimulusSet(stim,cfg);
+set = mabr.stim.StimulusSet(stim,cfg, ...
+    struct('Kind','demo','Generated',datetime('now')));
 end

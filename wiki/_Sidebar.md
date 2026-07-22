@@ -8,6 +8,7 @@
 
 **Use**
 - [[Running a Session]]
+- [[Using stimgen]]
 - [[Stimulus Package Contract]]
 - [[Presentation Strategies]]
 

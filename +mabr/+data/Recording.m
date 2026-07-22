@@ -8,12 +8,24 @@ classdef Recording
 %   to a parent object (the old ABRobj handle cycle that to_struct had to
 %   strip); the decimation factor is passed explicitly.
 %
-%   Filtering is explicit and opt-in. Design the ADC filter chain once with
+%   Filtering is explicit and opt-in, and lives in a mabr.FilterPolicy held
+%   in the Filters property (the same object the GUI's filter dialog edits
+%   and the live view applies, so what you see online and what a Block
+%   reports come off one set of corners). Design the chain once with
 %   designFilters(); afterwards the filtered trace is used consistently in
 %   segmentation (ProcessedData -> SweepData -> SweepMean). Before
 %   designFilters() is called the raw Data is used. This resolves the legacy
 %   ambiguity where a bandpass/notch was designed in the live path but never
 %   applied.
+%
+%   Data itself is NEVER filtered in place, and mabr.data.io saves Data, so
+%   an .abr file always carries the raw trace whatever the chain says.
+%
+%   Artifacts are marked, never removed. IsArtifact flags sweeps the acquisition
+%   judged contaminated; the samples stay in Data and reach the .abr file
+%   untouched, but everything DESCRIPTIVE (SweepMean, noisePower/SNR, RMS) is
+%   computed from CleanSweepData, the flagged sweeps excluded. Use SweepData
+%   when you want every sweep regardless of verdict.
 %
 %   Rate/decimation convention: Data is stored at its acquisition SampleRate;
 %   DecimationFactor records the DAC/ADC ratio so mabr.data.io can decimate at
@@ -36,24 +48,13 @@ classdef Recording
                                   mustBeLessThanOrEqual(DetrendPoly,9)} = -1;
         SmoothSpan  (1,1) double {mustBeInteger,mustBeNonnegative} = 0;
 
-        % ADC filter chain (HP 10 / LP 3000 bandpass + 60 Hz notch by default)
-        UseBandpass (1,1) logical = false;
-        UseNotch    (1,1) logical = false;
-        FilterHP    (1,1) double {mustBePositive,mustBeFinite} = 10;    % Hz
-        FilterLP    (1,1) double {mustBePositive,mustBeFinite} = 3000;  % Hz
-        % Butterworth order for the bandpass. Kept low: a high-order IIR with a
-        % 10 Hz corner at 12 kHz is numerically fragile, and designFilters
-        % clamps to [2 8] for that reason.
-        FilterOrder (1,1) double {mustBePositive,mustBeInteger} = 4;
-        NotchFreq   (1,1) double {mustBePositive,mustBeFinite} = 60;    % Hz
-        NotchWidth  (1,1) double {mustBePositive,mustBeFinite} = 4;     % Hz, -3 dB width
+        % ADC filter chain: independent high pass / low pass / notch, held in
+        % the same mabr.FilterPolicy the GUI edits and the live view applies,
+        % so a Block's numbers come off the corners the operator was watching.
+        % Still opt-in -- designFilters() is what puts it into effect.
+        Filters (1,1) mabr.FilterPolicy = mabr.FilterPolicy;
 
         FFTOptions = struct('windowFcn',@flattop,'inDecibels',true);
-    end
-
-    properties (SetAccess = private)
-        BandpassDesign = [];   % digitalFilter (designed by designFilters)
-        NotchDesign    = [];   % digitalFilter
     end
 
     properties (Dependent)
@@ -63,7 +64,10 @@ classdef Recording
         ProcessedData      % Data with the (designed) filter chain applied
         ValidSweeps        % logical per SweepOnsets: window lies inside Data
         SweepData
+        CleanSweeps        % logical per SweepData column: not flagged artifact
+        CleanSweepData     % SweepData with the flagged sweeps removed
         NumSweeps
+        NumCleanSweeps
         SweepMean
         noisePower
         signalPower
@@ -83,51 +87,25 @@ classdef Recording
 
         % --- Filtering -----------------------------------------------------
         function obj = designFilters(obj)
-            % Design the enabled filters at the current SampleRate. Call once
-            % after setting SampleRate/params; segmentation then uses them.
+            % Design the enabled sections at the current SampleRate. Call once
+            % after setting SampleRate/Filters; segmentation then uses them.
             % IIR (Butterworth) designs. An FIR of any practical order cannot
             % realize a 10 Hz corner at a 12 kHz sample rate: the previous
             % order-10 'bandpassfir'/'bandstopfir' pair measured 0.0 dB at both
             % DC and 60 Hz, i.e. it removed neither baseline drift nor line
-            % noise. filtfilt() below makes the response zero-phase, so the IIR
-            % phase distortion that motivates FIR here does not apply.
-            nyq = obj.SampleRate/2;
-            if obj.UseBandpass
-                lp = min(obj.FilterLP,0.99*nyq);
-                obj.BandpassDesign = designfilt('bandpassiir', ...
-                    'FilterOrder',          min(8,max(2,2*ceil(obj.FilterOrder/2))), ...
-                    'HalfPowerFrequency1',  obj.FilterHP, ...
-                    'HalfPowerFrequency2',  lp, ...
-                    'SampleRate',           obj.SampleRate);
-            else
-                obj.BandpassDesign = [];
-            end
-            if obj.UseNotch
-                obj.NotchDesign = designfilt('bandstopiir', ...
-                    'FilterOrder',          2, ...
-                    'HalfPowerFrequency1',  obj.NotchFreq-obj.NotchWidth/2, ...
-                    'HalfPowerFrequency2',  obj.NotchFreq+obj.NotchWidth/2, ...
-                    'SampleRate',           obj.SampleRate);
-            else
-                obj.NotchDesign = [];
-            end
+            % noise. filtfilt() in mabr.FilterPolicy.apply makes the response
+            % zero-phase, so the IIR phase distortion that motivates FIR here
+            % does not apply.
+            obj.Filters = obj.Filters.design(obj.SampleRate);
         end
 
         function y = applyFilter(obj,x)
             % Apply the designed filter chain (zero-phase) to a vector.
-            y = double(x(:));
-            if numel(y) < 4, y = single(y); return; end   % too short to filtfilt
-            if ~isempty(obj.BandpassDesign), y = filtfilt(obj.BandpassDesign,y); end
-            if ~isempty(obj.NotchDesign),    y = filtfilt(obj.NotchDesign,y);    end
-            y = single(y);
+            y = single(obj.Filters.apply(double(x(:))));
         end
 
         function d = get.ProcessedData(obj)
-            if isempty(obj.BandpassDesign) && isempty(obj.NotchDesign)
-                d = obj.Data;
-            else
-                d = obj.applyFilter(obj.Data);
-            end
+            d = obj.Filters.apply(obj.Data);    % raw until designFilters()
         end
 
         % --- Basic sizes ---------------------------------------------------
@@ -156,12 +134,44 @@ classdef Recording
             if size(s,2) == 1 && size(s,1) ~= obj.SweepLength, s = s'; end
         end
 
+        function v = get.CleanSweeps(obj)
+            % Which SweepData columns survived artifact rejection. IsArtifact
+            % is indexed by SweepOnsets and SweepData by the subset whose
+            % window fits inside Data, so the flags map through ValidSweeps.
+            valid = obj.ValidSweeps;
+            v     = true(1,nnz(valid));
+            bad   = obj.IsArtifact;
+            if numel(bad) == numel(obj.SweepOnsets) && any(bad)
+                v = ~reshape(bad(valid),1,[]);
+            end
+        end
+
+        function s = get.CleanSweepData(obj)
+            % The sweeps anything descriptive should be computed from. Flagged
+            % sweeps stay in Data (and in the saved .abr) so an offline
+            % reanalysis can overrule the call, but they are dropped here: a
+            % single electrode pop otherwise smears across the whole average.
+            s = obj.SweepData;
+            if isempty(s), return; end
+            keep = obj.CleanSweeps;
+            if ~all(keep), s = s(:,keep); end
+        end
+
         function n = get.NumSweeps(obj)
             n = size(obj.SweepData,2);
         end
 
+        function n = get.NumCleanSweeps(obj)
+            n = size(obj.CleanSweepData,2);
+        end
+
         function m = get.SweepMean(obj)
-            m = mean(obj.SweepData,2,'omitnan');
+            % Artifact sweeps are excluded (see CleanSweepData). With every
+            % sweep rejected there is nothing to average, and an all-NaN mean
+            % says so rather than returning a misleading zero.
+            D = obj.CleanSweepData;
+            if isempty(D), m = nan(obj.SweepLength,1,'single'); return; end
+            m = mean(D,2,'omitnan');
 
             if obj.DetrendPoly == 0
                 m = m - mean(m);
@@ -177,8 +187,9 @@ classdef Recording
 
         % --- Metrics -------------------------------------------------------
         function r = get.noisePower(obj)
-            % plus/minus averaging as a noise estimate
-            x = obj.SweepData;
+            % plus/minus averaging as a noise estimate, over the clean sweeps
+            % only -- an artifact left in would be measured as noise it is not.
+            x = obj.CleanSweepData;
             if size(x,2) > 1
                 x = mean(x(:,1:2:end),2) - mean(x(:,2:2:end),2);
             end
@@ -194,7 +205,7 @@ classdef Recording
         end
 
         function r = get.RMS(obj)
-            r = sqrt(mean(obj.SweepData.^2,'omitnan'));
+            r = sqrt(mean(obj.CleanSweepData.^2,'omitnan'));
         end
 
         % --- FFT of the mean sweep -----------------------------------------

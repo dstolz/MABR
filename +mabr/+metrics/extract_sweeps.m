@@ -1,4 +1,4 @@
-function [preSweep,postSweep,onsets,state] = extract_sweeps(rb,params,state)
+function [preSweep,postSweep,onsets,state,tvec] = extract_sweeps(rb,params,state)
 % mabr.metrics.extract_sweeps  Slice pre-/post-onset sweep windows from the
 % acquisition ring buffer.
 %
@@ -27,10 +27,19 @@ function [preSweep,postSweep,onsets,state] = extract_sweeps(rb,params,state)
 %     postSweep  [nSweeps x nSamples] response window at/after each onset
 %     onsets     [nSweeps x 1] absolute onset sample indices (this block)
 %     state      updated cursor + sweep cache
+%     tvec       struct with .pre and .post: the time (SECONDS, relative to
+%                onset) of each column of the matching matrix. The two are
+%                contiguous, so [tvec.pre tvec.post] is one unbroken time
+%                base running from before the onset to the end of the
+%                response -- which is what a live view needs to draw a
+%                negative time axis. Returned here rather than recomputed by
+%                the caller so the baseline offsets cannot drift apart from
+%                the ones the samples were actually taken at.
 %
 % Daniel Stolzberg (c) 2019-2026
 
 preSweep = []; postSweep = []; onsets = [];
+tvec = struct('pre',[],'post',[]);
 
 if nargin < 3 || isempty(state), state = struct(); end
 if ~isfield(state,'onsets'),     state.onsets     = []; end
@@ -91,6 +100,7 @@ df   = params.decimation;
 swin = w(1):df:w(2);                          % post-onset offsets
 L    = numel(swin);
 bwin = -df*(L:-1:1);                          % pre-onset (baseline) offsets
+tvec = struct('pre',bwin/Fs,'post',swin/Fs);
 
 respEnd     = w(2);                           % last response offset
 oldestValid = max(1,head - rb.MaxLength + 1); % oldest sample still retained

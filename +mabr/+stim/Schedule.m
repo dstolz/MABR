@@ -53,7 +53,19 @@ classdef Schedule < handle
 %   Make-up runs are appended to the end of the plan (a run's play matrix is
 %   rendered before streaming starts and cannot grow mid-flight), hold one
 %   stimulus each, and are bounded by MakeupLimit. reset() drops them, so a
-%   re-started schedule always begins from the plan build() produced.
+%   re-started schedule always begins from the plan build() produced, and
+%   dropPendingMakeup() drops just the ones not yet reached — what the
+%   controller calls when the user turns Repeat off mid-schedule.
+%
+%   Manual repeat
+%   -------------
+%   repeatRun appends the same shape of run -- one stimulus, its scheduled
+%   repetition count -- but on the user's direct request (the GUI's Repeat
+%   button, mabr.ui.AcqController.repeatLastBlock) rather than as artifact
+%   recovery, so it is NOT bounded by MakeupLimit. It is tracked in IsRepeat,
+%   a separate flag from IsMakeup, so dropPendingMakeup (which only withdraws
+%   make-up runs) cannot mistake one for the other; reset() drops both kinds
+%   alike, since neither belongs to the plan build() produced.
 %
 %   Typical walk (driven by mabr.ui.AcqController):
 %       sch = mabr.stim.Schedule(stimulusSet,cfg);
@@ -98,6 +110,7 @@ classdef Schedule < handle
         Runs        (1,:) cell = {}    % each cell: stimulus indices, in play order
         Polarities  (1,:) cell = {}    % each cell: +1/-1 per onset, same size
         IsMakeup    (1,:) logical = false(1,0)  % parallel to Runs; appended make-up?
+        IsRepeat    (1,:) logical = false(1,0)  % parallel to Runs; user-requested repeat?
         CurrentRun  (1,1) double = 0   % 0 = not started / complete
         RunCounts   (1,:) double = []  % presentations actually recorded, per stimulus
         MakeupUsed  (1,:) double = []  % make-up presentations appended, per stimulus
@@ -137,6 +150,7 @@ classdef Schedule < handle
             obj.Runs       = {};
             obj.Polarities = {};
             obj.IsMakeup   = false(1,0);
+            obj.IsRepeat   = false(1,0);
             if n == 0 || ~any(reps > 0), obj.CurrentRun = 0; return; end
 
             rs  = obj.stream();
@@ -172,19 +186,22 @@ classdef Schedule < handle
             end
 
             obj.IsMakeup = false(1,numel(obj.Runs));
+            obj.IsRepeat = false(1,numel(obj.Runs));
             obj.reset();
         end
 
         function reset(obj)
-            % Make-up runs belong to the acquisition that produced them, not to
-            % the plan, so re-starting drops them: reset() returns the schedule
-            % to exactly the state build() left it in, and the make-up budget
-            % starts over with it.
-            m = obj.IsMakeup;
+            % Make-up runs and user-requested repeat runs (see repeatRun)
+            % belong to the acquisition that produced them, not to the plan, so
+            % re-starting drops both: reset() returns the schedule to exactly
+            % the state build() left it in, and the make-up budget starts over
+            % with it.
+            m = obj.IsMakeup | obj.IsRepeat;
             if any(m)
                 obj.Runs(m)       = [];
                 obj.Polarities(m) = [];
                 obj.IsMakeup(m)   = [];
+                obj.IsRepeat(m)   = [];
             end
             obj.RunCounts(:)  = 0;
             obj.MakeupUsed(:) = 0;
@@ -272,12 +289,89 @@ classdef Schedule < handle
                 obj.Runs{end+1}       = repmat(i,1,k);
                 obj.Polarities{end+1} = mabr.stim.Schedule.polaritySeries(k,alt(i));
                 obj.IsMakeup(end+1)   = true;
+                obj.IsRepeat(end+1)   = false;
                 obj.MakeupUsed(i)     = obj.MakeupUsed(i) + k;
                 added(i)              = k;
 
                 mabr.log.vprintf(1,'Appended make-up run %d: %d x stimulus %d', ...
                     numel(obj.Runs),k,i);
             end
+        end
+
+        function dropped = dropPendingMakeup(obj)
+            % Discard make-up runs that have not started yet.
+            %
+            %   dropped = dropPendingMakeup() removes every make-up run after
+            %   the current one and returns how many runs were removed. The
+            %   budget they consumed is refunded, so turning make-up back on
+            %   later starts from the same MakeupLimit headroom as before.
+            %
+            %   Called by mabr.ui.AcqController when the user clears
+            %   ArtifactPolicy.Repeat mid-schedule: the queued make-up runs
+            %   were appended on the old policy's authority, and presenting
+            %   them anyway would ignore the instruction just given. Runs
+            %   already played are untouched — their data exists.
+            dropped = 0;
+            % CurrentRun == 0 means the schedule has not started or has
+            % finished; either way nothing is pending, and the make-up runs
+            % still listed are ones that were played. reset() is what clears
+            % those, at the start of the next acquisition.
+            if isempty(obj.Runs) || obj.CurrentRun == 0, return; end
+            m = obj.IsMakeup;
+            m(1:min(obj.CurrentRun,numel(m))) = false;   % keep the current run
+            if ~any(m), return; end
+
+            for r = find(m)
+                i = obj.Runs{r}(1);      % a make-up run holds one stimulus
+                obj.MakeupUsed(i) = max(0,obj.MakeupUsed(i) - numel(obj.Runs{r}));
+            end
+            obj.Runs(m)       = [];
+            obj.Polarities(m) = [];
+            obj.IsMakeup(m)   = [];
+            obj.IsRepeat(m)   = [];
+            dropped           = sum(m);
+
+            mabr.log.vprintf(1,'Dropped %d pending artifact make-up run(s).',dropped);
+        end
+
+        function n = repeatRun(obj,stimIndex)
+            % Append one more full run of stimIndex, at its scheduled
+            % repetition count -- the user's direct "run this again" request
+            % (mabr.ui.AcqController.repeatLastBlock), NOT a recovery of sweeps
+            % an artifact took. Independent of MakeupLimit, which bounds
+            % appendMakeup only.
+            %
+            % Only sensible when a run holds a single stimulus, i.e. a blocked
+            % strategy: mabr.ui.AcqController.canRepeat gates the GUI button on
+            % isIntermixed() and never records a stimulus to repeat for an
+            % intermixed run.
+            assert(stimIndex >= 1 && stimIndex <= obj.Set.numStimuli, ...
+                'mabr:stim:Schedule:repeatRange', ...
+                'Stimulus index %d out of range (1..%d).',stimIndex,obj.Set.numStimuli);
+            reps = obj.normalizedReps();
+            n    = reps(stimIndex);
+            assert(n > 0,'mabr:stim:Schedule:repeatZero', ...
+                'Stimulus %d has 0 scheduled repetitions -- nothing to repeat.',stimIndex);
+
+            alt = obj.Set.alternatesPolarity();
+            obj.Runs{end+1}       = repmat(stimIndex,1,n);
+            obj.Polarities{end+1} = mabr.stim.Schedule.polaritySeries(n,alt(stimIndex));
+            obj.IsMakeup(end+1)   = false;
+            obj.IsRepeat(end+1)   = true;
+
+            mabr.log.vprintf(1,'Appended repeat run %d: %d x stimulus %d (user requested).', ...
+                numel(obj.Runs),n,stimIndex);
+        end
+
+        function resumeAt(obj,r)
+            % Point the plan at run r, so advance() continues normally from
+            % there. Needed after repeatRun appends a run onto a schedule that
+            % had already reached SchedComplete (CurrentRun == 0): appending
+            % alone does not restart automatic advancement, since nothing calls
+            % advance() again on its own once the plan was walked to its end.
+            assert(r >= 1 && r <= obj.NumRuns,'mabr:stim:Schedule:runRange', ...
+                'Run index %d out of range (1..%d).',r,obj.NumRuns);
+            obj.CurrentRun = r;
         end
 
         % --- Rendering --------------------------------------------------------

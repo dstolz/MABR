@@ -15,7 +15,7 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
  │      Output  [ C:\data\subj001    v ] [ Browse… ] │
  └───────────────────────────────────────────────────┘
  ┌ Stimulus ────────────────────────────────────────┐
- │        Bank   8 stimuli  [ Load .mat… ] [ Test ]  │
+ │  Bank 8 stimuli · stimgen [Design…][Load bank…][Demo] │
  └───────────────────────────────────────────────────┘
  ┌ Presentation ────────────────────────────────────┐
  │    Strategy  [ Blocked — one stimulus per run  v ] │
@@ -25,12 +25,14 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
  │        8 runs (blocked) · 4096 presentations · ~4 min │
  └───────────────────────────────────────────────────┘
  ┌ Acquisition ─────────────────────────────────────┐
- │  [x] Testing (loopback, no hardware)              │
  │     Advance  [ Correlation Thr. v ] [ r ≥ 0.50 ]  │
+ │   Artifacts  [ Voltage threshold v ] [ ± 100 mV ] │
+ │              [x] Repeat sweeps lost to artifact   │
+ │     Filters  10–3000 Hz + 60 Hz notch [ Filters… ]│
  └───────────────────────────────────────────────────┘
  ┌ Run ─────────────────────────────────────────────┐
- │  (o) Acquire       Sweeps: 128           r = 0.42 │
- │  [ Start ] [ Pause ] [ Advance ] [ Abort ]       │
+ │  (o) Acquire   Sweeps: 128   r = 0.42  rejected: 3 │
+ │  [ Start ] [ Preview ] [ Repeat ] [ Pause ] [ Advance ] [ Abort ] │
  └───────────────────────────────────────────────────┘
  Saved SUBJ_ID_001_Frequency_8kHz_Level_30dB_....abr
 ```
@@ -45,13 +47,19 @@ Every panel shares one label-column width, so the fields line up along a single 
 
 ## Stimulus
 
-**Load .mat…** — Loads a `.mat` file of pre-computed, calibrated stimuli supplied by your external stimulus package. The file should contain a struct array in which each entry is **one** stimulus — a `signal` and an `ID`. MABR finds it among the loaded variables. Fields are listed in [Extending MABR](Extending.md#the-stimulus-entry).
+**Design…** — Opens the [stimgen](https://github.com/dstolz/stimgen) bank editor, the suggested way to build stimuli. Set a parameter to a vector (`Frequency = [8000 16000]`) and stimgen expands it into variants; each variant becomes one MABR stimulus. The window stays open and the button becomes **Adopt bank** — press it to bring the current bank into MABR, tweak, and adopt again as often as you like. Everything is regenerated at MABR's 192 kHz rate, so nothing is resampled.
 
-Note what the file does *not* contain: repetition counts, spacing, or ordering. Those are yours to choose here, per session, and are described below.
+Greyed out with an explanatory tooltip if the stimgen submodule was never fetched — run `git submodule update --init` and restart.
 
-**Test Stimulus** — Loads the built-in tone-pip grid (8 and 16 kHz × 30 and 60 dB). **Uncalibrated** — for testing the software and signal chain only.
+**Load bank…** — Loads a bank from file: a stimgen `.spl`, or a `.mat` holding a struct array in which each entry is **one** stimulus (a `signal` and an `ID`; MABR finds it among the loaded variables). Fields are listed in [Extending MABR](Extending.md#the-stimulus-entry).
 
-The **Bank** field shows `(none loaded)` in red until stimuli are loaded, then the stimulus count in green. It sits in the field column rather than beside the buttons, so it reads as the panel's current value.
+Note what neither contains: repetition counts, spacing, or ordering. Those are yours to choose here, per session, and are described below. A `.spl` does carry stimgen's own reps and ISI — MABR takes the reps as a starting value and ignores the rest.
+
+**Demo** — Loads the built-in tone-pip grid (8 and 16 kHz × 30 and 60 dB). **Uncalibrated** — for testing the software and signal chain only.
+
+The **Bank** field shows `(none loaded)` in red until stimuli are loaded, then the count and where they came from — `12 stimuli · stimgen`. Green when the bank is calibrated, **amber when it is not**. It sits in the field column rather than beside the buttons, so it reads as the panel's current value.
+
+> **Levels need a calibration to mean anything.** dB SPL becomes a voltage *through* the calibration. With none loaded, stimgen generates every stimulus at the same amplitude, so a bank asking for 30, 60, and 90 dB is three identical sounds. MABR warns when you adopt such a bank rather than blocking it — it is still useful for testing — but do not collect data with one. Calibrate under **Settings ▸ Calibration…**, then rebuild the bank.
 
 ## Presentation
 
@@ -77,8 +85,6 @@ Shuffling only reorders — it never resamples. Every stimulus is presented exac
 
 ## Acquisition settings
 
-**Testing (loopback, no hardware)** — On by default. Runs the entire program with no audio device: the outgoing stimulus is fed back as the incoming recording, plus a trace of noise. Everything else behaves normally, including saving files. Untick for real recordings. Toggling this rebuilds the background worker.
-
 **Advance** — When to end a run early:
 
 | Setting | Behavior |
@@ -90,14 +96,72 @@ The threshold field (0 to 1, 0.5 is a reasonable starting point) is enabled only
 
 **Correlation early-stop is available for blocked strategies only.** When you pick an intermixed strategy the Advance control greys out: a correlation computed across mixed conditions is not meaningful, and stopping such a run would truncate whichever stimuli happened to fall last in the sequence, unbalancing the design. Those runs always play to completion.
 
+**Artifacts** — How a sweep is judged contaminated, and what to do about one:
+
+| Setting | Behavior |
+|---------|----------|
+| None — keep every sweep | No sweep is ever flagged |
+| Voltage threshold | Flag a sweep if any sample leaves ±threshold (default ±100 mV) |
+| RMS threshold | Flag a sweep if its RMS exceeds the threshold (default 30 mV) — catches sustained muscle noise a peak limit misses |
+
+One threshold field serves both criteria, since they are alternatives; the caption beside the number says which one it belongs to, and each criterion remembers its own value as you switch. **Repeat sweeps lost to artifact** re-presents what was rejected in a make-up run appended to the end of the schedule, so every condition still reaches its requested count; leave it off to simply count the losses. Your choices are remembered across sessions.
+
+A flagged sweep is **marked, never discarded** — the `.abr` file carries the whole recording plus an `IsArtifact` flag per sweep, so offline analysis can overrule the call. What flagging changes is everything *descriptive*: the sweep is left out of the displayed average, the metrics, and the SNR. The **rejected:** count beside the sweep counter in **Run** tallies the flags for the schedule so far.
+
+**These three controls stay live while a schedule is running**, unlike everything above them. The criterion is only decided when a run is finalized, so changing it mid-session is a decision about the next block rather than an edit to the one in flight — which is what you want when an electrode starts drifting an hour in. The live plot previews the new rule immediately, so you can see whether the threshold you just typed is the one you meant; blocks already finalized keep the verdict they were judged under. Clearing **Repeat** mid-schedule also withdraws any make-up runs that were queued but not yet reached.
+
+**Filters** — Digital filtering of the signal *as you view it*. The row shows the chain in force; **Filters…** opens a small window to change it:
+
+| Control | Purpose |
+|---------|---------|
+| High pass | Removes DC offset, electrode drift, and slow movement artifact (default 10 Hz) |
+| Low pass | Removes hiss and everything above the response band (default 3000 Hz) |
+| Notch | Removes mains hum — 60 Hz here, set it to 50 Hz on a 50 Hz supply. The width is the −3 dB span; keep it narrow so it does not eat the response |
+| Roll-off | Butterworth order shared by the high and low pass. Steeper is not better on a 10 ms sweep, and a steep IIR with a 10 Hz corner at 12 kHz is numerically fragile |
+
+Each of the three is an independent switch — a rig rarely wants all three answered the same way. The plot shows the chain **as applied**: filtering is zero-phase (`filtfilt` runs it forwards and backwards), so the realized response is the squared magnitude and the corners read −6 dB rather than −3 dB. **Defaults** restores 10–3000 Hz with a 60 Hz notch. OK greys out on a chain that passes nothing, such as a high pass above the low pass.
+
+**Saved `.abr` files always hold the raw, unfiltered trace.** The chain applies to the live plot, the trace organizer, and the sweep metrics (including the SNR and the artifact verdict) — never to the recorded samples. So there is no wrong moment to change it and nothing to undo: the filters are how you *look* at the data, and the offline pipeline is free to make entirely different choices from the same file. Your chain is remembered across sessions.
+
+Like the artifact controls, **Filters… stays live while a schedule runs**. The live plot redraws through the new corners on its next refresh, and its caption names the chain, so a filtered view is never mistaken for the raw signal.
+
+> **Testing with loopback?** The default 10–3000 Hz band is the ABR band. In loopback the "recording" is the stimulus itself — a tone pip far above that band — so the live traces will look empty until you widen or switch off the filters.
+
+## Settings menu
+
+**Audio Device (ASIO)…** opens a small dialog over the audio configuration:
+
+**Testing (loopback, no hardware)** — Ticked by default. Runs the entire program with no audio device: the outgoing stimulus is fed back as the incoming recording, plus a trace of noise. Everything else behaves normally, including saving files. Checking it greys out the device dropdown, the channel fields, and **Test Device** below, since none of them matter when nothing is going to be opened. Untick for real recordings. Toggling this rebuilds the background worker.
+
+**Device** — The ASIO device to open, or **(system default)**. **Refresh** re-queries the system for connected devices.
+
+**Player ch. / Recorder ch.** — The `[signal timing]` output and input channel mapping.
+
+**Microphone** — The input channel your calibration microphone is patched to. Deliberately separate from **Recorder ch.**: during acquisition that input carries an electrode, during calibration it carries a mic. Same device, different patchings, so two settings. Only calibration reads it — it can never affect a recording.
+
+**Test Device** — Briefly opens the selected device and reports the sample rate it actually grants, so a mismatched ASIO driver is caught here rather than partway into a session. Disabled in Testing mode.
+
+Like the acquisition viewers, this dialog's position and every value here are remembered across sessions. Unlike the artifact and filter controls, this menu item **locks for the duration of a schedule** — the worker's audio device is already open on whatever it was handed at Start.
+
+**Calibration…** opens [stimgen](https://github.com/dstolz/stimgen)'s calibration window, pointed at *your* rig: it plays through the ASIO device and output channel set above, records from the **Microphone** channel, and measures at MABR's 192 kHz rate — the rate your stimuli are generated at. Calibrating through some other device would describe a signal chain your experiment never uses.
+
+Measure a reference (a known level from a calibrator), then a tone sweep, then save a `.esgc` file. Load that calibration onto your stimuli in the stimgen designer and rebuild the bank; from then on dB SPL means dB SPL.
+
+Also locked during a schedule, and for a harder reason than the audio settings: an ASIO device has exactly one owner, and while a schedule runs the acquisition worker is it. Note that the worker keeps the device open *between* runs too, to keep block-to-block latency down — so opening calibration quietly asks it to hand the device back. It takes the device again automatically on the next Start.
+
+Calibration is greyed out in Testing mode (loopback would just measure the stimulus fed back to itself) and when the stimgen submodule is missing.
+
 ## Toolbar
 
 Both viewers open automatically with the app and sit beside the main window, so the toolbar buttons normally just raise them; they rebuild a window only if you closed it.
 
+Each button is drawn as what its window shows; hover for the tooltip if the pictogram is ambiguous.
+
 | Button | Effect |
 | --- | --- |
-| **L** | Raises the Live Plot. |
-| **T** | Raises the Trace Organizer, refreshed with the conditions completed so far. |
+| a trace on axes | Raises the Live Plot. |
+| a stack of traces | Raises the Trace Organizer, refreshed with the conditions completed so far. |
+| a loudspeaker | Opens the Stimulus Viewer on the loaded bank. |
 | **?** | Opens the [MABR wiki](https://github.com/dstolz/MABR/wiki) in a browser (same as **Help ▸ MABR Wiki**). |
 
 Both viewers are described in [Viewing Data](Viewing-Data.md).
@@ -121,11 +185,14 @@ The toolbar is never disabled — raising a viewer is safe at any time, includin
 | Button | Effect |
 |--------|--------|
 | **Start** | Begin the schedule from the first run |
+| **Repeat** | Queue one more full block of the stimulus that just finished |
 | **Pause** / **Resume** | Suspend playback in place, keeping the audio device open |
 | **Advance** | End the current run now, save it, continue to the next |
 | **Abort** | End the current run now, save it, halt the schedule |
 
 Advance and Abort both save what was recorded. Neither discards data. Stopping an intermixed run early is allowed but leaves the conditions unbalanced — the stimuli late in the sequence will have fewer sweeps than the rest.
+
+**Repeat** appends one more run of whichever stimulus the most recently completed block presented, at its originally scheduled repetition count, to the end of the plan — the same "append to the end" mechanism artifact make-up uses, just triggered by you instead of a rejected sweep. It is **available only for blocked strategies** (Blocked, or Blocked with shuffled run order): an intermixed run has no single stimulus to point at, so the button stays disabled for the whole run in that case. It lights up as soon as the first eligible block lands and stays available for the rest of the schedule — including after everything has finished, to add one more block before you move on — and it works whether or not the schedule is still running, exactly like the artifact and filter controls beside it.
 
 ## Closing
 

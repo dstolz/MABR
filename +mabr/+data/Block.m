@@ -62,17 +62,13 @@ classdef Block
         function obj = computeMetrics(obj)
             % Compute the standard live metrics over the ADC sweeps using the
             % tested mabr.metrics functions (the single source of truth).
-            D = obj.ADC.SweepData;      % [nSamples x nSweeps]
-
             % Artifact sweeps stay in the Recording (and in the saved file),
             % but they are excluded here: a metric meant to describe the
             % response should not be dominated by sweeps already judged not to
-            % hold one. IsArtifact is indexed by SweepOnsets, SweepData by the
-            % subset that fit inside the trace, so map through ValidSweeps.
-            bad = obj.ADC.IsArtifact;
-            if numel(bad) == numel(obj.ADC.SweepOnsets) && any(bad)
-                D = D(:,~bad(obj.ADC.ValidSweeps));
-            end
+            % hold one. CleanSweepData does that mapping once, so this and
+            % Recording's own SweepMean/SNR cannot disagree about which sweeps
+            % count.
+            D = obj.ADC.CleanSweepData;   % [nSamples x nCleanSweeps]
 
             m = struct();
             if isempty(D) || size(D,2) < 2

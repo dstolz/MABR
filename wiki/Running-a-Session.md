@@ -8,9 +8,7 @@ Launch with `MABR` from the MATLAB command window. The window is `mabr.ui.App`.
 
 **Output** — editable dropdown plus **Browse…**. Where `.abr` files are written. Also remembered.
 
-**Stimulus** — **Load .mat…** reads a stimulus bank from file (`mabr.stim.StimulusSet.fromFile`); **Test Stimulus** loads the built-in tone-pip demo bank. Until one is loaded the label reads `(none loaded)` in red. See [[Stimulus Package Contract]].
-
-**Testing (loopback, no hardware)** — checked by default. Runs the whole engine with no audio device. Uncheck only when an ASIO device is connected. Toggling this rebuilds the worker.
+**Stimulus** — **Design…** opens the stimgen bank editor and then becomes **Adopt bank** (`mabr.stim.fromStimgen`); **Load bank…** reads a bank from file, `.spl` or `.mat` (`mabr.stim.StimulusSet.fromFile`); **Demo** loads the built-in tone-pip bank. Until one is loaded the label reads `(none loaded)` in red; afterwards it shows the count and source (`12 stimuli · stimgen`), amber when the bank is uncalibrated. See [[Using stimgen]] and [[Stimulus Package Contract]].
 
 **Strategy** — how entries in the bank are combined into runs. See [[Presentation Strategies]].
 
@@ -26,9 +24,13 @@ This control is **greyed out and forced to *All Repetitions* for intermixed stra
 
 **Plan summary** — a live preview of runs, total presentations, and estimated wall-clock duration. It and Start both go through the same `buildSchedule`, so what you preview is what you run.
 
-**Show Live Plot** — opens `mabr.ui.LivePlot` (mean / most-recent / correlation bar), refreshed by a single ~20 Hz timer.
+**Show Live Plot** — opens `mabr.ui.LivePlot`, refreshed by a single ~20 Hz timer: the most recent sweep on its own axes at the top with the correlation bar beside it, and below it one running mean per stimulus the current run is presenting — overlaid on one axes or one panel each. The control strip along the bottom sets the layout, the time base (default −2 to 10 ms, the negative half being the pre-onset baseline), and how the means are scaled (each to its own peak, all to one shared scale, or a manual ± limit).
 
 **Trace Organizer** — opens `mabr.ui.TraceOrganizer`, the interactive stacked-waveform viewer. Each acquired block appears as one trace labelled with its stimulus ID, and the view keeps up on its own — leave it open during a run and a new trace appears as each block completes, without stealing focus from the live view. Resize individual traces, the selection, or all of them, adjust the stack spacing, reorder and mark peaks — from the menu bar, the right-click menu, or the keyboard (`F1` lists the shortcuts) — then save the arranged view to a `.torg` file and reload it exactly as it was.
+
+**Settings ▸ Audio Device (ASIO)…** — opens `mabr.ui.AudioSettingsDialog`, edited over `mabr.AudioSettings`: **Testing (loopback, no hardware)** (checked by default — runs the whole engine with no audio device; unchecking it enables the rest of the dialog), the ASIO **Device**, the **Player/Recorder** `[signal timing]` channel mapping, and the **Microphone** input channel used by calibration only. Toggling Testing or changing the device rebuilds the worker. Locked for the duration of a schedule.
+
+**Settings ▸ Calibration…** — opens stimgen's calibration GUI over `mabr.stim.CalibrationAdapter`, so the measurement runs on this rig's device, output channel, and mic channel at the DAC rate. Locked during a schedule and unavailable in Testing mode; borrows the audio device from the idle worker (`Engine.releaseDevice`), which retakes it on the next Start. See [[Using stimgen]].
 
 ## Transport
 

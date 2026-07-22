@@ -45,6 +45,14 @@ This is the test that protects the core promise of the design: commands are hono
 
 Parts B and C are the only tests that exercise the full stack — controller, engine, worker, ring buffer, extraction, criterion, de-interleaving, finalization, save — in one pass.
 
+### verify_stimgen_import
+
+[tests/verify_stimgen_import.m](../tests/verify_stimgen_import.m) — the stimgen bridge. Asserts a 2×2 variant grid becomes four entries at the DAC rate, that `informativeParams` is the *declared* list rather than every numeric scalar, that a `.spl` bank round-trips with its levels and repetitions intact, and that `Frequency`/`Level` produce a filename matching the offline regex.
+
+Its sharpest assertion is an FFT of every generated waveform against the `Frequency` its own metadata claims. stimgen's `VariantReselectOnUpdate` defaults true, so reading a parameter back *outside* an update cycle silently advances to the next variant — metadata and waveform come apart, and an 8 kHz tone is saved labelled 16 kHz. Nothing about the signal looks wrong; only the pairing is. Test the pairing, not the parts.
+
+**Skips and passes** when the `external/stimgen` submodule was never fetched — an absent optional dependency is not a failure.
+
 ## Writing a new verification
 
 Follow the existing pattern: a plain function, no test framework, `fprintf` a banner, `assert` with messages, clean up with `onCleanup`, and add it to the list in [run_all_verifications.m](../tests/run_all_verifications.m).

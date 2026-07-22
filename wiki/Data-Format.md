@@ -34,6 +34,19 @@ Two more fields are always written for offline analysis. The stock pipeline does
 
 Both are unconditional, so analysis code can read them without testing for their existence: a fixed-polarity condition writes all `+1` and `0`. `SIG.alternatePolarity` is deliberately **not** listed in `informativeParams` — those become grouping dimensions in `extractABRResponses`, and this describes how a condition was run rather than defining a separate condition. Files written before this field existed import as all `+1` (see `mabr.data.io.importLegacy`).
 
+## Stimulus provenance
+
+Written when the bank supplied it — banks from [[Using stimgen|stimgen]] always do — and kept out of `informativeParams` for the same reason as `alternatePolarity`: these describe how a waveform was *made*, not which condition it is.
+
+| Field | Contents |
+| --- | --- |
+| `SIG.StimClass` | Generating class, e.g. `stimgen.Tone` |
+| `SIG.VariantIndex` | Which variant combination of that stimulus this was |
+| `SIG.Calibrated` | `true`/`false` — were these levels derived from a measurement? |
+| `SIG.CalibrationTime` | When that calibration was taken, `''` if none |
+
+`SIG.Calibrated` is the one to check before trusting a level. False means the requested dB SPL never reached the amplitude, so levels across a session are nominal and may be acoustically identical — see [[Using stimgen]].
+
 Working with the two polarities offline:
 
 ```matlab
@@ -69,9 +82,11 @@ Subject IDs not already starting with `SUBJ` get prefixed. The numeric part is p
 
 **`mabr.data.Recording`** (value) — one channel: `SampleRate`, `Data`, `SweepOnsets`, `SweepLength`, plus `SweepData` / `SweepMean` / `noisePower` / `SNR`. Ported from the legacy `abr.Buffer` but **cycle-free** — no back-reference to a parent object; the decimation factor is passed explicitly.
 
-Filtering is **explicit and opt-in**. Call `designFilters()` once to build the chain; afterwards the filtered trace is used consistently through `ProcessedData → SweepData → SweepMean`. Before that call, raw `Data` is used. This resolves the legacy ambiguity where a bandpass/notch was designed in the live path but never applied.
+Filtering is **explicit and opt-in**, and lives in a `mabr.FilterPolicy` held in `Recording.Filters`. Call `designFilters()` once to build the chain; afterwards the filtered trace is used consistently through `ProcessedData → SweepData → SweepMean`. Before that call, raw `Data` is used. This resolves the legacy ambiguity where a bandpass/notch was designed in the live path but never applied.
 
-Defaults: Butterworth bandpass HP 10 Hz / LP 3000 Hz, order 4 (clamped to [2 8] — a high-order IIR with a 10 Hz corner at 12 kHz is numerically fragile), plus a 60 Hz notch with 4 Hz −3 dB width. Optional `DetrendPoly` and `SmoothSpan` post-process `SweepMean`.
+Filtering is a **display and metrics** decision only. `Data` is never filtered in place and `io` saves `Data`, so a `.abr` file holds the raw trace whatever the chain says — offline analysis is free to make entirely different choices.
+
+Three independent sections, each switchable on its own: Butterworth high pass (10 Hz) and low pass (3000 Hz), order 4 (clamped to [2 8] — a high-order IIR with a 10 Hz corner at 12 kHz is numerically fragile), plus an order-2 60 Hz notch with 4 Hz −3 dB width. Because `filtfilt` runs the chain both ways, the realized corners sit at −6 dB. Optional `DetrendPoly` and `SmoothSpan` post-process `SweepMean`.
 
 **`mabr.data.Block`** (value) — one condition's result: stimulus metadata + the recorded `Recording` + computed metrics + start time.
 

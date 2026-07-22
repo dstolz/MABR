@@ -55,7 +55,7 @@ Reach them with `mabr.Config.runtimeDir` / `mabr.Config.errorLogDir`.
 
 ## First run without hardware
 
-Leave **Testing (loopback, no hardware)** checked in the GUI, or run the verification suite:
+Leave **Testing (loopback, no hardware)** checked in **Settings ▸ Audio Device (ASIO)…**, or run the verification suite:
 
 ```matlab
 cd tests

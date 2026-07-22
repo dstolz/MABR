@@ -27,17 +27,19 @@ If your device is absent, the ASIO driver is not installed or not selected. Manu
 
 **Underruns or overruns reported in the command window** — The worker could not keep up with the audio stream. Close other applications, especially anything doing heavy disk or network work. Occasional underruns at the very start of a block are usually harmless; continuous ones mean the data is not trustworthy. MABR already raises the worker's process priority automatically.
 
-**No sweeps counted — "Sweeps: 0" throughout a block** — The timing pulse is not being recorded. This is the most common rig problem. Check that:
+**"Timing pulse not detected on the loop-back input during the pre-run check"** — This is the most common rig problem, and `Start` now catches it immediately rather than letting a whole block stream with `Sweeps: 0`. It means:
 
-- The timing output channel is physically routed back into the second input channel.
-- Player and recorder channel mappings match your wiring (default `[1 2]` for both).
-- The timing signal amplitude reaches the detection threshold — a heavily attenuated loop-back pulse can fall below it.
+- The timing output channel is not physically routed back into the second input channel.
+- Player and recorder channel mappings (Acquisition panel's **Audio Settings…**) don't match your wiring (default `[1 2]` for both).
+- The timing signal amplitude doesn't reach the detection threshold — a heavily attenuated loop-back pulse can fall below it.
 
-Confirm the software side is fine by ticking **Testing** and running: if sweeps count in loopback but not with hardware, the problem is in the wiring, not MABR.
+Confirm the software side is fine by ticking **Testing** and running: the check trivially passes in loopback (the timing column is looped back in software), so if it still fails with **Testing** unticked, the problem is in the wiring, not MABR. If you change devices or wiring between runs, the check re-runs automatically on the next `Start`.
+
+**No sweeps counted — "Sweeps: 0" throughout a block, despite Start succeeding** — The pre-run check above only confirms the loop-back was working at `Start`; if wiring comes loose mid-session, sweeps can still go uncounted. Check the same three items as above.
 
 **The live plot is flat, or noise only** — If the most recent sweep (blue) is flat, no signal is arriving: check electrode connections and the amplifier. If it is noisy but the running average never converges, the response may genuinely be absent (below threshold), or the timing pulses may be firing at the wrong times, so sweeps are being averaged out of alignment.
 
-**Heavy 60 Hz in the recording** — MABR's notch filter is applied at finalization, not to the live view, so the live plot legitimately shows more line noise than the saved data. Persistent 60 Hz in saved data points at grounding in the rig.
+**Heavy 60 Hz in the recording** — the notch is applied to the live view as well as to a finalized block's sweeps, so hum you can still see in the live plot is either outside the notch (check its centre frequency: 50 Hz on a 50 Hz supply) or the notch is switched off. Open **Filters…** in the Acquisition panel to check. Note that filtering is a display decision only: line noise is never removed from the saved trace, so persistent 60 Hz there points at grounding in the rig and is what the offline pipeline will see.
 
 ## Data and files
 
@@ -71,4 +73,4 @@ Level 3 prints a lot and can perturb acquisition timing — use it for diagnosis
 
 ## Ruling MABR out
 
-The fastest way to separate a software problem from a rig problem: tick **Testing (loopback, no hardware)**, click **Test Stimulus**, and run. That path touches every part of the program except the audio device. If it works, the software is healthy and the problem is in hardware, wiring, or the stimulus file. If it fails, run `>> run_all_verifications` — see [Testing](Testing.md).
+The fastest way to separate a software problem from a rig problem: tick **Testing (loopback, no hardware)** in **Settings ▸ Audio Device (ASIO)…**, click **Demo**, and run. That path touches every part of the program except the audio device. If it works, the software is healthy and the problem is in hardware, wiring, or the stimulus file. If it fails, run `>> run_all_verifications` — see [Testing](Testing.md).

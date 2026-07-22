@@ -6,7 +6,7 @@ This walks through a complete recording session. If you have not installed MABR 
 
 1. `>> MABR` in MATLAB.
 2. Type a subject ID and pick an output folder.
-3. Load your stimulus file (or click **Test Stimulus** to try the software without one).
+3. Build or load a stimulus bank (or click **Demo** to try the software without one).
 4. Choose when each condition should stop: a fixed number of sweeps, or automatically when a response is detected.
 5. Untick **Testing** once real hardware is connected.
 6. Click **Start** and watch the live plot.
@@ -31,12 +31,13 @@ If you leave Output blank, blocks are still recorded and held in memory, but not
 
 ### 3. Load a stimulus
 
-MABR does not create sounds. It plays waveforms that an external, calibrated stimulus package produced for you, so that the levels in your data mean what they say.
+MABR does not create sounds. It plays waveforms a calibrated stimulus package produced for you, so that the levels in your data mean what they say.
 
-- **Load .mat…** opens a `.mat` file containing your pre-computed blocks. Each block carries its own waveform, sample rate, sweep timing, and metadata (frequency, level, and so on).
-- **Test Stimulus** loads a built-in grid of tone pips (8 and 16 kHz at 30 and 60 dB). These are **not calibrated** — the levels are nominal. Use this to learn the software or to check the signal chain, never to collect real data.
+- **Design…** opens the stimgen bank editor — the suggested route. Pick a stimulus type, give a parameter a vector (`Frequency = [8000 16000]`, `SoundLevel = [30 60]`) and it expands into every combination; each one becomes a MABR stimulus. The editor stays open and the button becomes **Adopt bank**, so you can adjust and re-adopt freely.
+- **Load bank…** opens a saved bank: a stimgen `.spl`, or a `.mat` of pre-computed stimuli. Each entry carries its own waveform, sample rate, and metadata (frequency, level, and so on).
+- **Demo** loads a built-in grid of tone pips (8 and 16 kHz at 30 and 60 dB). These are **not calibrated** — the levels are nominal. Use this to learn the software or to check the signal chain, never to collect real data.
 
-Once loaded, the label next to **Stimulus** turns from red to a block count.
+Once loaded, the label next to **Bank** turns from red to a count and its source — `4 stimuli · stimgen`. If it is **amber**, the bank has no calibration behind it: the sounds will play, but their levels are nominal, and a bank asking for several different levels will produce sounds that are all equally loud. Calibrate first (**Settings ▸ Calibration…**) and rebuild the bank before collecting data.
 
 ### 4. Decide when each condition stops
 
@@ -51,7 +52,7 @@ The correlation option can meaningfully shorten a session, because strong condit
 
 ### 5. Testing vs. real hardware
 
-**Testing (loopback, no hardware)** is ticked by default. In this mode nothing is sent to an audio device — the stimulus is fed straight back as if it were the recorded response, so you can see the whole program run without a rig. Untick it when your ASIO device is connected and you want to record for real.
+Open **Settings ▸ Audio Device (ASIO)…**. **Testing (loopback, no hardware)** is ticked by default. In this mode nothing is sent to an audio device — the stimulus is fed straight back as if it were the recorded response, so you can see the whole program run without a rig. Untick it when your ASIO device is connected and you want to record for real; the same dialog is where you pick the device and channel mapping.
 
 Changing this checkbox rebuilds the acquisition worker, which takes a few seconds the first time.
 
@@ -75,7 +76,7 @@ Nothing is discarded by any of these — whatever was recorded before you presse
 
 ### 7. Look at the results
 
-Both viewers are already open — they launch with the app and sit to the right of the main window. The **L** and **T** toolbar buttons raise them if they get buried.
+Both viewers are already open — they launch with the app and sit to the right of the main window. The trace-on-axes and stacked-traces toolbar buttons raise them if they get buried.
 
 The **Live Plot** (**L**) displays the running average (black), the most recent sweep (blue), and a bar showing the current correlation against your threshold. It updates about 20 times a second.
 

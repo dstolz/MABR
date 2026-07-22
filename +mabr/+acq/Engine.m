@@ -137,6 +137,17 @@ classdef Engine < handle
         function resume(obj), obj.send_cmd(mabr.acq.Cmd.Resume); end
         function stop(obj),   obj.send_cmd(mabr.acq.Cmd.Stop);   end
 
+        function releaseDevice(obj)
+            % Ask the worker to close the audio device, keeping it (and the
+            % warm pool) alive. The worker holds its audioPlayerRecorder from
+            % the first prep until kill, so anything else needing the ASIO
+            % device -- mabr.stim.CalibrationAdapter -- has to ask for it back
+            % first. The next prep reopens it. Safe to call when no worker is
+            % running, since that is already the state it asks for.
+            if isempty(obj.CmdQueue), return; end
+            try, obj.send_cmd(mabr.acq.Cmd.Release); end %#ok<TRYNC>
+        end
+
         function kill(obj)
             if ~isempty(obj.CmdQueue)
                 try, obj.send_cmd(mabr.acq.Cmd.Kill); end %#ok<TRYNC>

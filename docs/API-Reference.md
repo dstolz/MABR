@@ -32,6 +32,9 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 | [`mabr.stim.StimulusSet`](../+mabr/+stim/StimulusSet.m) | **The contract.** A bank of single stimuli, wrapping the struct array the external package supplies (`signal` + `ID` per entry, everything else passed through). Inert — it holds waveforms and nothing about presentation. |
 | [`mabr.stim.Schedule`](../+mabr/+stim/Schedule.m) | **Owns presentation.** Turns a `StimulusSet` plus ISI, repetitions, and a combination strategy into ordered runs, and renders each into the 2-channel play matrix the worker streams. |
 | [`mabr.stim.demoStimuli`](../+mabr/+stim/demoStimuli.m) | Built-in tone-pip bank over a Frequency × Level grid. **Testing and demos only — uncalibrated.** Also the clearest worked example of the contract. |
+| [`mabr.stim.fromStimgen`](../+mabr/+stim/fromStimgen.m) | **The stimgen bridge.** Converts a `.spl` bank, a live `StimPlayer`, a `StimPlay`, or a bare `StimType` into a `StimulusSet` — one stimgen *variant* per entry, regenerated at the DAC rate. |
+| [`mabr.stim.stimgenAvailable`](../+mabr/+stim/stimgenAvailable.m) | `[tf,msg]` — is the `external/stimgen` submodule on the path? `msg` is actionable text for a disabled control's tooltip. |
+| [`mabr.stim.CalibrationAdapter`](../+mabr/+stim/CalibrationAdapter.m) | Implements stimgen's `calibration.HwAdapter` against MABR's ASIO device, output channel, and `MicChannel`, so a calibration describes *this* rig. |
 
 **`StimulusSet` surface**
 
@@ -40,10 +43,12 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 | `numStimuli()`, `IDs()`, `get(i)`, `signal(i)`, `id(i)`, `timing(i)` | The bank and its entries |
 | `duration([i])`, `maxDuration()` | Single-presentation duration (s); `maxDuration` is the worst case for ISI overlap |
 | `defaultRepetitions()` | Per-entry `Repetitions` where supplied, else `0` |
-| `meta(i)` | Metadata struct for entry `i`: `ID`, every passthrough field, plus derived `informativeParams` and `Label` |
+| `meta(i)` | Metadata struct for entry `i`: `ID`, every passthrough field, plus `informativeParams` (declared by the entry if it supplies one, else inferred from numeric scalars) and `Label` |
 | `SampleRate` | Common DAC rate; construction errors unless it equals `Config.DACSampleRate` |
+| `Source`, `describeSource()` | Provenance: `Kind` (`stimgen`/`file`/`demo`), `File`, `Calibration`, `Generated`. Read by the GUI's bank label and written into the `.abr`; nothing in acquisition uses it |
+| `isCalibrated()` | True only when **every** entry was built against a measurement — half-calibrated is not a reportable state, since levels across the bank are then not comparable |
 | `validate(s,idx,cfg)` | Static. Validates and normalizes one entry; specific error identifiers on a bad one |
-| `fromFile(ffn,[cfg])` | Static. Loads a stimulus definition from a `.mat` — what the GUI's **Load .mat…** uses |
+| `fromFile(ffn,[cfg])` | Static. Loads a bank — `.spl` via `fromStimgen`, anything else as a `.mat`. What the GUI's **Load bank…** uses |
 
 **`Schedule` surface**
 
@@ -122,7 +127,7 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 | Item | Description |
 |------|-------------|
 | [`find_timing_onsets(timing,shadowSamples,threshold)`](../+mabr/+metrics/find_timing_onsets.m) | Sample indices of sweep onsets — the first sample reaching threshold on a rising edge. Positive signal only; onsets closer than `shadowSamples` are merged. |
-| [`extract_sweeps(rb,params,state)`](../+mabr/+metrics/extract_sweeps.m) | Incrementally slice pre-/post-onset windows from the ring buffer. Returns `[pre,post,onsets,state]`; **the cursor is explicit state owned by the caller**. Matrices here are `[nSweeps x nSamples]`. |
+| [`extract_sweeps(rb,params,state)`](../+mabr/+metrics/extract_sweeps.m) | Incrementally slice pre-/post-onset windows from the ring buffer. Returns `[pre,post,onsets,state,tvec]`; **the cursor is explicit state owned by the caller**. Matrices here are `[nSweeps x nSamples]`. `tvec.pre`/`tvec.post` are the columns' times in seconds relative to onset — contiguous, so `[pre post]` is one segment on the time base `[tvec.pre tvec.post]`. |
 | [`partition_corr(preSweep,postSweep)`](../+mabr/+metrics/partition_corr.m) | Onset-contrast correlation driving the online advance criterion: split-half consistency of the response minus that of the baseline, floored at zero. After Arnold et al. (1985). |
 | [`mean_pairwise_corr(D)`](../+mabr/+metrics/mean_pairwise_corr.m) | Fisher-z mean of all pairwise sweep correlations. |
 | [`snr(D)`](../+mabr/+metrics/snr.m) | SNR in dB via plus/minus averaging: RMS of the mean sweep over RMS of the odd-minus-even difference. |
@@ -146,12 +151,14 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 | `designFilters()` | Design the enabled filter chain at the current rate. **Filtering is opt-in**; before this call the raw data is used |
 | `applyFilter(x)` | Apply the designed chain zero-phase (`filtfilt`) |
 | `ProcessedData` | Dependent: `Data` with the chain applied |
-| `SweepData`, `NumSweeps`, `SweepMean` | Dependent: segmentation and the averaged waveform |
-| `noisePower`, `signalPower`, `SNR`, `RMS` | Dependent: metrics |
+| `SweepData`, `NumSweeps` | Dependent: segmentation — **every** sweep, whatever its artifact verdict |
+| `CleanSweeps`, `CleanSweepData`, `NumCleanSweeps` | Dependent: the same sweeps with the `IsArtifact` ones dropped (mapped through `ValidSweeps`) |
+| `SweepMean` | Dependent: the averaged waveform, over `CleanSweepData`. All-NaN when every sweep was rejected |
+| `noisePower`, `signalPower`, `SNR`, `RMS` | Dependent: metrics, also over `CleanSweepData` |
 | `N`, `SweepDuration`, `TimeVector`, `NumArtifacts` | Dependent: sizes |
 | `fft()` | FFT of the mean sweep; returns `[M,f]` |
 | `to_struct()` | Plain-struct serialization |
-| `UseBandpass`, `UseNotch`, `FilterHP`, `FilterLP`, `FilterOrder`, `NotchFreq`, `NotchWidth` | Filter settings (defaults: 10–3000 Hz bandpass, 60 Hz notch) |
+| `Filters` | A `mabr.FilterPolicy` — independent high pass / low pass / notch (defaults: 10 Hz, 3000 Hz, 60 Hz). The same object the GUI edits and the live view applies |
 | `DetrendPoly`, `SmoothSpan` | Post-processing applied to `SweepMean` |
 | `IsArtifact`, `SweepValue`, `DecimationFactor` | Bookkeeping |
 
@@ -177,10 +184,11 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 | [`mabr.ui.AcqController`](../+mabr/+ui/AcqController.m) | **The program.** Owns the Engine, Session, BlockQueue, and live view; translates actions → commands and events → UI updates. Usable headlessly. |
 | [`mabr.ui.ProgState`](../+mabr/+ui/ProgState.m) | Enumeration: `Idle`, `PrepBlock`, `Acquire`, `BlockComplete`, `AdvanceBlock`, `SchedComplete`, `Error`. |
 | [`mabr.ui.ProgStateEventData`](../+mabr/+ui/ProgStateEventData.m) | Event payload carrying `State` and an `Info` struct. |
-| [`mabr.ui.LivePlot`](../+mabr/+ui/LivePlot.m) | Live view: running mean, most-recent sweep, correlation bar. Passive — draws what it is handed. |
+| [`mabr.ui.LivePlot`](../+mabr/+ui/LivePlot.m) | Live view: the most-recent sweep on its own top axes, one running mean per stimulus in the run below it, correlation bar. Passive — draws what it is handed. |
 | [`mabr.ui.TraceOrganizer`](../+mabr/+ui/TraceOrganizer.m) | Interactive stacked-waveform viewer with drag-to-reposition and peak marking. |
 | [`mabr.ui.Trace`](../+mabr/+ui/Trace.m) | One waveform in the stack: data, time base, label, colour, offset, markers. |
 | [`mabr.ui.Marker`](../+mabr/+ui/Marker.m) | A peak marker (point + label) on a trace axes. |
+| [`mabr.ui.TestRunner`](../+mabr/+ui/TestRunner.m) | The verification suite as a window (Help ▸ Verification Tests…). Discovers every `verify_*.m` in `tests/`, runs the ticked ones, and reports verdict, elapsed time, and captured output per test. |
 
 **`AcqController` surface**
 
@@ -193,13 +201,13 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 | `start()`, `pauseAcq()`, `resumeAcq()`, `stopBlock()`, `abort()` | User actions. `stopBlock` continues the schedule; `abort` halts it — both save |
 | `Window` | ADC window in seconds relative to onset (default `[0 0.01]`) |
 | `AdvanceFcn`, `AdvanceParams` | The criterion and its context. `targetSweeps` is overwritten per run with that run's presentation count |
-| `UseBandpass`, `UseNotch` | Filter chain applied at finalization |
+| `Filters` | A `mabr.FilterPolicy` applied to the live view *and* handed to each finalized `Recording`. Settable mid-acquisition; never reaches `Recording.Data`, so saved files stay raw |
 | `Engine`, `Session`, `Stimuli`, `Schedule`, `LivePlot`, `State`, `Testing` | Read-only properties |
 | events `StateChanged`, `MetricsUpdated`, `BlockReady`, `BlockSaved`, `ScheduleComplete` | The front-end contract. `BlockReady` carries the finalized `Block` (`.Info.block`) and always fires; `BlockSaved` carries a path (`.Info.file`) and fires only when the `Session` has an `OutputPath` |
 
 At finalization the run's sweeps are split by `Schedule.runSequence`, yielding **one `Block` and one `.abr` per stimulus** that appeared in it. A homogeneous run saves the continuous trace; an intermixed one saves each stimulus's sweep windows concatenated, so files do not each carry a full copy of the shared recording.
 
-**`LivePlot`** — `LivePlot(parent)` (omit `parent` for its own figure), `update(postSweep,tvec,R,target)`, `reset()`.
+**`LivePlot`** — `LivePlot(parent)` (omit `parent` for its own figure), `update(sweeps,tvec,R,target,bad,info)`, `reset()`, `setFilterText(txt)`. `sweeps` is `[pre post]` as one contiguous segment and `tvec` its time base in seconds; `info.StimIndex`/`.Stimuli`/`.Labels` say which stimulus evoked each sweep (omit it for a single pooled mean). Display settings are the public properties `Layout` (`'overlay'`/`'separate'`), `TimeBase` (ms, default `[-2 10]`), `AmpMode` (`'each'`/`'common'`/`'manual'`) and `ManualLimit` (volts) — the window's control strip writes exactly these. See [Viewing Data](Viewing-Data.md#liveplot).
 
 **`TraceOrganizer`** — `addBlock(block)`, `addTrace(data,time,label,stimID)`, `markPeaks(idx)`, `clearMarkers(idx)`, `show()`, `refresh()`, `clear()`, `isvalidView()`; live updates `listenTo(controller)`, `stopListening()`; selection `select(idx,extend)`, `selectedIndices()`, `targetIndices()`; display `scaleTraces(factor,idx)`, `resetGain(idx)`, `setSpacing(s)`, `restack()`, `moveTrace(idx,delta)`, `toggleVisible(idx)`, `removeTraces(idx)`; persistence `saveView(file)`, `loadView(file)`; properties `YSpacing`, `YScaling`, `NormalizeEach`, `ShowLabels`, `Colors`, `Traces`, and read-only `Figure`/`Axes`.
 

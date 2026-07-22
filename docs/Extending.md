@@ -33,6 +33,7 @@ stim(N).ID     = "click_rare";
 | `Repetitions` | Starting repetition count the GUI picks up (the operator can still change it) |
 | `Timing` | `[N x 1]` your own timing channel for this stimulus; otherwise MABR synthesizes a unit pulse at the onset |
 | `alternatePolarity` | Logical. Present successive repetitions as `+1, -1, +1, …`, splitting the repetition count between the two polarities rather than doubling it |
+| `informativeParams` | Cellstr. The passthrough fields that *identify* this condition. Supply it when your generator emits more numeric fields than it varies (see below) |
 
 **Every other field passes straight through** into the block metadata and on to the saved `.abr`. Numeric scalars are additionally advertised as `informativeParams`, so the offline pipeline picks them up without any extra declaration:
 
@@ -42,17 +43,41 @@ stim(k).Level     = 60;     % -> SIG.Level,     and an informativeParam
 stim(k).Notes     = 'left'; % -> carried along, not an informativeParam
 ```
 
+That inference is right for a hand-built bank whose only extras *are* its parameters. It goes wrong for a generator, which emits every knob it has — window duration, onset phase, ramp time — and each name in `informativeParams` becomes a **grouping dimension** in the offline pipeline, splitting what should be one condition into many. If you know which of your parameters actually vary across the bank, say so:
+
+```matlab
+stim(k).informativeParams = {'Frequency','Level'};   % these identify the condition
+stim(k).WindowDuration    = 0.002;                   % carried, but not a dimension
+```
+
 Supplying `Frequency` and `Level` specifically makes the written filename match the offline pipeline's default regex; without them MABR falls back to `ID`. See [Data Files](Data-Files.md).
 
 ### Loading it
 
-Save the struct array to a `.mat` file and the GUI's **Load .mat…** button picks it up — [mabr.stim.StimulusSet.fromFile](../+mabr/+stim/StimulusSet.m) finds any variable that is a struct array with `signal` and `ID`. Headlessly:
+Save the struct array to a `.mat` file and the GUI's **Load bank…** button picks it up — [mabr.stim.StimulusSet.fromFile](../+mabr/+stim/StimulusSet.m) finds any variable that is a struct array with `signal` and `ID`. Headlessly:
 
 ```matlab
 set = mabr.stim.StimulusSet(stim);       % validates and normalizes
 ```
 
 [mabr.stim.demoStimuli](../+mabr/+stim/demoStimuli.m) is a complete worked example — read it before writing your own.
+
+### Or use stimgen
+
+[stimgen](https://github.com/dstolz/stimgen) ships with MABR as a submodule and already satisfies all of the above; [mabr.stim.fromStimgen](../+mabr/+stim/fromStimgen.m) does the conversion. Reach for the raw contract when you have a stimulus stimgen cannot make, or waveforms from somewhere else entirely — not merely to avoid a dependency.
+
+```matlab
+t = stimgen.Tone;
+t.Frequency  = [8000 16000];   % a vector expands into variants...
+t.SoundLevel = [30 60];        % ...Cartesian, so this is 4 stimuli
+set = mabr.stim.fromStimgen(t);          % one variant -> one entry
+set = mabr.stim.fromStimgen('bank.spl'); % or a saved bank
+```
+
+Two things it does that a naive conversion would not, both worth understanding if you write your own bridge to some other generator:
+
+- **Regenerate, don't resample.** It sets `Fs = Config.DACSampleRate` on a `copy()` of each stimulus and calls `update_signal()`, so every waveform is synthesized natively at 192 kHz. stimgen's own default is 97656.25 Hz. This is why it imports *parameters*, never a bank's cached `Signal`.
+- **Pin the variant before reading it back.** stimgen's `VariantReselectOnUpdate` defaults true, which makes every parameter read outside an update cycle silently advance to the *next* variant — so metadata read after selecting variant 3 can describe variant 4 while the waveform is still variant 3's. `fromStimgen` forces it false first. [tests/verify_stimgen_import.m](../tests/verify_stimgen_import.m) FFTs every generated waveform against its own label to prove the pairing holds.
 
 ### What MABR decides
 
@@ -138,7 +163,7 @@ To expose a new criterion in the GUI, add it to the `AdvanceDrop` items and the 
 
 A viewer should listen to `BlockReady`, not `BlockSaved`: it carries the block itself, and a session configured with no output path never raises `BlockSaved` at all.
 
-Public surface: `setStimuli`, `setLivePlot`, `waitUntilReady`, `start`, `pauseAcq`, `resumeAcq`, `stopBlock`, `abort`, and the settable properties `Window`, `AdvanceFcn`, `AdvanceParams`, `UseBandpass`, `UseNotch`. `setStimuli` accepts either a `StimulusSet` or the raw struct array, and builds a default `Schedule` you then configure:
+Public surface: `setStimuli`, `setLivePlot`, `waitUntilReady`, `start`, `pauseAcq`, `resumeAcq`, `stopBlock`, `abort`, and the settable properties `Window`, `AdvanceFcn`, `AdvanceParams`, `Filters`, `Artifacts`. `setStimuli` accepts either a `StimulusSet` or the raw struct array, and builds a default `Schedule` you then configure:
 
 ```matlab
 c.setStimuli(stim);                      % struct array or StimulusSet
@@ -153,8 +178,13 @@ For an embedded live view, pass a container to `LivePlot` and hand it over with 
 
 ```matlab
 lp = mabr.ui.LivePlot(myPanel);
+lp.Layout   = 'separate';    % one axes per stimulus instead of overlaid
+lp.TimeBase = [-2 10];       % ms, the negative half being the baseline
+lp.AmpMode  = 'each';        % or 'common' / 'manual' + lp.ManualLimit
 c.setLivePlot(lp);
 ```
+
+The container gets the whole view — the latest-sweep axes, the per-stimulus means, and the control strip — laid out around a fixed-height strip at the bottom. Setting those properties is exactly what the strip does, so a host UI can drive the view from its own controls instead.
 
 Anything more custom can skip `LivePlot` entirely and draw from `MetricsUpdated` plus its own `extract_sweeps` cursor over `c.Engine.RingBuffer` (read-only).
 

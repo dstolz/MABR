@@ -114,9 +114,17 @@ An imported `Recording` starts **unfiltered** — `designFilters()` has not been
 ```matlab
 b = mabr.data.io.importLegacy(f);
 r = b.ADC;
-r.UseBandpass = true;  r.UseNotch = true;
-r = r.designFilters();     % value class: reassign
+r.Filters = mabr.FilterPolicy;      % 10–3000 Hz + 60 Hz notch
+r = r.designFilters();              % value class: reassign
 b.ADC = r;
 ```
 
 `Recording` is a value type; every mutating call returns a new object.
+
+The three sections are independent, so a file can be re-examined under any chain without reloading it — and `Data` is never touched, so you can go back:
+
+```matlab
+r.Filters = mabr.FilterPolicy(100,1500,false);   % HP 100, LP 1500, no notch
+r.Filters = mabr.FilterPolicy(false,false,60);   % notch only
+r = r.designFilters();
+```

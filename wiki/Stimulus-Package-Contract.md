@@ -2,6 +2,8 @@
 
 MABR **does not generate or calibrate stimuli**. An external package supplies precomputed, calibrated waveforms; `mabr.stim.StimulusSet` wraps and validates them and is otherwise inert — a bank of waveforms and nothing more.
 
+[**stimgen**](https://github.com/dstolz/stimgen) is the suggested package and ships as a submodule at `external/stimgen` — see [[Using stimgen]]. It satisfies this contract through `mabr.stim.fromStimgen`; the contract below is what MABR actually requires, and any other source that meets it is equally welcome.
+
 ## The shape
 
 A plain **struct array**, where **each element is ONE presentation** of one stimulus — not a repeated train, no ISI padding, no timing channel.
@@ -11,7 +13,7 @@ stim(i).signal        % [N x 1] required — calibrated waveform for a SINGLE pr
 stim(i).ID            % string  required — names the stimulus condition
 ```
 
-Four optional fields are given meaning:
+Five optional fields are given meaning:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -19,10 +21,17 @@ Four optional fields are given meaning:
 | `Repetitions` | scalar | Per-entry starting repetition count the GUI picks up |
 | `Timing` | `[N x 1]` | Explicit timing channel; must match `signal` in length. Otherwise MABR synthesizes one unit pulse at each onset. |
 | `alternatePolarity` | logical | Present this entry with alternating polarity: successive presentations are multiplied by `+1, -1, +1, …`. This **splits** the repetition count between the two polarities — it does not double it. See [[Presentation Strategies]]. |
+| `informativeParams` | cellstr | The passthrough fields that *identify* this condition. Overrides the inference described below. |
 
-**Every other field passes through untouched** into the block metadata and on into the saved `.abr` file, so the external package can add parameters without MABR changing. Numeric scalar extras are additionally advertised in `informativeParams`, which is how the offline pipeline discovers them.
+**Every other field passes through untouched** into the block metadata and on into the saved `.abr` file, so the external package can add parameters without MABR changing. Numeric scalar extras are otherwise advertised in `informativeParams`, which is how the offline pipeline discovers them.
+
+That inference suits a hand-built bank, whose only extras *are* its parameters. It misfires for a generator, which emits every knob it has: each name in `informativeParams` becomes a **grouping dimension** offline, so a stray `WindowDuration` splits one condition into several. A source that knows which parameters vary should declare the list instead — which is exactly what `fromStimgen` does, from stimgen's own record of which properties were vectorized.
 
 Name a passthrough field `Frequency` (kHz) and `Level` (dB) to get filenames that match the offline pipeline's default regex — see [[Data Format]].
+
+## Provenance
+
+`StimulusSet` also carries a `Source` struct (`Kind` — `stimgen`/`file`/`demo` — plus `File`, `Calibration`, `Generated`) and `isCalibrated()`. Neither is part of the contract: no entry supplies them and nothing in acquisition reads them. They exist because a calibrated bank and the demo bank are indistinguishable once both are struct arrays, and that is a confusion worth making impossible. The GUI's bank label reads `12 stimuli · stimgen` and turns amber when uncalibrated; `mabr.data.io` writes `StimClass`, `VariantIndex`, `Calibrated`, and `CalibrationTime` into each `.abr` — deliberately **not** as `informativeParams`, for the reason above.
 
 ## Validation
 
@@ -39,14 +48,16 @@ Name a passthrough field `Frequency` (kHz) and `Level` (dB) to get filenames tha
 
 ## Loading
 
-From the GUI: **Load .mat…**. Programmatically:
+From the GUI: **Load bank…** (or **Design…** for stimgen). Programmatically:
 
 ```matlab
 set = mabr.stim.StimulusSet(stimStructArray);       % from a struct array
 set = mabr.stim.StimulusSet.fromFile('bank.mat');   % from a .mat file
+set = mabr.stim.StimulusSet.fromFile('bank.spl');   % a stimgen bank -> fromStimgen
+set = mabr.stim.fromStimgen(stimgen.Tone);          % stimgen objects directly
 ```
 
-`fromFile` accepts either a saved `StimulusSet` object or any variable in the file that is a struct array with `signal` and `ID` fields. It throws `mabr:stim:StimulusSet:noStimuli` if it finds neither.
+`fromFile` dispatches on the extension: `.spl` goes to `mabr.stim.fromStimgen`, anything else is read as a `.mat`. From a `.mat` it accepts either a saved `StimulusSet` object or any variable that is a struct array with `signal` and `ID` fields, and throws `mabr:stim:StimulusSet:noStimuli` if it finds neither.
 
 ## Inspecting a bank
 

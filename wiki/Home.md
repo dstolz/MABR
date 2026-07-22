@@ -11,7 +11,8 @@ Copyright © Daniel Stolzberg, PhD (`dstolz@umd.edu`). Proprietary — see `Copy
 | --- | --- |
 | Get it running on a new machine | [[Installation and Requirements]] |
 | Run an experiment | [[Running a Session]] |
-| Feed MABR your own stimuli | [[Stimulus Package Contract]] |
+| Build stimuli and calibrate the rig | [[Using stimgen]] |
+| Feed MABR stimuli from somewhere else | [[Stimulus Package Contract]] |
 | Understand blocked vs. interleaved | [[Presentation Strategies]] |
 | Understand how acquisition works | [[Acquisition Engine]] |
 | Read a saved `.abr` file | [[Data Format]] |
@@ -23,7 +24,7 @@ Copyright © Daniel Stolzberg, PhD (`dstolz@umd.edu`). Proprietary — see `Copy
 
 MABR **owns presentation and acquisition**. It decides spacing, repetition, ordering, and early-stopping; it streams the stimulus, records two channels, extracts sweeps, and writes one file per condition.
 
-MABR **does not generate or calibrate stimuli**. An external package supplies precomputed, calibrated waveforms as a plain struct array — one entry per single presentation. See [[Stimulus Package Contract]]. A built-in tone-pip bank, `mabr.stim.demoStimuli`, exists for testing and demos only.
+MABR **does not generate or calibrate stimuli**. An external package supplies precomputed, calibrated waveforms as a plain struct array — one entry per single presentation. See [[Stimulus Package Contract]]. [**stimgen**](https://github.com/dstolz/stimgen) is the suggested package and ships as a submodule — it builds the stimuli and calibrates the rig; see [[Using stimgen]]. A built-in tone-pip bank, `mabr.stim.demoStimuli`, exists for testing and demos only.
 
 ## Layout
 
