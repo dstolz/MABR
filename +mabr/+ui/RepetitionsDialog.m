@@ -1,4 +1,4 @@
-function reps = RepetitionsDialog(stimuli,reps0,isi)
+function reps = RepetitionsDialog(stimuli,reps0,isi,isiLabel)
 % mabr.ui.RepetitionsDialog  Modal editor for per-stimulus repetition counts.
 %
 %   reps = mabr.ui.RepetitionsDialog(stimuli) opens a small modal window over
@@ -7,6 +7,12 @@ function reps = RepetitionsDialog(stimuli,reps0,isi)
 %
 %   reps = mabr.ui.RepetitionsDialog(stimuli,reps0,isi) seeds the editor with
 %   reps0 and uses isi (s) to estimate how long the resulting schedule runs.
+%
+%   reps = mabr.ui.RepetitionsDialog(...,isiLabel) captions that estimate with
+%   isiLabel instead of "<isi> ms ISI". A randomized schedule is estimated from
+%   its MEAN interval (there is nothing else to estimate from), and the caption
+%   is where the dialog says so rather than reporting a number the run will
+%   rarely actually use.
 %
 %   Two modes:
 %       Same for all   one spinner drives every entry; the table is read-only
@@ -32,6 +38,7 @@ if numel(reps0) < n, reps0(end+1:n) = 0; end
 reps0 = max(0,round(reps0(1:n)));
 
 if nargin < 3 || isempty(isi), isi = 1/21.1; end
+if nargin < 4 || isempty(isiLabel), isiLabel = sprintf('%.2f ms ISI',1e3*isi); end
 
 reps = [];                              % [] unless OK is pressed
 assert(n > 0,'mabr:ui:RepetitionsDialog:empty','No stimuli to configure.');
@@ -126,8 +133,8 @@ uiwait(fig);
         r     = currentReps();
         total = sum(r);
         secs  = total*isi;
-        totalLbl.Text = sprintf('%d stimuli  ·  %d presentations  ·  ~%s at %.2f ms ISI', ...
-            n,total,durationText(secs),1e3*isi);
+        totalLbl.Text = sprintf('%d stimuli  ·  %d presentations  ·  ~%s at %s', ...
+            n,total,durationText(secs),isiLabel);
         if total == 0
             totalLbl.FontColor = [0.8 0.2 0];
             okBtn.Enable = 'off';

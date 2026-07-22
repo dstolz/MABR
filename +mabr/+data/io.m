@@ -145,8 +145,13 @@ classdef io
             % ordinal is not a condition -- promoting either would split an
             % otherwise-single group in the offline pipeline. Calibrated is the
             % one that decides whether the levels in this file mean anything
-            % (see mabr.stim.fromStimgen).
-            for f = {'StimClass','VariantIndex','Calibrated','CalibrationTime'}
+            % (see mabr.stim.fromStimgen), and LevelScale says what they mean
+            % when it is false: the linear gain the uncalibrated waveform was
+            % given relative to the loudest entry of its bank. Present only on
+            % such a file, which is itself the tell -- Level is dB SPL where it
+            % is absent and Calibrated is true, and dB relative to an arbitrary
+            % reference where it is not.
+            for f = {'StimClass','VariantIndex','Calibrated','CalibrationTime','LevelScale'}
                 if isfield(meta,f{1}), SIG.(f{1}) = meta.(f{1}); end
             end
 

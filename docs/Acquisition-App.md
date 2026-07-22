@@ -59,7 +59,7 @@ Note what neither contains: repetition counts, spacing, or ordering. Those are y
 
 The **Bank** field shows `(none loaded)` in red until stimuli are loaded, then the count and where they came from — `12 stimuli · stimgen`. Green when the bank is calibrated, **amber when it is not**. It sits in the field column rather than beside the buttons, so it reads as the panel's current value.
 
-> **Levels need a calibration to mean anything.** dB SPL becomes a voltage *through* the calibration. With none loaded, stimgen generates every stimulus at the same amplitude, so a bank asking for 30, 60, and 90 dB is three identical sounds. MABR warns when you adopt such a bank rather than blocking it — it is still useful for testing — but do not collect data with one. Calibrate under **Settings ▸ Calibration…**, then rebuild the bank.
+> **Without a calibration, levels are relative — not dB SPL.** dB SPL becomes a voltage *through* the calibration. With none loaded, stimgen would generate every stimulus at the same amplitude, so a bank asking for 30, 60, and 90 dB would be three identical sounds. MABR instead scales an uncalibrated bank **relative to its own loudest entry**: the top level plays at the bank's normalized amplitude and each lower one is attenuated by the right ratio, so level *differences* are correct while the absolute level is arbitrary. MABR warns when you adopt such a bank rather than blocking it — it is still useful for testing, and for anything that only needs relative levels — but do not report absolute thresholds from one. Calibrate under **Settings ▸ Calibration…**, then rebuild the bank.
 
 ## Presentation
 

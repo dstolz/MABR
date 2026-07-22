@@ -222,6 +222,20 @@ classdef FilterPolicy
                 tf = false; msg = 'The notch is wider than its own centre frequency.'; return
             end
         end
+
+        function s = toStruct(obj)
+            % Plain-struct snapshot for mabr.ui.App's save/load CONFIGURATION
+            % file -- a named, shareable setup, distinct from loadPrefs/
+            % savePrefs's "last used" persistence in MATLAB prefs, though the
+            % two travel through the same validated fields. The cached
+            % Designs are deliberately excluded, same as settings() above --
+            % a consequence, not a setting, and the caller redesigns at
+            % whatever rate it needs.
+            s = struct('HighPass',obj.HighPass,'HighPassHz',obj.HighPassHz, ...
+                       'LowPass', obj.LowPass, 'LowPassHz', obj.LowPassHz, ...
+                       'Notch',   obj.Notch,   'NotchHz',   obj.NotchHz, ...
+                       'NotchWidthHz',obj.NotchWidthHz,'Order',obj.Order);
+        end
     end
 
     methods (Access = private)
@@ -284,11 +298,40 @@ classdef FilterPolicy
             setpref('MABR','FilterNotchWidthHz', obj.NotchWidthHz);
             setpref('MABR','FilterOrder',        obj.Order);
         end
+
+        function obj = fromStruct(s)
+            % Inverse of toStruct. Forgiving of a struct saved by an older
+            % MABR or edited by hand -- the same rule loadPrefs follows:
+            % restore whatever field validates and fall back to the property
+            % default for anything that does not.
+            obj = mabr.FilterPolicy;
+            if isfield(s,'HighPass'), obj.HighPass = logical(s.HighPass); end
+            if isfield(s,'LowPass'),  obj.LowPass  = logical(s.LowPass);  end
+            if isfield(s,'Notch'),    obj.Notch    = logical(s.Notch);    end
+            if isfield(s,'HighPassHz')
+                obj.HighPassHz = mabr.FilterPolicy.coercePositive(s.HighPassHz,obj.HighPassHz);
+            end
+            if isfield(s,'LowPassHz')
+                obj.LowPassHz = mabr.FilterPolicy.coercePositive(s.LowPassHz,obj.LowPassHz);
+            end
+            if isfield(s,'NotchHz')
+                obj.NotchHz = mabr.FilterPolicy.coercePositive(s.NotchHz,obj.NotchHz);
+            end
+            if isfield(s,'NotchWidthHz')
+                obj.NotchWidthHz = mabr.FilterPolicy.coercePositive(s.NotchWidthHz,obj.NotchWidthHz);
+            end
+            if isfield(s,'Order')
+                obj.Order = mabr.FilterPolicy.coercePositive(s.Order,obj.Order);
+            end
+        end
     end
 
     methods (Static, Access = private)
         function v = getPositive(name,default)
-            v = getpref('MABR',name,default);
+            v = mabr.FilterPolicy.coercePositive(getpref('MABR',name,default),default);
+        end
+
+        function v = coercePositive(v,default)
             if ~isnumeric(v) || ~isscalar(v) || ~isfinite(v) || v <= 0
                 v = default;
             end

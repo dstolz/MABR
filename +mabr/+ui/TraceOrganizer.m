@@ -25,6 +25,13 @@ classdef TraceOrganizer < handle
 %   is selected. Click a trace (or its label) to select it; shift- or
 %   ctrl-click to extend the selection.
 %
+%   DOUBLE-CLICK a trace to open it in mabr.ui.TraceInspector: one waveform
+%   at full size, in its own units, with search windows and draggable
+%   markers for measuring wave latencies. The stack is the wrong place to
+%   measure anything -- every trace there is normalized to a shared scale so
+%   the series stays legible -- so the peaks are picked in the inspector and
+%   transferred back to the trace when it is applied.
+%
 %     Up / Down            amplitude larger / smaller
 %     Shift+Up / Down      spacing wider / narrower
 %     Ctrl+Up / Down       move selected trace up / down the stack
@@ -34,6 +41,7 @@ classdef TraceOrganizer < handle
 %     a / Escape           select all / none
 %     l                    toggle stimulus ID labels
 %     p / c                mark peaks / clear markers
+%     i                    inspect the selected trace (or double-click it)
 %     h / Delete           hide / remove selected traces
 %     Ctrl+S / Ctrl+O      save / load the view
 %
@@ -77,6 +85,7 @@ classdef TraceOrganizer < handle
         dragMoved   = false;
         FigTag (1,:) char = '';
         BlockListener   % listener on an AcqController's BlockReady event
+        Inspector       % mabr.ui.TraceInspector, at most one at a time
     end
 
     methods
@@ -86,6 +95,7 @@ classdef TraceOrganizer < handle
 
         function delete(obj)
             obj.stopListening();
+            obj.closeInspector();
             delete(obj.Traces);
             try, delete(obj.Figure); end %#ok<TRYNC>
         end
@@ -162,6 +172,7 @@ classdef TraceOrganizer < handle
         function clear(obj)
             delete(obj.Traces);
             obj.Traces = mabr.ui.Trace.empty;
+            obj.pruneInspector();
             if obj.isvalidView(), cla(obj.Axes); obj.refreshStatus(); end
         end
 
@@ -263,6 +274,7 @@ classdef TraceOrganizer < handle
             if isempty(idx), obj.status('Select a trace first.'); return; end
             delete(obj.Traces(idx));
             obj.Traces(idx) = [];
+            obj.pruneInspector();
             obj.plotAll(false);
             obj.refreshStatus();
         end
@@ -283,6 +295,37 @@ classdef TraceOrganizer < handle
             if nargin < 2 || isempty(idx), idx = obj.targetIndices(); end
             for k = idx(:)', obj.Traces(k).clearMarkers(); end
             obj.plotAll(false);
+        end
+
+        function insp = inspectTrace(obj,idx)
+            % Open one trace in a mabr.ui.TraceInspector for measuring. The
+            % stack normalizes every trace to a shared scale, which is what a
+            % series needs and what a measurement cannot use, so latencies are
+            % picked over there and transferred back on apply.
+            insp = mabr.ui.TraceInspector.empty;
+            if nargin < 2 || isempty(idx), idx = obj.selectedIndices(); end
+            if numel(idx) ~= 1
+                obj.status('Select one trace to inspect (or double-click it).');
+                return
+            end
+            tr = obj.Traces(idx);
+            if numel(tr.Data) < 3
+                obj.status('That trace has no waveform to inspect.');
+                return
+            end
+            % One inspector at a time: re-opening on the same trace raises the
+            % window the user is already working in rather than discarding the
+            % peaks they have placed in it.
+            if ~isempty(obj.Inspector) && isvalid(obj.Inspector) && ...
+                    obj.Inspector.isopen() && obj.Inspector.Trace == tr
+                obj.Inspector.show();
+                insp = obj.Inspector;
+                return
+            end
+            obj.closeInspector();
+            obj.Inspector = mabr.ui.TraceInspector(tr,@() obj.onInspectorApplied());
+            insp = obj.Inspector;
+            obj.status(sprintf('Inspecting "%s".',tr.DisplayName));
         end
 
         % --- Persistence ------------------------------------------------------
@@ -381,6 +424,29 @@ classdef TraceOrganizer < handle
             end
         end
 
+        function onInspectorApplied(obj)
+            % The inspector wrote its markers straight onto the shared Trace
+            % handle; all that is left here is to draw them.
+            obj.plotAll(false);
+            obj.refreshStatus();
+        end
+
+        function closeInspector(obj)
+            if ~isempty(obj.Inspector) && isvalid(obj.Inspector)
+                obj.Inspector.close();
+            end
+            obj.Inspector = [];
+        end
+
+        function pruneInspector(obj)
+            % A trace that has been removed takes its inspector with it --
+            % otherwise the window sits there editing a deleted handle.
+            if isempty(obj.Inspector) || ~isvalid(obj.Inspector), return; end
+            if isempty(obj.Inspector.Trace) || ~isvalid(obj.Inspector.Trace)
+                obj.closeInspector();
+            end
+        end
+
         function ensureFigure(obj)
             if obj.isvalidView(), return; end
             obj.Figure = figure('Name','MABR Trace Organizer','NumberTitle','off', ...
@@ -412,6 +478,7 @@ classdef TraceOrganizer < handle
             obj.toolButton('spread', ink,  'Wider spacing (Shift+Up)',           @() obj.setSpacing(obj.YSpacing*obj.SpacingStep),true);
             obj.toolButton('squeeze',ink,  'Tighter spacing (Shift+Down)',       @() obj.setSpacing(obj.YSpacing/obj.SpacingStep));
             obj.toolButton('peaks',  alert,'Mark peaks on selection (p)',        @() obj.markPeaks(),true);
+            obj.toolButton('inspect',alert,'Inspect selected trace (i, or double-click)',@() obj.inspectTrace());
             obj.toolButton('save',   ink,  'Save view (Ctrl+S)',                 @() obj.saveView(),true);
             obj.toolButton('load',   ink,  'Load view (Ctrl+O)',                 @() obj.loadView());
             obj.toolButton('trash',  warn, 'Remove all traces',                  @() obj.clear());
@@ -487,7 +554,8 @@ classdef TraceOrganizer < handle
 
             spec(end+1).name = 'Peaks';
             spec(end).items  = { ...
-                it('Mark peaks'                  ,@() obj.markPeaks()) , ...
+                it('Inspect trace... (double-click)',@() obj.inspectTrace()) , ...
+                it('Mark peaks'                  ,@() obj.markPeaks(),'sep',true) , ...
                 it('Clear markers'               ,@() obj.clearMarkers()) };
 
             spec(end+1).name = 'File';
@@ -618,6 +686,17 @@ classdef TraceOrganizer < handle
         % --- Interaction ------------------------------------------------------
         function onTraceClick(obj,k)
             mods  = get(obj.Figure,'SelectionType');
+            % 'open' = double-click. MATLAB delivers the first click of the
+            % pair as a normal one, so a drag is already armed by the time
+            % this arrives -- disarm it, or the inspector opens with the
+            % trace still following the mouse.
+            if strcmp(mods,'open')
+                obj.dragIdx   = [];
+                obj.dragMoved = false;
+                obj.select(k);
+                obj.inspectTrace(k);
+                return
+            end
             % 'extend' = shift-click, 'alt' = ctrl-click (or right-click, which
             % the context menu handles before this fires).
             extend = any(strcmp(mods,{'extend','alt'}));
@@ -680,6 +759,8 @@ classdef TraceOrganizer < handle
                     obj.markPeaks();
                 case 'c'
                     obj.clearMarkers();
+                case 'i'
+                    obj.inspectTrace();
                 case 'h'
                     obj.toggleVisible();
                 case {'delete','backspace'}
@@ -758,6 +839,7 @@ classdef TraceOrganizer < handle
                 'Click a trace or its label to select it.'
                 'Shift- or ctrl-click extends the selection.'
                 'Drag a trace vertically to reposition it.'
+                'Double-click a trace to inspect and mark it full size.'
                 'Amplitude commands act on the selection, or on all traces'
                 'when nothing is selected.'
                 ''
@@ -770,6 +852,7 @@ classdef TraceOrganizer < handle
                 'a / Escape           select all / none'
                 'l                    toggle stimulus ID labels'
                 'p / c                mark peaks / clear markers'
+                'i                    inspect the selected trace'
                 'h                    hide / show selected'
                 'Delete               remove selected'
                 'Ctrl+S / Ctrl+O      save / load view'
@@ -888,6 +971,23 @@ classdef TraceOrganizer < handle
                             '....X......X....'
                             '...X........X...'
                             'XXX..........XXX'
+                            '................'
+                            '................'
+                            '................'};
+                case 'inspect'   % magnifying glass: look at one trace closely
+                    rows = {'................'
+                            '.....XXXX.......'
+                            '...XX....XX.....'
+                            '..X........X....'
+                            '..X........X....'
+                            '..X........X....'
+                            '..X........X....'
+                            '...XX....XX.....'
+                            '.....XXXX.X.....'
+                            '..........XX....'
+                            '...........XX...'
+                            '............XX..'
+                            '.............XX.'
                             '................'
                             '................'
                             '................'};

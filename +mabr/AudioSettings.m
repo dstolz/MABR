@@ -101,6 +101,16 @@ classdef AudioSettings
                 try, delete(apr);  end %#ok<TRYNC>
             end
         end
+
+        function s = toStruct(obj)
+            % Plain-struct snapshot for mabr.ui.App's save/load CONFIGURATION
+            % file -- a named, shareable setup, distinct from loadPrefs/
+            % savePrefs's "last used" persistence in MATLAB prefs, though the
+            % two travel through the same validated fields.
+            s = struct('Device',obj.Device,'PlayerChannels',obj.PlayerChannels, ...
+                       'RecorderChannels',obj.RecorderChannels,'Testing',obj.Testing, ...
+                       'MicChannel',obj.MicChannel);
+        end
     end
 
     methods (Static)
@@ -137,24 +147,60 @@ classdef AudioSettings
             setpref('MABR','AudioTesting',          obj.Testing);
             setpref('MABR','AudioMicChannel',       obj.MicChannel);
         end
+
+        function obj = fromStruct(s)
+            % Inverse of toStruct. Forgiving of a struct saved by an older
+            % MABR or edited by hand -- the same rule loadPrefs follows:
+            % restore whatever field validates and fall back to the property
+            % default for anything that does not.
+            obj = mabr.AudioSettings;
+            if isfield(s,'Device')
+                obj.Device = mabr.AudioSettings.coerceChar(s.Device,obj.Device);
+            end
+            if isfield(s,'PlayerChannels')
+                obj.PlayerChannels = mabr.AudioSettings.coerceChannels(s.PlayerChannels,obj.PlayerChannels);
+            end
+            if isfield(s,'RecorderChannels')
+                obj.RecorderChannels = mabr.AudioSettings.coerceChannels(s.RecorderChannels,obj.RecorderChannels);
+            end
+            if isfield(s,'Testing')
+                obj.Testing = mabr.AudioSettings.coerceLogical(s.Testing,obj.Testing);
+            end
+            if isfield(s,'MicChannel')
+                obj.MicChannel = mabr.AudioSettings.coerceChannel(s.MicChannel,obj.MicChannel);
+            end
+        end
     end
 
     methods (Static, Access = private)
         function v = getChar(name,default)
-            v = getpref('MABR',name,default);
-            if ~ischar(v), v = default; end
+            v = mabr.AudioSettings.coerceChar(getpref('MABR',name,default),default);
         end
 
         function v = getLogical(name,default)
-            v = getpref('MABR',name,default);
-            if ~islogical(v) && ~(isnumeric(v) && isscalar(v)), v = default; end
-            v = logical(v);
+            v = mabr.AudioSettings.coerceLogical(getpref('MABR',name,default),default);
         end
 
         function v = getChannel(name,default)
             % Scalar sibling of getChannels, same forgiving contract: a pref
             % edited by hand should not stop the app from opening.
-            v = getpref('MABR',name,default);
+            v = mabr.AudioSettings.coerceChannel(getpref('MABR',name,default),default);
+        end
+
+        function v = getChannels(name,default)
+            v = mabr.AudioSettings.coerceChannels(getpref('MABR',name,default),default);
+        end
+
+        function v = coerceChar(v,default)
+            if ~ischar(v), v = default; end
+        end
+
+        function v = coerceLogical(v,default)
+            if ~islogical(v) && ~(isnumeric(v) && isscalar(v)), v = default; end
+            v = logical(v);
+        end
+
+        function v = coerceChannel(v,default)
             if ~isnumeric(v) || ~isscalar(v) || ~isfinite(v) || v < 1 || mod(v,1) ~= 0
                 v = default;
             else
@@ -162,8 +208,7 @@ classdef AudioSettings
             end
         end
 
-        function v = getChannels(name,default)
-            v = getpref('MABR',name,default);
+        function v = coerceChannels(v,default)
             if ~isnumeric(v) || numel(v) ~= 2 || any(~isfinite(v)) || any(v < 1) || any(mod(v,1) ~= 0)
                 v = default;
             else

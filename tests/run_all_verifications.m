@@ -2,6 +2,8 @@ function run_all_verifications()
 % run_all_verifications  Run the MABR no-hardware verification suite.
 %
 %   Runs, in order:
+%       verify_isi_jitter        - presentation timing: fixed grid vs uniformly
+%                                  randomized ISI, and what still reads it back
 %       verify_engine_loopback   - acquisition engine (ring buffer, Pause/Stop/Kill)
 %       verify_data_roundtrip    - .abr writer satisfies the offline pipeline
 %       verify_legacy_import     - legacy .abr import shim
@@ -12,6 +14,8 @@ function run_all_verifications()
 %       verify_live_plot         - live view: per-stimulus means, time base,
 %                                  amplitude scaling, control strip
 %       verify_trace_organizer   - TraceOrganizer scaling/spacing/save/load
+%       verify_trace_inspector   - TraceInspector peak picking, and the
+%                                  transfer of peaks back to the organizer
 %       verify_audio_settings    - ASIO device/channel settings: prefs,
 %                                  graceful device query, schedule wiring
 %       verify_stimgen_import    - stimgen bank -> StimulusSet: one variant per
@@ -31,16 +35,19 @@ function run_all_verifications()
 %   This file is also the ORDER mabr.ui.TestRunner lists the suite in -- it
 %   parses the calls below rather than keeping a second copy of them.
 %
-%   Requires the Parallel Computing Toolbox (all but verify_filters,
-%   verify_live_plot, verify_trace_organizer, and verify_audio_settings). None
-%   require audio hardware.
+%   Requires the Parallel Computing Toolbox (all but verify_isi_jitter,
+%   verify_filters, verify_live_plot, verify_trace_organizer,
+%   verify_trace_inspector, and verify_audio_settings). None require audio
+%   hardware.
 %
 % Daniel Stolzberg (c) 2026
 
-tests = {@verify_engine_loopback, @verify_data_roundtrip, ...
+tests = {@verify_isi_jitter, ...
+         @verify_engine_loopback, @verify_data_roundtrip, ...
          @verify_legacy_import,  @verify_online_advance, ...
          @verify_artifact_rejection, @verify_filters, ...
-         @verify_live_plot, @verify_trace_organizer, @verify_audio_settings, ...
+         @verify_live_plot, @verify_trace_organizer, @verify_trace_inspector, ...
+         @verify_audio_settings, ...
          @verify_stimgen_import, ...
          @verify_timing_selftest, @verify_timing_loopback, @verify_test_runner};
 

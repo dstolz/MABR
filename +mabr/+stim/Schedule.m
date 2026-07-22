@@ -9,6 +9,26 @@ classdef Schedule < handle
 %       Repetitions  how many times each entry is presented (per entry)
 %       Strategy     how entries are combined across the array
 %
+%   Fixed and randomized ISI
+%   ------------------------
+%   ISIMode picks which of two settings decides the spacing:
+%
+%     'fixed'   every interval is ISI. Onsets land on a strict grid.
+%     'random'  each interval is drawn independently and uniformly from
+%               ISIRange = [min max] seconds. The draw happens in renderSpec,
+%               once per run, so a plan built and rendered twice is not
+%               expected to be sample-identical unless Seed is set.
+%
+%   Randomizing decorrelates the presentation rate from line noise and from
+%   any periodicity in the response itself, which a strict grid can otherwise
+%   average up alongside the signal. It costs the run its exact duration --
+%   summary() reports the EXPECTED duration, mean(ISIRange) per interval --
+%   and nothing more: the timing channel still carries one pulse per onset, so
+%   sweep extraction, the sweep window, and every downstream metric are
+%   indifferent to how evenly the onsets are spaced. MinISI, not the mean, is
+%   what has to clear the stimulus duration (see overlaps) and the sweep
+%   window, because the shortest interval drawn is the one that collides.
+%
 %   Strategies
 %   ----------
 %     'blocked'          one run per stimulus, each the full repetition train.
@@ -83,6 +103,7 @@ classdef Schedule < handle
 
     properties (Constant)
         Strategies = {'blocked','shuffled-blocks','interleaved','shuffled-cycles','shuffled'};
+        ISIModes   = {'fixed','random'};
     end
 
     properties
@@ -90,7 +111,17 @@ classdef Schedule < handle
         Config                          % mabr.Config
         Repetitions      (1,:) double = []      % per stimulus entry
         Strategy         (1,:) char   = 'blocked'
-        ISI              (1,1) double = 1/21.1  % s, onset-to-onset
+        ISI              (1,1) double = 1/21.1  % s, onset-to-onset ('fixed')
+
+        % Which of ISI / ISIRange decides the spacing. Kept as a separate
+        % switch rather than inferred from a degenerate range, so turning
+        % randomization off and on again cannot lose the range it was set to
+        % (the GUI's checkbox is exactly this property).
+        ISIMode          (1,:) char {mustBeMember(ISIMode,{'fixed','random'})} = 'fixed'
+
+        % [min max] s, onset-to-onset, drawn uniformly per interval ('random').
+        ISIRange         (1,2) double {mustBePositive,mustBeFinite} = [1 1]/21.1
+
         Seed                          = []      % [] = nondeterministic shuffle
         SilencePad       (1,1) double = 0.25    % s of silence bracketing a run
         PlayerChannels   (1,2) double = [1 2]   % [DACsignal DACtiming]
@@ -118,6 +149,8 @@ classdef Schedule < handle
 
     properties (Dependent)
         NumRuns
+        MeanISI     % s: the interval a duration estimate should be built on
+        MinISI      % s: the shortest interval that can occur -- the worst case
     end
 
     methods
@@ -132,6 +165,28 @@ classdef Schedule < handle
         end
 
         function n = get.NumRuns(obj), n = numel(obj.Runs); end
+
+        function v = get.MeanISI(obj)
+            if obj.isRandomISI(), v = mean(obj.ISIRange); else, v = obj.ISI; end
+        end
+
+        function v = get.MinISI(obj)
+            if obj.isRandomISI(), v = obj.ISIRange(1); else, v = obj.ISI; end
+        end
+
+        function set.ISIRange(obj,v)
+            % Ascending, and never silently sorted: [50 20] is a mistake about
+            % which bound is which, and quietly swapping it would hide that.
+            assert(v(2) >= v(1),'mabr:stim:Schedule:isiRange', ...
+                'ISI range must be [min max] with max >= min (got [%g %g] s).',v(1),v(2));
+            obj.ISIRange = v;
+        end
+
+        function tf = isRandomISI(obj)
+            % True when each interval is drawn from ISIRange rather than fixed
+            % at ISI.
+            tf = strcmpi(obj.ISIMode,'random');
+        end
 
         function tf = isIntermixed(obj)
             % True when a single run mixes more than one stimulus.
@@ -382,12 +437,13 @@ classdef Schedule < handle
             pol = obj.runPolarity(r);
 
             Fs     = obj.Set.SampleRate;
-            period = round(Fs*obj.ISI);
-            assert(period >= 1,'mabr:stim:Schedule:isi', ...
-                'ISI (%g s) is shorter than one sample at %g Hz.',obj.ISI,Fs);
-
             nPres  = numel(seq);
-            onsets = (0:nPres-1)'.*period + 1;
+
+            % One interval before each presentation after the first, so the
+            % onsets are a cumulative sum rather than a multiple of a period:
+            % under 'random' no two gaps need be the same.
+            periods = obj.onsetPeriods(nPres,Fs);
+            onsets  = [1; 1 + cumsum(periods)];
 
             % The run must be long enough to hold the last stimulus in full.
             tail = 0;
@@ -409,12 +465,16 @@ classdef Schedule < handle
                  'blocked strategy so each run covers one stimulus.'], ...
                 r,total,total/Fs,cap,cap/Fs);
 
-            longest = obj.Set.maxDuration()*Fs;
-            if longest > period
+            % The shortest interval is what collides, so a randomized run is
+            % judged on the bottom of its range, not its mean.
+            longest   = obj.Set.maxDuration()*Fs;
+            minPeriod = round(Fs*obj.MinISI);
+            if longest > minPeriod
+                if obj.isRandomISI(), what = 'shortest ISI in the range'; else, what = 'ISI'; end
                 mabr.log.vprintf(0,1, ...
-                    ['Stimulus (%.2f ms) is longer than the ISI (%.2f ms); ' ...
+                    ['Stimulus (%.2f ms) is longer than the %s (%.2f ms); ' ...
                      'presentations overlap and are summed.'], ...
-                    1e3*longest/Fs,1e3*period/Fs);
+                    1e3*longest/Fs,what,1e3*minPeriod/Fs);
             end
 
             samples = zeros(N,1,'single');
@@ -473,21 +533,51 @@ classdef Schedule < handle
             s.presentations = sum(reps);
             s.intermixed   = obj.isIntermixed();
 
+            s.isiMode = obj.ISIMode;
+            s.isi     = obj.MeanISI;
+
+            % Under 'random' this is an EXPECTED duration: each interval
+            % averages mean(ISIRange), and a finite run lands near it rather
+            % than on it.
             s.duration = 0;
             for r = 1:obj.NumRuns
                 n = numel(obj.Runs{r});
-                s.duration = s.duration + (n-1)*obj.ISI + obj.Set.maxDuration() ...
+                s.duration = s.duration + (n-1)*obj.MeanISI + obj.Set.maxDuration() ...
                              + 2*obj.SilencePad;
             end
         end
 
         function tf = overlaps(obj)
-            % True when the longest stimulus does not fit inside the ISI.
-            tf = obj.Set.numStimuli > 0 && obj.Set.maxDuration() > obj.ISI;
+            % True when the longest stimulus does not fit inside the shortest
+            % interval that can occur -- which under 'random' is the bottom of
+            % the range, not its mean: one short draw is enough to overlap.
+            tf = obj.Set.numStimuli > 0 && obj.Set.maxDuration() > obj.MinISI;
         end
     end
 
     methods (Access = private)
+        function p = onsetPeriods(obj,nPres,Fs)
+            % The nPres-1 onset-to-onset intervals of a run, in samples.
+            if obj.isRandomISI()
+                lo = obj.ISIRange(1); hi = obj.ISIRange(2);
+                assert(round(Fs*lo) >= 1,'mabr:stim:Schedule:isi', ...
+                    'Shortest ISI in the range (%g s) is shorter than one sample at %g Hz.', ...
+                    lo,Fs);
+                % Drawn from the schedule's own RandStream for the same reason
+                % the shuffles are: building or rendering a plan must not
+                % perturb the global rng, and an explicit Seed must make the
+                % whole plan -- order AND timing -- reproducible.
+                rs = obj.stream();
+                p  = round(Fs.*(lo + (hi-lo).*rand(rs,max(0,nPres-1),1)));
+                p  = max(1,p);
+            else
+                period = round(Fs*obj.ISI);
+                assert(period >= 1,'mabr:stim:Schedule:isi', ...
+                    'ISI (%g s) is shorter than one sample at %g Hz.',obj.ISI,Fs);
+                p = repmat(period,max(0,nPres-1),1);
+            end
+        end
+
         function reps = normalizedReps(obj)
             n    = obj.Set.numStimuli;
             reps = obj.Repetitions;

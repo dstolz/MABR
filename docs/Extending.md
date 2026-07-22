@@ -85,7 +85,8 @@ Everything about *presentation* is MABR's, not yours. [mabr.stim.Schedule](../+m
 
 | Setting | Meaning |
 |---------|---------|
-| `ISI` | Spacing between successive onsets (s, onset-to-onset). GUI shows it as linked ISI/rate fields, default 21.1 Hz. |
+| `ISI` | Spacing between successive onsets (s, onset-to-onset), when `ISIMode` is `'fixed'`. GUI shows it as linked ISI/rate fields, default 21.1 Hz. |
+| `ISIMode` / `ISIRange` | `'random'` draws each interval independently and uniformly from `ISIRange` = `[min max]` s instead, so the presentation rate carries no periodicity of its own. `MinISI`/`MeanISI` report the two numbers worth reasoning with: the shortest interval that can occur (what overlap is judged against) and the one a duration estimate is built on. |
 | `Repetitions` | How many times each entry is presented. One value for all, or one per entry. |
 | `Strategy` | How entries are combined across the array. |
 
@@ -103,13 +104,13 @@ All five are permutations of a **fixed multiset**, never probabilistic sampling 
 
 The last three **intermix** different stimuli inside one continuous acquisition run. MABR records which stimulus fired at each onset (`spec.StimulusIndex`) and de-interleaves the recorded sweeps at save time, so **each stimulus ID still gets its own `.abr` file** regardless of presentation order. An entry that has met its repetition count drops out of later cycles, so unequal counts stay spread out instead of clumping at the end.
 
-Set `Seed` for a reproducible order; leave it empty for a fresh shuffle each time. A private `RandStream` is used either way, so building a plan never perturbs global `rng`.
+Set `Seed` for a reproducible order — and, under `ISIMode = 'random'`, reproducible timing with it; leave it empty for a fresh shuffle each time. A private `RandStream` is used either way, so neither building a plan nor rendering one perturbs global `rng`.
 
 `Schedule` also renders the play matrix: it pairs your signal with a **synthesized timing channel**, brackets the result with silence for device settling, pads to a whole number of frames, and attaches channel mappings (`SilencePad`, `PlayerChannels`, `RecorderChannels`, `Device`). MABR owns the timing contract because sweep extraction depends on it — see [Architecture](Architecture.md#what-mabr-does-not-do).
 
 Two constraints worth knowing:
 
-- If a stimulus is longer than the ISI, presentations are **summed** where they overlap and the condition is logged; the GUI warns before acquisition starts.
+- If a stimulus is longer than `MinISI` — the ISI, or the bottom of `ISIRange` — presentations are **summed** where they overlap and the condition is logged; the GUI warns before acquisition starts.
 - One run is recorded in one ring-buffer pass, so a run may not exceed `Config.maxInputBufferLength` (~5.8 min at 192 kHz). `renderSpec` refuses with `mabr:stim:Schedule:tooLong` rather than silently discarding the earliest sweeps. Intermixed strategies put every presentation in one run, so this is the ceiling that bites first — the GUI's plan summary shows the estimated duration before you start.
 
 ## Defining when a run ends

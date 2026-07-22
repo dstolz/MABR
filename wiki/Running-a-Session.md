@@ -16,6 +16,8 @@ Launch with `MABR` from the MATLAB command window. The window is `mabr.ui.App`.
 
 **ISI / Rate** — two linked fields; editing either updates the other. ISI is onset-to-onset in ms, rate in Hz. Default 21.1 Hz. If the longest stimulus does not fit inside the ISI, a red warning appears — overlapping presentations are **summed**, not clipped, and the fact is logged.
 
+**Random** — the checkbox below ISI/Rate, with the two fields beside it giving a **[min max] range in ms**. Checked, each interval is drawn independently and uniformly from that range instead of being held fixed, which keeps the presentation rate from carrying a periodicity of its own; ISI/Rate grey out, because no single number describes the spacing any more. The bounds cannot cross — pushing one past the other carries it along. The overlap warning and the plan's estimated duration both adjust: overlap is judged against the **shortest** interval that can be drawn (one short draw is enough to collide), while the duration estimate uses the mean and is therefore an expectation, not a promise. Nothing downstream changes — the timing channel still marks every onset, and the realized intervals are recoverable from `ADC.SweepOnsets` in the saved file. See [[Presentation Strategies]].
+
 **Advance** — the criterion that ends a run:
 - *All Repetitions* — play the full train (`mabr.stim.advance.num_sweeps`).
 - *Correlation Threshold* — stop early once the running onset-contrast correlation reaches the value in the adjacent field (default 0.5), after a minimum sweep count (`mabr.stim.advance.corr_threshold`).

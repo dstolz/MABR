@@ -43,6 +43,11 @@ classdef App < handle
         % owns these; RepetitionsDialog edits them, and onStart hands them to
         % the schedule.
         Reps        (1,:) double = []
+        % Configuration files most recently saved or loaded, most-recent-first,
+        % capped at 9 -- the File > Recent Configurations submenu. Persisted in
+        % the same MABR pref group as everything else here (key
+        % 'RecentConfigFiles') so the list survives a restart.
+        RecentConfigs (1,:) cell = {}
         % Artifact criterion, and what to do about a sweep that fails it. The
         % GUI owns this; it is remembered across sessions in MATLAB prefs
         % (mabr.ArtifactPolicy.loadPrefs) so a rig keeps whatever suits its
@@ -73,6 +78,10 @@ classdef App < handle
     % --- UI components ------------------------------------------------------
     properties (Access = private)
         UIFigure
+        FileMenu
+        SaveConfigMenuItem
+        LoadConfigMenuItem
+        RecentConfigsMenu
         SettingsMenu
         AudioMenuItem
         CalMenuItem
@@ -104,6 +113,9 @@ classdef App < handle
         FilterButton
         ISIField
         RateField
+        JitterCheck
+        ISIMinField
+        ISIMaxField
         OverlapLabel
         PlanLabel
         RunPanel
@@ -141,10 +153,14 @@ classdef App < handle
             app.Artifacts = mabr.ArtifactPolicy.loadPrefs();
             app.Filters   = mabr.FilterPolicy.loadPrefs();
             app.Audio     = mabr.AudioSettings.loadPrefs();
+            rc = getpref('MABR','RecentConfigFiles',{});
+            if iscell(rc), app.RecentConfigs = rc; end
             app.createComponents();
             app.syncAdvanceEnables();
             app.syncArtifactFields();
             app.syncFilterFields();
+            app.syncISIFields();
+            app.syncRecentConfigsMenu();
             if nargout == 0, clear app; end
         end
 
@@ -170,6 +186,17 @@ classdef App < handle
                 'CloseRequestFcn',@(~,~) app.onClose());
             mabr.ui.WindowPos.restore(app.UIFigure,'MABR',app.UIFigure.Position);
 
+            app.FileMenu = uimenu(app.UIFigure,'Text','&File');
+            app.SaveConfigMenuItem = uimenu(app.FileMenu,'Text','Save Configuration…', ...
+                'Tooltip','Save subject/output, bank, presentation, artifact, filter, and audio settings to one file.', ...
+                'MenuSelectedFcn',@(~,~) app.onSaveConfiguration());
+            app.LoadConfigMenuItem = uimenu(app.FileMenu,'Text','Load Configuration…', ...
+                'Separator','on', ...
+                'Tooltip','Restore a previously saved configuration.', ...
+                'MenuSelectedFcn',@(~,~) app.onLoadConfiguration());
+            app.RecentConfigsMenu = uimenu(app.FileMenu,'Text','Recent Configurations', ...
+                'Tooltip','Reload one of the last 9 configurations saved or loaded.');
+
             app.SettingsMenu = uimenu(app.UIFigure,'Text','&Settings');
             app.AudioMenuItem = uimenu(app.SettingsMenu,'Text','Audio Device (ASIO)…', ...
                 'MenuSelectedFcn',@(~,~) app.onAudioSettings());
@@ -193,7 +220,7 @@ classdef App < handle
             % not see through a panel to its nested grid.
             app.Grid = uigridlayout(app.UIFigure,[7 1]);
             app.Grid.ColumnWidth = {'1x'};
-            app.Grid.RowHeight   = {96,60,166,150,'1x',96,22};
+            app.Grid.RowHeight   = {96,60,196,150,'1x',96,22};
             app.Grid.RowSpacing  = 8;
             app.Grid.Padding     = [10 10 10 6];
 
@@ -279,7 +306,7 @@ classdef App < handle
         end
 
         function buildPresentationPanel(app,row)
-            g = app.panelGrid('Presentation',row,{24,24,24,16,18},{app.LabelWidth,'1x','1x'});
+            g = app.panelGrid('Presentation',row,{24,24,24,24,16,18},{app.LabelWidth,'1x','1x'});
 
             app.addLabel(g,'Strategy',1,1);
             app.StrategyDrop = uidropdown(g, ...
@@ -316,17 +343,46 @@ classdef App < handle
                 'ValueChangedFcn',@(~,~) app.onRateChanged());
             app.RateField.Layout.Row = 3; app.RateField.Layout.Column = 3;
 
+            % Randomized ISI: the switch and the two bounds it governs read as
+            % one setting, so they share a row inside the field columns with
+            % the label column left empty -- the same shape the artifact-repeat
+            % checkbox uses. Checking it takes the ISI/Rate fields above out of
+            % play entirely (syncISIFields greys them), because the interval is
+            % then drawn per presentation and no single number describes it.
+            j = uigridlayout(g,[1 3]);
+            j.Layout.Row = 4; j.Layout.Column = [2 3];
+            j.ColumnWidth   = {'fit','1x','1x'};
+            j.Padding       = [0 0 0 0];
+            j.ColumnSpacing = 6;
+
+            app.JitterCheck = uicheckbox(j,'Text','Random', ...
+                'Tooltip',['Draw each interval uniformly from the range beside it ' ...
+                           'instead of holding the ISI fixed, so the presentation rate ' ...
+                           'carries no periodicity of its own.'], ...
+                'ValueChangedFcn',@(~,~) app.onJitterChanged());
+            isi0 = 1e3/mabr.ui.App.DefaultRateHz;
+            app.ISIMinField = uieditfield(j,'numeric', ...
+                'Value',round(0.9*isi0,2),'Limits',[eps Inf], ...
+                'ValueDisplayFormat','%.2f ms','Enable','off', ...
+                'Tooltip','Shortest interval that can be drawn.', ...
+                'ValueChangedFcn',@(~,~) app.onISIRangeChanged('min'));
+            app.ISIMaxField = uieditfield(j,'numeric', ...
+                'Value',round(1.1*isi0,2),'Limits',[eps Inf], ...
+                'ValueDisplayFormat','%.2f ms','Enable','off', ...
+                'Tooltip','Longest interval that can be drawn.', ...
+                'ValueChangedFcn',@(~,~) app.onISIRangeChanged('max'));
+
             % A full-width warning line directly under the fields that cause
             % it, rather than a clipped stub squeezed in beside them.
             app.OverlapLabel = uilabel(g,'Text','','FontColor',[0.8 0.2 0]);
-            app.OverlapLabel.Layout.Row = 4; app.OverlapLabel.Layout.Column = [2 3];
+            app.OverlapLabel.Layout.Row = 5; app.OverlapLabel.Layout.Column = [2 3];
 
             % Live consequence of everything above it: runs, presentations,
             % estimated duration. Kept in this panel because those are the
             % settings that change it.
             app.PlanLabel = uilabel(g,'Text','','FontColor',[0.3 0.3 0.3], ...
                 'HorizontalAlignment','right');
-            app.PlanLabel.Layout.Row = 5; app.PlanLabel.Layout.Column = [1 3];
+            app.PlanLabel.Layout.Row = 6; app.PlanLabel.Layout.Column = [1 3];
         end
 
         function buildAcquisitionPanel(app,row)
@@ -540,6 +596,273 @@ classdef App < handle
             field.Value = v;
         end
 
+        % --- Save/load configuration -----------------------------------------
+        % A named, shareable snapshot of an entire experiment setup -- bank,
+        % reps, strategy, ISI, artifacts, filters, audio -- in one file, the
+        % direct analogue of the legacy +abr ConfigTab's "Save/Load a Config
+        % file". This is distinct from the individual loadPrefs/savePrefs
+        % each settings object already does on every change: those remember
+        % the LAST used choice per rig, while a configuration file is a
+        % deliberately saved, reloadable point a user names and returns to
+        % (e.g. switching between protocols on the same rig). Loading one also
+        % updates the prefs, exactly as editing each setting by hand would.
+        function onSaveConfiguration(app)
+            dflt = 'MABR_Config.mabrcfg';
+            if ~isempty(app.SubjectField.Value)
+                dflt = [matlab.lang.makeValidName(app.SubjectField.Value) '.mabrcfg'];
+            end
+            [fn,pn] = uiputfile({'*.mabrcfg','MABR configuration (*.mabrcfg)'}, ...
+                'Save configuration',dflt);
+            figure(app.UIFigure);
+            if isequal(fn,0), return; end
+            try
+                file = fullfile(pn,fn);
+                MABRConfig = app.captureConfiguration();
+                save(file,'MABRConfig');
+                app.setStatus(['Configuration saved to ' fn '.']);
+                app.addRecentConfig(file);
+            catch me
+                app.setStatus(['Save configuration failed: ' me.message]);
+            end
+        end
+
+        function onLoadConfiguration(app)
+            [fn,pn] = uigetfile({'*.mabrcfg','MABR configuration (*.mabrcfg)'}, ...
+                'Load configuration');
+            figure(app.UIFigure);
+            if isequal(fn,0), return; end
+            app.loadConfigurationFile(fullfile(pn,fn));
+        end
+
+        function onLoadRecentConfiguration(app,file)
+            % File > Recent Configurations entry. A file can vanish between
+            % sessions (moved, deleted, a network drive unmounted); rather
+            % than erroring, drop it from the list and say so -- the same
+            % self-healing rule applyConfigStimuli follows for a stimulus
+            % bank that has moved.
+            if ~isfile(file)
+                app.setStatus(['Recent configuration "' file '" no longer exists.']);
+                app.removeRecentConfig(file);
+                return
+            end
+            app.loadConfigurationFile(file);
+        end
+
+        function loadConfigurationFile(app,file)
+            % Shared by the Load Configuration… dialog and a Recent
+            % Configurations click, so both end up on one list and one status
+            % message.
+            try
+                S = load(file,'-mat');
+                assert(isfield(S,'MABRConfig'),'mabr:ui:App:badConfig', ...
+                    '"%s" is not a MABR configuration file.',file);
+                warn = app.applyConfiguration(S.MABRConfig);
+                [~,fn,ext] = fileparts(file);
+                msg  = ['Configuration loaded from ' fn ext '.'];
+                if ~isempty(warn), msg = [msg ' ' warn]; end
+                app.setStatus(msg);
+                app.addRecentConfig(file);
+            catch me
+                app.setStatus(['Load configuration failed: ' me.message]);
+            end
+        end
+
+        function addRecentConfig(app,file)
+            % Move file to the front of the recent list (dropping any earlier
+            % entry for the same path), cap at 9, persist, and rebuild the menu.
+            file = char(file);
+            list = app.RecentConfigs;
+            list(strcmpi(list,file)) = [];
+            list = [{file}, list];
+            if numel(list) > 9, list = list(1:9); end
+            app.RecentConfigs = list;
+            setpref('MABR','RecentConfigFiles',list);
+            app.syncRecentConfigsMenu();
+        end
+
+        function removeRecentConfig(app,file)
+            list = app.RecentConfigs;
+            list(strcmpi(list,file)) = [];
+            app.RecentConfigs = list;
+            setpref('MABR','RecentConfigFiles',list);
+            app.syncRecentConfigsMenu();
+        end
+
+        function syncRecentConfigsMenu(app)
+            % Rebuild the File > Recent Configurations submenu from
+            % app.RecentConfigs -- most-recently-used at the top. Numbered so
+            % the list order (and therefore recency) is visible at a glance,
+            % titled with the file name only (the full path is the tooltip)
+            % since a subject-named file is what the operator actually reads.
+            delete(app.RecentConfigsMenu.Children);
+            if isempty(app.RecentConfigs)
+                uimenu(app.RecentConfigsMenu,'Text','(No Recent Configurations)', ...
+                    'Enable','off');
+                return
+            end
+            for k = 1:numel(app.RecentConfigs)
+                file = app.RecentConfigs{k};
+                [~,name,ext] = fileparts(file);
+                uimenu(app.RecentConfigsMenu,'Text',sprintf('%d  %s%s',k,name,ext), ...
+                    'Tooltip',file, ...
+                    'MenuSelectedFcn',@(~,~) app.onLoadRecentConfiguration(file));
+            end
+        end
+
+        function cfg = captureConfiguration(app)
+            % Everything a configuration restores, as plain structs -- never
+            % classdef objects -- so a file saved by this version still loads
+            % after a class gains or loses a property (see applyConfiguration).
+            cfg = struct();
+            cfg.FormatVersion = 1;
+            cfg.Saved         = datetime('now');
+            cfg.Subject       = app.SubjectField.Value;
+            cfg.OutputPath    = app.OutputField.Value;
+
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0
+                cfg.StimulusSource = mabr.stim.StimulusSet.emptySource();
+                cfg.Reps           = struct('ID',{},'Count',{});
+            else
+                cfg.StimulusSource = app.Stimuli.Source;
+                ids  = app.Stimuli.IDs();
+                cfg.Reps = struct('ID',ids(:),'Count',num2cell(app.Reps(:)));
+            end
+
+            cfg.Strategy      = app.StrategyDrop.Value;
+            cfg.Advance       = app.AdvanceDrop.Value;
+            cfg.CorrThreshold = app.CorrField.Value;
+            cfg.ISIRandom     = app.JitterCheck.Value;
+            cfg.ISI_ms        = app.ISIField.Value;
+            cfg.ISIMin_ms     = app.ISIMinField.Value;
+            cfg.ISIMax_ms     = app.ISIMaxField.Value;
+
+            cfg.Artifacts = app.Artifacts.toStruct();
+            cfg.Filters   = app.Filters.toStruct();
+            cfg.Audio     = app.Audio.toStruct();
+        end
+
+        function warn = applyConfiguration(app,cfg)
+            % Defensive throughout: a configuration saved by an older MABR, or
+            % edited by hand, restores whatever it can rather than refusing
+            % the whole file -- the same rule ArtifactPolicy/FilterPolicy/
+            % AudioSettings.loadPrefs already follow for MATLAB prefs.
+            %
+            % Returns a one-line warning (empty if none) rather than calling
+            % setStatus itself -- onLoadConfiguration's own final status
+            % overwrites the label the instant this returns, so anything
+            % said in here would never be seen otherwise.
+            if isfield(cfg,'Subject') && ~isempty(cfg.Subject)
+                app.setDropValue(app.SubjectField,char(cfg.Subject));
+            end
+            if isfield(cfg,'OutputPath')
+                app.setDropValue(app.OutputField,char(cfg.OutputPath));
+            end
+
+            warn = app.applyConfigStimuli(cfg);
+
+            if isfield(cfg,'Strategy') && any(strcmp(cfg.Strategy,mabr.stim.Schedule.Strategies))
+                app.StrategyDrop.Value = cfg.Strategy;
+            end
+            app.syncAdvanceEnables();   % re-derives Advance/Corr for the (maybe new) strategy
+            % Early stop is meaningless for an intermixed strategy (see
+            % syncAdvanceEnables), so a saved 'Correlation Threshold' is only
+            % restored when the strategy just set actually allows it --
+            % otherwise the disabled dropdown's forced 'All Repetitions' wins.
+            if strcmp(app.AdvanceDrop.Enable,'on') && isfield(cfg,'Advance') ...
+                    && any(strcmp(cfg.Advance,app.AdvanceDrop.Items))
+                app.AdvanceDrop.Value = cfg.Advance;
+            end
+            if isfield(cfg,'CorrThreshold') && isnumeric(cfg.CorrThreshold) && isscalar(cfg.CorrThreshold)
+                app.CorrField.Value = cfg.CorrThreshold;
+            end
+            app.onAdvanceChanged();
+
+            if isfield(cfg,'ISIRandom'), app.JitterCheck.Value = logical(cfg.ISIRandom); end
+            if isfield(cfg,'ISI_ms') && isnumeric(cfg.ISI_ms) && isscalar(cfg.ISI_ms) && cfg.ISI_ms > 0
+                app.ISIField.Value  = cfg.ISI_ms;
+                app.RateField.Value = 1e3/cfg.ISI_ms;
+            end
+            if isfield(cfg,'ISIMin_ms') && isnumeric(cfg.ISIMin_ms) && isscalar(cfg.ISIMin_ms) && cfg.ISIMin_ms > 0
+                app.ISIMinField.Value = cfg.ISIMin_ms;
+            end
+            if isfield(cfg,'ISIMax_ms') && isnumeric(cfg.ISIMax_ms) && isscalar(cfg.ISIMax_ms) && cfg.ISIMax_ms > 0
+                app.ISIMaxField.Value = cfg.ISIMax_ms;
+            end
+            app.syncISIFields();
+
+            if isfield(cfg,'Artifacts')
+                app.Artifacts = mabr.ArtifactPolicy.fromStruct(cfg.Artifacts);
+                app.ArtifactDrop.Value = app.Artifacts.Mode;
+                app.syncArtifactFields();
+                app.applyArtifacts();
+            end
+            if isfield(cfg,'Filters')
+                app.Filters = mabr.FilterPolicy.fromStruct(cfg.Filters);
+                app.syncFilterFields();
+                app.applyFilters();
+            end
+            if isfield(cfg,'Audio')
+                app.Audio = mabr.AudioSettings.fromStruct(cfg.Audio);
+                mabr.AudioSettings.savePrefs(app.Audio);
+            end
+
+            app.checkOverlap();
+            app.refreshPlan();
+        end
+
+        function warn = applyConfigStimuli(app,cfg)
+            % Restore the bank a configuration was saved with, where that is
+            % possible, then overlay the saved per-stimulus repetition counts
+            % onto whatever bank ends up loaded. Returns a one-line warning
+            % (empty if none) rather than calling setStatus -- see
+            % applyConfiguration.
+            warn = '';
+            if ~isfield(cfg,'StimulusSource'), return; end
+            src = cfg.StimulusSource;
+
+            set = [];
+            switch lower(src.Kind)
+                case 'demo'
+                    set = mabr.stim.demoStimuli(app.Config);
+                case {'file','stimgen'}
+                    if ~isempty(src.File) && isfile(src.File)
+                        try
+                            set = mabr.stim.StimulusSet.fromFile(src.File,app.Config);
+                        catch me
+                            warn = ['Configuration''s stimulus bank could not be ' ...
+                                'reloaded from "' src.File '": ' me.message];
+                        end
+                    else
+                        % Built live in the designer and never saved to a
+                        % file the configuration can point back to (or the
+                        % file has moved). The bank currently loaded, if any,
+                        % is left alone rather than cleared.
+                        warn = ['Configuration references a stimulus bank with no ' ...
+                            'reloadable file -- load it manually, then re-apply repetitions.'];
+                    end
+                otherwise
+                    % No Kind recorded (an empty bank when saved) -- nothing to restore.
+            end
+            if isempty(set), return; end
+
+            app.adoptStimuli(set);   % resets Reps to the bank's own defaults
+
+            if isfield(cfg,'Reps') && ~isempty(cfg.Reps)
+                % Matched by ID, not position: a bank regenerated from the
+                % same source reproduces the same IDs, and matching by name is
+                % what survives the bank having gained or dropped an entry
+                % since the configuration was saved.
+                ids = set.IDs();
+                r   = app.Reps;
+                for k = 1:numel(cfg.Reps)
+                    idx = find(strcmp(ids,cfg.Reps(k).ID),1);
+                    if ~isempty(idx), r(idx) = cfg.Reps(k).Count; end
+                end
+                app.Reps = r;
+                if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
+            end
+        end
+
         % --- Controller lifecycle ------------------------------------------
         function ensureController(app)
             testing = app.Audio.Testing;
@@ -614,6 +937,7 @@ classdef App < handle
 
             try
                 app.Designer = stimgen.StimPlayer();
+                app.hideDesignerSessionControls();
                 app.setStatus(['Designer open. Build a bank, then press Adopt bank ' ...
                                'to bring it into MABR.']);
             catch me
@@ -621,6 +945,30 @@ classdef App < handle
                 app.setStatus(['Could not open the stimgen designer: ' me.message]);
             end
             app.syncDesignButton();
+        end
+
+        function hideDesignerSessionControls(app)
+            % MABR owns presentation, so the designer must not appear to offer
+            % it. Reps, ISI, the Shuffle/Serial dropdown and Run/Pause all
+            % duplicate settings that live in the Presentation panel -- and the
+            % duplicates are not merely redundant, they are inert: fromStimgen
+            % drops ISI and SelectionType outright, and a session started from
+            % the designer's Run button would stream through stimgen's own
+            % speaker preview rather than the rig the worker holds open.
+            % set_control_visibility collapses them out of the layout (the
+            % properties stay settable programmatically), so the designer is
+            % reduced to what it is being used for here: building a bank.
+            %
+            % Guarded on the method rather than assumed, since stimgen is an
+            % optional submodule a rig may have checked out at an older commit
+            % -- an unhidden control is a worse designer, not a broken one.
+            if ~ismethod(app.Designer,'set_control_visibility')
+                mabr.log.vprintf(1,['App: this stimgen has no ' ...
+                    'set_control_visibility; the designer will show its own ' ...
+                    'Reps/ISI/order/run controls, which MABR ignores.']);
+                return
+            end
+            app.Designer.set_control_visibility(All=false);
         end
 
         function adoptFromDesigner(app)
@@ -683,13 +1031,14 @@ classdef App < handle
         end
 
         function warnUncalibratedLevels(app,set)
-            % The one way an uncalibrated bank misleads rather than merely
-            % under-delivers. stimgen converts dB SPL to volts THROUGH the
-            % calibration; with none loaded apply_calibration is a no-op, so
-            % every entry comes out at the SAME amplitude and a Level series
-            % that looks like 30/60/90 dB is three identical stimuli. The bank
-            % is still perfectly runnable -- which is why this warns rather
-            % than refuses -- but nobody should discover it from the data.
+            % What an uncalibrated level series is and is not. stimgen converts
+            % dB SPL to volts THROUGH the calibration; with none loaded
+            % apply_calibration is a no-op, so SoundLevel never reaches the
+            % amplitude. mabr.stim.fromStimgen makes the levels RELATIVE to the
+            % bank's loudest entry instead (see relativeLevels), so the spacing
+            % is right and a growth function still grows -- but the absolute
+            % axis is arbitrary, and nobody should discover that from the data
+            % months later. Hence a warning on adopt, not a refusal.
             %
             % Scoped to stimgen banks deliberately. An uncalibrated bank from
             % anywhere else may well vary amplitude with level -- demoStimuli
@@ -700,17 +1049,33 @@ classdef App < handle
             if set.numStimuli < 2 || set.isCalibrated(), return; end
             if ~isfield(set.Stimuli,'Level'), return; end
 
-            L = [set.Stimuli.Level];
-            if numel(unique(L)) < 2, return; end
+            u = unique([set.Stimuli.Level]);
+            if numel(u) < 2, return; end
 
-            u = unique(L);
-            msg = sprintf(['This bank asks for %d different levels (%s dB) but carries no ' ...
-                'calibration, so every stimulus is generated at the same amplitude — ' ...
-                'the levels will not differ acoustically.\n\nCalibrate under ' ...
-                'Settings > Calibration…, then rebuild the bank.'], ...
-                numel(u),strjoin(string(u),', '));
-            mabr.log.vprintf(0,1,'Uncalibrated bank with %d distinct Levels (%s dB).', ...
-                numel(u),strjoin(string(u),', '));
+            % LevelScale is fromStimgen's record that it did the rescaling. Its
+            % absence here means the bank is PARTLY calibrated, which that pass
+            % leaves alone for want of a common reference -- a different
+            % problem, and a worse one.
+            if isfield(set.Stimuli,'LevelScale')
+                msg = sprintf(['This bank asks for %d different levels (%s dB) but carries ' ...
+                    'no calibration, so no absolute dB SPL can be put on any of them.\n\n' ...
+                    'MABR has scaled them relative to the loudest: %g dB plays at the ' ...
+                    'bank''s own normalized amplitude and each lower level is attenuated ' ...
+                    'by the right ratio. Level differences are therefore correct; the ' ...
+                    'absolute level is not.\n\nCalibrate under Settings > Calibration…, ' ...
+                    'then rebuild the bank for true SPL.'], ...
+                    numel(u),strjoin(string(u),', '),max(u));
+                mabr.log.vprintf(0,1,['Uncalibrated bank: %d Levels (%s dB) scaled ' ...
+                    'relative to %g dB.'],numel(u),strjoin(string(u),', '),max(u));
+            else
+                msg = sprintf(['This bank asks for %d different levels (%s dB) and only ' ...
+                    'SOME of its stimuli are calibrated, so the levels cannot be made ' ...
+                    'relative to each other either — the uncalibrated ones are all at ' ...
+                    'the same amplitude.\n\nCalibrate under Settings > Calibration…, ' ...
+                    'then rebuild the bank.'],numel(u),strjoin(string(u),', '));
+                mabr.log.vprintf(0,1,['Partly calibrated bank with %d distinct Levels ' ...
+                    '(%s dB); levels left as generated.'],numel(u),strjoin(string(u),', '));
+            end
             uialert(app.UIFigure,msg,'Uncalibrated bank','Icon','warning');
         end
 
@@ -923,7 +1288,14 @@ classdef App < handle
             if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0
                 app.setStatus('Load stimuli first.'); return
             end
-            r = mabr.ui.RepetitionsDialog(app.Stimuli,app.Reps,app.ISIField.Value/1e3);
+            % The dialog only estimates a duration from it, so it gets the mean
+            % interval -- which under Random is all there is to give it, and the
+            % caption says as much rather than quoting a fixed ISI that no
+            % single presentation will be spaced by.
+            [~,avgISI] = app.isiSeconds();
+            lbl = '';
+            if app.JitterCheck.Value, lbl = sprintf('%.2f ms mean ISI',1e3*avgISI); end
+            r = mabr.ui.RepetitionsDialog(app.Stimuli,app.Reps,avgISI,lbl);
             figure(app.UIFigure);
             if isempty(r), return; end        % cancelled
             app.Reps = r;
@@ -948,18 +1320,84 @@ classdef App < handle
             app.refreshPlan();
         end
 
+        % --- Randomized ISI -------------------------------------------------
+        function onJitterChanged(app)
+            app.syncISIFields();
+            app.checkOverlap();
+            app.refreshPlan();
+        end
+
+        function onISIRangeChanged(app,which)
+            % The bounds are a range, so the pair has to stay ordered: pushing
+            % one past the other carries the other along rather than refusing
+            % the edit, which is what the ISI/Rate pair above does with its own
+            % dependency. Silently crossing them is the one thing not on offer.
+            if app.ISIMinField.Value > app.ISIMaxField.Value
+                switch which
+                    case 'min', app.ISIMaxField.Value = app.ISIMinField.Value;
+                    case 'max', app.ISIMinField.Value = app.ISIMaxField.Value;
+                end
+                app.setStatus(sprintf('ISI range collapsed to %.2f ms — the bounds crossed.', ...
+                    app.ISIMinField.Value));
+            end
+            app.checkOverlap();
+            app.refreshPlan();
+        end
+
+        function syncISIFields(app)
+            % Only one of the two settings decides anything at a time, so the
+            % other is greyed rather than left looking live: with Random on the
+            % fixed ISI/rate is not what will be played, and with it off the
+            % range is not either.
+            rnd = app.JitterCheck.Value;
+            app.ISIField.Enable    = onOff(~rnd);
+            app.RateField.Enable   = onOff(~rnd);
+            app.ISIMinField.Enable = onOff(rnd);
+            app.ISIMaxField.Enable = onOff(rnd);
+        end
+
+        function m = isiMode(app)
+            % The checkbox, in mabr.stim.Schedule's vocabulary.
+            if app.JitterCheck.Value, m = 'random'; else, m = 'fixed'; end
+        end
+
+        function [mn,av] = isiSeconds(app)
+            % What the plan will actually use, in seconds: mn is the shortest
+            % interval that can occur (the overlap worst case) and av the one a
+            % duration estimate should be built on. They differ only under
+            % Random, where no single number describes the spacing.
+            if app.JitterCheck.Value
+                mn = app.ISIMinField.Value/1e3;
+                av = 0.5*(app.ISIMinField.Value + app.ISIMaxField.Value)/1e3;
+            else
+                mn = app.ISIField.Value/1e3;
+                av = mn;
+            end
+        end
+
         function checkOverlap(app)
             % Warn when the longest stimulus does not fit inside the ISI, so
             % the next presentation would start before this one has finished.
+            % Judged against the SHORTEST interval that can occur: under Random
+            % one unlucky draw is enough to overlap, so the bottom of the range
+            % is the number that has to clear the stimulus.
             app.OverlapLabel.Text = '';
             if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
             stimMs = 1e3*app.Stimuli.maxDuration();
-            if stimMs > app.ISIField.Value
+            minMs  = 1e3*app.isiSeconds();
+            if stimMs > minMs
                 app.OverlapLabel.Text = sprintf('overlap! %.1f ms stim',stimMs);
-                app.setStatus(sprintf(['Longest stimulus is %.2f ms but the ISI is only ' ...
-                    '%.2f ms (%.2f Hz) — presentations will overlap and be summed. ' ...
-                    'Lower the rate to %.2f Hz or below.'], ...
-                    stimMs,app.ISIField.Value,app.RateField.Value,1e3/stimMs));
+                if app.JitterCheck.Value
+                    app.setStatus(sprintf(['Longest stimulus is %.2f ms but the shortest ' ...
+                        'interval in the range is only %.2f ms — presentations will ' ...
+                        'overlap and be summed. Raise the range minimum to %.2f ms or above.'], ...
+                        stimMs,minMs,stimMs));
+                else
+                    app.setStatus(sprintf(['Longest stimulus is %.2f ms but the ISI is only ' ...
+                        '%.2f ms (%.2f Hz) — presentations will overlap and be summed. ' ...
+                        'Lower the rate to %.2f Hz or below.'], ...
+                        stimMs,app.ISIField.Value,app.RateField.Value,1e3/stimMs));
+                end
             end
         end
 
@@ -987,7 +1425,11 @@ classdef App < handle
             sch             = mabr.stim.Schedule(app.Stimuli,app.Config);
             sch.Strategy    = app.StrategyDrop.Value;
             sch.Repetitions = app.Reps;
+            % Both settings travel every time and the mode picks between them,
+            % so the one not in force is still whatever the user last set it to.
             sch.ISI         = app.ISIField.Value/1e3;      % ms -> s
+            sch.ISIRange    = [app.ISIMinField.Value app.ISIMaxField.Value]/1e3;
+            sch.ISIMode     = app.isiMode();
             sch.Device           = app.Audio.Device;
             sch.PlayerChannels   = app.Audio.PlayerChannels;
             sch.RecorderChannels = app.Audio.RecorderChannels;
@@ -1045,6 +1487,8 @@ classdef App < handle
                 c.Schedule.Strategy    = app.StrategyDrop.Value;
                 c.Schedule.Repetitions = app.Reps;
                 c.Schedule.ISI         = app.ISIField.Value/1e3;   % ms -> s
+                c.Schedule.ISIRange    = [app.ISIMinField.Value app.ISIMaxField.Value]/1e3;
+                c.Schedule.ISIMode     = app.isiMode();
                 c.Schedule.Device           = app.Audio.Device;
                 c.Schedule.PlayerChannels   = app.Audio.PlayerChannels;
                 c.Schedule.RecorderChannels = app.Audio.RecorderChannels;
@@ -1326,13 +1770,21 @@ classdef App < handle
             % Settings that must not change once a run is under way.
             % Calibration joins them: it opens the ASIO device the running
             % worker is holding (see mabr.stim.CalibrationAdapter), so it is
-            % not merely unwise mid-schedule but impossible.
+            % not merely unwise mid-schedule but impossible. Load Configuration
+            % joins them for the same reason as Load bank/Audio Device -- it
+            % can replace the stimulus bank, ISI, and audio mapping out from
+            % under a running schedule. Recent Configurations is the same
+            % action by another route and joins for the same reason. Save
+            % Configuration does not: it only reads the current settings, so
+            % it stays live throughout.
             h = {app.SubjectField, app.OutputField, app.BrowseButton, ...
                  app.DesignButton, app.LoadButton, app.TestButton, ...
                  app.StrategyDrop, app.RepsField, app.RepsButton, ...
                  app.AdvanceDrop, app.CorrField, ...
-                 app.ISIField, app.RateField, app.AudioMenuItem, ...
-                 app.CalMenuItem, app.TestMenuItem};
+                 app.ISIField, app.RateField, app.JitterCheck, ...
+                 app.ISIMinField, app.ISIMaxField, app.AudioMenuItem, ...
+                 app.CalMenuItem, app.TestMenuItem, app.LoadConfigMenuItem, ...
+                 app.RecentConfigsMenu};
         end
 
         function h = liveControls(app)
@@ -1381,6 +1833,9 @@ classdef App < handle
             if ~running
                 app.PauseButton.Text = 'Pause';
                 app.syncAdvanceEnables();     % re-derives the Advance/Corr enables
+                % Same reason: configControls just switched all five ISI
+                % controls back on, but only one pair of them is ever live.
+                app.syncISIFields();
             end
             drawnow limitrate
         end

@@ -121,6 +121,15 @@ classdef ArtifactPolicy
             else,          s = [s ', counting only'];
             end
         end
+
+        function s = toStruct(obj)
+            % Plain-struct snapshot for mabr.ui.App's save/load CONFIGURATION
+            % file -- a named, shareable setup, distinct from loadPrefs/
+            % savePrefs's "last used" persistence in MATLAB prefs, though the
+            % two travel through the same validated fields.
+            s = struct('Mode',obj.Mode,'VoltageThreshold',obj.VoltageThreshold, ...
+                       'RMSThreshold',obj.RMSThreshold,'Repeat',obj.Repeat);
+        end
     end
 
     methods (Static)
@@ -147,11 +156,37 @@ classdef ArtifactPolicy
             setpref('MABR','ArtifactRMS',     obj.RMSThreshold);
             setpref('MABR','ArtifactRepeat',  obj.Repeat);
         end
+
+        function obj = fromStruct(s)
+            % Inverse of toStruct. Forgiving of a struct saved by an older
+            % MABR or edited by hand -- the same rule loadPrefs follows:
+            % restore whatever field validates and fall back to the property
+            % default for anything that does not, rather than refuse the
+            % whole file over one bad value.
+            obj = mabr.ArtifactPolicy;
+            if isfield(s,'Mode') && any(strcmpi(s.Mode,mabr.ArtifactPolicy.Modes))
+                obj.Mode = lower(char(s.Mode));
+            end
+            if isfield(s,'VoltageThreshold')
+                obj.VoltageThreshold = mabr.ArtifactPolicy.coercePositive( ...
+                    s.VoltageThreshold,obj.VoltageThreshold);
+            end
+            if isfield(s,'RMSThreshold')
+                obj.RMSThreshold = mabr.ArtifactPolicy.coercePositive( ...
+                    s.RMSThreshold,obj.RMSThreshold);
+            end
+            if isfield(s,'Repeat')
+                obj.Repeat = logical(s.Repeat);
+            end
+        end
     end
 
     methods (Static, Access = private)
         function v = getPositive(name,default)
-            v = getpref('MABR',name,default);
+            v = mabr.ArtifactPolicy.coercePositive(getpref('MABR',name,default),default);
+        end
+
+        function v = coercePositive(v,default)
             if ~isnumeric(v) || ~isscalar(v) || ~isfinite(v) || v <= 0
                 v = default;
             end

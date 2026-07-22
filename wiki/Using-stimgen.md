@@ -44,7 +44,7 @@ Saved banks are `.spl` files. **Load bank…** reads them through the same path 
 
 Every other varying property passes through under its own name, and the set of them is declared as `informativeParams` rather than inferred — see [[Stimulus Package Contract]].
 
-**What is dropped.** `StimPlay.ISI`, `StimPlayer.ISI`, `SelectionType`, and `StimOrder` are ignored: MABR owns presentation and `mabr.stim.Schedule` decides it (see [[Presentation Strategies]]). stimgen's ISI is a `[min max]` jitter range that MABR's scalar has no equivalent for, and collapsing it would misreport the bank. Only `Reps` survives, as the starting repetition count.
+**What is dropped.** `StimPlay.ISI`, `StimPlayer.ISI`, `SelectionType`, and `StimOrder` are ignored: MABR owns presentation and `mabr.stim.Schedule` decides it (see [[Presentation Strategies]]). MABR does now have somewhere to put a `[min max]` jitter range — `ISIMode = 'random'` with `ISIRange` — but the timing is the operator's setting for the session in front of them, and loading a bank must not silently retime a schedule already configured around it. Only `Reps` survives, as the starting repetition count.
 
 ## Calibration
 
@@ -56,9 +56,15 @@ Set the **Microphone** channel in **Settings ▸ Audio Device (ASIO)…**. It is
 
 Save a `.esgc`, load it onto your stimuli in the designer, and rebuild the bank.
 
-> ### Levels do nothing without a calibration
+> ### Without a calibration, levels are relative — not dB SPL
 >
-> dB SPL becomes a voltage *through* the calibration. With none loaded, `apply_calibration` is a no-op and every stimulus is generated at the same amplitude — a bank asking for 30, 60 and 90 dB is three **identical** sounds. MABR warns on adopt and shows the bank label in amber, but does not block it (the bank is still useful for testing the signal chain). Never collect data with one.
+> dB SPL becomes a voltage *through* the calibration. With none loaded, `apply_calibration` is a no-op, so `SoundLevel` never reaches the amplitude and a bank asking for 30, 60 and 90 dB would leave stimgen as three **identical** sounds.
+>
+> `fromStimgen` rescales an entirely uncalibrated bank **relative to its own loudest entry** instead: the top level keeps the amplitude stimgen normalized it to, and every lower level is attenuated by `10^(ΔdB/20)`. The gain applied is recorded per entry as `LevelScale`. So the *spacing* is right — a growth function still grows, a threshold still falls somewhere — while the absolute axis is arbitrary. Since the reference is the top of the bank, this only ever attenuates; no bank gains a clipping risk it did not already have.
+>
+> MABR says so on adopt and shows the bank label in amber, but does not block it. **Do not report absolute thresholds from one.**
+>
+> A **partly** calibrated bank is left alone — there is no common reference to be relative to — and the warning says that instead.
 
 ### The device is not free just because nothing is running
 

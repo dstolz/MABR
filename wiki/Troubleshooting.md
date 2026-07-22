@@ -35,9 +35,11 @@ See [[Stimulus Package Contract]].
 
 **`mabr:stim:Schedule:tooLong`** — the run exceeds the ring buffer (`maxInputBufferLength`, ~5.8 min at 192 kHz). The check runs *before* allocation deliberately, so you get this instead of a `MATLAB:nomem`. Reduce repetitions, shorten the ISI, or switch to a blocked strategy so each run covers a single stimulus. Intermixed strategies render the whole design as one run and hit this first.
 
-**`mabr:stim:Schedule:isi`** — the ISI is shorter than one sample at the stimulus rate.
+**`mabr:stim:Schedule:isi`** — the ISI is shorter than one sample at the stimulus rate. Under `ISIMode = 'random'` it is the *bottom* of `ISIRange` that is too short.
 
-**Red overlap warning in the GUI / red log line.** The longest stimulus does not fit inside the ISI. Overlapping presentations are **summed**, not clipped. Either lengthen the ISI or accept the summation knowingly.
+**`mabr:stim:Schedule:isiRange`** — `ISIRange` was given descending, as `[max min]`. It is never sorted for you: which bound is which is exactly what the mistake is about. The GUI's two fields cannot be crossed — pushing one past the other carries it along.
+
+**Red overlap warning in the GUI / red log line.** The longest stimulus does not fit inside the ISI — or, with **Random** checked, inside the *shortest* interval that can be drawn, since one short draw is enough to collide. Overlapping presentations are **summed**, not clipped. Either lengthen the ISI (or raise the range minimum) or accept the summation knowingly.
 
 **Repetition or strategy change had no effect.** `Schedule.build()` must be called after changing `Repetitions` or `Strategy`; `reset()` alone rewinds without rebuilding. The GUI does this for you via `buildSchedule`.
 

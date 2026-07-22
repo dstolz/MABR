@@ -30,11 +30,31 @@ Opens with the app, and is raised by the stacked-traces toolbar button. Closing 
 
 - **Drag a trace vertically** to reorder or separate the stack. Click and drag; release to drop.
 - **Mark peaks** — **Peaks ▸ Mark peaks** (or the ▼-over-a-peak toolbar button, or `p`) finds and labels response peaks on the selected trace, for identifying waves I–V.
+- **Double-click a trace** to open it in the **Trace Inspector** (below) and measure it properly.
 - **Save / load** the arrangement, so a figure you have laid out can be recovered later.
 
 Traces are labeled with their stimulus parameters and coloured in sequence. Time is shown in milliseconds relative to sweep onset.
 
 Reading a level series: as level decreases, the response amplitude shrinks and its peaks shift later. The lowest level at which a repeatable waveform is still visible is the visually-determined threshold. For an objective, statistically-defined threshold across a whole study, use the offline pipeline — see [Offline Analysis](Offline-Analysis.md).
+
+## Trace Inspector
+
+**Double-click a trace** in the organizer (or select it and press `i`, or **Peaks ▸ Inspect trace…**) to open it on its own, full size, in microvolts. The stack normalizes every trace to one shared scale — that is what makes a level series readable, and what makes any single waveform too small to measure — so latencies are picked here and sent back when you are done.
+
+**Waves** are the rows of the table on the right: a name, a **search window** in ms after stimulus onset, and whether you expect a **Peak** or a **Trough** there. Waves I–V come pre-filled with starting windows; edit them to suit your preparation and they are remembered for next time.
+
+**Opening the window already picks what it can.** A trace with nothing marked yet is auto-detected the moment the inspector opens, so you see peaks immediately instead of a blank waveform waiting for a button press. Anything already placed — from an earlier pass, or wherever you have since dragged it — is left exactly where it is; only a wave still unplaced gets auto-detected.
+
+**Placing a wave:**
+
+- **Auto-detect** (or `a`) puts every enabled wave on the most prominent feature inside its own window — **including** ones already placed, so it is also how you recompute a wave after widening its window. (The automatic pass on open is narrower: it only fills waves that are still unplaced, so it can never undo a pick you already made.) A window containing no turning point at all still reports its best sample, so you can see that the window, not the response, is what needs fixing.
+- **Click the trace** with a wave row selected to place that wave where you clicked — it snaps to the nearest peak within the **Snap** distance, so "near enough" is enough.
+- **Drag a marker** to move it, or nudge the selected wave with `Left` / `Right` (`Shift` for ten samples at a time). A marker is free to leave its window; the window only tells Auto-detect where to look.
+- `Delete` clears the selected wave, `c` clears all of them.
+
+**Reading it:** the table shows each wave's latency and amplitude, and the summary underneath gives the interpeak intervals — I–II, II–III, and so on, plus the overall I–V. **Copy table** puts the same numbers on the clipboard for a spreadsheet. **Smooth** averages the view (and what Auto-detect searches) when a noisy average makes a peak hard to see; the raw trace stays drawn underneath it, and nothing smoothed is ever saved — markers are stored as positions on the real waveform. Scroll to zoom the time axis, `f` to fit it back.
+
+**Apply & Close** transfers the marked waves onto the trace in the organizer, where they appear as labelled markers and are saved with the view. **Cancel** changes nothing. Re-opening a trace you have already marked brings those waves back into the table, so a second pass edits the first.
 
 ---
 
@@ -114,6 +134,7 @@ Every command is reachable three ways — the menu bar, the right-click context 
 | `a` / `Esc` | select all / none |
 | `l` | toggle stimulus ID labels |
 | `p` / `c` | mark peaks / clear markers |
+| `i` | inspect the selected trace (same as double-clicking it) |
 | `h` / `Delete` | hide / remove selected |
 | `Ctrl+S` / `Ctrl+O` | save / load the view |
 
@@ -135,3 +156,25 @@ to.show();
 Interaction uses standard figure `WindowButtonMotionFcn`/`WindowButtonUpFcn`/`WindowKeyPressFcn` callbacks. The legacy version drove dragging through a `user32.dll` mouse hook and had a broken Group/Marker implementation; both are gone. `YSpacing` and `YScaling` set the stack separation and the fraction of it the largest waveform occupies; `NormalizeEach` switches between one common scale (amplitudes stay comparable across traces) and per-trace normalization.
 
 `tests/verify_trace_organizer.m` covers the labelling, scaling, spacing, selection, marker, keyboard, menu, and save/load behaviour with no hardware.
+
+### TraceInspector
+
+[mabr.ui.TraceInspector](../+mabr/+ui/TraceInspector.m) is the measurement window behind the organizer's double-click. It takes a `mabr.ui.Trace` — the same handle the organizer holds — and an optional callback fired after the peaks are transferred:
+
+```matlab
+insp = mabr.ui.TraceInspector(to.Traces(2),@() to.refresh());   % auto-detects on open
+insp.autoDetect();                     % recompute every enabled wave
+insp.setWindow(1,1.0,2.0,'Peak');      % name-free window edit
+insp.setWaveTime(1,1.4,true);          % place wave 1 at 1.4 ms, snapping
+insp.nudgeWave(1,+2);                  % ...or a couple of samples later
+disp(insp.results());                  % Wave / Latency_ms / Amplitude / Type
+insp.apply();                          % transfer + close
+```
+
+`TraceOrganizer.onTraceClick` branches on the figure's `SelectionType` being `'open'` and **disarms the drag that the first click of the pair armed** — otherwise the trace follows the mouse while the inspector opens. The organizer keeps at most one inspector: re-opening on the same trace raises the existing window rather than discarding the peaks placed in it, opening another trace replaces it, and removing a trace closes the inspector that was editing it.
+
+A wave is `Name` / `Enabled` / `TMin` / `TMax` (ms re onset — a `Recording`'s `TimeVector` starts at the onset, so the trace's own time base is already the right one) / `Type` / `Loc` (a sample index, `NaN` when unplaced). `autoDetect` ranks [find_peaks](../+mabr/+metrics/find_peaks.m) by **prominence** rather than taking the first hit, since inside a hand-drawn window the largest feature is the one meant; a window with no turning point at all falls back to the segment extremum rather than reporting nothing. **The constructor calls it too**, but only over `find([obj.Waves.Enabled] & isnan([obj.Waves.Loc]))` — waves still unplaced once `seedFromTrace` has restored whatever the trace already carries — so opening on a bare trace shows peaks with no button press, while nothing already picked is ever silently recomputed by an open. Calling `autoDetect()` yourself (the button, `a`) carries no such restriction and recomputes every enabled wave regardless of `Loc`, which is the intended way to re-find one after widening its window. `SmoothSpan` smooths the displayed trace and the detection together — picking a peak off one signal while showing another is a disagreement nobody catches until the numbers are wrong — with the raw trace still drawn under it.
+
+Nothing reaches the trace until `apply()`, which calls `Trace.setMarkers` with the placed waves in temporal order plus their names, then fires the callback so the organizer redraws. Because markers are sample indices, they survive the organizer's rescaling and its `.torg` round-trip. Constructing an inspector on a trace that already carries markers **seeds the table from them**, matching by name, so a second pass edits the first. Search windows (never the picks) persist in the `MABR` pref group on apply.
+
+`tests/verify_trace_inspector.m` covers detection, the fallback, click/drag/nudge placement, the smoothing guarantee, transfer-on-apply versus cancel, seeding, and the organizer wiring including the double-click itself — no hardware.

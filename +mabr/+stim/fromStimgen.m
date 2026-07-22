@@ -39,16 +39,28 @@ function set = fromStimgen(src,cfg,opts)
 %   The stimuli are copied first (StimType is matlab.mixin.Copyable), so
 %   forcing Fs never mutates the objects a live StimPlayer is showing.
 %
+%   Uncalibrated levels are made relative
+%   -------------------------------------
+%   stimgen turns dB SPL into volts inside apply_calibration, which returns
+%   immediately when no calibration is loaded -- so SoundLevel never reaches
+%   the amplitude and a 0..70 dB series arrives as eight IDENTICAL waveforms.
+%   Absolute SPL is unknowable without a measurement, but the SPACING is not:
+%   dB is a ratio. So an entirely uncalibrated bank is rescaled RELATIVE to
+%   its own loudest entry (10^(dL/20) each), and every entry records the gain
+%   it was given in LevelScale. See relativeLevels below.
+%
 %   What is deliberately dropped
 %   ----------------------------
 %   stimgen.StimPlay carries Reps, ISI and SelectionType, and StimPlayer adds
 %   its own ISI and SelectionType. MABR owns presentation -- ordering, spacing
 %   and repetition are mabr.stim.Schedule's, chosen in the GUI -- so only Reps
 %   survives, as the per-entry starting repetition count the GUI picks up.
-%   stimgen's ISI is a [min max] jitter range that Schedule's scalar ISI has no
-%   equivalent for, and collapsing it to a number would quietly misreport the
-%   bank; SelectionType duplicates Schedule.Strategy. Both are logged and
-%   ignored rather than half-honoured.
+%   Schedule now does have a [min max] jitter range of its own (ISIMode
+%   'random' + ISIRange), so stimgen's ISI could be carried across; it is
+%   still not, because the timing is the operator's setting for THIS session
+%   and loading a bank must not silently retime a schedule already configured
+%   around it. SelectionType duplicates Schedule.Strategy the same way. All of
+%   them are logged and ignored rather than half-honoured.
 %
 %   See also mabr.stim.StimulusSet, mabr.stim.Schedule, mabr.stim.stimgenAvailable.
 %
@@ -77,6 +89,14 @@ if (ischar(src) || isstring(src)) && isscalar(string(src))
         ffn,mat2str(bankISI));
 elseif isa(src,'stimgen.StimPlayer')
     items = playItems(src.StimPlayObjs);
+    if repsHidden(src)
+        % A host that hid the Reps field owns repetitions itself, so whatever
+        % the play items carry is StimPlay's default (20) rather than anyone's
+        % choice -- and 20 sweeps is not an ABR. Import it as no opinion so the
+        % GUI's own default stands. mabr.ui.App hides exactly this control.
+        for k = 1:numel(items), items(k).Reps = 0; end
+        mabr.log.vprintf(2,'fromStimgen: designer Reps hidden by the host; ignored.');
+    end
     mabr.log.vprintf(2,'fromStimgen: designer ISI %s / %s order ignored (MABR owns presentation).', ...
         mat2str(src.ISI),src.SelectionType);
 elseif isa(src,'stimgen.StimPlay')
@@ -128,6 +148,7 @@ for i = 1:numel(items)
 end
 
 entries = uniqueIDs([entries{:}]);
+entries = relativeLevels(entries);
 set = mabr.stim.StimulusSet(entries,cfg,source);
 
 mabr.log.vprintf(1,'fromStimgen: %d stimuli -> %d presentations at %g Hz.', ...
@@ -205,6 +226,48 @@ end
 end
 
 % =========================================================================
+function entries = relativeLevels(entries)
+% Scale an UNCALIBRATED bank's waveforms by level, relative to its loudest.
+%
+% stimgen converts dB SPL to volts inside apply_calibration, which returns
+% immediately when no calibration is loaded -- so SoundLevel never reaches the
+% amplitude and a level series arrives here as N identical waveforms. That is
+% the one way an uncalibrated bank misleads rather than merely under-delivering:
+% nothing in the recording says the levels did not actually differ.
+%
+% Absolute SPL is unknowable without a measurement. The SPACING is not: dB is a
+% ratio, so relative to the bank's own loudest entry every other level has a
+% defined amplitude, 10^(dL/20) of it. Applying that makes an uncalibrated
+% level series behave like one -- a growth function still grows -- while the
+% absolute axis stays uncalibrated and is labelled as such (mabr.ui.App says so
+% on adopt; the entries carry Calibrated = false either way).
+%
+% The reference is the loudest entry, never a fixed dB, and it keeps exactly
+% the amplitude stimgen normalized it to. So this can only ever ATTENUATE: no
+% bank acquires a clipping risk it did not already have, and the waveform an
+% uncalibrated bank plays at its top level is unchanged from before.
+%
+% Only when NOTHING in the bank is calibrated. Where a calibration was applied
+% the volts are already right and must not be touched, and a partly calibrated
+% bank has no single reference to be relative TO -- so it is left alone, and
+% App's warning says that instead.
+if isempty(entries) || any([entries.Calibrated]), return; end
+
+L = [entries.Level];
+if ~all(isfinite(L)) || numel(unique(L)) < 2, return; end
+
+g = 10.^((L - max(L))/20);
+for i = 1:numel(entries)
+    entries(i).signal     = single(double(entries(i).signal) .* g(i));
+    entries(i).LevelScale = g(i);
+end
+
+mabr.log.vprintf(1,['fromStimgen: uncalibrated bank -- %d levels scaled relative ' ...
+    'to %g dB (gains %s). Spacing is correct; absolute SPL is not.'], ...
+    numel(unique(L)),max(L),mat2str(unique(round(g,4))));
+end
+
+% =========================================================================
 function id = variantID(s,info,v)
 % A readable, condition-describing name: the stimulus's DisplayName followed by
 % the parameters that vary. Uniqueness is enforced afterwards by uniqueIDs.
@@ -262,6 +325,15 @@ for i = 1:numel(sp)
         items(end).Reps   = sp(i).Reps;
     end
 end
+end
+
+% =========================================================================
+function tf = repsHidden(sp)
+% True when the host application has hidden the designer's Reps field, which
+% is its way of saying it sets repetitions itself. An older stimgen with no
+% ControlVisibility never hid anything, so its Reps is still a real choice.
+tf = isprop(sp,'ControlVisibility') && isfield(sp.ControlVisibility,'Reps') ...
+     && ~sp.ControlVisibility.Reps;
 end
 
 % =========================================================================
