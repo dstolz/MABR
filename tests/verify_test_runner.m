@@ -18,9 +18,9 @@ function verify_test_runner()
 %          tests that were not ticked alone.
 %
 %   The App's Help-menu item is deliberately not checked here: constructing
-%   mabr.ui.App opens the acquisition window and both viewers, which is a
-%   lot of furniture for one uimenu -- and this file runs *inside* the window
-%   it is testing when the suite is launched from that very menu.
+%   mabr.ui.App stands up the whole acquisition window for one uimenu -- and
+%   this file runs *inside* the window it is testing when the suite is
+%   launched from that very menu.
 %
 %   The nested run uses verify_filters: it is the cheapest test in the suite
 %   that needs neither a parallel pool nor a device, so this stays quick and

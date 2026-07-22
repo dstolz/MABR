@@ -99,7 +99,7 @@ to.listenTo(controller);   % adds a trace on every AcqController BlockReady
 to.stopListening();        % detach
 ```
 
-`listenTo` tracks one controller at a time — calling it again re-points the listener rather than stacking a second one, so re-opening the view cannot duplicate traces. The handler is wrapped in a try/catch: it runs on the acquisition path, so a plotting error must never propagate back into the controller mid-schedule. New blocks are drawn without raising the figure, so an auto-update cannot steal focus from the live view. `App` wires this up when it builds the Trace Organizer at launch, and re-points it whenever the controller is rebuilt.
+`listenTo` tracks one controller at a time — calling it again re-points the listener rather than stacking a second one, so re-opening the view cannot duplicate traces. The handler is wrapped in a try/catch: it runs on the acquisition path, so a plotting error must never propagate back into the controller mid-schedule. New blocks are drawn without raising the figure, so an auto-update cannot steal focus from the live view. `App` wires this up when it builds the Trace Organizer — on the first Start or Preview, or earlier if you open it from the toolbar — and re-points it whenever the controller is rebuilt.
 
 Every command is reachable three ways — the menu bar, the right-click context menu, and the keyboard — so nothing is discoverable only by memorization; press `F1` in the figure for the shortcut list. Amplitude commands act on the current selection, or on every trace when nothing is selected. Click a trace or its label to select it, shift- or ctrl-click to extend.
 

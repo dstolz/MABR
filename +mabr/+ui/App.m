@@ -145,7 +145,6 @@ classdef App < handle
             app.syncAdvanceEnables();
             app.syncArtifactFields();
             app.syncFilterFields();
-            app.openViewers();
             if nargout == 0, clear app; end
         end
 
@@ -472,11 +471,10 @@ classdef App < handle
         end
 
         function buildToolbar(app)
-            % The acquisition viewers are always open, so their entries here
-            % are "bring to front" rather than "show" -- they reopen a window
-            % only if the user closed one. The stimulus viewer is the
-            % exception: it inspects what is about to be played rather than
-            % what is coming back, so it opens on demand. Each glyph draws
+            % Every viewer opens on demand from here. The acquisition pair also
+            % opens by itself at Start/Preview (see openViewers), so in practice
+            % these two are usually "bring to front" during a run and "show"
+            % before one. Each glyph draws
             % what its window shows -- one trace on axes, a stack of traces,
             % a loudspeaker -- so the toolbar reads without the tooltip, the
             % same convention mabr.ui.TraceOrganizer's toolbar uses.
@@ -1068,7 +1066,7 @@ classdef App < handle
                 app.LiveArtifacts = 0;
                 app.setArtifactReadout();
 
-                if isempty(app.LivePlot) || ~isvalid(app.LivePlot), app.onShowLive(); end
+                app.openViewers();
                 c.setLivePlot(app.LivePlot);
 
                 s = c.Schedule.summary();
@@ -1117,13 +1115,23 @@ classdef App < handle
         end
 
         % --- Viewer windows -------------------------------------------------
-        % Both viewers open with the app rather than on demand, so the toolbar
-        % buttons raise an existing window and only build one the user has
-        % closed. Each remembers where it was last left (mabr.ui.WindowPos).
+        % Both viewers open at Start/Preview rather than with the app: there is
+        % nothing to watch until a schedule is in flight, and launching into
+        % three windows costs the user two closes before they can even pick a
+        % subject. The toolbar buttons still open either on demand at any time.
+        % Each remembers where it was last left (mabr.ui.WindowPos).
         function openViewers(app)
-            app.onTraceOrg();
-            app.onShowLive();
-            figure(app.UIFigure);       % the main window keeps focus
+            % Called from onStart. Only a viewer whose *window* is absent is
+            % opened -- one already up is left exactly as the user arranged it,
+            % and deliberately not raised over whatever is in front of it.
+            newLive  = isempty(app.LivePlot) || ~isvalid(app.LivePlot);
+            newTrace = isempty(app.TraceOrg) || ~isvalid(app.TraceOrg) ...
+                || ~app.TraceOrg.isvalidView();
+            if newTrace, app.onTraceOrg(); end
+            if newLive,  app.onShowLive(); end
+            if newTrace || newLive
+                figure(app.UIFigure);   % the main window keeps focus
+            end
         end
 
         function onShowLive(app)

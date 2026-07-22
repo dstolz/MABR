@@ -192,18 +192,19 @@ det    = mabr.metrics.find_timing_onsets(recTim,shadow,opts.Threshold);
 % ---- Match detections to commanded onsets ---------------------------------
 % Matched by proximity rather than by ordinal position: with a dropped pulse in
 % the middle, index-wise pairing mislabels every pulse after it as late.
-tol     = period/2;
-matched = nan(nPulses,1);
-claimed = false(numel(det),1);
-for k = 1:nPulses
-    avail = find(~claimed);
-    if isempty(avail), break; end
-    [d,jj] = min(abs(det(avail) - expIdx(k)));
-    if d <= tol
-        matched(k)      = det(avail(jj));
-        claimed(avail(jj)) = true;
-    end
-end
+%
+% Proximity to WHAT, though. A device's round-trip latency can exceed one pulse
+% period -- a 40 Hz train is 25 ms apart and a USB ASIO round trip at 192 kHz is
+% comfortably more than that -- and a periodic train cannot tell a lag of L from
+% one of L+period on its own. Matching straight against expIdx therefore aliases
+% such a lag into one missed pulse and one spurious pulse at opposite ends of an
+% otherwise perfect train, with a nonsense sub-sample latency in between: a false
+% report of exactly the fault this file exists to detect, and one that gets worse
+% the higher PulseRate is swept. So resolve the whole-period part of the lag
+% first (estimate_lag) and match around expIdx+lag.
+tol   = period/2;
+lag   = estimate_lag(det,expIdx,period,round(0.25*Fs),tol);
+[matched,claimed] = match_onsets(det,expIdx + lag,tol);
 ok      = ~isnan(matched);
 nFound  = nnz(ok);
 nMissed = nPulses - nFound;
@@ -316,6 +317,11 @@ fprintf('    detected / commanded : %d / %d   (missed %d, spurious %d)\n', ...
 fprintf('    dropped-pulse gaps   : %d  (IPIs at an integer multiple of nominal)\n',nDropGaps);
 fprintf('  -- onset timing --------------------------------------------------\n');
 fprintf('    loop-back latency    : %.1f us (%g samples)\n',us(latencySamp),latencySamp);
+if abs(latencySamp) > tol
+    fprintf(['                           more than half the %.2f ms period: the train is %.2f\n' ...
+             '                           periods in flight, resolved by lag search, not proximity\n'], ...
+        1e3*nominal,latencySamp/period);
+end
 fprintf('    jitter (RMS / p-p)   : %.2f us / %.2f us\n',us(jitterRMS),us(jitterPP));
 fprintf('    clock drift          : %.2f ppm over the block\n',driftPPM);
 fprintf('  -- inter-pulse interval ------------------------------------------\n');
@@ -374,7 +380,7 @@ results = struct( ...
 % ---- Plot -------------------------------------------------------------------
 if opts.Plot
     results.Figure = draw_report(recTim,det,expIdx,segs,win,ipi,nominal,kk,err,p, ...
-        thrSweep,counts,nPulses,Fs,opts,sweepTop);
+        thrSweep,counts,nPulses,Fs,opts,sweepTop,lag);
 end
 
 % ---- Verdict ----------------------------------------------------------------
@@ -409,6 +415,65 @@ end
 
 
 % =====================================================================
+function [matched,claimed] = match_onsets(det,target,tol)
+% Greedy nearest-unclaimed pairing of detected onsets to expected ones.
+matched = nan(numel(target),1);
+claimed = false(numel(det),1);
+for k = 1:numel(target)
+    avail = find(~claimed);
+    if isempty(avail), break; end
+    [d,jj] = min(abs(det(avail) - target(k)));
+    if d <= tol
+        matched(k)         = det(avail(jj));
+        claimed(avail(jj)) = true;
+    end
+end
+end
+
+
+% =====================================================================
+function lag = estimate_lag(det,expIdx,period,maxLag,tol)
+% Resolve the whole-period part of the loop-back lag.
+%
+% Where in the period the pulses land is the same number for every detection
+% whatever that whole-period part is, so it survives dropped pulses untouched --
+% take it as a circular mean so a lag near zero does not split across the wrap.
+% That fixes the candidates to one period apart; the winner is the one pairing up
+% the most pulses. Ties go to the smallest lag, since a genuinely missing pulse at
+% one end of the train is likelier than a whole extra period of latency, and that
+% keeps a real dropout reported as a dropout.
+if isempty(det), lag = 0; return; end
+th    = 2*pi*mod(det(:) - expIdx(1),period)/period;
+r     = period*mod(angle(mean(exp(1i*th))),2*pi)/(2*pi);
+cands = round(r + period*(-1:ceil(maxLag/period)));
+cands = cands(cands >= -period/2 & cands <= maxLag);
+if isempty(cands), lag = 0; return; end
+
+score = zeros(size(cands));
+for i = 1:numel(cands)
+    score(i) = nnz(~isnan(match_onsets(det,expIdx + cands(i),tol)));
+end
+best  = find(score == max(score));
+[~,j] = min(abs(cands(best)));
+lag   = cands(best(j));
+
+% Losing a pulse at an END of the train is the one case that stays ambiguous:
+% N-1 evenly spaced pulses are equally well "1..N-1, arriving a period late" and
+% "2..N, arriving on time", and nothing in the recording distinguishes them. The
+% missed/spurious counts -- what the verdict below turns on -- come out the same
+% either way, so this is not worth a failure; the latency is not the same, so it
+% is worth saying out loud rather than reporting one of them as if it were known.
+if numel(best) > 1
+    warning('mabr:test:timing:ambiguousLag', ...
+        ['Loop-back lag is ambiguous: %s samples pair up equally well, which is ' ...
+         'what losing a pulse at one end of the train looks like. Reporting %d; ' ...
+         'the missed/spurious counts hold either way, the latency does not.'], ...
+        mat2str(cands(best)),lag);
+end
+end
+
+
+% =====================================================================
 function wait_until(pred,timeout)
 % Pause (letting DataQueue callbacks run) until pred() is true or timeout.
 t0 = tic;
@@ -420,7 +485,7 @@ end
 
 % =====================================================================
 function fig = draw_report(recTim,det,expIdx,segs,win,ipi,nominal,kk,err,p, ...
-    thrSweep,counts,nPulses,Fs,opts,sweepTop)
+    thrSweep,counts,nPulses,Fs,opts,sweepTop,lag)
 
 fig = figure('Name',sprintf('Timing loop-back @ %g Hz',opts.PulseRate), ...
     'Color','w','Position',[80 80 1180 780]);
@@ -448,8 +513,10 @@ title(ax,sprintf('Recovered timing channel (envelope) — %d onsets detected',nu
 ax = nexttile(tl,2);
 nz  = min(5,nPulses);
 per = expIdx(2)-expIdx(1);
-lo  = max(1,expIdx(1) - round(0.25*per));
-hi  = min(numel(recTim),expIdx(min(nz,numel(expIdx))) + round(0.5*per));
+% Shifted by the resolved lag, or a loop-back slower than one period puts every
+% detected pulse outside the window and the panel shows only the commanded grid.
+lo  = max(1,expIdx(1) + min(0,lag) - round(0.25*per));
+hi  = min(numel(recTim),expIdx(min(nz,numel(expIdx))) + max(0,lag) + round(0.5*per));
 idx = (lo:max(lo,hi))';
 plot(ax,1e3*idx/Fs,recTim(idx),'-','Color',[0.25 0.45 0.75],'LineWidth',1); hold(ax,'on');
 % One xline per commanded onset: vector-valued xline is not available on the
