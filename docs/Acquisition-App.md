@@ -91,8 +91,11 @@ Shuffling only reorders — it never resamples. Every stimulus is presented exac
 |---------|----------|
 | All Repetitions | Play every scheduled repetition |
 | Correlation Threshold | Stop as soon as the online response correlation reaches the threshold, subject to a minimum sweep count |
+| Custom… | Prompts for your own criterion `.m` file (see below) |
 
-The threshold field (0 to 1, 0.5 is a reasonable starting point) is enabled only when the correlation criterion is selected.
+The threshold field (0 to 1, 0.5 is a reasonable starting point) is enabled for the correlation criterion and for a custom one, which reads it as `ctx.corrThreshold`.
+
+**Custom criteria.** Picking **Custom…** opens a file browser; choose a function that takes one context struct and returns a single logical (`true` = stop the run). MABR puts its folder on the path and checks it against the contract before accepting it — a malformed function is refused at selection, not mid-run. Once chosen it appears in the dropdown as `Custom: <name>` and is remembered by file in a saved configuration. Copy [`+mabr/+stim/+advance/custom_template.m`](../+mabr/+stim/+advance/custom_template.m) to get the signature and available `ctx` fields right; see [Extending](Extending.md#defining-when-a-run-ends) for the full field list.
 
 **Correlation early-stop is available for blocked strategies only.** When you pick an intermixed strategy the Advance control greys out: a correlation computed across mixed conditions is not meaningful, and stopping such a run would truncate whichever stimuli happened to fall last in the sequence, unbalancing the design. Those runs always play to completion.
 

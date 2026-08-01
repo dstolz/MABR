@@ -115,40 +115,55 @@ Two constraints worth knowing:
 
 ## Defining when a run ends
 
-An advance criterion is a **pure predicate over a context struct**:
+An advance criterion is a **pure predicate over a context struct** — one stereotyped input, one stereotyped output:
 
 ```matlab
-function done = my_criterion(ctx)
+function done = my_criterion(ctx)   % ctx in, a single logical out
 ```
 
-`AcqController` calls it on every live tick with a context built from `AdvanceParams` plus the current `numSweeps` and `corr`. Return `true` to end the run; the controller sends `Stop` and the worker halts within one frame.
+The contract is defined in one place, [mabr.stim.advance.context](../+mabr/+stim/+advance/context.m), which builds the `ctx` every criterion is called under by merging your tuning **parameters** (from `AdvanceParams`) with the **live metrics** the controller recomputes each ~20 Hz tick. Return `true` to end the run; the controller sends `Stop` and the worker halts within one frame.
+
+| `ctx` field | Kind | Meaning |
+|-------------|------|---------|
+| `numSweeps` | metric | **clean** sweeps averaged so far (artifact-rejected ones excluded) — the count to reason about, since it is what the average is built from |
+| `numTotal` | metric | all sweeps acquired so far, including rejected ones |
+| `numArtifacts` | metric | sweeps rejected as artifact so far |
+| `corr` | metric | running onset-contrast correlation, 0..1 ([partition_corr](../+mabr/+metrics/partition_corr.m)) |
+| `elapsedSeconds` | metric | wall-clock seconds since the run began streaming |
+| `targetSweeps` | param | the scheduled repetition count — the hard ceiling |
+| `corrThreshold` | param | the GUI's threshold field |
+| `minSweeps` | param | sweeps required before the criterion may fire |
+| `maxSweeps` | param | optional hard cap below `targetSweeps` |
+
+Any extra field you add to `AdvanceParams` arrives in `ctx` too, so a criterion can carry its own knobs. Read only the fields you use.
 
 **Criteria only run for blocked strategies.** An intermixed run pools sweeps from different conditions, so a correlation over it is meaningless, and stopping it early would truncate whichever stimuli happened to fall last in the sequence. `AcqController` therefore skips the criterion entirely when `Schedule.isIntermixed()` is true, and the GUI disables the control. Those runs always play to completion.
 
-Two are supplied:
+Three are supplied — the first two wired to the GUI dropdown, the third a copy-me stereotype:
 
 - [num_sweeps](../+mabr/+stim/+advance/num_sweeps.m) — `ctx.numSweeps >= ctx.targetSweeps`.
 - [corr_threshold](../+mabr/+stim/+advance/corr_threshold.m) — `ctx.corr >= ctx.corrThreshold` after `ctx.minSweeps`, or `ctx.numSweeps >= ctx.maxSweeps`.
+- [custom_template](../+mabr/+stim/+advance/custom_template.m) — the full contract as comments, plus a worked body; start here.
 
-A custom one, stopping on SNR with a hard cap:
+A custom one, adding a wall-clock budget to the correlation criterion:
 
 ```matlab
-function done = snr_threshold(ctx)
-    minN = 64;
-    done = (ctx.numSweeps >= minN && ctx.snr >= ctx.snrTarget) || ...
-            ctx.numSweeps >= ctx.maxSweeps;
+function done = corr_or_timeout(ctx)
+    hitCorr    = ctx.numSweeps >= ctx.minSweeps && ctx.corr >= ctx.corrThreshold;
+    ranTooLong = ctx.elapsedSeconds >= ctx.maxSeconds;   % your own knob
+    done = hitCorr || ranTooLong || ctx.numSweeps >= ctx.maxSweeps;
 end
 ```
 
 ```matlab
-c.AdvanceFcn    = @snr_threshold;
-c.AdvanceParams = struct('snrTarget',10,'maxSweeps',2048, ...
+c.AdvanceFcn    = @corr_or_timeout;
+c.AdvanceParams = struct('maxSeconds',120,'maxSweeps',2048, ...
                          'targetSweeps',2048,'corrThreshold',0.5,'minSweeps',64);
 ```
 
 Two rules. **Always include a hard cap** — a criterion that never fires runs until the scheduled repetitions are exhausted. And **keep it cheap and side-effect-free**: it runs 20 times a second on the GUI thread. If you need a metric the controller does not compute, add it to `live_tick_body` from a [+metrics](../+mabr/+metrics/) function rather than recomputing it inside the predicate.
 
-To expose a new criterion in the GUI, add it to the `AdvanceDrop` items and the mapping in `App.onStart`.
+**Selecting one from the GUI.** The Acquisition panel's **Advance** dropdown has a **Custom…** item: pick it, choose your function's `.m` file, and MABR puts its folder on the path and checks it against the contract with [mabr.stim.advance.validate](../+mabr/+stim/+advance/validate.m) before accepting it (a malformed one is refused there and then, not 20 times a second mid-run). The choice is remembered by file in a saved [configuration](Acquisition-App.md), so it re-resolves next session. Driving `AcqController.AdvanceFcn` directly (as above) skips the GUI entirely.
 
 ## Building a different front end
 

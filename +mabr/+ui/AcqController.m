@@ -105,6 +105,10 @@ classdef AcqController < handle
         CurMetrics (1,1) struct = struct('numSweeps',0,'numArtifacts',0, ...
                                          'numClean',0,'corr',0);
         BlockStart (1,:) char = '';
+        % tic reference for the run currently streaming, so an advance
+        % criterion can reason in wall-clock seconds (ctx.elapsedSeconds).
+        % 0 until the first run of a session begins.
+        RunStartTic (1,1) uint64 = uint64(0);
         CurRun     (1,1) double = 0;    % index of the run being acquired
         CurSeq     (1,:) double = [];   % stimulus index at each of its onsets
         CurPol     (1,:) double = [];   % polarity (+1/-1) at each of its onsets
@@ -320,6 +324,7 @@ classdef AcqController < handle
             obj.CurMetrics = struct('numSweeps',0,'numArtifacts',0, ...
                                     'numClean',0,'corr',0);
             obj.BlockStart = char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss'));
+            obj.RunStartTic = tic;
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot), obj.LivePlot.reset(); end
 
             spec = obj.Schedule.renderSpec(r);
@@ -618,13 +623,28 @@ classdef AcqController < handle
         end
 
         function tf = advance_met(obj)
-            ctx = obj.AdvanceParams;
-            % Count the sweeps that will actually be averaged: a criterion
-            % asking for 512 sweeps, or for a correlation over at least
-            % minSweeps of them, means clean ones.
-            ctx.numSweeps = obj.CurMetrics.numClean;
-            ctx.corr      = obj.CurMetrics.corr;
-            tf = obj.AdvanceFcn(ctx);
+            % Build the canonical context (mabr.stim.advance.context is the
+            % authoritative field list) from the user's parameters plus the
+            % current live metrics, and hand it to whatever criterion is set
+            % -- num_sweeps, corr_threshold, or a custom function the user
+            % selected in the GUI. numSweeps is the CLEAN count, since that is
+            % what the average is built from: a criterion asking for 512
+            % sweeps, or for a correlation over at least minSweeps of them,
+            % means clean ones.
+            live = struct( ...
+                'numSweeps',     obj.CurMetrics.numClean, ...
+                'numTotal',      obj.CurMetrics.numSweeps, ...
+                'numArtifacts',  obj.CurMetrics.numArtifacts, ...
+                'corr',          obj.CurMetrics.corr, ...
+                'elapsedSeconds',obj.run_elapsed());
+            ctx = mabr.stim.advance.context(obj.AdvanceParams,live);
+            tf  = obj.AdvanceFcn(ctx);
+        end
+
+        function s = run_elapsed(obj)
+            % Seconds since the current run began streaming, for a criterion
+            % that wants a time budget. 0 before the first run of a session.
+            if obj.RunStartTic == 0, s = 0; else, s = toc(obj.RunStartTic); end
         end
 
         % --- Finalization / save -------------------------------------------

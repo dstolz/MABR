@@ -105,6 +105,18 @@ classdef App < handle
         RepsButton
         AdvanceDrop
         CorrField
+        % A user-selected custom advance function, once one has been chosen
+        % through the dropdown's "Custom…" item. The handle is resolved from
+        % the picked .m file (its folder added to the path) and validated
+        % against the mabr.stim.advance contract before it is accepted; the
+        % file path is what a configuration saves, so it can be re-resolved on
+        % load rather than serialising a fragile handle. LastAdvanceValue is
+        % the last good, non-sentinel dropdown selection, used to fall back
+        % when a Custom… pick is cancelled or rejected.
+        CustomAdvanceFcn  = []
+        CustomAdvanceName (1,:) char = ''
+        CustomAdvanceFile (1,:) char = ''
+        LastAdvanceValue  (1,:) char = 'All Repetitions'
         ArtifactDrop
         ArtifactField
         ArtifactRepeatCheck
@@ -392,9 +404,11 @@ classdef App < handle
             % disabled for intermixed strategies (see syncAdvanceEnables).
             app.addLabel(g,'Advance',1,1);
             app.AdvanceDrop = uidropdown(g, ...
-                'Items',{'All Repetitions','Correlation Threshold'}, ...
-                'Tooltip','When a run ends: after every repetition, or once the response is reproducible enough.', ...
-                'ValueChangedFcn',@(~,~) app.onAdvanceChanged());
+                'Items',{'All Repetitions','Correlation Threshold','Custom…'}, ...
+                'Tooltip',['When a run ends: after every repetition, once the response is ' ...
+                           'reproducible enough, or by your own criterion. "Custom…" prompts ' ...
+                           'for a function file — see +mabr/+stim/+advance/custom_template.m.'], ...
+                'ValueChangedFcn',@(~,~) app.onAdvanceSelected());
             app.AdvanceDrop.Layout.Row = 1; app.AdvanceDrop.Layout.Column = 2;
             % The threshold field is captioned by its own display format --
             % as a bare "0.50" beside a dropdown it read as an orphan.
@@ -731,6 +745,12 @@ classdef App < handle
             cfg.Strategy      = app.StrategyDrop.Value;
             cfg.Advance       = app.AdvanceDrop.Value;
             cfg.CorrThreshold = app.CorrField.Value;
+            % A custom criterion is saved as its FILE, not its handle: a path
+            % re-resolves across sessions and MABR versions where a serialised
+            % handle (with its captured workspace) would not. cfg.Advance
+            % above already holds the "Custom: <name>" label to reselect.
+            cfg.AdvanceCustomFile = app.CustomAdvanceFile;
+            cfg.AdvanceCustomName = app.CustomAdvanceName;
             cfg.ISIRandom     = app.JitterCheck.Value;
             cfg.ISI_ms        = app.ISIField.Value;
             cfg.ISIMin_ms     = app.ISIMinField.Value;
@@ -763,6 +783,12 @@ classdef App < handle
             if isfield(cfg,'Strategy') && any(strcmp(cfg.Strategy,mabr.stim.Schedule.Strategies))
                 app.StrategyDrop.Value = cfg.Strategy;
             end
+            % Re-resolve a saved custom criterion first, so its "Custom: <name>"
+            % item is back in the dropdown before the Advance value below tries
+            % to select it. Defensive throughout: a moved, deleted, or
+            % no-longer-conforming file leaves the custom item simply absent,
+            % and the Advance restore then falls through to a built-in.
+            warn = app.applyConfigCustomAdvance(cfg,warn);
             app.syncAdvanceEnables();   % re-derives Advance/Corr for the (maybe new) strategy
             % Early stop is meaningless for an intermixed strategy (see
             % syncAdvanceEnables), so a saved 'Correlation Threshold' is only
@@ -860,6 +886,41 @@ classdef App < handle
                 end
                 app.Reps = r;
                 if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
+            end
+        end
+
+        function warn = applyConfigCustomAdvance(app,cfg,warn)
+            % Re-resolve the custom advance function a configuration was saved
+            % with, restoring its dropdown item so cfg.Advance can select it.
+            % Returns the (possibly appended) one-line warning -- see
+            % applyConfiguration. A missing/moved/malformed file is not an
+            % error: the item is simply not restored and the Advance value
+            % falls through to a built-in.
+            if ~isfield(cfg,'AdvanceCustomFile') || isempty(cfg.AdvanceCustomFile)
+                return
+            end
+            file = char(cfg.AdvanceCustomFile);
+            [pn,nm,ext] = fileparts(file);
+            note = '';
+            if ~isfile(file) || ~strcmpi(ext,'.m')
+                note = ['Configuration''s custom advance function could not be found at "' ...
+                        file '"; the built-in criterion is used instead.'];
+            else
+                app.addToPath(pn);
+                fcn = str2func(nm);
+                [ok,why] = mabr.stim.advance.validate(fcn);
+                if ok
+                    app.CustomAdvanceFcn  = fcn;
+                    app.CustomAdvanceName = nm;
+                    app.CustomAdvanceFile = file;
+                    app.ensureCustomItem(nm);
+                else
+                    note = ['Configuration''s custom advance function "' nm ...
+                            '" no longer conforms (' why '); the built-in criterion is used.'];
+                end
+            end
+            if ~isempty(note)
+                if isempty(warn), warn = note; else, warn = [warn ' ' note]; end
             end
         end
 
@@ -1079,10 +1140,108 @@ classdef App < handle
             uialert(app.UIFigure,msg,'Uncalibrated bank','Icon','warning');
         end
 
+        function onAdvanceSelected(app)
+            % The dropdown's ValueChangedFcn: only fired by a genuine user
+            % pick, so this is the one place the "Custom…" file picker may
+            % open. Everything programmatic (syncAdvanceEnables, config load)
+            % calls onAdvanceChanged directly and never trips a dialog.
+            if strcmp(app.AdvanceDrop.Value,'Custom…')
+                app.chooseCustomAdvance();
+            end
+            app.onAdvanceChanged();
+        end
+
         function onAdvanceChanged(app)
-            isCorr    = strcmp(app.AdvanceDrop.Value,'Correlation Threshold');
+            v         = app.AdvanceDrop.Value;
+            isCorr    = strcmp(v,'Correlation Threshold');
+            isCustom  = startsWith(v,'Custom: ');
             canEarly  = ~mabr.stim.Schedule.strategyIntermixes(app.StrategyDrop.Value);
-            app.CorrField.Enable = onOff(isCorr && canEarly);
+            % The threshold field feeds AdvanceParams.corrThreshold, which the
+            % correlation criterion reads directly and a custom one may read
+            % too, so it is live for either — but never for plain "All
+            % Repetitions", nor once the strategy intermixes and early stop
+            % is off entirely.
+            app.CorrField.Enable = onOff((isCorr || isCustom) && canEarly);
+            % Remember the last real selection so a cancelled/rejected Custom…
+            % pick has somewhere to fall back to.
+            if ~strcmp(v,'Custom…'), app.LastAdvanceValue = v; end
+        end
+
+        function chooseCustomAdvance(app)
+            % Prompt for a .m advance function, resolve it to a handle, and
+            % accept it only if it conforms to the contract. On cancel or
+            % rejection the dropdown falls back to the last good selection, so
+            % the sentinel is never left standing as the live value.
+            [fn,pn] = uigetfile({'*.m','MATLAB function (*.m)'}, ...
+                'Select a custom advance function');
+            figure(app.UIFigure);
+            if isequal(fn,0), app.revertAdvanceSelection(); return; end
+
+            file = fullfile(pn,fn);
+            [dn,name] = fileparts(file);        % dn has no trailing separator
+            app.addToPath(dn);
+            fcn = str2func(name);
+            [ok,why] = mabr.stim.advance.validate(fcn);
+            if ~ok
+                uialert(app.UIFigure, sprintf(['"%s" is not a valid advance function.\n\n%s' ...
+                    '\n\nAn advance function takes one context struct and returns a single ' ...
+                    'logical (true = stop the run early). Copy ' ...
+                    '+mabr/+stim/+advance/custom_template.m to get the contract right.'], ...
+                    name,why),'Invalid advance function');
+                app.revertAdvanceSelection();
+                return
+            end
+
+            app.CustomAdvanceFcn  = fcn;
+            app.CustomAdvanceName = name;
+            app.CustomAdvanceFile = file;
+            label = app.ensureCustomItem(name);
+            app.AdvanceDrop.Value = label;
+            app.LastAdvanceValue  = label;
+            app.setStatus(sprintf('Custom advance function: %s',name));
+        end
+
+        function label = ensureCustomItem(app,name)
+            % Make sure a "Custom: <name>" item exists just before the
+            % "Custom…" sentinel, replacing any previous custom item. Returns
+            % the label so callers can select it. Setting Value/Items
+            % programmatically does NOT fire ValueChangedFcn, so this never
+            % re-enters the picker.
+            label = ['Custom: ' name];
+            app.AdvanceDrop.Items = ...
+                {'All Repetitions','Correlation Threshold',label,'Custom…'};
+        end
+
+        function addToPath(~,folder)
+            % Put a custom function's folder on the MATLAB path so str2func
+            % can resolve it by name, but only when it is not already there --
+            % a redundant addpath needlessly reorders the path.
+            if isempty(folder), return; end
+            if ~any(strcmp(folder,regexp(path,pathsep,'split')))
+                addpath(folder);
+            end
+        end
+
+        function revertAdvanceSelection(app)
+            % Back to the last non-sentinel selection. If that was itself a
+            % custom item that no longer exists (never chosen), the base list
+            % has no such entry, so fall back to "All Repetitions".
+            v = app.LastAdvanceValue;
+            if ~any(strcmp(v,app.AdvanceDrop.Items)), v = 'All Repetitions'; end
+            app.AdvanceDrop.Value = v;
+        end
+
+        function fcn = currentAdvanceFcn(app)
+            % Map the dropdown's current selection to the criterion handle
+            % onStart hands the controller.
+            v = app.AdvanceDrop.Value;
+            if strcmp(v,'Correlation Threshold')
+                fcn = @mabr.stim.advance.corr_threshold;
+            elseif startsWith(v,'Custom: ') && ~isempty(app.CustomAdvanceFcn)
+                fcn = app.CustomAdvanceFcn;
+            else
+                fcn = @mabr.stim.advance.num_sweeps;
+            end
         end
 
         function onStrategyChanged(app)
@@ -1495,11 +1654,7 @@ classdef App < handle
                 c.Schedule.build();
                 c.Session.Device = app.Audio.Device;
 
-                if strcmp(app.AdvanceDrop.Value,'Correlation Threshold')
-                    c.AdvanceFcn = @mabr.stim.advance.corr_threshold;
-                else
-                    c.AdvanceFcn = @mabr.stim.advance.num_sweeps;
-                end
+                c.AdvanceFcn = app.currentAdvanceFcn();
                 p = c.AdvanceParams;
                 p.corrThreshold = app.CorrField.Value;
                 c.AdvanceParams = p;
