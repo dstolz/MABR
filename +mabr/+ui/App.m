@@ -88,6 +88,7 @@ classdef App < handle
         HelpMenu
         TestMenuItem
         Toolbar
+        AlwaysOnTopTool
         Grid
         SubjectField
         OutputField
@@ -152,6 +153,12 @@ classdef App < handle
         % written. Set at Start and left alone until the next one, so the
         % completion message can still say the run was not saved.
         Previewing (1,1) logical = false
+        % True while the schedule now running is stimulation-only (playback
+        % and timing pulse, nothing recorded). Captured at Start for the same
+        % reason as Previewing: mabr.AudioSettings is the setting, but the
+        % setting can be changed once the schedule settles, and what the Run
+        % panel is describing is the run.
+        StimOnlyRun (1,1) logical = false
     end
 
     methods
@@ -197,6 +204,9 @@ classdef App < handle
             app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 700], ...
                 'CloseRequestFcn',@(~,~) app.onClose());
             mabr.ui.WindowPos.restore(app.UIFigure,'MABR',app.UIFigure.Position);
+            if getpref('MABR','AlwaysOnTop',false)
+                app.UIFigure.WindowStyle = 'alwaysontop';
+            end
 
             app.FileMenu = uimenu(app.UIFigure,'Text','&File');
             app.SaveConfigMenuItem = uimenu(app.FileMenu,'Text','Save Configuration…', ...
@@ -555,7 +565,29 @@ classdef App < handle
             app.toolButton('live',  ink, 'Live plot',        @() app.onShowLive());
             app.toolButton('traces',ink, 'Trace organizer',  @() app.onTraceOrg());
             app.toolButton('stim',  ink, 'Stimulus viewer',  @() app.onStimViewer());
+
+            onTop = strcmp(app.UIFigure.WindowStyle,'alwaysontop');
+            app.AlwaysOnTopTool = uitoggletool(app.Toolbar,'Separator','on', ...
+                'CData',mabr.ui.Icon.fromArt(mabr.ui.App.glyph('pin'),ink), ...
+                'State',matlab.lang.OnOffSwitchState(onTop), ...
+                'Tooltip','Keep the MABR window on top of other windows', ...
+                'ClickedCallback',@(src,~) app.onAlwaysOnTop(src));
+
             app.toolButton('help',  help,'Help (MABR wiki)', @() app.openHelp(),true);
+        end
+
+        function onAlwaysOnTop(app,src)
+            % 'alwaysontop' is a documented uifigure WindowStyle value as of
+            % R2021a -- MABR's minimum (R2021b) already covers it, so no
+            % undocumented Java/CEF trick is needed. Persisted like the other
+            % per-rig prefs (mabr.AudioSettings etc.) so it survives restart.
+            onTop = src.State == matlab.lang.OnOffSwitchState.on;
+            if onTop
+                app.UIFigure.WindowStyle = 'alwaysontop';
+            else
+                app.UIFigure.WindowStyle = 'normal';
+            end
+            setpref('MABR','AlwaysOnTop',onTop);
         end
 
         function toolButton(app,glyph,rgb,tip,fcn,sep)
@@ -1592,6 +1624,7 @@ classdef App < handle
             sch.Device           = app.Audio.Device;
             sch.PlayerChannels   = app.Audio.PlayerChannels;
             sch.RecorderChannels = app.Audio.RecorderChannels;
+            sch.StimulationOnly  = app.Audio.isStimulationOnly();
             sch.build();
         end
 
@@ -1614,10 +1647,13 @@ classdef App < handle
             % callback for tens of seconds (parallel pool + worker handshake),
             % and nothing here is safe to re-enter meanwhile. The engine
             % reports each startup milestone into the status line as it goes.
-            app.Previewing = preview;
-            app.setRunTitle(preview);
+            app.Previewing  = preview;
+            app.StimOnlyRun = app.Audio.isStimulationOnly();
+            app.setRunTitle(preview || app.StimOnlyRun);
             if preview
                 app.setBusy('Starting preview…');
+            elseif app.StimOnlyRun
+                app.setBusy('Starting stimulation…');
             else
                 app.setBusy('Starting…');
             end
@@ -1651,6 +1687,7 @@ classdef App < handle
                 c.Schedule.Device           = app.Audio.Device;
                 c.Schedule.PlayerChannels   = app.Audio.PlayerChannels;
                 c.Schedule.RecorderChannels = app.Audio.RecorderChannels;
+                c.Schedule.StimulationOnly  = app.Audio.StimulationOnly;
                 c.Schedule.build();
                 c.Session.Device = app.Audio.Device;
 
@@ -1665,8 +1702,24 @@ classdef App < handle
                 app.LiveArtifacts = 0;
                 app.setArtifactReadout();
 
-                app.openViewers();
-                c.setLivePlot(app.LivePlot);
+                % Nothing is recorded in stimulation-only mode, so there is
+                % nothing for either viewer to show and no live plot for the
+                % controller to feed -- opening them would put up two empty
+                % windows that never fill. Run progress is reported in the
+                % Run panel instead (see setRunProgress).
+                if app.StimOnlyRun
+                    c.setLivePlot(mabr.ui.LivePlot.empty);
+                    app.setRunReadout();
+                else
+                    app.openViewers();
+                    c.setLivePlot(app.LivePlot);
+                    % Clear whatever the last run left here -- a preceding
+                    % stimulation-only schedule leaves run progress and "no
+                    % recording" in place, which would be a lie until the
+                    % first live tick overwrites them.
+                    app.SweepLabel.Text = 'Sweeps: 0';
+                    app.CorrLabel.Text  = 'r = —';
+                end
 
                 s = c.Schedule.summary();
                 kind = 'schedule'; if preview, kind = 'preview (nothing will be saved)'; end
@@ -1858,10 +1911,16 @@ classdef App < handle
             [c,txt] = stateAppearance(e.State);
             app.StateLamp.Color = c;
             app.StateLabel.Text = txt;
-            % A preview is indistinguishable from a real run everywhere else,
-            % so the panel title carries the warning for as long as one is in
-            % flight, and drops it once the schedule settles.
-            app.setRunTitle(app.Previewing && ~isTerminal(e.State));
+            % A preview -- and a stimulation-only run -- is indistinguishable
+            % from a real one everywhere else, so the panel title carries the
+            % warning for as long as one is in flight, and drops it once the
+            % schedule settles.
+            app.setRunTitle((app.Previewing || app.StimOnlyRun) && ~isTerminal(e.State));
+            % Stimulation only runs no live timer, so onMetrics never fires and
+            % these two readouts would otherwise sit frozen on whatever the
+            % previous run left in them. Run progress is the one thing that
+            % moves, and every state transition is where it moves.
+            if app.StimOnlyRun, app.setRunReadout(); end
             switch e.State
                 case {mabr.ui.ProgState.SchedComplete, mabr.ui.ProgState.Idle, mabr.ui.ProgState.Error}
                     app.transport(false);
@@ -1896,7 +1955,9 @@ classdef App < handle
         end
 
         function onScheduleComplete(app)
-            if app.Previewing
+            if app.StimOnlyRun
+                app.setStatus('Stimulation complete — nothing was recorded or written.');
+            elseif app.Previewing
                 app.setStatus('Preview complete — no files were written.');
             else
                 app.setStatus('Schedule complete.');
@@ -1995,12 +2056,40 @@ classdef App < handle
             drawnow limitrate
         end
 
-        function setRunTitle(app,preview)
-            if preview
+        function setRunTitle(app,banner)
+            % `banner` is true while a run that needs one is in flight. Which
+            % banner is decided here, not by the caller: stimulation only wins
+            % over preview, because it is the stronger statement -- a preview
+            % acquires everything and merely declines to write it, while
+            % stimulation only never records at all.
+            if banner && app.StimOnlyRun
+                app.RunPanel.Title = 'Run — STIMULATION ONLY (no recording)';
+            elseif banner
                 app.RunPanel.Title = 'Run — PREVIEW (nothing is saved)';
             else
                 app.RunPanel.Title = 'Run';
             end
+        end
+
+        function setRunReadout(app)
+            % The Sweeps / r readouts in the Run panel, repurposed for a
+            % stimulation-only schedule. There are no sweeps and no
+            % correlation to report there -- nothing is recorded, and
+            % AcqController never starts the live timer that normally writes
+            % these -- so they carry run progress instead, which is the only
+            % thing that moves.
+            n = 0; r = 0;
+            if ~isempty(app.Controller) && isvalid(app.Controller) && ...
+                    ~isempty(app.Controller.Schedule)
+                sch = app.Controller.Schedule;
+                n   = sch.NumRuns;
+                r   = sch.current();
+                % current() is 0 once the plan is exhausted; the run that
+                % finished it was the last one.
+                if r == 0 && n > 0, r = n; end
+            end
+            app.SweepLabel.Text = sprintf('Run %d/%d',r,n);
+            app.CorrLabel.Text  = 'no recording';
         end
 
         function setSourceLabel(app)
@@ -2085,6 +2174,23 @@ classdef App < handle
                             '.....XXX.X...X..'
                             '......XX....X...'
                             '.......X...X....'
+                            '................'
+                            '................'
+                            '................'};
+                case 'pin'       % pushpin: keep window on top
+                    rows = {'................'
+                            '.......XXXX....'
+                            '......XXXXXX...'
+                            '......XXXXXX...'
+                            '......XXXXXX...'
+                            '.......XXXX....'
+                            '........XX.....'
+                            '........XX.....'
+                            '........XX.....'
+                            '........XX.....'
+                            '........XX.....'
+                            '.......XXXX....'
+                            '................'
                             '................'
                             '................'
                             '................'};

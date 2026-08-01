@@ -25,6 +25,13 @@ classdef AcqController < handle
 %   index, so each stimulus ID still becomes its own mabr.data.Block and its
 %   own .abr file regardless of how the presentation was ordered.
 %
+%   Schedule.StimulationOnly (from mabr.AudioSettings) removes the recording
+%   half of all of that: the worker opens an output-only device, so start()
+%   skips the loop-back self-test, no live timer runs, and a completed run is
+%   not finalized -- no Block, no BlockReady/BlockSaved, no .abr. The plan
+%   still advances run by run to SchedComplete, which is all there is to
+%   report when nothing is coming back.
+%
 %   Artifact rejection is DECIDED at that same finalization, which is why the
 %   Artifacts policy is settable at any time, including mid-acquisition: the
 %   live path holds no verdict of its own. It does preview one — live_tick_body
@@ -241,21 +248,26 @@ classdef AcqController < handle
                 'No stimuli set. Call setStimuli() first.');
             assert(obj.Schedule.NumRuns > 0,'mabr:ui:AcqController:emptySchedule', ...
                 'The schedule is empty — every stimulus has 0 repetitions.');
-            audioCfg = struct('Device',obj.Schedule.Device, ...
-                'PlayerChannels',obj.Schedule.PlayerChannels, ...
-                'RecorderChannels',obj.Schedule.RecorderChannels);
-            obj.TimingVerified = ~isempty(obj.VerifiedAudioConfig) && ...
-                isequal(obj.VerifiedAudioConfig,audioCfg);
-            if ~obj.TimingVerified
-                if ~obj.verifyTimingLoop()
-                    error('mabr:ui:AcqController:timingNotDetected', ...
-                        ['Timing pulse not detected on the loop-back input during the ' ...
-                         'pre-run check. Check that the timing output channel is physically ' ...
-                         'wired to the timing input channel (default channel 2 to channel 2) ' ...
-                         'and that the loop-back level is not excessively attenuated.']);
+            % Stimulation only has no input side at all -- the worker opens an
+            % output-only audioDeviceWriter -- so there is no loop-back to
+            % verify and requiring one would make the mode impossible to use.
+            if ~obj.Schedule.StimulationOnly
+                audioCfg = struct('Device',obj.Schedule.Device, ...
+                    'PlayerChannels',obj.Schedule.PlayerChannels, ...
+                    'RecorderChannels',obj.Schedule.RecorderChannels);
+                obj.TimingVerified = ~isempty(obj.VerifiedAudioConfig) && ...
+                    isequal(obj.VerifiedAudioConfig,audioCfg);
+                if ~obj.TimingVerified
+                    if ~obj.verifyTimingLoop()
+                        error('mabr:ui:AcqController:timingNotDetected', ...
+                            ['Timing pulse not detected on the loop-back input during the ' ...
+                             'pre-run check. Check that the timing output channel is physically ' ...
+                             'wired to the timing input channel (default channel 2 to channel 2) ' ...
+                             'and that the loop-back level is not excessively attenuated.']);
+                    end
+                    obj.VerifiedAudioConfig = audioCfg;
+                    obj.TimingVerified = true;
                 end
-                obj.VerifiedAudioConfig = audioCfg;
-                obj.TimingVerified = true;
             end
             obj.HaltAfterBlock = false;
             obj.Schedule.reset();
@@ -424,7 +436,12 @@ classdef AcqController < handle
             switch e.State
                 case mabr.acq.State.Acquire
                     obj.set_state(mabr.ui.ProgState.Acquire);
-                    obj.start_timer();
+                    % Nothing is recorded in stimulation-only mode, so there
+                    % is nothing for the live timer to read out of the ring
+                    % buffer; run progress comes from the state transitions.
+                    if ~obj.Schedule.StimulationOnly
+                        obj.start_timer();
+                    end
                 % Ready / Paused / Idle need no program-state change here
             end
         end
@@ -442,20 +459,27 @@ classdef AcqController < handle
                 obj.LastRunStimulus = obj.CurSeq(1);
             end
 
-            try
-                [files,blocks] = obj.finalize_run();
-                % Announce the blocks themselves first: a viewer should get the
-                % data whether or not the session is writing files.
-                for i = 1:numel(blocks)
-                    notify(obj,'BlockReady',mabr.ui.ProgStateEventData( ...
-                        obj.State,struct('block',blocks(i))));
+            % Stimulation only records nothing, so there is nothing to
+            % finalize: no sweeps to extract, no Block to build, no .abr to
+            % write, and nothing to announce to a viewer. The schedule-advance
+            % tail below still runs -- the plan must drive itself to
+            % completion exactly as it would with a recording attached.
+            if ~obj.Schedule.StimulationOnly
+                try
+                    [files,blocks] = obj.finalize_run();
+                    % Announce the blocks themselves first: a viewer should get the
+                    % data whether or not the session is writing files.
+                    for i = 1:numel(blocks)
+                        notify(obj,'BlockReady',mabr.ui.ProgStateEventData( ...
+                            obj.State,struct('block',blocks(i))));
+                    end
+                    for i = 1:numel(files)
+                        notify(obj,'BlockSaved',mabr.ui.ProgStateEventData( ...
+                            obj.State,struct('file',files{i})));
+                    end
+                catch me
+                    mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
                 end
-                for i = 1:numel(files)
-                    notify(obj,'BlockSaved',mabr.ui.ProgStateEventData( ...
-                        obj.State,struct('file',files{i})));
-                end
-            catch me
-                mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
             end
 
             if obj.HaltAfterBlock

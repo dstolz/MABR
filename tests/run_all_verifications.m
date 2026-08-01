@@ -25,6 +25,10 @@ function run_all_verifications()
 %                                  entry, regenerated at the DAC rate, and the
 %                                  waveform matching its own label. SKIPS when
 %                                  the external/stimgen submodule is absent.
+%       verify_stimulation_only  - playback + timing pulse with no recording:
+%                                  the setting, the flag on the render spec,
+%                                  and a schedule that runs to completion with
+%                                  no loop-back, no blocks, and no files
 %       verify_timing_selftest   - pre-run timing loop-back self-test does
 %                                  not regress a normal Start
 %       verify_timing_loopback   - timing pulse recovery: count, jitter, clock
@@ -52,7 +56,7 @@ tests = {@verify_isi_jitter, ...
          @verify_artifact_rejection, @verify_filters, ...
          @verify_live_plot, @verify_trace_organizer, @verify_trace_inspector, ...
          @verify_audio_settings, ...
-         @verify_stimgen_import, ...
+         @verify_stimgen_import, @verify_stimulation_only, ...
          @verify_timing_selftest, @verify_timing_loopback, @verify_test_runner};
 
 nPass = 0;

@@ -25,6 +25,8 @@ function worker_loop(rootPath,resultQueue,testing)
 %                 SampleRate        (Hz)
 %                 PlayerChannels    [1x2] device output channels  (default [1 2])
 %                 RecorderChannels  [1x2] device input channels   (default [1 2])
+%                 StimulationOnly   (optional) true = open an output-only
+%                                   audioDeviceWriter and record nothing
 %                 Device            (optional) ASIO device name
 %       worker -> client : struct('type',...) — see send_* helpers below.
 %
@@ -141,6 +143,11 @@ N  = size(X,1);
 % frames and the requested ISI means nothing in wall-clock terms. The client
 % sets this to one frame's duration to make TESTING run at real time.
 testDelay = getdef(spec,'TestingFrameDelay',0);
+% Playback only: the device is an output-only audioDeviceWriter, so there is
+% a real sample clock pacing the loop but no returned frame to record. The
+% ring buffer is still reset below (harmless, and it keeps the write head
+% honest for whatever runs next).
+stimOnly  = getdef(spec,'StimulationOnly',false) && ~testing;
 
 rb.reset();                    % new block: clear write head, bump BlockSeq
 send_state(resultQueue,mabr.acq.State.Acquire);
@@ -179,13 +186,19 @@ while i <= N
     if testing
         % Hardware-free loopback: DAC -> ADC with a trace of noise.
         audioADC = [frame(:,1) + randn(size(frame,1),1,'single')/1e6, frame(:,2)];
+        rb.writeFrame(audioADC(:,1),audioADC(:,2));
+    elseif stimOnly
+        % Output only: both columns (signal AND timing pulse) go out, the
+        % device clock paces the loop, and nothing comes back to record.
+        nUnder = apr(frame);
+        if nUnder, mabr.log.vprintf(0,'# Underruns = %d',nUnder); end
     else
         [audioADC,nUnder,nOver] = apr(frame);
         if nUnder, mabr.log.vprintf(0,'# Underruns = %d',nUnder); end
         if nOver,  mabr.log.vprintf(0,'# Overruns = %d',nOver);   end
+        rb.writeFrame(audioADC(:,1),audioADC(:,2));
     end
 
-    rb.writeFrame(audioADC(:,1),audioADC(:,2));
     i = hi + 1;
 
     if testing && testDelay > 0
@@ -218,8 +231,18 @@ end
 
 % =====================================================================
 function apr = prepare_device(apr,spec,testing)
-% Build/refresh the audioPlayerRecorder for a prepared block. In testing
-% mode no device is created.
+% Build/refresh the audio device for a prepared block. Three modes, in
+% precedence order:
+%
+%   testing          no device at all (stream_block loops the DAC frame back)
+%   StimulationOnly  an OUTPUT-ONLY audioDeviceWriter -- playback and the
+%                    timing pulse, nothing recorded. A separate class rather
+%                    than an audioPlayerRecorder whose input is ignored, so
+%                    the mode also runs on hardware with no input channels.
+%   otherwise        the full-duplex audioPlayerRecorder
+%
+% release() works for both device classes, so switching modes between runs
+% needs nothing special here.
 if testing
     apr = [];
     return
@@ -229,17 +252,35 @@ if ~isempty(apr) && isvalid(apr), release(apr); end
 
 player   = getdef(spec,'PlayerChannels',  [1 2]);
 recorder = getdef(spec,'RecorderChannels',[1 2]);
+stimOnly = getdef(spec,'StimulationOnly', false);
 
-args = {'SampleRate',spec.SampleRate, ...
-        'PlayerChannelMapping',player, ...
-        'RecorderChannelMapping',recorder, ...
-        'BitDepth','32-bit float'};
+if stimOnly
+    % Driver must be named explicitly: audioDeviceWriter defaults to
+    % DirectSound on Windows, where audioPlayerRecorder is ASIO-only. The
+    % Device name here came off the ASIO device list (see
+    % mabr.AudioSettings.availableDevices), so anything else would fail to
+    % resolve it -- and DirectSound would not honour 192 kHz besides.
+    args = {'SampleRate',spec.SampleRate, ...
+            'Driver','ASIO', ...
+            'ChannelMappingSource','Property', ...
+            'ChannelMapping',player, ...
+            'BitDepth','32-bit float'};
+else
+    args = {'SampleRate',spec.SampleRate, ...
+            'PlayerChannelMapping',player, ...
+            'RecorderChannelMapping',recorder, ...
+            'BitDepth','32-bit float'};
+end
 
 if isfield(spec,'Device') && ~isempty(spec.Device)
     args = [args, {'Device',spec.Device}];
 end
 
-apr = audioPlayerRecorder(args{:});
+if stimOnly
+    apr = audioDeviceWriter(args{:});
+else
+    apr = audioPlayerRecorder(args{:});
+end
 end
 
 

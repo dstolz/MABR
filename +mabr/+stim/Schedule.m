@@ -127,6 +127,15 @@ classdef Schedule < handle
         PlayerChannels   (1,2) double = [1 2]   % [DACsignal DACtiming]
         RecorderChannels (1,2) double = [1 2]   % [ADCsignal ADCtiming]
         Device           (1,:) char   = ''
+
+        % Playback + timing pulse, nothing recorded (mabr.AudioSettings.
+        % StimulationOnly). Unlike Testing -- which is baked into the worker at
+        % parfeval time -- this rides per-block in the render spec, because
+        % worker_loop's prepare_device rebuilds the device on every Prep. The
+        % play matrix is unaffected: both columns are still emitted, since the
+        % timing pulse is as much an output as the signal.
+        StimulationOnly  (1,1) logical = false
+
         TestingFrameDelay (1,1) double = 0      % s/frame; loopback pacing, tests only
 
         % Ceiling on artifact make-up (see appendMakeup), as a multiple of each
@@ -517,6 +526,7 @@ classdef Schedule < handle
             spec.Polarity          = pol(:);      % +1/-1 applied at each onset
             spec.PlayerChannels    = obj.PlayerChannels;
             spec.RecorderChannels  = obj.RecorderChannels;
+            spec.StimulationOnly   = obj.StimulationOnly;
             spec.TestingFrameDelay = obj.TestingFrameDelay;
             spec.Meta              = obj.Set.meta(seq(1));
             if ~isempty(obj.Device), spec.Device = obj.Device; end
