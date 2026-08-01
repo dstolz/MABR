@@ -490,7 +490,7 @@ classdef Schedule < handle
 
                 t = obj.Set.timing(i);
                 if isempty(t)
-                    timing(i0) = 1;
+                    timing(i0:i1) = 1;
                 else
                     timing(i0:i1) = max(timing(i0:i1),t);
                 end
