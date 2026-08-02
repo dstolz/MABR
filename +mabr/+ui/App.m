@@ -33,6 +33,11 @@ classdef App < handle
             'Interleaved — A B C A B C …', ...
             'Interleaved, shuffled each cycle', ...
             'Fully shuffled'};
+
+        % Stamped on the UIFigure so a second launch can find the first
+        % instance's window rather than opening a duplicate onto the same
+        % rig/audio device -- see the constructor's single-instance guard.
+        InstanceTag = 'MABR_App_Instance';
     end
 
     properties (SetAccess = private)
@@ -176,6 +181,18 @@ classdef App < handle
 
     methods
         function app = App()
+            % Only one MABR window may be open at a time -- a second one
+            % would fight the first over the same ASIO device (the worker
+            % holds it open for the run) and over the same MATLAB prefs.
+            % Detected by the figure itself, not a stored handle, so a
+            % stale reference can never mask a window the user already
+            % closed.
+            existing = findall(groot,'Type','figure','Tag',mabr.ui.App.InstanceTag);
+            if ~isempty(existing)
+                figure(existing(1));
+                error('mabr:ui:App:alreadyOpen', ...
+                    'MABR is already open -- bringing the existing window to the front.');
+            end
             app.Config = mabr.Config;
             try
                 app.Config.verifyToolboxes(true);
@@ -216,6 +233,7 @@ classdef App < handle
     methods (Access = private)
         function createComponents(app)
             app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 700], ...
+                'Tag',mabr.ui.App.InstanceTag, ...
                 'CloseRequestFcn',@(~,~) app.onClose());
             mabr.ui.WindowPos.restore(app.UIFigure,'MABR',app.UIFigure.Position);
             if getpref('MABR','AlwaysOnTop',false)
