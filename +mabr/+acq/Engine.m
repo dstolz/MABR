@@ -18,6 +18,11 @@ classdef Engine < handle
 %       BlockCompleted - the current block finished (or was stopped)
 %       WorkerError    - the worker reported an error (.Identifier/.Message)
 %
+%   The worker is named by its Role in every message it appears in --
+%   "acquisition worker" while it is recording, "stimulus worker" while it is
+%   only playing out (mabr.AudioSettings.StimulationOnly). The label follows
+%   what the run actually does; it changes nothing about how the worker runs.
+%
 %   Typical use:
 %       eng = mabr.acq.Engine(cfg,testing);
 %       eng.waitUntilReady();          % one-time worker handshake
@@ -34,6 +39,30 @@ classdef Engine < handle
         State     (1,1) mabr.acq.State = mabr.acq.State.Idle
         WorkerPID (1,1) double = -1
         RingBuffer               % read-only mabr.acq.RingBuffer
+
+        % What this worker is currently DOING, for every message that names it:
+        % 'acquisition' (playback + recording) or 'stimulus' (playback only --
+        % mabr.AudioSettings.StimulationOnly, where nothing is recorded and
+        % calling it an acquisition worker is simply untrue). Purely a label:
+        % it changes no behaviour, and the mode itself rides per block in the
+        % render spec (see mabr.stim.Schedule.StimulationOnly). Set at
+        % construction and re-set by mabr.ui.AcqController.start, since one
+        % controller -- and therefore one worker -- is reused across runs that
+        % may switch modes between them.
+        Role      (1,:) char = 'acquisition'
+
+        % What the worker reported about the last block it streamed:
+        %   .samples  play-matrix samples actually emitted
+        %   .reason   'completed' | 'stopped' | 'killed'
+        % Cleared at each prep. In stimulation-only mode nothing comes back
+        % through the ring buffer, so this is the only record of how far
+        % through a run that was stopped early the presentation actually got
+        % (see mabr.ui.AcqController's stimulation log).
+        LastStream (1,1) struct = struct('samples',0,'reason','')
+    end
+
+    properties (Dependent)
+        WorkerName   % 'acquisition worker' / 'stimulus worker'
     end
 
     properties (Access = private)
@@ -52,13 +81,16 @@ classdef Engine < handle
     end
 
     methods
-        function obj = Engine(cfg,testing,progressFcn)
+        function obj = Engine(cfg,testing,progressFcn,role)
             % progressFcn (optional) is called with a char status message at
             % each startup milestone so a UI can show what is happening while
             % the pool spins up (that can take tens of seconds).
+            % role (optional) labels the worker in those messages and in the
+            % log -- see the Role property and setRole.
             if nargin < 1 || isempty(cfg), cfg = mabr.Config; end
             if nargin < 2 || isempty(testing), testing = false; end
             if nargin >= 3 && ~isempty(progressFcn), obj.Progress = progressFcn; end
+            if nargin >= 4 && ~isempty(role), obj.Role = mabr.acq.Engine.checkRole(role); end
             obj.Config  = cfg;
             obj.Testing = logical(testing);
 
@@ -82,8 +114,8 @@ classdef Engine < handle
             obj.ResultQueue = parallel.pool.DataQueue;
             obj.MsgListener = afterEach(obj.ResultQueue,@(m) obj.on_worker_message(m));
 
-            obj.report('Launching acquisition worker…');
-            mabr.log.vprintf(1,'Launching acquisition worker (testing = %d)',obj.Testing);
+            obj.report('Launching %s…',obj.WorkerName);
+            mabr.log.vprintf(1,'Launching %s (testing = %d)',obj.WorkerName,obj.Testing);
             obj.Future = parfeval(obj.Pool,@mabr.acq.worker_loop,0, ...
                 mabr.Config.root,obj.ResultQueue,obj.Testing);
         end
@@ -92,6 +124,23 @@ classdef Engine < handle
             try, obj.kill(); end %#ok<TRYNC>
             try, delete(obj.MsgListener); end %#ok<TRYNC>
             try, cancel(obj.Future); end %#ok<TRYNC>
+        end
+
+        function n = get.WorkerName(obj)
+            n = [obj.Role ' worker'];
+        end
+
+        function setRole(obj,role)
+            % Re-label a worker that is already running. The same process
+            % streams whatever the next spec asks of it, so switching between
+            % recording and stimulation only does not (and must not) restart
+            % it -- but every message about it from here on should say which
+            % of the two it is doing. Logged on change, since "the worker" in
+            % a log is otherwise silently two different things.
+            role = mabr.acq.Engine.checkRole(role);
+            if strcmp(role,obj.Role), return; end
+            obj.Role = role;
+            mabr.log.vprintf(1,'Worker re-labelled: %s (PID %d)',obj.WorkerName,obj.WorkerPID);
         end
 
         % --- Lifecycle ------------------------------------------------------
@@ -108,16 +157,19 @@ classdef Engine < handle
                 end
                 if toc(t0) - lastReport >= 1
                     lastReport = toc(t0);
-                    obj.report('Waiting for worker handshake… (%.0f s of %.0f)', ...
-                        lastReport,timeout);
+                    obj.report('Waiting for the %s handshake… (%.0f s of %.0f)', ...
+                        obj.WorkerName,lastReport,timeout);
                 end
                 pause(0.05);   % lets the afterEach handshake callback run
             end
             tf = ~isempty(obj.CmdQueue);
-            if tf, obj.report('Worker ready (PID %d).',obj.WorkerPID); end
+            if tf
+                obj.report('%s ready (PID %d).', ...
+                    mabr.acq.Engine.capitalize(obj.WorkerName),obj.WorkerPID);
+            end
             if ~tf
                 error('mabr:acq:Engine:handshakeTimeout', ...
-                    'Timed out waiting for the acquisition worker handshake.');
+                    'Timed out waiting for the %s handshake.',obj.WorkerName);
             end
         end
 
@@ -129,6 +181,10 @@ classdef Engine < handle
         function prep(obj,blockSpec)
             % Arm the worker with a pre-rendered block (2-channel play matrix
             % + parameters). See mabr.acq.worker_loop for the payload shape.
+            % The previous block's stream report belongs to the previous block:
+            % clear it here so nothing downstream can mistake a stale count for
+            % this block's.
+            obj.LastStream = struct('samples',0,'reason','');
             obj.send_cmd(mabr.acq.Cmd.Prep,blockSpec);
         end
 
@@ -184,6 +240,12 @@ classdef Engine < handle
                     obj.elevate_priority();
                     mabr.log.vprintf(1,'Worker handshake received (PID %d)',obj.WorkerPID);
 
+                case 'streamed'
+                    % Always arrives before the Completed state that raises
+                    % BlockCompleted, so a listener on that event can read it.
+                    obj.LastStream = struct('samples',double(msg.samples), ...
+                                            'reason',char(msg.reason));
+
                 case 'state'
                     prev = obj.State;
                     obj.State = msg.state;
@@ -212,6 +274,20 @@ classdef Engine < handle
     end
 
     methods (Static)
+        function role = checkRole(role)
+            % Only the two the worker can actually be doing. A typo here would
+            % otherwise reach the log and a status line as though it meant
+            % something.
+            role = lower(char(role));
+            assert(ismember(role,{'acquisition','stimulus'}), ...
+                'mabr:acq:Engine:badRole', ...
+                'Worker role must be ''acquisition'' or ''stimulus'' (got "%s").',role);
+        end
+
+        function s = capitalize(s)
+            if ~isempty(s), s(1) = upper(s(1)); end
+        end
+
         function pool = ensure_pool(progressFcn)
             % Reuse an existing 1-process pool or create one.
             if nargin < 1 || isempty(progressFcn), progressFcn = @(~) []; end

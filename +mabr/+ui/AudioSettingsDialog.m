@@ -1,10 +1,26 @@
-function settings = AudioSettingsDialog(settings0,cfg)
+function settings = AudioSettingsDialog(settings0,cfg,applyFcn)
 % mabr.ui.AudioSettingsDialog  Modal editor for Testing (loopback) mode, the
 % ASIO device, and the channel mapping.
 %
 %   s = mabr.ui.AudioSettingsDialog(s0,cfg) opens a small modal window over a
-%   mabr.AudioSettings and returns the edited settings, or [] if the user
-%   cancelled.
+%   mabr.AudioSettings and returns the last COMMITTED settings, or [] if
+%   nothing was committed.
+%
+%   s = mabr.ui.AudioSettingsDialog(s0,cfg,applyFcn) additionally calls
+%   applyFcn(settings) each time Commit is pressed. The dialog stays open, so
+%   the owner (mabr.ui.App.applyAudioSettings) can take the new parameters
+%   straight away and re-derive the main window from them -- which matters
+%   most for Stimulation only, where committing takes the entire Acquisition
+%   panel out of play. Seeing that happen while the dialog is still open is
+%   the point: the consequence of the checkbox is visible at the moment it is
+%   committed, rather than only after the window is gone and cannot be put
+%   back without reopening it.
+%
+%   Commit / Cancel rather than OK / Cancel because the two are no longer the
+%   same act: Commit applies and leaves the dialog up, Cancel closes. Commit
+%   greys out when the controls match what was last committed (nothing to
+%   apply), and Cancel then reads 'Close', since there is nothing left to
+%   cancel back to -- edits already committed have been applied and stand.
 %
 %   Testing (loopback, no hardware) lives at the top: it decides whether a
 %   device is opened at all (mabr.acq.worker_loop's prepare_device creates
@@ -32,9 +48,11 @@ function settings = AudioSettingsDialog(settings0,cfg)
 
 if nargin < 1 || isempty(settings0), settings0 = mabr.AudioSettings; end
 if nargin < 2 || isempty(cfg),       cfg = mabr.Config; end
+if nargin < 3,                       applyFcn = []; end
 
-settings = [];                       % [] unless OK is pressed
-devices  = mabr.AudioSettings.availableDevices();
+settings  = [];                      % [] unless Commit is pressed
+committed = [];                      % what the controls last agreed with
+devices   = mabr.AudioSettings.availableDevices();
 
 % ---- layout -------------------------------------------------------------
 fig = uifigure('Name','Audio Device (ASIO)','Position',[100 100 440 452], ...
@@ -56,10 +74,14 @@ testCheck = uicheckbox(g,'Text','Testing (loopback, no hardware)', ...
 testCheck.Layout.Row = 1; testCheck.Layout.Column = [1 3];
 
 % Row 2: stimulation-only mode -- a real output device, but nothing recorded
+stimCheckTooltip = ['Play the signal and timing pulse through an output-only device. ' ...
+    'Nothing is recorded, no loop-back cable is needed, and no .abr files are ' ...
+    'written — each run instead saves the sequence it played to a .stimlog ' ...
+    'file, so it can be lined up with whatever did the recording. The whole ' ...
+    'Acquisition panel is disabled while this is set.'];
 stimCheck = uicheckbox(g,'Text','Stimulation only (no recording / no loop-back)', ...
     'Value',settings0.StimulationOnly && ~settings0.Testing, ...
-    'Tooltip',['Play the signal and timing pulse through an output-only device. ' ...
-               'Nothing is recorded, no loop-back cable is needed, and no .abr files are written.'], ...
+    'Tooltip',stimCheckTooltip, ...
     'ValueChangedFcn',@(~,~) onStimOnlyChanged());
 stimCheck.Layout.Row = 2; stimCheck.Layout.Column = [1 3];
 
@@ -155,10 +177,11 @@ noteLbl.Layout.Row = 9; noteLbl.Layout.Column = [1 3];
 msgLbl = uilabel(g,'Text','','FontColor',[0.8 0.2 0]);
 msgLbl.Layout.Row = 10; msgLbl.Layout.Column = [1 3];
 
-% Row 11: transport
-okBtn = uibutton(g,'Text','OK','BackgroundColor',[0.6 0.9 0.6], ...
-    'FontWeight','bold','ButtonPushedFcn',@(~,~) onOK());
-okBtn.Layout.Row = 11; okBtn.Layout.Column = 2;
+% Row 11: transport. Commit applies without closing (see the header), so the
+% pair is Commit/Cancel rather than OK/Cancel.
+commitBtn = uibutton(g,'Text','Commit','BackgroundColor',[0.6 0.9 0.6], ...
+    'FontWeight','bold','ButtonPushedFcn',@(~,~) onCommit());
+commitBtn.Layout.Row = 11; commitBtn.Layout.Column = 2;
 cancelBtn = uibutton(g,'Text','Cancel','ButtonPushedFcn',@(~,~) onCancel());
 cancelBtn.Layout.Row = 11; cancelBtn.Layout.Column = 3;
 
@@ -166,7 +189,14 @@ if isempty(devices)
     msgLbl.Text = 'No ASIO devices found -- check the driver is installed and selected.';
 end
 
+% The controls were just filled from settings0, so reading them back is the
+% NORMALIZED starting point (readControls reconciles StimulationOnly against
+% Testing) -- which is what the dirty comparison has to be against, or a
+% settings0 holding both flags would show as pending the moment it opened.
+committed = readControls();
+
 syncTestingEnable();
+syncCommitEnable();
 
 uiwait(fig);
 
@@ -214,6 +244,15 @@ uiwait(fig);
         onoff    = onOff(~testing);
         inputs   = onOff(~testing && ~stimOnly);
         stimCheck.Enable  = onoff;
+        if testing
+            % Explains the grey-out rather than leaving it to be discovered:
+            % without this, checking the box while Testing is still on looks
+            % like the setting silently failed to take, or failed to persist,
+            % rather than that it was never live in the first place.
+            stimCheck.Tooltip = 'Disabled while Testing (loopback, no hardware) is set -- turn that off first.';
+        else
+            stimCheck.Tooltip = stimCheckTooltip;
+        end
         devDrop.Enable    = onoff;
         refreshBtn.Enable = onoff;
         plSig.Enable = onoff; plTim.Enable = onoff;
@@ -232,15 +271,40 @@ uiwait(fig);
         end
     end
 
+    function syncCommitEnable()
+        % Commit is live only while the controls disagree with what was last
+        % committed -- greyed, it says "nothing pending" without a word.
+        %
+        % Cancel is re-labelled by the same test, because what it means
+        % depends on it: with an edit pending it cancels that edit, and with
+        % none it is simply Close. Calling it Cancel in the second case would
+        % imply committed settings are about to be undone, which they are not
+        % -- they have already been applied.
+        working = readControls();
+        dirty   = ~isequal(working.toStruct(),committed.toStruct());
+        commitBtn.Enable = onOff(dirty);
+        if dirty
+            commitBtn.Tooltip = 'Apply these settings now. The dialog stays open.';
+            cancelBtn.Text    = 'Cancel';
+            cancelBtn.Tooltip = 'Close, discarding the changes not yet committed.';
+        else
+            commitBtn.Tooltip = 'No changes to apply.';
+            cancelBtn.Text    = 'Close';
+            cancelBtn.Tooltip = 'Close. Everything shown here has been applied.';
+        end
+    end
+
     function onTestingChanged()
         if ~isgraphics(fig), return; end
         syncTestingEnable();
+        syncCommitEnable();
         probeLbl.Text = '';
     end
 
     function onStimOnlyChanged()
         if ~isgraphics(fig), return; end
         syncTestingEnable();
+        syncCommitEnable();
         probeLbl.Text = '';
     end
 
@@ -248,16 +312,20 @@ uiwait(fig);
         if ~isgraphics(fig), return; end
         msgLbl.Text = '';
         probeLbl.Text = '';
+        syncCommitEnable();
     end
 
     function onRefresh()
         devices = mabr.AudioSettings.availableDevices();
         setDeviceItems(devices,devDrop.Value);
         if isempty(devices)
-            msgLbl.Text = 'No ASIO devices found -- check the driver is installed and selected.';
+            setMessage('No ASIO devices found -- check the driver is installed and selected.',false);
         else
-            msgLbl.Text = '';
+            setMessage('',false);
         end
+        % A refresh can drop the selected device off the list, which
+        % setDeviceItems falls back from -- that is an edit like any other.
+        syncCommitEnable();
     end
 
     function onProbe()
@@ -272,16 +340,45 @@ uiwait(fig);
         end
     end
 
-    function onOK()
-        settings = readControls();
+    function onCommit()
+        % Apply, and stay open. The owner's applyFcn is what actually updates
+        % the parameters and re-derives the main window from them, so a failure
+        % there leaves the edit uncommitted rather than reporting a success the
+        % app never had.
+        working = readControls();
+        if ~isempty(applyFcn)
+            try
+                applyFcn(working);
+            catch me
+                setMessage(sprintf('Could not apply: %s',me.message),false);
+                return
+            end
+        end
+        committed = working;
+        settings  = working;
+        % The one-line status row is too narrow for describe(), and the app's
+        % own status line already carries it (applyAudioSettings), so the
+        % summary goes in the tooltip rather than being clipped here.
+        setMessage('Committed.',true);
+        msgLbl.Tooltip = working.describe();
+        syncCommitEnable();
+    end
+
+    function onCancel()
+        % `settings` is left exactly as the last Commit set it (or [] if there
+        % never was one): an edit still pending is discarded, but anything
+        % already committed has been applied and stands.
         mabr.ui.WindowPos.remember(fig,'AudioSettingsDialog');
         delete(fig);
     end
 
-    function onCancel()
-        settings = [];
-        mabr.ui.WindowPos.remember(fig,'AudioSettingsDialog');
-        delete(fig);
+    function setMessage(txt,good)
+        msgLbl.Text = txt;
+        if good
+            msgLbl.FontColor = [0 0.5 0];
+        else
+            msgLbl.FontColor = [0.8 0.2 0];
+        end
     end
 end
 

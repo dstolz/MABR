@@ -88,6 +88,7 @@ classdef App < handle
         HelpMenu
         TestMenuItem
         Toolbar
+        LiveTool
         AlwaysOnTopTool
         Grid
         SubjectField
@@ -118,6 +119,14 @@ classdef App < handle
         CustomAdvanceName (1,:) char = ''
         CustomAdvanceFile (1,:) char = ''
         LastAdvanceValue  (1,:) char = 'All Repetitions'
+        % The Acquisition panel itself, so its title can say when nothing in
+        % it applies -- a greyed control says "not now", a greyed panel with a
+        % reason in its title says why (see syncAcquisitionEnables).
+        AcqPanel
+        % The theme's own panel-title colour, captured at build time so
+        % syncAcquisitionEnables can grey the header and put it back without
+        % hard-coding either value (it is not the same in every MATLAB theme).
+        AcqPanelFG (1,3) double = [0 0 0]
         ArtifactDrop
         ArtifactField
         ArtifactRepeatCheck
@@ -159,6 +168,10 @@ classdef App < handle
         % setting can be changed once the schedule settles, and what the Run
         % panel is describing is the run.
         StimOnlyRun (1,1) logical = false
+        % .stimlog files written by the schedule now running, so the completion
+        % message can say what a stimulation-only session actually left behind.
+        % Zeroed at Start alongside the artifact tallies.
+        StimLogsWritten (1,1) double = 0
     end
 
     methods
@@ -175,9 +188,10 @@ classdef App < handle
             rc = getpref('MABR','RecentConfigFiles',{});
             if iscell(rc), app.RecentConfigs = rc; end
             app.createComponents();
-            app.syncAdvanceEnables();
-            app.syncArtifactFields();
-            app.syncFilterFields();
+            % Covers syncAdvanceEnables/syncArtifactFields/syncFilterFields --
+            % the acquisition controls have one more thing to be derived from
+            % than themselves (see syncAcquisitionEnables).
+            app.syncAcquisitionEnables();
             app.syncISIFields();
             app.syncRecentConfigsMenu();
             if nargout == 0, clear app; end
@@ -290,7 +304,8 @@ classdef App < handle
             app.addLabel(g,'Output',2,1);
             app.OutputField = uidropdown(g,'Editable','on', ...
                 'Items',app.loadHistory('Output',{pwd}), ...
-                'Tooltip','Folder for .abr files, one per condition. Leave empty to record without saving.');
+                'Tooltip',['Folder for .abr files, one per condition — or, under stimulation ' ...
+                           'only, .stimlog files, one per run. Leave empty to run without saving.']);
             app.OutputField.Value = app.OutputField.Items{1};
             app.OutputField.Layout.Row = 2; app.OutputField.Layout.Column = 2;
             app.BrowseButton = uibutton(g,'Text','Browse…','ButtonPushedFcn',@(~,~) app.onBrowse());
@@ -409,6 +424,11 @@ classdef App < handle
 
         function buildAcquisitionPanel(app,row)
             g = app.panelGrid('Acquisition',row,{24,24,24,24},{app.LabelWidth,'1x','1x'});
+            % Kept so the whole panel can say when none of it applies: every
+            % control below judges, stops, or displays a RECORDING, and a
+            % stimulation-only run has none (see syncAcquisitionEnables).
+            app.AcqPanel   = g.Parent;
+            app.AcqPanelFG = app.AcqPanel.ForegroundColor;
 
             % Early stop only applies to a run holding one stimulus, so this is
             % disabled for intermixed strategies (see syncAdvanceEnables).
@@ -562,7 +582,10 @@ classdef App < handle
             help = [0.35 0.35 0.35];
 
             app.Toolbar = uitoolbar(app.UIFigure);
-            app.toolButton('live',  ink, 'Live plot',        @() app.onShowLive());
+            % The live view is the one tool that has nothing to show in
+            % stimulation-only mode, so it is also the one kept as a handle
+            % (see syncAcquisitionEnables).
+            app.LiveTool = app.toolButton('live',ink,'Live plot',@() app.onShowLive());
             app.toolButton('traces',ink, 'Trace organizer',  @() app.onTraceOrg());
             app.toolButton('stim',  ink, 'Stimulus viewer',  @() app.onStimViewer());
 
@@ -590,10 +613,10 @@ classdef App < handle
             setpref('MABR','AlwaysOnTop',onTop);
         end
 
-        function toolButton(app,glyph,rgb,tip,fcn,sep)
+        function h = toolButton(app,glyph,rgb,tip,fcn,sep)
             if nargin < 6, sep = false; end
             sepStr = 'off'; if sep, sepStr = 'on'; end
-            uipushtool(app.Toolbar,'Tooltip',tip,'Separator',sepStr, ...
+            h = uipushtool(app.Toolbar,'Tooltip',tip,'Separator',sepStr, ...
                 'CData',mabr.ui.Icon.fromArt(mabr.ui.App.glyph(glyph),rgb), ...
                 'ClickedCallback',@(~,~) fcn());
         end
@@ -863,6 +886,11 @@ classdef App < handle
                 app.Audio = mabr.AudioSettings.fromStruct(cfg.Audio);
                 mabr.AudioSettings.savePrefs(app.Audio);
             end
+            % Last, and unconditionally: a restored Audio can put the app into
+            % stimulation only, which disables the entire Acquisition panel --
+            % including the artifact and filter controls the two blocks above
+            % just re-enabled from the same file.
+            app.syncAcquisitionEnables();
 
             app.checkOverlap();
             app.refreshPlan();
@@ -958,10 +986,18 @@ classdef App < handle
 
         % --- Controller lifecycle ------------------------------------------
         function ensureController(app)
-            testing = app.Audio.Testing;
+            testing  = app.Audio.Testing;
+            stimOnly = app.Audio.isStimulationOnly();
             if ~isempty(app.Controller) && isvalid(app.Controller) ...
                     && app.Controller.Testing == testing
-                app.setStatus('Reusing the running acquisition worker.');
+                % The mode rides per block, so a worker built for one is
+                % reused for the other -- but it is re-labelled for what it is
+                % about to do (mabr.acq.Engine.setRole, from AcqController's
+                % start), and the message says which it is being reused as.
+                app.Controller.Engine.setRole( ...
+                    mabr.ui.AcqController.workerRole(stimOnly));
+                app.setStatus(['Reusing the running ' ...
+                    app.Controller.Engine.WorkerName '.']);
                 return
             end
             % (Re)build for the selected mode.
@@ -974,7 +1010,7 @@ classdef App < handle
             % Startup is slow (parallel pool + worker handshake), so the
             % engine reports each milestone straight into the status line.
             app.Controller = mabr.ui.AcqController(app.Config,testing, ...
-                @(msg) app.setStatus(msg));
+                @(msg) app.setStatus(msg),stimOnly);
             app.Listeners = [ ...
                 addlistener(app.Controller,'StateChanged',   @(~,e) app.onState(e)); ...
                 addlistener(app.Controller,'MetricsUpdated', @(~,e) app.onMetrics(e)); ...
@@ -987,7 +1023,8 @@ classdef App < handle
                 app.TraceOrg.listenTo(app.Controller);
             end
             app.Controller.waitUntilReady(120);
-            app.setStatus('Worker ready.');
+            app.setStatus([mabr.acq.Engine.capitalize( ...
+                app.Controller.Engine.WorkerName) ' ready.']);
         end
 
         % --- Button callbacks ----------------------------------------------
@@ -1290,6 +1327,13 @@ classdef App < handle
             % Early stop is unavailable once a run mixes stimuli: stopping it
             % would truncate whichever stimuli fell last in the sequence.
             % Called from transport() too, so it must not touch the status line.
+            if app.Audio.isStimulationOnly()
+                % Nothing is recorded, so there is no running average for a
+                % criterion to look at -- every run plays out in full.
+                app.AdvanceDrop.Enable = 'off';
+                app.CorrField.Enable   = 'off';
+                return
+            end
             if mabr.stim.Schedule.strategyIntermixes(app.StrategyDrop.Value)
                 app.AdvanceDrop.Value  = 'All Repetitions';
                 app.AdvanceDrop.Enable = 'off';
@@ -1358,14 +1402,73 @@ classdef App < handle
                     app.ArtifactField.ValueDisplayFormat = 'RMS > %.4g mV';
                     app.ArtifactField.Value = 1e3*p.RMSThreshold;
             end
-            app.ArtifactDrop.Enable        = 'on';
-            app.ArtifactField.Enable       = onOff(p.Enabled);
-            app.ArtifactRepeatCheck.Enable = onOff(p.Enabled);
+            % Artifact rejection judges recorded sweeps, of which a
+            % stimulation-only run has none: the criterion, its threshold, and
+            % the make-up runs it would append all have nothing to act on.
+            live = ~app.Audio.isStimulationOnly();
+            app.ArtifactDrop.Enable        = onOff(live);
+            app.ArtifactField.Enable       = onOff(live && p.Enabled);
+            app.ArtifactRepeatCheck.Enable = onOff(live && p.Enabled);
             app.ArtifactRepeatCheck.Value  = p.Repeat;
         end
 
         function saveArtifactPrefs(app)
             mabr.ArtifactPolicy.savePrefs(app.Artifacts);
+        end
+
+        % --- Stimulation only ------------------------------------------------
+        function syncAcquisitionEnables(app)
+            % Stimulation only (mabr.AudioSettings.StimulationOnly) opens an
+            % output-only device and records NOTHING, so every acquisition
+            % setting is inapplicable rather than merely unwise: an advance
+            % criterion has no running average to watch, an artifact threshold
+            % no sweep to judge, a filter chain nothing to draw. The three
+            % sync* functions each grey their own controls (they are called
+            % from transport() and would put them back otherwise); this puts
+            % the reason on the panel, where a greyed control cannot.
+            %
+            % The live-plot toolbar button goes with them: in this mode the
+            % controller is handed no LivePlot at all, so the window it opens
+            % would never fill. The trace organizer stays -- it can still load
+            % a saved .torg view, which has nothing to do with this run.
+            stimOnly = app.Audio.isStimulationOnly();
+            if stimOnly
+                app.AcqPanel.Title = 'Acquisition — n/a (STIMULATION ONLY)';
+            else
+                app.AcqPanel.Title = 'Acquisition';
+            end
+            app.LiveTool.Enable = onOff(~stimOnly);
+            % Advance is a CONFIG control: it is dead for the duration of a
+            % schedule whatever the mode, and transport() owns putting it back
+            % when one ends. Re-deriving it here mid-run would switch it on
+            % again, so this only speaks for it while nothing is running.
+            if ~app.isRunning(), app.syncAdvanceEnables(); end
+            app.syncArtifactFields();
+            app.syncFilterFields();
+
+            % Last, and the one that must win: each sync* call above speaks
+            % only for its own fields, which leaves every row LABEL black and
+            % the header bold. The result reads as a live panel with some
+            % greyed controls in it -- "not now" -- when what is true is that
+            % none of it applies at all. Nothing here judges, stops, or
+            % displays anything without a recording, so the panel is disabled
+            % as a unit, labels and title included.
+            %
+            % The panel's own Enable is deliberately not used: uipanel only
+            % gained one after R2021b, which mabr.Config still supports.
+            if stimOnly
+                set(findall(app.AcqPanel,'-property','Enable', ...
+                    '-not','Type','uipanel'),'Enable','off');
+                app.AcqPanel.ForegroundColor = [0.5 0.5 0.5];
+            else
+                % Only the labels are re-derived on the way back out: every
+                % interactive control was just decided by the sync* calls
+                % above and has to keep that verdict (an artifact threshold
+                % stays dead under 'none', Advance under an intermixed
+                % strategy), whereas a label carries no state of its own.
+                set(findall(app.AcqPanel,'Type','uilabel'),'Enable','on');
+                app.AcqPanel.ForegroundColor = app.AcqPanelFG;
+            end
         end
 
         % --- ASIO device / channel mapping -----------------------------------
@@ -1374,12 +1477,36 @@ classdef App < handle
         % is opened on whatever device Start hands it, so switching mid-run is
         % not something changing a property can safely do.
         function onAudioSettings(app)
-            s = mabr.ui.AudioSettingsDialog(app.Audio,app.Config);
+            % Commit applies through applyAudioSettings while the dialog is
+            % still open, so the settings can be pressed into the app and their
+            % consequences watched here -- above all Stimulation only, which
+            % takes the whole Acquisition panel out of play. Everything is
+            % therefore already applied by the time this returns; the return
+            % value is only what the dialog reports it committed (or [] for
+            % none), and the standalone caller's route to the same thing.
+            mabr.ui.AudioSettingsDialog(app.Audio,app.Config, ...
+                @(p) app.applyAudioSettings(p));
             figure(app.UIFigure);
-            if isempty(s), return; end        % cancelled
+        end
+
+        function applyAudioSettings(app,s)
+            % One Commit from the audio dialog: adopt the settings, persist
+            % them, and re-derive whatever the main window shows from them.
             app.Audio = s;
             mabr.AudioSettings.savePrefs(app.Audio);
-            app.setStatus(['Audio device: ' app.Audio.describe() '.']);
+            % Stimulation only takes the entire Acquisition panel out of play,
+            % so committing is the moment that has to be reflected.
+            app.syncAcquisitionEnables();
+            msg = ['Audio device: ' app.Audio.describe() '.'];
+            if app.Audio.isStimulationOnly()
+                msg = [msg ' Nothing will be recorded — each run saves its ' ...
+                       'stimulation sequence to a .stimlog file instead.'];
+            end
+            app.setStatus(msg);
+            % The dialog is modal and still up, so nothing would flush the
+            % queue until it closes -- and the point of committing early is to
+            % SEE the panel change behind it.
+            drawnow limitrate
         end
 
         % --- Calibration ------------------------------------------------------
@@ -1444,6 +1571,15 @@ classdef App < handle
             % the chain is without the dialog being open. Called from
             % transport() as well: the button stays live while acquiring and
             % so has to be revived after the busy lock, not just at Idle.
+            if app.Audio.isStimulationOnly()
+                % The chain only ever decides what a plot or a sweep metric is
+                % computed from, and there is neither. Saying so beats leaving
+                % a live-looking corner frequency on a run that draws nothing.
+                app.FilterLabel.Text      = 'n/a — nothing is recorded';
+                app.FilterLabel.FontColor = [0.5 0.5 0.5];
+                app.FilterButton.Enable   = 'off';
+                return
+            end
             app.FilterLabel.Text = app.Filters.describe();
             if app.Filters.Enabled
                 app.FilterLabel.FontColor = [0.3 0.3 0.3];
@@ -1687,7 +1823,10 @@ classdef App < handle
                 c.Schedule.Device           = app.Audio.Device;
                 c.Schedule.PlayerChannels   = app.Audio.PlayerChannels;
                 c.Schedule.RecorderChannels = app.Audio.RecorderChannels;
-                c.Schedule.StimulationOnly  = app.Audio.StimulationOnly;
+                % isStimulationOnly(), not the raw flag: Testing opens no
+                % device at all and wins, and buildSchedule/StimOnlyRun both
+                % already ask the question that way.
+                c.Schedule.StimulationOnly  = app.Audio.isStimulationOnly();
                 c.Schedule.build();
                 c.Session.Device = app.Audio.Device;
 
@@ -1700,6 +1839,7 @@ classdef App < handle
                 c.Filters   = app.Filters;
                 app.ArtifactCount = 0;        % readout counts this schedule only
                 app.LiveArtifacts = 0;
+                app.StimLogsWritten = 0;
                 app.setArtifactReadout();
 
                 % Nothing is recorded in stimulation-only mode, so there is
@@ -1722,7 +1862,20 @@ classdef App < handle
                 end
 
                 s = c.Schedule.summary();
-                kind = 'schedule'; if preview, kind = 'preview (nothing will be saved)'; end
+                kind = 'schedule';
+                if preview
+                    kind = 'preview (nothing will be saved)';
+                elseif app.StimOnlyRun
+                    % Say what IS written, since "no recording" invites the
+                    % assumption that nothing is -- one .stimlog per run, or
+                    % none at all with no output folder set, which is a
+                    % session that leaves no record of itself whatsoever.
+                    if isempty(c.Session.OutputPath)
+                        kind = 'stimulation (no recording, and no output folder — nothing will be saved)';
+                    else
+                        kind = 'stimulation (no recording; each run saves its sequence to a .stimlog file)';
+                    end
+                end
                 app.setStatus(sprintf('Starting %s (%d runs, %d presentations, ~%s)…', ...
                     kind,s.numRuns,s.presentations,durationText(s.duration)));
                 c.start();
@@ -1950,13 +2103,37 @@ classdef App < handle
         end
 
         function onBlockSaved(app,e)
+            % One .abr per condition from a recorded run, or one .stimlog per
+            % run from a stimulation-only one -- the event means "a file was
+            % written" and the extension says which.
             [~,fn,ext] = fileparts(e.Info.file);
-            app.setStatus(['Saved ' fn ext]);
+            if strcmpi(ext,'.stimlog')
+                app.StimLogsWritten = app.StimLogsWritten + 1;
+                app.setStatus(['Saved stimulation sequence ' fn ext]);
+            else
+                app.setStatus(['Saved ' fn ext]);
+            end
         end
 
         function onScheduleComplete(app)
             if app.StimOnlyRun
-                app.setStatus('Stimulation complete — nothing was recorded or written.');
+                % "Nothing was recorded" is the whole point of the mode, but it
+                % must not read as "nothing was saved": the sequence that was
+                % played is written, and where it went is what the user needs
+                % to know now.
+                if app.StimLogsWritten > 0
+                    app.setStatus(sprintf(['Stimulation complete — nothing recorded; ' ...
+                        '%d stimulation log(s) written to %s.'], ...
+                        app.StimLogsWritten,app.OutputField.Value));
+                elseif app.Previewing
+                    % Preview withholds the output folder, so it withholds the
+                    % stimulation log with it -- the mode's only output.
+                    app.setStatus(['Stimulation preview complete — nothing was ' ...
+                        'recorded, and no stimulation log was written.']);
+                else
+                    app.setStatus(['Stimulation complete — nothing was recorded, and ' ...
+                        'no stimulation log was written (no output folder set).']);
+                end
             elseif app.Previewing
                 app.setStatus('Preview complete — no files were written.');
             else
@@ -2037,9 +2214,11 @@ classdef App < handle
             app.AbortButton.Enable  = onOff(running);
             % Artifact rejection and display filtering are adjustable in both
             % states, so their enables are re-derived unconditionally -- setBusy
-            % killed them on the way in and only this puts them back.
-            app.syncArtifactFields();
-            app.syncFilterFields();
+            % killed them on the way in and only this puts them back. Routed
+            % through syncAcquisitionEnables so a stimulation-only run does not
+            % get them back at all: there is nothing recorded for either to
+            % apply to (it re-derives the Advance pair for the same reason).
+            app.syncAcquisitionEnables();
             app.syncRepeatEnable();
             % Re-derived for the same reason: configControls just switched it
             % on wholesale, but it must stay off without the stimgen submodule.

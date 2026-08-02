@@ -23,6 +23,11 @@ function verify_artifact_rejection()
 %   Parts A-D need no hardware and no parallel pool; Parts E-F need the
 %   Parallel Computing Toolbox. Run:  >> verify_artifact_rejection
 %
+%   Part F is the one test here that listens to the controller from a NESTED
+%   function, which makes tearing it down a step this file has to take itself
+%   -- see the delete(lh) after run_schedule. Getting that wrong strands the
+%   pool worker and hangs whatever test runs next, not this one.
+%
 % Daniel Stolzberg (c) 2026
 
 fprintf('== verify_artifact_rejection ==\n');
@@ -261,9 +266,26 @@ ctrl.Artifacts = mabr.ArtifactPolicy('voltage',1e-9,true);   % reject everything
 n0      = ctrl.Session.NumBlocks;
 flipped = false;
 lh = addlistener(ctrl,'BlockReady',@(~,~) flip_policy());
-lhc = onCleanup(@() delete(lh));
 
 run_schedule(ctrl,120);
+
+% Break the reference cycle BEFORE this function returns, and do it with an
+% explicit delete rather than an onCleanup, because the cycle is exactly what
+% stops an onCleanup here from ever running:
+%
+%   ctrl -> its BlockReady listener -> @flip_policy -> this function's shared
+%   nested workspace -> ctrl (and `cleaner`, the onCleanup that deletes it)
+%
+% A nested function makes the workspace a reference-counted object, and the
+% listener held by ctrl keeps it alive, so on return NOTHING in it is
+% destroyed: `cleaner` never fires, ctrl is never deleted, and its engine
+% never sends the Kill that ends mabr.acq.worker_loop. The worker then sits
+% in its poll loop holding the pool's only process forever, and the NEXT
+% mabr.acq.Engine blocks in pctRunOnAll with no timeout -- which hangs the
+% rest of run_all_verifications (and mabr.ui.TestRunner) on the following
+% test, far from the cause. Deleting the listener drops ctrl's reference to
+% the workspace and lets the usual teardown happen.
+delete(lh);
 
 assert(flipped,'the mid-schedule policy change never ran');
 got = ctrl.Session.NumBlocks - n0;

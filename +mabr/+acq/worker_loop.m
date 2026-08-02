@@ -81,7 +81,14 @@ try
                         'Received Run before Prep.');
                     continue
                 end
-                reason = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
+                [reason,nStreamed] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
+                % How much of the play matrix actually went out, and why the
+                % block ended. Sent BEFORE the Completed state, so the client's
+                % BlockCompleted handler already has it: with nothing recorded
+                % (stimulation only) this is the only evidence of how far
+                % through the planned sequence a stopped run got.
+                send(resultQueue,struct('type','streamed', ...
+                    'samples',nStreamed,'reason',reason));
                 if strcmp(reason,'killed')
                     running = false;
                 else
@@ -131,9 +138,11 @@ end
 
 
 % =====================================================================
-function reason = stream_block(cmdQueue,resultQueue,rb,apr,spec,cfg,testing)
+function [reason,nStreamed] = stream_block(cmdQueue,resultQueue,rb,apr,spec,cfg,testing)
 % Stream one prepared block frame-by-frame. Returns 'completed', 'stopped',
-% or 'killed'. Analogue of the legacy acquire_block.m tight loop.
+% or 'killed', plus the number of play-matrix samples actually emitted --
+% which is the whole matrix unless a Stop/Kill cut it short. Analogue of the
+% legacy acquire_block.m tight loop.
 
 fl = cfg.frameLength;
 X  = spec.PlayMatrix;          % [N x 2] single
@@ -151,7 +160,8 @@ stimOnly  = getdef(spec,'StimulationOnly',false) && ~testing;
 
 rb.reset();                    % new block: clear write head, bump BlockSeq
 send_state(resultQueue,mabr.acq.State.Acquire);
-mabr.log.vprintf(1,'Streaming block: %d samples (%d frames)',N,ceil(N/fl));
+if stimOnly, kind = 'stimulation-only block'; else, kind = 'block'; end
+mabr.log.vprintf(1,'Streaming %s: %d samples (%d frames)',kind,N,ceil(N/fl));
 
 reason = 'completed';
 i = 1;
@@ -208,7 +218,13 @@ while i <= N
     end
 end
 
-mabr.log.vprintf(1,'Block %s (head = %d)',reason,rb.WriteHead);
+% i advanced past the last frame written, so i-1 is what went out. A Stop
+% breaks before the frame is played, which is exactly what should NOT be
+% counted as presented.
+nStreamed = min(i-1,N);
+
+mabr.log.vprintf(1,'Block %s (%d of %d samples, head = %d)', ...
+    reason,nStreamed,N,rb.WriteHead);
 end
 
 
@@ -278,8 +294,12 @@ end
 
 if stimOnly
     apr = audioDeviceWriter(args{:});
+    mabr.log.vprintf(1,['Opened an OUTPUT-ONLY device (stimulation only): ' ...
+        'play channels [%d %d], nothing recorded.'],player);
 else
     apr = audioPlayerRecorder(args{:});
+    mabr.log.vprintf(1,'Opened a full-duplex device: play [%d %d], record [%d %d].', ...
+        player,recorder);
 end
 end
 

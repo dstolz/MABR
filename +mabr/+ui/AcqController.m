@@ -28,9 +28,18 @@ classdef AcqController < handle
 %   Schedule.StimulationOnly (from mabr.AudioSettings) removes the recording
 %   half of all of that: the worker opens an output-only device, so start()
 %   skips the loop-back self-test, no live timer runs, and a completed run is
-%   not finalized -- no Block, no BlockReady/BlockSaved, no .abr. The plan
-%   still advances run by run to SchedComplete, which is all there is to
-%   report when nothing is coming back.
+%   not finalized -- no Block, no BlockReady, no .abr. The plan still advances
+%   run by run to SchedComplete, which is all there is to report when nothing
+%   is coming back.
+%
+%   What such a run DOES save is the stimulation sequence itself (see
+%   log_stim_run): one .stimlog file per run, holding every presentation in
+%   play order with its stimulus, polarity, and onset time, plus which of them
+%   actually went out. Nothing is recorded, but what was played is still the
+%   experimental record -- and on a rig where another system does the
+%   recording it is the only thing that can align the two. BlockSaved fires
+%   for it, so the GUI reports a written stimulation log exactly as it reports
+%   a written .abr.
 %
 %   Artifact rejection is DECIDED at that same finalization, which is why the
 %   Artifacts policy is settable at any time, including mid-acquisition: the
@@ -48,9 +57,10 @@ classdef AcqController < handle
 %                          from the run, whether or not it was written to
 %                          disk. This is what viewers (mabr.ui.TraceOrganizer)
 %                          listen to so a trace appears as each block lands.
-%       BlockSaved       - a block was written (.Info.file); fires once per
-%                          stimulus recovered from the run, and only when the
-%                          Session has an OutputPath
+%       BlockSaved       - a file was written (.Info.file), and only when the
+%                          Session has an OutputPath: once per stimulus
+%                          recovered from a recorded run, or once per run for
+%                          the .stimlog of a stimulation-only one
 %       ScheduleComplete - the whole schedule finished
 %
 % Daniel Stolzberg (c) 2019-2026
@@ -119,6 +129,12 @@ classdef AcqController < handle
         CurRun     (1,1) double = 0;    % index of the run being acquired
         CurSeq     (1,:) double = [];   % stimulus index at each of its onsets
         CurPol     (1,:) double = [];   % polarity (+1/-1) at each of its onsets
+        % Where each of those onsets sits in the run's play matrix, straight
+        % from mabr.stim.Schedule.renderSpec. Recorded runs recover the onsets
+        % that actually came back off the timing channel and have no use for
+        % these; a stimulation-only run has no input at all, so the rendered
+        % positions are what its .stimlog reports (see log_stim_run).
+        CurOnsets  (1,:) double = [];
         % The stimuli this run presents and what to call them, worked out once
         % when the run is prepared rather than on every one of the 20 live
         % ticks a second. The live view lays out one mean per entry, so the
@@ -154,17 +170,23 @@ classdef AcqController < handle
     end
 
     methods
-        function obj = AcqController(cfg,testing,progressFcn)
+        function obj = AcqController(cfg,testing,progressFcn,stimOnly)
             % progressFcn (optional) receives char status messages while the
             % engine starts up; forwarded straight to mabr.acq.Engine.
+            % stimOnly (optional) only names the worker it launches -- the mode
+            % itself is Schedule.StimulationOnly and rides per block, so this
+            % is purely so the startup messages say "stimulus worker" from the
+            % first one rather than after start() re-labels it.
             if nargin < 1 || isempty(cfg), cfg = mabr.Config; end
             if nargin < 2 || isempty(testing), testing = false; end
             if nargin < 3, progressFcn = []; end
+            if nargin < 4, stimOnly = false; end
             obj.Config  = cfg;
             obj.Testing = logical(testing);
 
             obj.Session = mabr.data.Session(cfg);
-            obj.Engine  = mabr.acq.Engine(cfg,obj.Testing,progressFcn);
+            obj.Engine  = mabr.acq.Engine(cfg,obj.Testing,progressFcn, ...
+                mabr.ui.AcqController.workerRole(stimOnly));
             obj.Listeners = [ ...
                 addlistener(obj.Engine,'StateChanged', @(~,e) obj.on_engine_state(e)); ...
                 addlistener(obj.Engine,'BlockCompleted',@(~,~) obj.on_block_completed()); ...
@@ -248,6 +270,11 @@ classdef AcqController < handle
                 'No stimuli set. Call setStimuli() first.');
             assert(obj.Schedule.NumRuns > 0,'mabr:ui:AcqController:emptySchedule', ...
                 'The schedule is empty — every stimulus has 0 repetitions.');
+            % One worker is reused across runs that may switch modes between
+            % them, so what it is about to spend the session doing is decided
+            % here, not at construction.
+            obj.Engine.setRole(mabr.ui.AcqController.workerRole( ...
+                obj.Schedule.StimulationOnly));
             % Stimulation only has no input side at all -- the worker opens an
             % output-only audioDeviceWriter -- so there is no loop-back to
             % verify and requiring one would make the mode impossible to use.
@@ -351,9 +378,10 @@ classdef AcqController < handle
                 spec.TestingFrameDelay = obj.Config.frameLength/spec.SampleRate;
             end
 
-            obj.CurRun = r;
-            obj.CurSeq = spec.StimulusIndex(:)';
-            obj.CurPol = spec.Polarity(:)';
+            obj.CurRun    = r;
+            obj.CurSeq    = spec.StimulusIndex(:)';
+            obj.CurPol    = spec.Polarity(:)';
+            obj.CurOnsets = spec.ExpectedOnsets(:)';
 
             % 'stable', so an interleaved run's live panels sit in the order
             % the stimuli are actually presented in.
@@ -461,10 +489,22 @@ classdef AcqController < handle
 
             % Stimulation only records nothing, so there is nothing to
             % finalize: no sweeps to extract, no Block to build, no .abr to
-            % write, and nothing to announce to a viewer. The schedule-advance
-            % tail below still runs -- the plan must drive itself to
-            % completion exactly as it would with a recording attached.
-            if ~obj.Schedule.StimulationOnly
+            % write, and nothing to announce to a viewer. What it does have is
+            % the sequence it just played, which is written out instead. The
+            % schedule-advance tail below runs either way -- the plan must
+            % drive itself to completion exactly as it would with a recording
+            % attached.
+            if obj.Schedule.StimulationOnly
+                try
+                    file = obj.log_stim_run();
+                    if ~isempty(file)
+                        notify(obj,'BlockSaved',mabr.ui.ProgStateEventData( ...
+                            obj.State,struct('file',file)));
+                    end
+                catch me
+                    mabr.log.vprintf(0,1,'Stimulation log failed: %s',me.message);
+                end
+            else
                 try
                     [files,blocks] = obj.finalize_run();
                     % Announce the blocks themselves first: a viewer should get the
@@ -784,6 +824,80 @@ classdef AcqController < handle
             end
         end
 
+        function file = log_stim_run(obj)
+            % Save the run's stimulation sequence, and return the file written
+            % ('' when the Session has no OutputPath -- the same
+            % run-without-saving rule Preview relies on for .abr files).
+            %
+            % This is the stimulation-only counterpart of finalize_run. There
+            % is no recording to segment and no Block to build, but the plan
+            % that was just played out IS the record of the experiment: what
+            % went out, in what order, with what polarity, and when. Written
+            % per run as the run ends, so a session interrupted halfway keeps
+            % the log of everything already presented.
+            %
+            % The onsets are the RENDERED ones (see CurOnsets), not recovered
+            % ones -- there is no input to recover them from. They are exact:
+            % the same play matrix carries a timing pulse at every one of them,
+            % so a system recording elsewhere aligns on the pulse and reads the
+            % labels here.
+            file = '';
+
+            % What the worker actually got through before the run ended. A
+            % Stop/Abort cuts the matrix short, and the presentations past that
+            % point never happened -- io.buildStimLog flags them rather than
+            % quietly writing the whole plan as though it had played.
+            stream = obj.Engine.LastStream;
+
+            info = struct();
+            info.Run             = obj.CurRun;
+            info.NumRuns         = obj.Schedule.NumRuns;
+            info.StartTime       = obj.BlockStart;
+            info.Subject         = obj.Session.Subject.ID;
+            info.Device          = obj.Schedule.Device;
+            info.SampleRate      = obj.Config.DACSampleRate;
+            info.PlayerChannels  = obj.Schedule.PlayerChannels;
+            info.StimulusIndex   = obj.CurSeq;
+            info.Polarity        = obj.CurPol;
+            info.OnsetSample     = obj.CurOnsets;
+            % Left OUT when the worker made no report (it always does, but a
+            % missing one must not be read as "0 samples streamed", which would
+            % mark a run that played perfectly well as never presented).
+            if ~isempty(stream.reason)
+                info.StreamedSamples = stream.samples;
+                info.StopReason      = stream.reason;
+            end
+            info.Strategy        = obj.Schedule.Strategy;
+            info.ISIMode         = obj.Schedule.ISIMode;
+            info.ISI             = obj.Schedule.ISI;
+            info.ISIRange        = obj.Schedule.ISIRange;
+            info.SilencePad      = obj.Schedule.SilencePad;
+            info.IDs             = obj.Stimuli.IDs();
+            info.StimulusMeta    = arrayfun(@(u) obj.Stimuli.meta(u), ...
+                1:obj.Stimuli.numStimuli,'UniformOutput',false);
+
+            % Tally what was presented against the plan, exactly as a recorded
+            % run tallies what came back -- so the schedule's own bookkeeping
+            % (and anything reading RunCounts) is as true here as there.
+            counts = zeros(1,obj.Stimuli.numStimuli);
+            presented = obj.CurSeq;
+            if ~isempty(stream.reason) && ~isempty(obj.CurOnsets)
+                presented = obj.CurSeq(obj.CurOnsets <= stream.samples);
+            end
+            for u = unique(presented)
+                counts(u) = nnz(presented == u);
+            end
+            obj.Schedule.recordRun(obj.CurRun,counts);
+
+            mabr.log.vprintf(1,'Run %d of %d: %d of %d presentations played (%s).', ...
+                obj.CurRun,obj.Schedule.NumRuns,numel(presented),numel(obj.CurSeq), ...
+                stream.reason);
+
+            if isempty(obj.Session.OutputPath), return; end
+            file = mabr.data.io.writeStimLog(info,obj.Session.OutputPath, ...
+                obj.Session.Subject.ID);
+        end
+
         % --- Helpers --------------------------------------------------------
         function set_state(obj,s)
             if obj.State == s, return; end
@@ -800,6 +914,17 @@ classdef AcqController < handle
                 if strcmp(obj.LiveTimer.Running,'on'), stop(obj.LiveTimer); end
             catch %#ok<CTCH>
             end
+        end
+    end
+
+    methods (Static)
+        function role = workerRole(stimOnly)
+            % What to call the worker for a run of this kind (mabr.acq.Engine's
+            % Role). A worker that records nothing is not an acquisition
+            % worker, and a log that calls it one is misleading in exactly the
+            % mode where the user most needs to be sure nothing is being
+            % recorded.
+            if stimOnly, role = 'stimulus'; else, role = 'acquisition'; end
         end
     end
 

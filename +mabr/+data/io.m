@@ -28,6 +28,15 @@ classdef io
 %   exactly as the legacy save_abr_data did: resample(Data,1,df) and
 %   round(SweepOnsets/df), with ADC.SampleRate = SampleRate/df.
 %
+%   writeStimLog is the other output this class produces, and the only one a
+%   STIMULATION-ONLY session writes (mabr.AudioSettings.StimulationOnly): there
+%   is no recording to put in a .abr, but what was played, in what order, with
+%   what polarity, and at what time is still the experimental record -- and
+%   without it a rig where something else did the recording has no way to line
+%   its own data up with the stimuli. One `.stimlog` file per run, same
+%   MAT-file-with-a-distinctive-extension convention as .abr/.torg/.mabrcfg,
+%   holding a single MABR_StimLog struct. Load with load(file,'-mat').
+%
 % Daniel Stolzberg (c) 2019-2026
 
     methods (Static)
@@ -45,6 +54,146 @@ classdef io
             x = whos('ABR_Data');
             mabr.log.vprintf(1,'Saving %s (%.1f MB) [%s]',fn,x.bytes/1e6,ffn);
             save(ffn,'ABR_Data','-mat','-nocompression');
+        end
+
+        function ffn = writeStimLog(info,outputPath,baseName)
+            % Write one run's stimulation sequence to a .stimlog file and
+            % return the full path ('' when there is no output folder, the
+            % same record-without-saving rule writeABR follows via its caller).
+            %
+            % This is what a STIMULATION-ONLY session saves in place of the
+            % .abr files it cannot produce. See buildStimLog for the contents
+            % and mabr.ui.AcqController.log_stim_run for who fills `info` in.
+            if nargin < 3, baseName = ''; end
+            ffn = '';
+            if nargin < 2 || isempty(outputPath), return; end
+            if ~isfolder(outputPath), mkdir(outputPath); end
+
+            MABR_StimLog = mabr.data.io.buildStimLog(info); %#ok<NASGU>
+
+            fn  = mabr.data.io.buildStimLogFilename(info,baseName);
+            ffn = fullfile(outputPath,fn);
+
+            mabr.log.vprintf(1,'Saving stimulation log %s [%s]',fn,ffn);
+            save(ffn,'MABR_StimLog','-mat','-nocompression');
+        end
+
+        function S = buildStimLog(info)
+            % Assemble the MABR_StimLog struct from one run's plan and what the
+            % worker reported actually going out.
+            %
+            % The sequence is stored as parallel arrays, one element per
+            % PRESENTATION in play order, so struct2table(S.Sequence) is a
+            % readable log on the spot:
+            %       Order StimulusIndex ID Polarity OnsetSample OnsetTime Presented
+            %
+            % OnsetSample indexes the run's play matrix (silence pad included,
+            % see mabr.stim.Schedule.renderSpec) and OnsetTime is that in
+            % seconds from the first sample of the run -- which is also the
+            % moment the timing pulse for that presentation went out on the
+            % timing output channel, so a system recording elsewhere can align
+            % on the pulse and read the label here.
+            %
+            % Presented is the honest part: a run stopped early (Advance/Abort,
+            % or a Kill) emits only part of its matrix, and the presentations
+            % past that point never happened. The plan is written whole and
+            % flagged, rather than truncated, so the file records both what was
+            % intended and what occurred.
+            g   = @(f,d) mabr.data.io.getdef(info,f,d);
+            cfg = mabr.Config;
+
+            Fs  = g('SampleRate',cfg.DACSampleRate);
+            idx = double(g('StimulusIndex',[]));  idx = idx(:)';
+            pol = double(g('Polarity',ones(size(idx))));  pol = pol(:)';
+            ons = double(g('OnsetSample',[]));    ons = ons(:)';
+            ids = g('IDs',{});
+            n   = numel(idx);
+            if numel(pol) ~= n, pol = ones(1,n); end
+            if numel(ons) ~= n, ons = nan(1,n);  end
+
+            % Everything up to the last sample the worker actually emitted was
+            % played; nothing after it was.
+            streamed = double(g('StreamedSamples',NaN));
+            if isnan(streamed)
+                presented = true(1,n);
+            else
+                presented = ons <= streamed;
+            end
+
+            S = struct();
+            S.SoftwareVersion = cfg.SoftwareVersion;
+            S.DataVersion     = cfg.DataVersion;
+            % Named so nothing reading this file has to infer why there is no
+            % recording in it.
+            S.Mode      = 'stimulation-only';
+            S.Recorded  = false;
+            S.StartTime = mabr.data.io.startTimeChar(g('StartTime',''));
+            S.Subject   = char(string(g('Subject','')));
+            S.Device    = char(string(g('Device','')));
+
+            S.Run      = g('Run',1);
+            S.NumRuns  = g('NumRuns',1);
+            S.Complete = strcmp(char(string(g('StopReason','completed'))),'completed');
+            S.StopReason = char(string(g('StopReason','completed')));
+
+            S.DAC = struct('SampleRate',Fs, ...
+                           'PlayerChannels',g('PlayerChannels',[1 2]), ...
+                           'StreamedSamples',streamed, ...
+                           'StreamedSeconds',streamed/Fs);
+
+            S.Presentation = struct( ...
+                'Strategy',char(string(g('Strategy',''))), ...
+                'ISIMode', char(string(g('ISIMode',''))), ...
+                'ISI',     g('ISI',NaN), ...
+                'ISIRange',g('ISIRange',[NaN NaN]), ...
+                'SilencePad',g('SilencePad',NaN));
+
+            seqIDs = repmat({''},1,n);
+            for k = 1:n
+                if idx(k) >= 1 && idx(k) <= numel(ids)
+                    seqIDs{k} = char(string(ids{idx(k)}));
+                end
+            end
+            S.Sequence = struct( ...
+                'Order',         1:n, ...
+                'StimulusIndex', idx, ...
+                'ID',            {seqIDs}, ...
+                'Polarity',      pol, ...
+                'OnsetSample',   ons, ...
+                'OnsetTime',     (ons-1)/Fs, ...
+                'Presented',     presented);
+            S.NumPlanned   = n;
+            S.NumPresented = nnz(presented);
+
+            % The bank as this run used it, flattened the same way a .abr's SIG
+            % is -- so the parameters of a stimulus in the log read exactly as
+            % they would in a recorded file, and a per-stimulus tally says how
+            % many times each one went out.
+            meta = g('StimulusMeta',{});
+            S.Stimuli = struct('Index',{},'ID',{},'SIG',{},'NumPresented',{});
+            for u = unique(idx(idx >= 1))
+                e = struct();
+                e.Index = u;
+                e.ID    = '';
+                if u <= numel(ids), e.ID = char(string(ids{u})); end
+                if u <= numel(meta)
+                    e.SIG = mabr.data.io.buildSIG(struct('Stim',struct('Meta',meta{u})));
+                else
+                    e.SIG = struct();
+                end
+                e.NumPresented = nnz(idx == u & presented);
+                S.Stimuli(end+1) = e;
+            end
+        end
+
+        function fn = buildStimLogFilename(info,baseName)
+            % <SUBJ_ID_n>_StimLog_Run<k>_<yyMMdd'T'HHmmss>.stimlog -- the run
+            % index rather than a condition, because a stimulation-only run is
+            % not split per stimulus: there is nothing recorded to split.
+            subj = mabr.data.io.subjectToken(baseName);
+            r    = mabr.data.io.getdef(info,'Run',1);
+            t    = mabr.data.io.timestampToken(mabr.data.io.getdef(info,'StartTime',''));
+            fn   = sprintf('%s_StimLog_Run%d_%s.stimlog',subj,r,t);
         end
 
         function ABR_Data = buildStruct(block)
@@ -170,18 +319,7 @@ classdef io
 
             subj = char(baseName);
             if isempty(subj) && isfield(meta,'SubjectID'), subj = char(string(meta.SubjectID)); end
-            if isempty(subj), subj = 'SUBJ_ID_0'; end
-            if ~startsWith(subj,'SUBJ')
-                % Prefer the numeric part, but fall back to the sanitized name:
-                % stripping non-digits from a purely alphabetic ID yielded
-                % 'SUBJ_ID_', collapsing every such subject onto one filename.
-                digits = regexprep(subj,'\D','');
-                if isempty(digits)
-                    subj = ['SUBJ_ID_' matlab.lang.makeValidName(subj)];
-                else
-                    subj = ['SUBJ_ID_' digits];
-                end
-            end
+            subj = mabr.data.io.subjectToken(subj);
 
             t = mabr.data.io.timestampToken(block.StartTime);
 
@@ -274,6 +412,31 @@ classdef io
     end
 
     methods (Static, Access = private)
+        function subj = subjectToken(subj)
+            % The SUBJ_ID_<n> filename stem, shared by .abr and .stimlog so a
+            % session's files sort together whatever it wrote.
+            subj = char(subj);
+            if isempty(subj), subj = 'SUBJ_ID_0'; end
+            if ~startsWith(subj,'SUBJ')
+                % Prefer the numeric part, but fall back to the sanitized name:
+                % stripping non-digits from a purely alphabetic ID yielded
+                % 'SUBJ_ID_', collapsing every such subject onto one filename.
+                digits = regexprep(subj,'\D','');
+                if isempty(digits)
+                    subj = ['SUBJ_ID_' matlab.lang.makeValidName(subj)];
+                else
+                    subj = ['SUBJ_ID_' digits];
+                end
+            end
+        end
+
+        function v = getdef(s,f,d)
+            % Field f of s, or the default -- the same forgiving contract
+            % worker_loop's getdef uses on a render spec, so a caller may omit
+            % anything it has no opinion about.
+            if isstruct(s) && isfield(s,f) && ~isempty(s.(f)), v = s.(f); else, v = d; end
+        end
+
         function v = plainValue(x)
             % Extract a plain numeric/char value, unwrapping a legacy sigProp
             % struct (which stores the value in a .Value field).
