@@ -22,12 +22,24 @@ classdef WindowPos
             % is none (or the remembered one is off-screen / malformed).
             % minSize (optional) [w h] in pixels: a window remembered from a
             % version that needed less room reopens too small to use, so grow
-            % it to fit rather than discarding the spot the user chose.
+            % it to fit rather than discarding the spot the user chose. A
+            % window with Resize 'off' needs no minSize -- see below, its size
+            % always comes from defaultPos.
             if isempty(fig) || ~isgraphics(fig), return; end
             if nargin < 4, minSize = []; end
             pos = getpref('MABR',['WindowPos_' name],[]);
             if ~isnumeric(pos) || numel(pos) ~= 4 || ~all(isfinite(pos)) || any(pos(3:4) <= 0)
                 pos = defaultPos;
+            end
+            % A non-resizable window's SIZE is not the user's to choose -- it
+            % is whatever its layout needs, and only the spot it was left in is
+            % worth remembering. Honouring a remembered size there is how a
+            % fixed dialog that has since gained a row reopens CLIPPED, with
+            % its bottom row (in a dialog, its buttons) below the window edge
+            % and no way to drag it bigger. So the code's own size always wins
+            % for these, which also repairs a stale pref on the next remember.
+            if strcmp(fig.Resize,'off') && numel(defaultPos) == 4
+                pos(3:4) = defaultPos(3:4);
             end
             if ~isempty(minSize)
                 pos(3:4) = max(pos(3:4),minSize(:).');
