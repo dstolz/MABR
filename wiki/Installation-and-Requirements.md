@@ -88,7 +88,6 @@ test, not an endorsement.
 | RME Babyface Pro FS / Fireface UC / UCX II | Vendor ASIO driver with a long-standing reputation for stable low-latency buffering |
 | PreSonus Studio 24c / 26c / 68c | Vendor ASIO driver, 192 kHz |
 | Steinberg UR22C / UR44C | Vendor ASIO driver, 192 kHz |
-| Native Instruments Komplete Audio 2 / 6 MK2 | Vendor ASIO driver, 192 kHz |
 
 Two cautions when reading a spec sheet:
 
