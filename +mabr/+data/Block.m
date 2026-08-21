@@ -1,0 +1,93 @@
+classdef Block
+% mabr.data.Block  One stimulus condition's acquired result.
+%
+%   A value container bundling everything produced for one stimulus: the
+%   stimulus metadata handed in by the external stimulus package, the recorded
+%   ADC signal channel (a mabr.data.Recording), optional timing channel,
+%   computed live metrics, and the start time of the run it came from.
+%
+%   One acquisition run yields one Block per stimulus it presented — usually
+%   just one (blocked strategies), but an intermixed run is de-interleaved by
+%   mabr.ui.AcqController into a Block per stimulus ID.
+%
+%   Stim is struct('Meta',...,'SampleRate',...), where Meta comes from
+%   mabr.stim.StimulusSet.meta: the stimulus ID plus every passthrough field
+%   the external package supplied, with informativeParams/Label driving
+%   display and the offline-compatible .abr write.
+%
+%   SweepPolarity records the sign (+1/-1) the stimulus was presented with at
+%   each sweep, aligned element-for-element with ADC.SweepOnsets. It is all +1
+%   unless the entry set alternatePolarity, and is written to the .abr file as
+%   ADC.SweepPolarity so offline analysis can separate the two polarities.
+%
+% Daniel Stolzberg (c) 2019-2026
+
+    properties
+        Stim      (1,1) struct = struct();      % external stimulus metadata
+        ADC       (1,1) mabr.data.Recording     % recorded signal channel
+        Timing    (1,1) mabr.data.Recording     % recorded timing channel (optional)
+        Metrics   (1,1) struct = struct();      % computed metrics
+        StartTime (1,:) char = '';              % ISO-ish timestamp
+        SweepPolarity (1,:) double = [];        % +1/-1 per ADC.SweepOnsets entry
+        % The session's rig notebook as it stood when this block was
+        % finalized (mabr.data.SessionNotes.toStruct). A plain struct array,
+        % never the handle store -- a Block is a value, and what belongs in it
+        % is the log AS OF this block, not a live reference that would keep
+        % changing under a saved result. mabr.data.io writes it to the .abr as
+        % ABR_Data.Notes, so a file recovered on its own still carries what the
+        % operator wrote during the session that produced it.
+        Notes     struct = struct('Stamp',{},'Text',{},'Time',{},'Elapsed',{}, ...
+                                  'Run',{},'NumRuns',{},'Sweep',{},'Source',{},'Edited',{});
+    end
+
+    properties (Dependent)
+        NumSweeps
+        Label
+    end
+
+    methods
+        function obj = Block(stim,adc,startTime)
+            if nargin >= 1 && ~isempty(stim), obj.Stim = stim; end
+            if nargin >= 2 && ~isempty(adc),  obj.ADC  = adc;  end
+            if nargin >= 3 && ~isempty(startTime)
+                obj.StartTime = startTime;
+            else
+                obj.StartTime = char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss'));
+            end
+        end
+
+        function n = get.NumSweeps(obj)
+            n = numel(obj.ADC.SweepOnsets);
+        end
+
+        function lbl = get.Label(obj)
+            if isfield(obj.Stim,'Meta') && isfield(obj.Stim.Meta,'Label')
+                lbl = obj.Stim.Meta.Label;
+            else
+                lbl = {};
+            end
+        end
+
+        function obj = computeMetrics(obj)
+            % Compute the standard live metrics over the ADC sweeps using the
+            % tested mabr.metrics functions (the single source of truth).
+            % Artifact sweeps stay in the Recording (and in the saved file),
+            % but they are excluded here: a metric meant to describe the
+            % response should not be dominated by sweeps already judged not to
+            % hold one. CleanSweepData does that mapping once, so this and
+            % Recording's own SweepMean/SNR cannot disagree about which sweeps
+            % count.
+            D = obj.ADC.CleanSweepData;   % [nSamples x nCleanSweeps]
+
+            m = struct();
+            if isempty(D) || size(D,2) < 2
+                m.corr = 0; m.rms = NaN; m.snr = NaN;
+            else
+                m.corr = mabr.metrics.mean_pairwise_corr(D);
+                m.rms  = mabr.metrics.rms_metric(D);
+                m.snr  = mabr.metrics.snr(D);
+            end
+            obj.Metrics = m;
+        end
+    end
+end

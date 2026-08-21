@@ -1,71 +1,52 @@
-# MABR – MATLAB Auditory Brainstem Response Toolbox
+# MABR
 
-Welcome to the **MABR** wiki. MABR is a MATLAB toolbox for recording, calibrating, and analyzing Auditory Brainstem Responses (ABRs) in a research setting. It provides a fully integrated graphical environment for stimulus generation, data acquisition, real-time visualization, and offline analysis.
+**M**atlab **A**uditory **B**rainstem **R**esponse — a Windows-only MATLAB toolbox for presenting calibrated acoustic stimuli and acquiring/analyzing ABR electrophysiology data.
 
----
 
-## Table of Contents
+Copyright © Daniel Stolzberg, PhD (`dstolz@umd.edu`). Proprietary — see `Copyright.txt` in the repository.
 
-| Page | Description |
-|------|-------------|
-| [Installation](Installation) | System requirements, dependencies, and setup |
-| [Getting Started](Getting-Started) | Step-by-step guide to your first ABR recording |
-| [Control Panel](Control-Panel) | Reference for the main acquisition GUI |
-| [Calibration](Calibration) | How to calibrate sound stimuli |
-| [Schedule Design](Schedule-Design) | How to create and manage stimulus schedules |
-| [Trace Organizer](Trace-Organizer) | Visualizing and managing ABR waveforms |
-| [Data Analysis](Data-Analysis) | Batch processing and threshold estimation |
-| [API Reference](API-Reference) | Function and class reference |
+## Start here
 
----
+| If you want to… | Read |
+| --- | --- |
+| Get it running on a new machine | [[Installation and Requirements]] |
+| Run an experiment | [[Running a Session]] |
+| Build stimuli and calibrate the rig | [[Using stimgen]] |
+| Feed MABR stimuli from somewhere else | [[Stimulus Package Contract]] |
+| Understand blocked vs. interleaved | [[Presentation Strategies]] |
+| Understand how acquisition works | [[Acquisition Engine]] |
+| Read a saved `.abr` file | [[Data Format]] |
+| Batch-process saved files | [[Offline Analysis]] |
+| Check the install without hardware | [[Verification and Testing]] |
+| Look up a class's members | [[Class Reference|Class-Reference]] |
+| Fix something | [[Troubleshooting]] |
 
-## What is MABR?
+## What MABR is and is not
 
-MABR (MATLAB Auditory Brainstem Response) is a comprehensive toolbox that guides you through every stage of an ABR experiment:
+MABR **owns presentation and acquisition**. It decides spacing, repetition, ordering, and early-stopping; it streams the stimulus, records two channels, extracts sweeps, and writes one file per condition.
 
-1. **Hardware Setup** – Select your ASIO-compatible sound card and configure input/output channels.
-2. **Sound Calibration** – Measure the acoustic output of your speaker system so that stimuli are presented at known, reproducible sound pressure levels.
-3. **Stimulus Scheduling** – Design a set of tone-burst, noise-burst, click, or custom-file stimuli parameterized by frequency, level, duration, etc.
-4. **Data Acquisition** – Present stimuli and record the bioelectric response while viewing real-time averaged waveforms.
-5. **Offline Analysis** – Load saved `.abr` data files, reject artifacts, filter, and estimate hearing thresholds automatically.
+MABR **does not generate or calibrate stimuli**. An external package supplies precomputed, calibrated waveforms as a plain struct array — one entry per single presentation. See [[Stimulus Package Contract]]. [**stimgen**](https://github.com/dstolz/stimgen) is the suggested package and ships as a submodule — it builds the stimuli and calibrates the rig; see [[Using stimgen]]. A built-in tone-pip bank, `mabr.stim.demoStimuli`, exists for testing and demos only.
 
----
+## Layout
 
-## Software Architecture Overview
+Everything lives in the `+mabr` package namespace:
 
-```
-MABR/
-├── MABR.m                 Entry point – launches the Control Panel
-├── +abr/                  Core package
-│   ├── @ControlPanel/     Main acquisition GUI
-│   ├── @CalibrationUtility/  Sound calibration GUI
-│   ├── @ScheduleDesign/   Stimulus schedule designer GUI
-│   ├── @Schedule/         Stimulus schedule viewer/editor GUI
-│   ├── @ABR/              ABR data object (DAC/ADC buffers, filters)
-│   ├── @Runtime/          Real-time acquisition engine
-│   ├── @Subject/          Subject metadata
-│   ├── +traces/           Trace Organizer system
-│   └── +sigdef/           Signal definitions (Tone, Noise, Click, File)
-├── abr_analysis/          Offline batch analysis functions
-├── advanceFcns/           Custom schedule-advance criterion functions
-├── helpers/               Utility functions
-└── external/              Third-party code
-```
+| Subpackage | Role |
+| --- | --- |
+| `+mabr/+acq` | Acquisition engine (parpool worker, ring buffer, state machine) |
+| `+mabr/+data` | Data model (`Recording`, `Block`, `Session`) and `.abr` I/O |
+| `+mabr/+stim` | `StimulusSet` adapter, `Schedule`, advance criteria |
+| `+mabr/+metrics` | Small tested functions: sweep extraction, SNR, correlation, peaks |
+| `+mabr/+ui` | GUI: `App`, `AcqController`, `LivePlot`, `TraceOrganizer` |
+| `+mabr/+log` | Verbosity-gated logger |
+| `abr_analysis/` | Separate, function-based **offline** batch pipeline (not part of the app) |
+| `tests/` | Hardware-free verification scripts |
 
----
+`mabr.Config` is a plain **value** object holding the fixed constants and runtime paths. Nothing inherits from it.
+So are the three policy objects beside it — [[ArtifactPolicy|mabr.ArtifactPolicy-Class-Reference]], [[FilterPolicy|mabr.FilterPolicy-Class-Reference]] and [[AudioSettings|mabr.AudioSettings-Class-Reference]].
 
-## Quick Links
+Every class in the toolbox has a member-by-member page of its own, with a class diagram: start at the [[Class Reference|Class-Reference]].
 
-- [System Requirements](Installation#system-requirements)
-- [Running MABR for the First Time](Getting-Started#first-launch)
-- [Creating a Tone Schedule](Schedule-Design#tone-stimulus)
-- [Calibrating Your Speaker](Calibration#running-a-calibration)
-- [Automated Threshold Estimation](Data-Analysis#threshold-estimation)
+## History
 
----
-
-## License & Contact
-
-MABR is proprietary software.  
-Copyright © Daniel Stolzberg, PhD – All Rights Reserved.  
-Contact: <daniel.stolzberg@gmail.com>
+The acquisition app was rewritten ground-up into the single `+mabr` namespace. The legacy `+abr` package was retired at cutover and remains recoverable from git history and the `master` branch. The rewrite replaced a two-`matlab.exe` design (spawned via `system(...)`, WMIC PID checks, `info.mat` and `dac.wav` handoff, a `mabr_com.dat` command memmap, and busy-wait loops throughout) with a warm parallel-pool worker and event-driven control.
