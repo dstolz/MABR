@@ -73,6 +73,18 @@ classdef App < handle
         % worker's audioPlayerRecorder is already open on whatever device
         % Start handed it (see configControls).
         Audio       (1,1) mabr.AudioSettings = mabr.AudioSettings
+        % The rig notebook for this session: what the operator writes down
+        % while it is happening, stamped with the run and sweep it happened at,
+        % and saved into every file the session produces. Owned HERE rather
+        % than by the controller because notes start before a schedule does --
+        % impedances, animal state, what was changed since the last run -- and
+        % the controller does not exist until the first Start. onStart hands
+        % the store to the Session, which is what puts it in the files. A
+        % handle, so every view of it stays in step; see mabr.data.SessionNotes
+        % and mabr.ui.Notes. Constructed in the constructor, never as a
+        % property default, which would share ONE store across every App.
+        Notes       mabr.data.SessionNotes
+        NotesView   mabr.ui.Notes
         LivePlot    mabr.ui.LivePlot
         TraceOrg    mabr.ui.TraceOrganizer
         StimViewer  mabr.ui.StimulusViewer
@@ -216,6 +228,13 @@ classdef App < handle
             end
             rc = getpref('MABR','RecentConfigFiles',{});
             if iscell(rc), app.RecentConfigs = rc; end
+            % The notebook opens with the app, not with the schedule: the first
+            % things worth writing down (impedances, what was changed since
+            % yesterday) happen before Start. Its stamps ask the controller
+            % where the session is, which is why the function is indirected
+            % through the App -- there is no controller yet.
+            app.Notes = mabr.data.SessionNotes();
+            app.Notes.ContextFcn = @() app.noteContext();
             app.createComponents();
             % Covers syncAdvanceEnables/syncArtifactFields/syncFilterFields --
             % the acquisition controls have one more thing to be derived from
@@ -232,6 +251,7 @@ classdef App < handle
             app.rememberViewerPositions();
             mabr.ui.WindowPos.remember(app.UIFigure,'MABR');
             try, delete(app.Listeners);  end %#ok<TRYNC>
+            try, delete(app.NotesView);  end %#ok<TRYNC>
             try, delete(app.Controller); end %#ok<TRYNC>
             try, delete(app.TraceOrg);   end %#ok<TRYNC>
             try, delete(app.LivePlot);   end %#ok<TRYNC>
@@ -618,6 +638,15 @@ classdef App < handle
             app.LiveTool = app.toolButton('live',ink,'Live plot',@() app.onShowLive());
             app.toolButton('traces',ink, 'Trace organizer',  @() app.onTraceOrg());
             app.toolButton('stim',  ink, 'Stimulus viewer',  @() app.onStimViewer());
+            % The notebook. Deliberately a toolbar button rather than a panel
+            % row: the main window is already five panels deep and a log needs
+            % height the layout does not have, while what the operator actually
+            % needs is one press to write a line down at the moment something
+            % happens. Like the rest of the toolbar it is never disabled --
+            % writing a note is safe in any state, and the states worth writing
+            % about are exactly the busy ones.
+            app.NotesView = mabr.ui.Notes.toolbarButton(app.Toolbar,app.Notes, ...
+                'Name','Session','Color',ink);
 
             onTop = strcmp(app.UIFigure.WindowStyle,'alwaysontop');
             app.AlwaysOnTopTool = uitoggletool(app.Toolbar,'Separator','on', ...
@@ -653,6 +682,51 @@ classdef App < handle
 
         function openHelp(~)
             web('https://github.com/dstolz/MABR/wiki','-browser');
+        end
+
+        function ctx = noteContext(app)
+            % Where the session is, for stamping a note. Indirected through the
+            % App because the notebook outlives (and predates) any one
+            % controller: before the first Start, and after a controller is
+            % rebuilt for a different mode, there is nothing to ask -- and the
+            % right answer then is an empty context, which stamps the note with
+            % the wall clock alone rather than a run that is not running.
+            ctx = struct();
+            if isempty(app.Controller) || ~isvalid(app.Controller), return; end
+            ctx = app.Controller.noteContext();
+        end
+
+        function bindNotes(app)
+            % Give the controller's session THIS App's notebook, replacing the
+            % empty one it built for itself. One store per session, however
+            % many controllers a session outlives: notes taken before Start,
+            % and notes taken before a controller was rebuilt for a different
+            % mode, belong to the same log as everything since.
+            if isempty(app.Controller) || ~isvalid(app.Controller), return; end
+            app.Controller.Session.Notes = app.Notes;
+        end
+
+        function applyNotesJournal(app,preview)
+            % Point the notebook's crash journal at this session's output
+            % folder, so every note is on disk the moment it is committed
+            % rather than only once a block finishes.
+            %
+            % A preview writes no files at all -- that is the whole of what
+            % Preview means -- so it gets no journal either, and neither does a
+            % run with no output folder set. The notes are still kept in memory
+            % and still reach any file a later real run writes.
+            app.Notes.Subject = app.SubjectField.Value;
+            app.Notes.JournalFile = '';
+            if preview || isempty(app.OutputField.Value), return; end
+            try
+                app.Notes.JournalFile = fullfile(app.OutputField.Value, ...
+                    mabr.data.io.buildNotesFilename(app.Notes.Subject, ...
+                                                    app.Notes.StartTime));
+                app.Notes.writeJournal();
+            catch me
+                app.Notes.JournalFile = '';
+                mabr.log.vprintf(1,1,'Notes journal not started: %s',me.message);
+            end
         end
 
         function onTestRunner(app)
@@ -1026,6 +1100,7 @@ classdef App < handle
                 % start), and the message says which it is being reused as.
                 app.Controller.Engine.setRole( ...
                     mabr.ui.AcqController.workerRole(stimOnly));
+                app.bindNotes();
                 app.setStatus(['Reusing the running ' ...
                     app.Controller.Engine.WorkerName '.']);
                 return
@@ -1047,6 +1122,11 @@ classdef App < handle
                 addlistener(app.Controller,'BlockReady',     @(~,e) app.onBlockReady(e)); ...
                 addlistener(app.Controller,'BlockSaved',     @(~,e) app.onBlockSaved(e)); ...
                 addlistener(app.Controller,'ScheduleComplete',@(~,~) app.onScheduleComplete())];
+            % Before listenTo below: the organizer adopts the session's
+            % notebook when it starts tracking a controller, and the session's
+            % notebook has to be the App's by then or it would adopt the fresh
+            % one the controller built for itself and be left on an orphan.
+            app.bindNotes();
             % An organizer left open across a controller rebuild would still be
             % listening to the deleted one, so re-point it at the new.
             if ~isempty(app.TraceOrg) && isvalid(app.TraceOrg)
@@ -1841,6 +1921,14 @@ classdef App < handle
                     app.rememberValue(app.OutputField,'Output');
                     c.Session.OutputPath = app.OutputField.Value;
                 end
+                % The session is already on the App's notebook (bindNotes, from
+                % ensureController above), so every file this run writes carries
+                % the whole log -- including the notes taken while the
+                % electrodes went in. All that is left is where the crash
+                % journal goes, which is only knowable now that the output
+                % folder is settled.
+                app.applyNotesJournal(preview);
+
                 c.setStimuli(app.Stimuli);
 
                 % The controller builds its own schedule in setStimuli; replace

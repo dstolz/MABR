@@ -24,6 +24,12 @@ classdef io
 %       ABR_Data.ADC.SweepPolarity        (+1/-1, one per SweepOnsets entry)
 %       ABR_Data.SIG.alternatePolarity    (0/1, whether the condition alternated)
 %
+%   And one more the pipeline does not read either: the session's rig notebook,
+%   written WHOLE into every file rather than split across them, so a .abr
+%   recovered on its own still carries what the operator wrote while it was
+%   being acquired (see mabr.data.SessionNotes):
+%       ABR_Data.Notes                    (struct array; 1x0 when nothing noted)
+%
 %   Save-time ADC decimation (by Recording.DecimationFactor) is preserved
 %   exactly as the legacy save_abr_data did: resample(Data,1,df) and
 %   round(SweepOnsets/df), with ADC.SampleRate = SampleRate/df.
@@ -165,6 +171,12 @@ classdef io
             S.NumPlanned   = n;
             S.NumPresented = nnz(presented);
 
+            % The rig notebook, on the same terms as a .abr's Notes: whole, and
+            % always present. A stimulation-only session writes no .abr at all,
+            % so this is the ONLY place its notes are saved -- which makes it
+            % the more important of the two, not the lesser.
+            S.Notes = mabr.data.io.noteRecord(g('Notes',[]));
+
             % The bank as this run used it, flattened the same way a .abr's SIG
             % is -- so the parameters of a stimulus in the log read exactly as
             % they would in a recorded file, and a per-stimulus tally says how
@@ -194,6 +206,20 @@ classdef io
             r    = mabr.data.io.getdef(info,'Run',1);
             t    = mabr.data.io.timestampToken(mabr.data.io.getdef(info,'StartTime',''));
             fn   = sprintf('%s_StimLog_Run%d_%s.stimlog',subj,r,t);
+        end
+
+        function fn = buildNotesFilename(subject,startTime)
+            % <SUBJ_ID_n>_Notes_<yyMMdd'T'HHmmss>.notes -- the plain-text crash
+            % journal mabr.data.SessionNotes rewrites on every commit. Named on
+            % the same pattern as the .abr and .stimlog files beside it (one
+            % subjectToken for all three) so a session's outputs sort together,
+            % and stamped with when the SESSION started rather than when the
+            % note was taken: there is one journal per session, rewritten, not
+            % one per note.
+            if nargin < 2, startTime = ''; end
+            subj = mabr.data.io.subjectToken(subject);
+            t    = mabr.data.io.timestampToken(startTime);
+            fn   = sprintf('%s_Notes_%s.notes',subj,t);
         end
 
         function ABR_Data = buildStruct(block)
@@ -240,6 +266,15 @@ classdef io
             ABR_Data.StartTime = mabr.data.io.startTimeChar(block.StartTime);
 
             ABR_Data.SIG = mabr.data.io.buildSIG(block);
+
+            % The rig notebook, whole, as it stood when this block was
+            % finalized (mabr.data.SessionNotes). Always written -- a 1x0
+            % struct with the right fields when nothing was noted -- so offline
+            % code can read ABR_Data.Notes unconditionally the same way it
+            % reads ADC.IsArtifact. Deliberately at the top level rather than
+            % under SIG: a note describes the session, not the stimulus, and
+            % anything under SIG risks being read as a parameter.
+            ABR_Data.Notes = mabr.data.io.noteRecord(block.Notes);
 
             % Provenance / metadata (harmless extras; offline pipeline ignores)
             cfg = mabr.Config;
@@ -435,6 +470,26 @@ classdef io
             % worker_loop's getdef uses on a render spec, so a caller may omit
             % anything it has no opinion about.
             if isstruct(s) && isfield(s,f) && ~isempty(s.(f)), v = s.(f); else, v = d; end
+        end
+
+        function S = noteRecord(notes)
+            % Normalize a session's notebook for writing: a plain 1xN struct
+            % array, or a 1x0 one carrying the same fields when there is
+            % nothing to say. Accepts either a mabr.data.SessionNotes handle or
+            % the struct array it produces, so a caller can pass whichever it
+            % happens to be holding. Never throws -- a notebook that cannot be
+            % serialized must not cost the file the data in it.
+            S = mabr.data.SessionNotes.emptyRecord();
+            try
+                if isa(notes,'mabr.data.SessionNotes')
+                    if isvalid(notes), S = notes.toStruct(); end
+                elseif isstruct(notes) && ~isempty(notes)
+                    S = reshape(notes,1,[]);
+                end
+            catch me
+                mabr.log.vprintf(1,1,'Notes could not be saved with this file: %s', ...
+                    me.message);
+            end
         end
 
         function v = plainValue(x)

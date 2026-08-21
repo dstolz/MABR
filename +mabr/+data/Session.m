@@ -19,6 +19,16 @@ classdef Session < handle
 
         Blocks        (1,:) mabr.data.Block             % completed results
         StartTime     (1,:) char = '';
+
+        % The rig notebook for this session (mabr.data.SessionNotes), a HANDLE
+        % shared with whoever is displaying it -- mabr.ui.App hands its own
+        % store in here at Start so the notes the operator has already taken
+        % follow the session rather than starting over. Deliberately NOT given
+        % a property default: a handle default is evaluated once at class load
+        % and would then be the SAME store in every Session ever constructed.
+        % Every file the session writes carries the whole log as of the moment
+        % it was written; see mabr.data.SessionNotes.
+        Notes         mabr.data.SessionNotes
     end
 
     properties (Dependent)
@@ -33,6 +43,7 @@ classdef Session < handle
                 obj.ADCSampleRate = cfg.ADCSampleRate;
             end
             obj.StartTime = char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss'));
+            obj.Notes     = mabr.data.SessionNotes();
         end
 
         function f = get.DecimationFactor(obj)
@@ -48,6 +59,18 @@ classdef Session < handle
                 obj.Blocks = block;
             else
                 obj.Blocks(end+1) = block;
+            end
+        end
+
+        function S = noteRecord(obj)
+            % The session's notebook as a plain struct array, ready to write
+            % into a data file. Empty -- but with the right fields -- when
+            % there is no store, so a Session built by hand in a test still
+            % produces a file offline code can read unconditionally.
+            if isempty(obj.Notes) || ~isvalid(obj.Notes)
+                S = mabr.data.SessionNotes.emptyRecord();
+            else
+                S = obj.Notes.toStruct();
             end
         end
 

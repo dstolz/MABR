@@ -43,7 +43,13 @@ classdef TraceOrganizer < handle
 %     p / c                mark peaks / clear markers
 %     i                    inspect the selected trace (or double-click it)
 %     h / Delete           hide / remove selected traces
+%     Ctrl+N               session notes
 %     Ctrl+S / Ctrl+O      save / load the view
+%
+%   The toolbar's notepad button (and Ctrl+N) opens the same rig notebook the
+%   main window carries -- listenTo adopts the running session's store, so a
+%   note written here about a trace lands in the same log, and in the same
+%   files, as one written there. A .torg carries the notebook with it.
 %
 %   saveView writes a .torg file holding the waveforms plus the complete
 %   display state -- gains, offsets, order, colours, markers, spacing,
@@ -62,13 +68,25 @@ classdef TraceOrganizer < handle
 
     properties (SetAccess = private)
         Traces (1,:) mabr.ui.Trace = mabr.ui.Trace.empty;
+
+        % The rig notebook these traces belong to (mabr.data.SessionNotes).
+        % A standalone organizer makes its own; listenTo (or useNotes) swaps in
+        % the live session's, so the notes button here opens the SAME log the
+        % main window's does rather than a second one nobody would think to
+        % check. NotesOwned records which of the two it is, because it decides
+        % whether loading a .torg may overwrite the log -- see loadView.
+        Notes      mabr.data.SessionNotes
+        NotesOwned (1,1) logical = true;
     end
 
     properties (Constant, Access = private)
         GainStep    = 1.25;   % multiplicative step for larger/smaller
         SpacingStep = 1.25;
         FileFilter  = {'*.torg','MABR Trace Organizer view (*.torg)'};
-        FileVersion = 2;
+        % 3 adds View.Notes. Older files simply lack the field and load as
+        % before -- loadView reads every optional field with isfield for
+        % exactly this reason.
+        FileVersion = 3;
     end
 
     properties (SetAccess = private, Transient)
@@ -86,16 +104,22 @@ classdef TraceOrganizer < handle
         FigTag (1,:) char = '';
         BlockListener   % listener on an AcqController's BlockReady event
         Inspector       % mabr.ui.TraceInspector, at most one at a time
+        NotesView       % mabr.ui.Notes, the button-and-window form
     end
 
     methods
         function obj = TraceOrganizer()
             obj.FigTag = sprintf('MABR_TRACEORG_%d',round(rand*1e9));
+            % Its own notebook until told otherwise: an organizer opened on its
+            % own (to read a .torg back) is not part of any session, and the
+            % notes in that file are the ones it should show.
+            obj.Notes = mabr.data.SessionNotes();
         end
 
         function delete(obj)
             obj.stopListening();
             obj.closeInspector();
+            try, delete(obj.NotesView); end %#ok<TRYNC>
             delete(obj.Traces);
             try, delete(obj.Figure); end %#ok<TRYNC>
         end
@@ -116,6 +140,35 @@ classdef TraceOrganizer < handle
             if nargin < 2 || isempty(controller) || ~isvalid(controller), return; end
             obj.BlockListener = addlistener(controller,'BlockReady', ...
                 @(~,e) obj.onBlockReady(e));
+            % Tracking a controller means tracking its session, and the session
+            % has a notebook. Adopting it is what makes the notes button here
+            % and the one on the main window two views of one log instead of
+            % two logs -- see mabr.data.SessionNotes.
+            try
+                obj.useNotes(controller.Session.Notes);
+            catch
+                % A controller without a session notebook (an older one, a
+                % hand-built stub in a test) keeps this organizer on its own.
+            end
+        end
+
+        function useNotes(obj,store)
+            % Show an external notebook instead of this organizer's own -- the
+            % running session's, normally. Every open view of that store stays
+            % in step through its NotesChanged event, so nothing here has to
+            % push updates anywhere.
+            if isempty(store) || ~isa(store,'mabr.data.SessionNotes') || ~isvalid(store)
+                return
+            end
+            if isequal(obj.Notes,store), return; end
+            obj.Notes      = store;
+            obj.NotesOwned = false;
+            % Re-point the view rather than rebuilding it: the toolbar button
+            % already holds this handle, and a rebuilt view would leave it
+            % opening a deleted one.
+            if ~isempty(obj.NotesView) && isvalid(obj.NotesView)
+                obj.NotesView.setStore(store);
+            end
         end
 
         function stopListening(obj)
@@ -297,6 +350,17 @@ classdef TraceOrganizer < handle
             obj.plotAll(false);
         end
 
+        function showNotes(obj)
+            % Open (or raise) the notebook. The toolbar button does the same
+            % thing; this is the menu/keyboard route, so nothing here is
+            % reachable only by knowing where the icons are.
+            if isempty(obj.NotesView) || ~isvalid(obj.NotesView)
+                obj.NotesView = mabr.ui.Notes(obj.Notes,[],'ButtonOnly',true, ...
+                    'Name','Traces');
+            end
+            obj.NotesView.popOut();
+        end
+
         function insp = inspectTrace(obj,idx)
             % Open one trace in a mabr.ui.TraceInspector for measuring. The
             % stack normalizes every trace to a shared scale, which is what a
@@ -347,6 +411,10 @@ classdef TraceOrganizer < handle
             View.Colors        = obj.Colors;
             View.XLim          = [];
             View.YLim          = [];
+            % The rig notebook travels with the view, on the same terms as it
+            % travels with a .abr: whole, so a .torg mailed to a collaborator
+            % carries what was happening while these traces were acquired.
+            View.Notes         = obj.Notes.toStruct();
             if obj.isvalidView()
                 View.XLim = obj.Axes.XLim;
                 View.YLim = obj.Axes.YLim;
@@ -373,6 +441,7 @@ classdef TraceOrganizer < handle
             end
             L = load(file,'-mat');
             obj.clear();
+            notesWarning = '';
 
             if isfield(L,'View')
                 V = L.View;
@@ -390,6 +459,7 @@ classdef TraceOrganizer < handle
                 if ~isempty(V.XLim), obj.Axes.XLim = V.XLim; end
                 if ~isempty(V.YLim), obj.Axes.YLim = V.YLim; end
                 obj.plotAll(false);   % relabel against the restored XLim
+                notesWarning = obj.restoreNotes(V);
             elseif isfield(L,'S')
                 % Version 1 files: waveform, label, colour, offset only.
                 for k = 1:numel(L.S)
@@ -405,6 +475,9 @@ classdef TraceOrganizer < handle
             end
             obj.syncMenuChecks();
             obj.refreshStatus();
+            % After refreshStatus, which would otherwise overwrite it -- and
+            % this is the one thing about the load the user has to be told.
+            if ~isempty(notesWarning), obj.status(notesWarning); end
         end
     end
 
@@ -422,6 +495,29 @@ classdef TraceOrganizer < handle
             catch me
                 mabr.log.vprintf(2,1,'TraceOrganizer block update failed: %s',me.message);
             end
+        end
+
+        function warn = restoreNotes(obj,V)
+            % Load the notebook a .torg carries, and return what to say about
+            % it (nothing, normally).
+            %
+            % The one case worth a word is an organizer showing the RUNNING
+            % session's notebook: replacing that with a file's would discard
+            % notes the operator is still taking, for traces they are still
+            % acquiring. A view is loaded to look at old data; the live log is
+            % not the loaded view's to overwrite. So it is left alone and the
+            % status line says the file's notes were not adopted, rather than
+            % either clobbering the log or silently dropping the file's.
+            warn = '';
+            if ~isfield(V,'Notes'), return; end          % a version 1/2 file
+            if isempty(V.Notes) || ~isstruct(V.Notes), return; end
+            if ~obj.NotesOwned
+                warn = sprintf(['Loaded, but the view''s %d note(s) were not ' ...
+                    'adopted — this organizer is showing the current session''s notes.'], ...
+                    numel(V.Notes));
+                return
+            end
+            obj.Notes.fromStruct(V.Notes);
         end
 
         function onInspectorApplied(obj)
@@ -479,6 +575,11 @@ classdef TraceOrganizer < handle
             obj.toolButton('squeeze',ink,  'Tighter spacing (Shift+Down)',       @() obj.setSpacing(obj.YSpacing/obj.SpacingStep));
             obj.toolButton('peaks',  alert,'Mark peaks on selection (p)',        @() obj.markPeaks(),true);
             obj.toolButton('inspect',alert,'Inspect selected trace (i, or double-click)',@() obj.inspectTrace());
+            % The same notes component the main window carries, over the same
+            % store once listenTo has adopted the session's -- so a note about
+            % a trace can be written where the trace is being looked at.
+            obj.NotesView = mabr.ui.Notes.toolbarButton(obj.Toolbar,obj.Notes, ...
+                'Name','Traces','Color',ink,'Separator',true);
             obj.toolButton('save',   ink,  'Save view (Ctrl+S)',                 @() obj.saveView(),true);
             obj.toolButton('load',   ink,  'Load view (Ctrl+O)',                 @() obj.loadView());
             obj.toolButton('trash',  warn, 'Remove all traces',                  @() obj.clear());
@@ -560,7 +661,8 @@ classdef TraceOrganizer < handle
 
             spec(end+1).name = 'File';
             spec(end).items  = { ...
-                it('Save traces...'              ,@() obj.saveView(),'accel','S') , ...
+                it('Session notes...'            ,@() obj.showNotes()) , ...
+                it('Save traces...'              ,@() obj.saveView(),'accel','S','sep',true) , ...
                 it('Load traces...'              ,@() obj.loadView(),'accel','O') , ...
                 it('Keyboard shortcuts'          ,@() obj.showHelp(),'sep',true) };
         end
@@ -746,7 +848,9 @@ classdef TraceOrganizer < handle
                 case '0'
                     obj.resetGain();
                 case 'n'
-                    obj.toggleNormalize();
+                    % Ctrl+N for the notebook: plain n is already normalization,
+                    % and the notebook is the rarer of the two.
+                    if ctrl, obj.showNotes(); else, obj.toggleNormalize(); end
                 case 'r'
                     obj.restack();
                 case 'a'
@@ -855,6 +959,7 @@ classdef TraceOrganizer < handle
                 'i                    inspect the selected trace'
                 'h                    hide / show selected'
                 'Delete               remove selected'
+                'Ctrl+N               session notes'
                 'Ctrl+S / Ctrl+O      save / load view'
                 'F1                   this help' };
             helpdlg(msg,'Trace Organizer Shortcuts');

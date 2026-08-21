@@ -29,6 +29,15 @@ classdef Block
         Metrics   (1,1) struct = struct();      % computed metrics
         StartTime (1,:) char = '';              % ISO-ish timestamp
         SweepPolarity (1,:) double = [];        % +1/-1 per ADC.SweepOnsets entry
+        % The session's rig notebook as it stood when this block was
+        % finalized (mabr.data.SessionNotes.toStruct). A plain struct array,
+        % never the handle store -- a Block is a value, and what belongs in it
+        % is the log AS OF this block, not a live reference that would keep
+        % changing under a saved result. mabr.data.io writes it to the .abr as
+        % ABR_Data.Notes, so a file recovered on its own still carries what the
+        % operator wrote during the session that produced it.
+        Notes     struct = struct('Stamp',{},'Text',{},'Time',{},'Elapsed',{}, ...
+                                  'Run',{},'NumRuns',{},'Sweep',{},'Source',{},'Edited',{});
     end
 
     properties (Dependent)

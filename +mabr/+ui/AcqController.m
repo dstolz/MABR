@@ -316,6 +316,32 @@ classdef AcqController < handle
             obj.Engine.stop();
         end
 
+        function ctx = noteContext(obj)
+            % Where the session is right now, for stamping a note taken at this
+            % moment (mabr.data.SessionNotes.ContextFcn -- mabr.ui.App points
+            % the store's here).
+            %
+            % Run and Sweep are left NaN unless a run is actually under way,
+            % because that is the honest answer: a note typed between runs
+            % belongs to no run, and stamping it with the last one -- or the
+            % next -- would put it in the wrong place in the record. Sweep is
+            % the count within the CURRENT run, the same number the Run panel's
+            % readout shows, so "S0128" and the operator's screen agree.
+            ctx = struct('Run',NaN,'NumRuns',NaN,'Sweep',NaN,'Running',false, ...
+                         'State',char(obj.State));
+            inRun = any(obj.State == [mabr.ui.ProgState.PrepBlock, ...
+                                      mabr.ui.ProgState.Acquire]);
+            if ~inRun || isempty(obj.Schedule) || obj.CurRun < 1, return; end
+            ctx.Running = true;
+            ctx.Run     = obj.CurRun;
+            ctx.NumRuns = obj.Schedule.NumRuns;
+            % No sweeps to count in stimulation-only mode -- nothing is
+            % recorded, so the run index is the whole of the context.
+            if ~obj.Schedule.StimulationOnly
+                ctx.Sweep = obj.CurMetrics.numSweeps;
+            end
+        end
+
         function tf = canRepeat(obj)
             % True once a blocked-strategy run has completed, so its stimulus
             % can be repeated with a fresh run appended to the plan (see
@@ -803,6 +829,12 @@ classdef AcqController < handle
                 % SweepOnsets, so the offline pipeline can average (or split)
                 % the two polarities of an alternating condition.
                 blk.SweepPolarity = pol(seq == u);
+                % The rig notebook as it stands right now, copied onto the
+                % block as a plain struct so the value carries its own record
+                % (and io writes it into the .abr). Taken here rather than at
+                % write time because a Block reaches a viewer through
+                % BlockReady whether or not the session is saving.
+                blk.Notes         = obj.Session.noteRecord();
                 blk = blk.computeMetrics();
 
                 obj.Session.addBlock(blk);
@@ -875,6 +907,9 @@ classdef AcqController < handle
             info.IDs             = obj.Stimuli.IDs();
             info.StimulusMeta    = arrayfun(@(u) obj.Stimuli.meta(u), ...
                 1:obj.Stimuli.numStimuli,'UniformOutput',false);
+            % A stimulation-only session writes no .abr, so the .stimlog is the
+            % only file its notes can reach.
+            info.Notes           = obj.Session.noteRecord();
 
             % Tally what was presented against the plan, exactly as a recorded
             % run tallies what came back -- so the schedule's own bookkeeping
