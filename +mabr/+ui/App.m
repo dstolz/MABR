@@ -202,6 +202,18 @@ classdef App < handle
             app.Artifacts = mabr.ArtifactPolicy.loadPrefs();
             app.Filters   = mabr.FilterPolicy.loadPrefs();
             app.Audio     = mabr.AudioSettings.loadPrefs();
+            % stimgen (when present) logs through MABR's logger from here on
+            % -- one console stream and one .error_logs/ file instead of a
+            % second daily file under tempdir. The seam is stimgen's
+            % (stimgen.LogSink); an older submodule checkout without it just
+            % keeps stimgen's own logger, which is the standalone behaviour.
+            try
+                if mabr.stim.stimgenAvailable()
+                    stimgen.util.logSink(mabr.log.StimgenLogSink());
+                end
+            catch me
+                mabr.log.vprintf(2,'App: stimgen log sink not installed (%s).',me.message);
+            end
             rc = getpref('MABR','RecentConfigFiles',{});
             if iscell(rc), app.RecentConfigs = rc; end
             app.createComponents();

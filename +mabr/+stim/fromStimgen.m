@@ -142,7 +142,30 @@ for i = 1:numel(items)
         % set_variant_index locks the index, calls update_signal, and releases
         % -- so VariantSelectionMode/VariantReselectOnUpdate cannot reselect
         % underneath us, and selected_value then reads this variant.
-        s.set_variant_index(v);
+        try
+            s.set_variant_index(v);
+        catch me
+            % stimgen refuses to run a filter-type calibration at any rate
+            % other than the one its FIR was designed at -- rightly, the taps
+            % would land their correction on the wrong frequencies -- and the
+            % Fs forced above is MABR's DAC rate. Its message offers "run the
+            % stimulus at the design rate", which MABR cannot do, so say what
+            % a MABR user actually can: the LUT part of a calibration is in Hz
+            % and volts and survives; only the filter is rate-specific.
+            if strcmp(me.identifier,'stimgen:util:filterRateMismatch')
+                err = MException('mabr:stim:fromStimgen:calibrationRate', ...
+                    ['Stimulus %d (%s): its equalization-filter calibration was ' ...
+                     'designed at a different sample rate, and MABR regenerates ' ...
+                     'every stimulus at %g Hz. Recalibrate through Settings > ' ...
+                     'Calibration (which measures this rig at %g Hz), or redesign ' ...
+                     'the filter from the same calibration with ' ...
+                     'design_filter(...,SampleRate=%g) -- the lookup table needs ' ...
+                     'no re-measuring.'], ...
+                    i,class(s),cfg.DACSampleRate,cfg.DACSampleRate,cfg.DACSampleRate);
+                throw(err.addCause(me));
+            end
+            rethrow(me);
+        end
         entries{end+1} = buildEntry(s,info,v,items(i).Reps,opts); %#ok<AGROW>
     end
 end
@@ -358,12 +381,14 @@ for k = 1:bank.NItems
          'know how to split into presentations.'],k);
 
     % Restore the stimulus WITHOUT its calibration, then put the calibration
-    % back separately. stimgen.StimCalibration.loadobj currently throws on a
-    % serialized calibration (it assigns Engine.MicSensitivity, which is
-    % read-only), and fromStruct calls it unconditionally -- so restoring in
-    % one step means one stimgen bug makes every saved bank unloadable. Split
-    % apart, a bank whose calibration cannot be revived still imports, and
-    % reports itself uncalibrated, which is both true and visible.
+    % back separately. stimgen.StimCalibration.loadobj used to throw on a
+    % serialized calibration (it assigned the read-only Engine.MicSensitivity;
+    % fixed upstream -- it restores through Engine.restore now), and fromStruct
+    % calls it unconditionally, so restoring in one step meant one stimgen bug
+    % made every saved bank unloadable. The split stays because the isolation,
+    % not that bug, is the point: on any loadobj failure -- an older submodule
+    % checkout included -- a bank whose calibration cannot be revived still
+    % imports, and reports itself uncalibrated, which is both true and visible.
     stimStruct = S.StimObj;
     calData    = [];
     if isfield(stimStruct,'Calibration')
