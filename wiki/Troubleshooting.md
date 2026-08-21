@@ -19,6 +19,28 @@ Output also goes to `.error_logs/` under the repository root (`mabr.Config.error
 
 **Undefined function or variable `mabr…` on the worker.** The pool predates the MABR path. The Engine runs `pctRunOnAll addpath(mabr.Config.root)` to defend against this; if it still fails, `delete(gcp('nocreate'))` and start again.
 
+## Audio device
+
+**The device dropdown is empty, or the interface is missing from it.** The list comes from
+`getAudioDevices(audioPlayerRecorder)`, which enumerates **ASIO** devices only. Install the
+manufacturer's ASIO driver (not ASIO4ALL, not the class-compliant WDM device) and confirm
+it appears in the vendor's own control panel first. `mabr.AudioSettings.availableDevices`
+never throws — an empty list is a missing driver, not an error.
+
+**Test Device reports a rate other than 192000.** The device would not grant
+`Config.DACSampleRate`, and MABR has no rate to change: every stimulus is rendered at
+192 kHz. Check the vendor control panel for a rate lock or a channel-count trade-off at
+the top rate, and see the hardware list in [[Installation and Requirements]].
+
+**`mabr:ui:AcqController:timingNotDetected`** — the loop-back self-test streamed unit
+pulses and heard nothing back. This is the most common rig problem, and it fails
+immediately rather than after a whole silent block. Check the cable from
+`PlayerChannels(2)` to `RecorderChannels(2)`, the channel numbers themselves (the fields
+are 1-based device channels, not indices into some subset), and the input gain — detection
+uses a fixed 0.1 threshold, so an input trimmed too far down reads as no pulse at all.
+Characterise the margin with `verify_timing_loopback` at `'Testing',false`; see
+[[Verification and Testing]].
+
 ## Stimulus loading
 
 | Error | Fix |

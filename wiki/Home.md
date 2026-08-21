@@ -18,6 +18,7 @@ Copyright © Daniel Stolzberg, PhD (`dstolz@umd.edu`). Proprietary — see `Copy
 | Read a saved `.abr` file | [[Data Format]] |
 | Batch-process saved files | [[Offline Analysis]] |
 | Check the install without hardware | [[Verification and Testing]] |
+| Look up a class's members | [[Class Reference|Class-Reference]] |
 | Fix something | [[Troubleshooting]] |
 
 ## What MABR is and is not
@@ -42,6 +43,9 @@ Everything lives in the `+mabr` package namespace:
 | `tests/` | Hardware-free verification scripts |
 
 `mabr.Config` is a plain **value** object holding the fixed constants and runtime paths. Nothing inherits from it.
+So are the three policy objects beside it — [[ArtifactPolicy|mabr.ArtifactPolicy-Class-Reference]], [[FilterPolicy|mabr.FilterPolicy-Class-Reference]] and [[AudioSettings|mabr.AudioSettings-Class-Reference]].
+
+Every class in the toolbox has a member-by-member page of its own, with a class diagram: start at the [[Class Reference|Class-Reference]].
 
 ## History
 

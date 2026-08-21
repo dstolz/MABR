@@ -36,7 +36,7 @@ Both are unconditional, so analysis code can read them without testing for their
 
 ## Stimulus provenance
 
-Written when the bank supplied it — banks from [[Using stimgen|stimgen]] always do — and kept out of `informativeParams` for the same reason as `alternatePolarity`: these describe how a waveform was *made*, not which condition it is.
+Written when the bank supplied it — banks from [[stimgen|Using stimgen]] always do — and kept out of `informativeParams` for the same reason as `alternatePolarity`: these describe how a waveform was *made*, not which condition it is.
 
 | Field | Contents |
 | --- | --- |

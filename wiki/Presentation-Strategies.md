@@ -1,6 +1,6 @@
 # Presentation Strategies
 
-`mabr.stim.Schedule` turns a [[Stimulus Package Contract|StimulusSet]] plus three GUI-chosen settings — **ISI** (fixed, or drawn per presentation from a range), **Repetitions**, **Strategy** — into an ordered list of *runs*, and renders each run into the two-channel play matrix the engine streams.
+`mabr.stim.Schedule` turns a [[StimulusSet|Stimulus Package Contract]] plus three GUI-chosen settings — **ISI** (fixed, or drawn per presentation from a range), **Repetitions**, **Strategy** — into an ordered list of *runs*, and renders each run into the two-channel play matrix the engine streams.
 
 MABR, not the stimulus package, owns these decisions.
 
@@ -53,7 +53,7 @@ The last three strategies mix different stimuli inside one continuous acquisitio
 
 `renderSpec(r)` builds the play matrix:
 
-- Onsets are placed by accumulating one interval per presentation: `round(Fs*ISI)` every time under `ISIMode = 'fixed'`, or a fresh uniform draw from `ISIRange` under `'random'` (see [[#Fixed and randomized ISI]]).
+- Onsets are placed by accumulating one interval per presentation: `round(Fs*ISI)` every time under `ISIMode = 'fixed'`, or a fresh uniform draw from `ISIRange` under `'random'` (see [Fixed and randomized ISI](#fixed-and-randomized-isi)).
 - Each waveform is **summed** into the signal channel at its onset. Overlapping presentations are summed, not clipped; if the longest stimulus exceeds `MinISI`, a red log line records it and the GUI warns up front.
 - The **timing channel is synthesized by MABR** — one unit pulse per onset, unless the entry supplied an explicit `Timing`, in which case it is `max`-merged in. Sweep extraction depends on this channel.
 - The run is bracketed by `SilencePad` (default 0.25 s) of silence for device settling and response tail, then zero-padded to a whole number of frames.
