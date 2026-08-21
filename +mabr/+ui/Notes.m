@@ -75,6 +75,7 @@ classdef Notes < handle
         EntryField
         CommitButton
         Button          % the ButtonOnly form's button, when embedded
+        Tool            % a host's toolbar button, when one was handed over
         ContextMenu
         EditItem
         StoreListener
@@ -157,6 +158,16 @@ classdef Notes < handle
             if ~isempty(obj.Store) && isvalid(obj.Store), obj.Store.clear(); end
         end
 
+        function setTool(obj,h)
+            % Adopt a toolbar button the host built, so the count can reach it.
+            % A uipushtool has no label to carry one, but it has a tooltip, and
+            % a notebook with something in it should not look identical to an
+            % empty one -- otherwise the only way to find out whether anything
+            % was written is to open the window.
+            obj.Tool = h;
+            obj.syncButtonLabel();
+        end
+
         function setStore(obj,store)
             % Point this view at a different notebook -- what a host calls when
             % it adopts the running session's store in place of its own (see
@@ -166,7 +177,11 @@ classdef Notes < handle
             if isempty(store) || ~isa(store,'mabr.data.SessionNotes') || ~isvalid(store)
                 return
             end
-            if isequal(obj.Store,store), return; end
+            % '==' rather than isequal: the question is whether it is the SAME
+            % store, not one that happens to hold the same notes.
+            if ~isempty(obj.Store) && isvalid(obj.Store) && obj.Store == store
+                return
+            end
             try, delete(obj.StoreListener); end %#ok<TRYNC>
             obj.Store = store;
             obj.StoreListener = addlistener(store,'NotesChanged', ...
@@ -218,6 +233,17 @@ classdef Notes < handle
                 delete(obj.Figure);
             end
             obj.Figure = [];
+        end
+
+        function lines = displayedLog(obj)
+            % What this view's log box is actually showing, as a cellstr --
+            % which is not the same question as what the store holds, and is
+            % the one worth asking of a view (tests/verify_notes.m asks it of
+            % two views on one store).
+            lines = {};
+            if ~isempty(obj.LogArea) && isgraphics(obj.LogArea)
+                lines = cellstr(obj.LogArea.Value);
+            end
         end
 
         function refresh(obj)
@@ -350,13 +376,24 @@ classdef Notes < handle
             % The button carries the count, so a host with no room for a log
             % still shows that there ARE notes -- an empty-looking button next
             % to a full notebook is the one thing this form could get wrong.
-            if isempty(obj.Button) || ~isgraphics(obj.Button), return; end
             n = 0;
             if ~isempty(obj.Store) && isvalid(obj.Store), n = obj.Store.NumNotes; end
-            if n > 0
-                obj.Button.Text = sprintf('Notes (%d)…',n);
-            else
-                obj.Button.Text = 'Notes…';
+            if ~isempty(obj.Button) && isgraphics(obj.Button)
+                if n > 0
+                    obj.Button.Text = sprintf('Notes (%d)…',n);
+                else
+                    obj.Button.Text = 'Notes…';
+                end
+            end
+            % A toolbar button has no room for a label, so the count goes in
+            % the tooltip -- the only thing a uipushtool can say.
+            if ~isempty(obj.Tool) && isgraphics(obj.Tool)
+                if n > 0
+                    obj.Tool.Tooltip = sprintf( ...
+                        'Session notes — %d so far (saved with the data)',n);
+                else
+                    obj.Tool.Tooltip = 'Session notes (saved with the data)';
+                end
             end
         end
 
@@ -401,9 +438,9 @@ classdef Notes < handle
             obj = mabr.ui.Notes(store,[],'ButtonOnly',true,opts{:});
             sepStr = 'off'; if sep, sepStr = 'on'; end
             tool = uipushtool(toolbar,'Separator',sepStr, ...
-                'Tooltip','Session notes (saved with the data)', ...
                 'CData',mabr.ui.Icon.fromArt(mabr.ui.Notes.glyph(),rgb), ...
                 'ClickedCallback',@(~,~) obj.popOut());
+            obj.setTool(tool);      % also writes the tooltip
         end
 
         function rows = glyph()

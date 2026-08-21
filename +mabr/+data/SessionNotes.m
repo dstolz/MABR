@@ -162,6 +162,7 @@ classdef SessionNotes < handle
             % line typed fresh is stamped now like any other commit.
             lines = mabr.data.SessionNotes.toLines(lines);
             old   = obj.Notes;
+            used  = false(1,numel(old));
             ctx   = obj.context();
             rec   = mabr.data.SessionNotes.emptyRecord();
             for k = 1:numel(lines)
@@ -169,8 +170,11 @@ classdef SessionNotes < handle
                 if isempty(body), continue; end
                 % Match against the note that was on this line before the edit
                 % first, then anywhere in the old log -- reordering a log is a
-                % legitimate edit and must not restamp everything.
-                j = mabr.data.SessionNotes.matchNote(old,stamp,body,k);
+                % legitimate edit and must not restamp everything. Each old
+                % note is claimed at most once, so two notes sharing a stamp
+                % (committed in the same second) cannot both collapse onto one.
+                j = mabr.data.SessionNotes.matchNote(old,used,stamp,body,k);
+                if ~isempty(j), used(j) = true; end
                 if isempty(j)
                     r = obj.makeRecord(body,obj.TimeStamp,'edit',ctx);
                     if ~isempty(stamp)
@@ -410,19 +414,27 @@ classdef SessionNotes < handle
             if isempty(i), s = isoTime; else, s = isoTime(i(1)+1:end); end
         end
 
-        function j = matchNote(old,stamp,body,k)
-            % Which old note an edited line came from: the one that was on this
-            % line if it still fits, otherwise any note with the same stamp.
+        function j = matchNote(old,used,stamp,body,k)
+            % Which old note an edited line came from, out of the ones not yet
+            % claimed by an earlier line.
+            %
+            % Untouched lines are matched first (stamp AND text), so a line the
+            % user did not touch is never mistaken for the one they rewrote --
+            % which is what would happen on two notes committed in the same
+            % second, since their stamps are identical. Only then does a
+            % stamp-only match apply, which is the edited-text case.
             j = [];
             if isempty(old), return; end
-            same = @(i) strcmp(old(i).Stamp,stamp);
-            if k <= numel(old) && same(k) && (strcmp(old(k).Text,body) || ~isempty(stamp))
-                j = k; return
-            end
+            avail  = ~used;
+            byBoth = arrayfun(@(i) strcmp(old(i).Stamp,stamp) && ...
+                                   strcmp(old(i).Text,body),1:numel(old)) & avail;
+            if k <= numel(old) && byBoth(k), j = k; return; end
+            hit = find(byBoth,1);
+            if ~isempty(hit), j = hit; return; end
             if isempty(stamp), return; end
-            hit = find(arrayfun(@(i) same(i) && strcmp(old(i).Text,body),1:numel(old)),1);
-            if isempty(hit), hit = find(arrayfun(same,1:numel(old)),1); end
-            j = hit;
+            byStamp = arrayfun(@(i) strcmp(old(i).Stamp,stamp),1:numel(old)) & avail;
+            if k <= numel(old) && byStamp(k), j = k; return; end
+            j = find(byStamp,1);
         end
 
         function c = toLines(txt)

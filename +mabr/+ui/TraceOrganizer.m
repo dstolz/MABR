@@ -160,7 +160,11 @@ classdef TraceOrganizer < handle
             if isempty(store) || ~isa(store,'mabr.data.SessionNotes') || ~isvalid(store)
                 return
             end
-            if isequal(obj.Notes,store), return; end
+            % '==' rather than isequal: these are handles, and the question is
+            % whether it is the SAME store, not one holding the same notes.
+            if ~isempty(obj.Notes) && isvalid(obj.Notes) && obj.Notes == store
+                return
+            end
             obj.Notes      = store;
             obj.NotesOwned = false;
             % Re-point the view rather than rebuilding it: the toolbar button
@@ -354,10 +358,7 @@ classdef TraceOrganizer < handle
             % Open (or raise) the notebook. The toolbar button does the same
             % thing; this is the menu/keyboard route, so nothing here is
             % reachable only by knowing where the icons are.
-            if isempty(obj.NotesView) || ~isvalid(obj.NotesView)
-                obj.NotesView = mabr.ui.Notes(obj.Notes,[],'ButtonOnly',true, ...
-                    'Name','Traces');
-            end
+            obj.ensureNotesView();
             obj.NotesView.popOut();
         end
 
@@ -497,6 +498,16 @@ classdef TraceOrganizer < handle
             end
         end
 
+        function ensureNotesView(obj)
+            % One view per organizer, built on first need and reused across
+            % figure rebuilds -- the figure is thrown away and remade every
+            % time a closed organizer is shown again, and a view rebuilt with
+            % it would strand the previous one (and its open window).
+            if ~isempty(obj.NotesView) && isvalid(obj.NotesView), return; end
+            obj.NotesView = mabr.ui.Notes(obj.Notes,[],'ButtonOnly',true, ...
+                'Name','Traces');
+        end
+
         function warn = restoreNotes(obj,V)
             % Load the notebook a .torg carries, and return what to say about
             % it (nothing, normally).
@@ -578,8 +589,16 @@ classdef TraceOrganizer < handle
             % The same notes component the main window carries, over the same
             % store once listenTo has adopted the session's -- so a note about
             % a trace can be written where the trace is being looked at.
-            obj.NotesView = mabr.ui.Notes.toolbarButton(obj.Toolbar,obj.Notes, ...
-                'Name','Traces','Color',ink,'Separator',true);
+            % Routed through showNotes rather than built with
+            % mabr.ui.Notes.toolbarButton because this figure (and so this
+            % toolbar) is rebuilt every time a closed organizer is shown again,
+            % and a view built here each time would strand the previous one.
+            notesTool = uipushtool(obj.Toolbar,'Separator','on', ...
+                'Tooltip','Session notes (saved with the data)', ...
+                'CData',mabr.ui.Icon.fromArt(mabr.ui.Notes.glyph(),ink), ...
+                'ClickedCallback',@(~,~) obj.showNotes());
+            obj.ensureNotesView();
+            obj.NotesView.setTool(notesTool);   % so the count reaches the tooltip
             obj.toolButton('save',   ink,  'Save view (Ctrl+S)',                 @() obj.saveView(),true);
             obj.toolButton('load',   ink,  'Load view (Ctrl+O)',                 @() obj.loadView());
             obj.toolButton('trash',  warn, 'Remove all traces',                  @() obj.clear());

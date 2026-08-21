@@ -13,6 +13,14 @@ classdef App < handle
 %   Session with no OutputPath, so blocks are acquired, finalized, plotted and
 %   organized exactly as usual but no .abr file is written.
 %
+%   The toolbar's notepad button opens the session's rig notebook
+%   (mabr.data.SessionNotes, shown by mabr.ui.Notes): free-text notes taken
+%   while a schedule runs, stamped with the run and sweep they were taken at,
+%   and saved into every file the session writes. The store is owned here
+%   rather than by the controller because the first notes worth taking happen
+%   before Start; bindNotes hands it to the Session as soon as a controller
+%   exists.
+%
 %   The layout code lives in createComponents (treated as generated); the
 %   wiring/logic lives in the callbacks and event handlers below.
 %
@@ -2095,6 +2103,11 @@ classdef App < handle
                     app.TraceOrg.listenTo(app.Controller);
                 end
             end
+            % Unconditionally, and whether or not a controller exists yet: the
+            % session's notebook is the App's, so an organizer opened before
+            % Start shows the same log as one opened after. A no-op when it is
+            % already on this store.
+            app.TraceOrg.useNotes(app.Notes);
             isNewWindow = ~app.TraceOrg.isvalidView();
             app.TraceOrg.show();
             if isNewWindow

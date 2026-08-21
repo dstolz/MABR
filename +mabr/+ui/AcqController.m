@@ -49,6 +49,13 @@ classdef AcqController < handle
 %   — but nothing there is recorded, and re-pointing Artifacts simply changes
 %   what the next tick previews. See the property and set.Artifacts below.
 %
+%   The session's rig notebook (mabr.data.SessionNotes) rides along with all
+%   of that: finalize_run copies the log onto each Block it builds and
+%   log_stim_run puts it in each .stimlog, so every file a run writes carries
+%   what the operator had written by the time it was written. noteContext is
+%   the other direction -- it tells the notebook where the session is, so a
+%   note taken mid-run is stamped with that run and its sweep count.
+%
 %   Events the App can listen to:
 %       StateChanged     - program flow changed (mabr.ui.ProgStateEventData)
 %       MetricsUpdated   - live metrics changed (ProgStateEventData.Info)
