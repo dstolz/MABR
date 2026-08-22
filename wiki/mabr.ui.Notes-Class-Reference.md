@@ -156,7 +156,7 @@ Two private details worth knowing:
 | Method | What it does |
 |---|---|
 | `toolbarButton(toolbar,store,...)` | Put a notes button on an existing toolbar and return the view it opens. Takes `Notes`' own options plus `'Color'` and `'Separator'` |
-| `glyph()` | A ruled notepad with a spiral binding — 16×16 art for [[mabr.ui.Icon|mabr.ui.Icon-Class-Reference]] |
+| `glyph()` | A ruled notepad with a spiral binding — 16×16 art for [[mabr.ui.Icon\|mabr.ui.Icon-Class-Reference]] |
 
 ## Many views, one store
 

@@ -94,7 +94,7 @@ report into a `StateChanged` notification carrying a
 
 Two state machines exist and they answer different questions:
 
-| | [[mabr.acq.State|mabr.acq.State-Class-Reference]] | [[mabr.ui.ProgState|mabr.ui.ProgState-Class-Reference]] |
+| | [[mabr.acq.State\|mabr.acq.State-Class-Reference]] | [[mabr.ui.ProgState\|mabr.ui.ProgState-Class-Reference]] |
 |---|---|---|
 | Whose | the **worker's** | the **controller's** |
 | Scope | one block | the whole schedule |

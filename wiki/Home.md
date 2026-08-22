@@ -18,7 +18,7 @@ Copyright © Daniel Stolzberg, PhD (`dstolz@umd.edu`). Proprietary — see `Copy
 | Read a saved `.abr` file | [[Data Format]] |
 | Batch-process saved files | [[Offline Analysis]] |
 | Check the install without hardware | [[Verification and Testing]] |
-| Look up a class's members | [[Class Reference|Class-Reference]] |
+| Look up a class's members | [[Class Reference\|Class-Reference]] |
 | Fix something | [[Troubleshooting]] |
 
 ## What MABR is and is not
