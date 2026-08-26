@@ -44,10 +44,19 @@ classdef ProgressMonitor < handle
 %   Cost
 %   ----
 %   This window runs NO timer of its own. It rides the controller's existing
-%   ~20 Hz live tick (MetricsUpdated) and repaints at most every MinInterval
-%   seconds (default 0.2), and then only if the tallies actually changed --
-%   a schedule of 512-sweep runs changes its counts a few times a second at
-%   most. State changes and finished blocks force a repaint regardless.
+%   AUXILIARY tick (MetricsUpdated, ~2 Hz -- deliberately not the ~20 Hz live
+%   tick, which belongs to the live trace; see mabr.ui.AcqController.AuxPeriod)
+%   and repaints at most every MinInterval seconds (default 0.2), and then
+%   only if the tallies actually changed -- a schedule of 512-sweep runs
+%   changes its counts a few times a second at most. State changes and
+%   finished blocks force a repaint regardless.
+%
+%   Note the aux tick is now SLOWER than MinInterval, so that throttle no
+%   longer binds: the rate limiting has moved upstream to AuxPeriod and this
+%   window repaints once per event. MinInterval stays because it is this
+%   window's own guarantee -- it is what keeps a faster caller (a hand-driven
+%   refresh, a future tick rate, mabrtest.FakeController) from repainting it
+%   arbitrarily often.
 %   Nothing is created per refresh: the bars are two patches whose vertices
 %   are rewritten, the heat map one image whose CData is, and the labels a
 %   fixed array of text objects whose Strings are. Layout is rebuilt only

@@ -4,8 +4,20 @@ classdef AcqController < handle
 %   Owns the mabr.acq.Engine, the mabr.data.Session, the mabr.stim.Schedule,
 %   and the live view. Translates user actions into engine commands and engine
 %   events into UI updates and program-state transitions. There is NO global
-%   state and NO busy-wait: engine State transitions arrive as events, and a
-%   single ~20 Hz timer refreshes the live view from the ring buffer.
+%   state and NO busy-wait: engine State transitions arrive as events, and two
+%   timers refresh the views from the ring buffer.
+%
+%   The two are split by PRIORITY. LiveTimer (~20 Hz) does the work the live
+%   trace and the advance criterion depend on: extract the new sweeps, filter
+%   them, preview the artifact verdict, correlate, draw. AuxTimer (~2 Hz, see
+%   AuxPeriod) does everything else drawn from a running block -- the snapshot
+%   the online analysis windows pull from, and the MetricsUpdated event the
+%   progress tally and the Run panel's readouts ride. Both timers are
+%   'fixedSpacing', so a tick's period is measured from when the previous one
+%   RETURNS: work in the fast tick comes straight off the live view's frame
+%   rate, which is the whole reason the slow half is not in it. Nothing on the
+%   aux timer recomputes anything -- the fast tick leaves its already-built
+%   sweeps in PendingLive and the aux tick reads them.
 %
 %   Because the worker polls commands every frame, an online advance criterion
 %   (e.g. mabr.stim.advance.corr_threshold) can stop a run early the moment a
@@ -117,10 +129,43 @@ classdef AcqController < handle
         % judged under. See set.Artifacts for the one consequence that cannot
         % simply wait for the next run.
         Artifacts     (1,1) mabr.ArtifactPolicy = mabr.ArtifactPolicy;
+        % How often the LOW-priority views are served (s). The live trace is
+        % fixed at 20 Hz and is not negotiable -- this is the other timer, the
+        % one carrying the progress tally and the online analysis snapshot.
+        % Raise it on a slow machine or with several analysis windows open:
+        % nothing on it is time-critical, and every tick it does not take is a
+        % tick the live view gets. Applied on assignment, mid-run included.
+        %
+        % 0.5 s (2 Hz) because none of it is read faster than that: a tally
+        % moving in units of a sweep and a metric averaged over a condition
+        % both change on the scale of a run. It is deliberately slower than
+        % mabr.ui.ProgressMonitor's own MinInterval throttle (0.2 s), which
+        % therefore no longer binds -- that window now repaints once per event
+        % rather than dropping three of every four.
+        AuxPeriod     (1,1) double {mustBePositive} = 0.5;
     end
 
     properties (Access = private)
         LiveTimer
+        % The second, slower timer. The live view is the one thing that has to
+        % keep up with the electrode -- an ABR average is watched as it forms,
+        % and a stuttering trace is the difference between seeing a bad
+        % electrode now and seeing it after the block. Everything ELSE drawn
+        % from a running block (the progress tally, the online analysis
+        % windows) is answering a question that moves on the scale of a run,
+        % not a sweep, and there is no reason for it to be recomputed twenty
+        % times a second.
+        %
+        % The two are split because LiveTimer runs 'fixedSpacing': the next
+        % tick starts Period AFTER the previous one returns, so the realized
+        % refresh rate is 1/(Period + work). Every millisecond of low-priority
+        % work in that tick comes straight off the live view's frame rate.
+        % Moving it here buys the trace back.
+        AuxTimer
+        % What the fast tick leaves for the slow one: the sweeps it has
+        % already built, so the aux tick re-derives nothing. Assignment is
+        % copy-on-write, so stashing these costs a reference, not an array.
+        PendingLive = []
         % Filters, designed once at the live sweeps' sample rate. designfilt
         % costs milliseconds; the live tick runs 20 times a second, so the
         % chain is built when the policy changes and never inside the tick.
@@ -219,6 +264,17 @@ classdef AcqController < handle
                 'Period',0.05,'TasksToExecute',Inf, ...
                 'TimerFcn',@(~,~) obj.on_live_tick());
 
+            % Ten times slower, and everything on it is something nobody
+            % reads at 20 Hz anyway: a sweep tally, a metric across
+            % conditions. 'drop' rather than 'queue' is the priority setting
+            % MATLAB actually offers -- a slow repaint here is skipped instead
+            % of accumulating a backlog that would later compete with the live
+            % view for the same single thread.
+            obj.AuxTimer = timer('Tag','MABR_AuxView', ...
+                'ExecutionMode','fixedSpacing','BusyMode','drop', ...
+                'Period',obj.AuxPeriod,'TasksToExecute',Inf, ...
+                'TimerFcn',@(~,~) obj.on_aux_tick());
+
             % Property defaults bypass set.Filters, so the default chain has
             % to be designed explicitly or the first ticks would run unfiltered.
             obj.refresh_live_filter();
@@ -227,6 +283,7 @@ classdef AcqController < handle
         function delete(obj)
             obj.stop_timer();
             try, delete(obj.LiveTimer); end %#ok<TRYNC>
+            try, delete(obj.AuxTimer);  end %#ok<TRYNC>
             try, delete(obj.Listeners);  end %#ok<TRYNC>
             try, delete(obj.LivePlot);   end %#ok<TRYNC>
             try, delete(obj.Engine);     end %#ok<TRYNC>
@@ -258,6 +315,16 @@ classdef AcqController < handle
             % set.Artifacts below: a controller is never deserialized.
             obj.Filters = p;
             obj.refresh_live_filter();
+        end
+
+        function set.AuxPeriod(obj,v)
+            % Retune the running timer rather than waiting for the next run:
+            % the reason to raise this is that the machine is struggling NOW.
+            % A timer's Period is read-only while it runs, so it is stopped
+            % and restarted -- cheap, and only the low-priority views miss a
+            % beat. Same MCSUP caveat as set.Filters: never deserialized.
+            obj.AuxPeriod = v;
+            obj.apply_aux_period();
         end
 
         function setLivePlot(obj,lp)
@@ -440,7 +507,8 @@ classdef AcqController < handle
             obj.SweepState = struct();
             obj.CurMetrics = struct('numSweeps',0,'numArtifacts',0, ...
                                     'numClean',0,'corr',0);
-            obj.LiveSnap   = [];
+            obj.LiveSnap    = [];
+            obj.PendingLive = [];   % the aux tick must not serve the last run
             obj.BlockStart = char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss'));
             obj.RunStartTic = tic;
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot), obj.LivePlot.reset(); end
@@ -669,27 +737,32 @@ classdef AcqController < handle
             obj.CurMetrics.numClean     = nnz(keep);
             obj.CurMetrics.corr         = R;
 
-            % Cache what a slow puller needs (see liveSnapshot). The arrays
-            % are already built; this is the only place they are kept.
-            n = size(post,1);
-            obj.LiveSnap = struct('Run',obj.CurRun, ...
-                'SampleRate',obj.Config.ADCSampleRate, ...
-                'Time',[tw.pre tw.post],'Sweeps',[pre post], ...
-                'StimIndex',obj.CurSeq(1:min(n,numel(obj.CurSeq))), ...
-                'Bad',bad(:)','Stimuli',obj.CurStim,'Labels',{obj.CurLabels});
+            % ONE concatenation, used by both timers. [pre post] allocates a
+            % whole sweep matrix; it used to be built twice a tick -- once for
+            % the snapshot cache, once for the live view -- and the second
+            % copy was pure waste. Built here because the live view needs it
+            % now; the aux tick borrows it.
+            %
+            % Hand the baseline over as well as the response, as one unbroken
+            % segment: the view's time base starts BEFORE the onset (default
+            % -2 ms), and pre-onset samples are the only thing that can fill
+            % it. The two windows are contiguous by construction (see
+            % extract_sweeps), so [pre post] is a single trace and
+            % [tw.pre tw.post] its time base.
+            Yc = [pre post];
+            tc = [tw.pre tw.post];
 
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot)
-                % Hand over the baseline as well as the response, as one
-                % unbroken segment: the view's time base starts BEFORE the
-                % onset (default -2 ms), and pre-onset samples are the only
-                % thing that can fill it. The two windows are contiguous by
-                % construction (see extract_sweeps), so [pre post] is a single
-                % trace and [tw.pre tw.post] its time base.
-                obj.LivePlot.update([pre post],[tw.pre tw.post],R, ...
+                obj.LivePlot.update(Yc,tc,R, ...
                     obj.AdvanceParams.targetSweeps,bad,obj.live_info(numel(onsets)));
             end
 
-            notify(obj,'MetricsUpdated',mabr.ui.ProgStateEventData(obj.State,obj.CurMetrics));
+            % Everything the low-priority views need, left where the aux tick
+            % can find it. Assignment shares the array rather than copying it
+            % (copy-on-write, and nothing here is written again), so the fast
+            % tick pays a reference and stops.
+            obj.PendingLive = struct('Y',Yc,'t',tc,'bad',bad, ...
+                'n',size(post,1),'metrics',obj.CurMetrics,'state',obj.State);
 
             % Online advance: stop the run early if the criterion is met. Only
             % meaningful when the run holds a single stimulus — pooling an
@@ -702,6 +775,47 @@ classdef AcqController < handle
                     obj.CurMetrics.numSweeps,R);
                 obj.Engine.stop();
             end
+        end
+
+        function on_aux_tick(obj)
+            % The low-priority half of the live path: build the snapshot the
+            % analysis windows pull from, and tell everyone whose numbers just
+            % moved. Nothing here is recomputed -- the fast tick already did
+            % the sweep extraction, filtering and artifact preview, and left
+            % the result in PendingLive.
+            try
+                obj.aux_tick_body();
+            catch me
+                % A failing progress bar must not take the acquisition with
+                % it, exactly as on_live_tick treats the live view.
+                mabr.log.vprintf(1,'Aux view tick failed: %s',me.message);
+            end
+        end
+
+        function aux_tick_body(obj)
+            P = obj.PendingLive;
+            if isempty(P), return; end
+
+            % Cache what a slow puller needs (see liveSnapshot).
+            obj.LiveSnap = struct('Run',obj.CurRun, ...
+                'SampleRate',obj.Config.ADCSampleRate, ...
+                'Time',P.t,'Sweeps',P.Y, ...
+                'StimIndex',obj.CurSeq(1:min(P.n,numel(obj.CurSeq))), ...
+                'Bad',P.bad(:)','Stimuli',obj.CurStim,'Labels',{obj.CurLabels});
+
+            notify(obj,'MetricsUpdated', ...
+                mabr.ui.ProgStateEventData(P.state,P.metrics));
+        end
+
+        function apply_aux_period(obj)
+            % Period is read-only on a running timer, so retuning means a stop
+            % and a start. Guarded on the timer existing because the property
+            % can be assigned before the constructor has built it.
+            if isempty(obj.AuxTimer) || ~isvalid(obj.AuxTimer), return; end
+            wasRunning = strcmp(obj.AuxTimer.Running,'on');
+            if wasRunning, stop(obj.AuxTimer); end
+            obj.AuxTimer.Period = obj.AuxPeriod;
+            if wasRunning, start(obj.AuxTimer); end
         end
 
         function info = live_info(obj,nSweeps)
@@ -1040,7 +1154,13 @@ classdef AcqController < handle
         end
 
         function start_timer(obj)
+            % Both views start together; they only differ in how often they
+            % are served.
             if strcmp(obj.LiveTimer.Running,'off'), start(obj.LiveTimer); end
+            if ~isempty(obj.AuxTimer) && isvalid(obj.AuxTimer) ...
+                    && strcmp(obj.AuxTimer.Running,'off')
+                start(obj.AuxTimer);
+            end
         end
 
         function stop_timer(obj)
@@ -1048,6 +1168,13 @@ classdef AcqController < handle
                 if strcmp(obj.LiveTimer.Running,'on'), stop(obj.LiveTimer); end
             catch %#ok<CTCH>
             end
+            try
+                if strcmp(obj.AuxTimer.Running,'on'), stop(obj.AuxTimer); end
+            catch %#ok<CTCH>
+            end
+            % The run is over: nothing should be able to pull a snapshot of it
+            % out of the aux tick after the fact.
+            obj.PendingLive = [];
         end
     end
 
