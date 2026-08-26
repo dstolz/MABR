@@ -165,6 +165,7 @@ Each button is drawn as what its window shows; hover for the tooltip if the pict
 | a trace on axes | Raises the Live Plot. |
 | a stack of traces | Raises the Trace Organizer, refreshed with the conditions completed so far. |
 | a loudspeaker | Opens the Stimulus Viewer on the loaded bank. |
+| three part-filled bars | Opens the [Progress Monitor](Viewing-Data.md#progressmonitor) — how much of the schedule is done, and which conditions are still short. |
 | **?** | Opens the [MABR wiki](https://github.com/dstolz/MABR/wiki) in a browser (same as **Help ▸ MABR Wiki**). |
 
 Both viewers are described in [Viewing Data](Viewing-Data.md).

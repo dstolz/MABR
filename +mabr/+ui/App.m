@@ -96,6 +96,7 @@ classdef App < handle
         LivePlot    mabr.ui.LivePlot
         TraceOrg    mabr.ui.TraceOrganizer
         StimViewer  mabr.ui.StimulusViewer
+        ProgressMon mabr.ui.ProgressMonitor
         TestRunner  mabr.ui.TestRunner
         Listeners
     end
@@ -264,6 +265,7 @@ classdef App < handle
             try, delete(app.TraceOrg);   end %#ok<TRYNC>
             try, delete(app.LivePlot);   end %#ok<TRYNC>
             try, delete(app.StimViewer); end %#ok<TRYNC>
+            try, delete(app.ProgressMon); end %#ok<TRYNC>
             try, delete(app.TestRunner); end %#ok<TRYNC>
             try, delete(app.UIFigure);   end %#ok<TRYNC>
         end
@@ -646,6 +648,11 @@ classdef App < handle
             app.LiveTool = app.toolButton('live',ink,'Live plot',@() app.onShowLive());
             app.toolButton('traces',ink, 'Trace organizer',  @() app.onTraceOrg());
             app.toolButton('stim',  ink, 'Stimulus viewer',  @() app.onStimViewer());
+            % Progress is the one viewer that is worth having open in EVERY
+            % mode, stimulation-only included -- it is the only window there
+            % that fills (see onStart), which is why it is here rather than
+            % beside the live view in syncAcquisitionEnables' disable list.
+            app.toolButton('progress',ink,'Acquisition progress', @() app.onProgress());
             % The notebook. Deliberately a toolbar button rather than a panel
             % row: the main window is already five panels deep and a log needs
             % height the layout does not have, while what the operator actually
@@ -1140,6 +1147,7 @@ classdef App < handle
             if ~isempty(app.TraceOrg) && isvalid(app.TraceOrg)
                 app.TraceOrg.listenTo(app.Controller);
             end
+            app.bindProgress();
             app.Controller.waitUntilReady(120);
             app.setStatus([mabr.acq.Engine.capitalize( ...
                 app.Controller.Engine.WorkerName) ' ready.']);
@@ -1976,6 +1984,12 @@ classdef App < handle
                 if app.StimOnlyRun
                     c.setLivePlot(mabr.ui.LivePlot.empty);
                     app.setRunReadout();
+                    % The one mode where a viewer opens by itself here: nothing
+                    % is recorded, so neither acquisition window has anything
+                    % to fill with, but the plan still walks itself run by run
+                    % and that is exactly what the progress window shows.
+                    app.onProgress();
+                    figure(app.UIFigure);      % the main window keeps focus
                 else
                     app.openViewers();
                     c.setLivePlot(app.LivePlot);
@@ -2004,6 +2018,10 @@ classdef App < handle
                 end
                 app.setStatus(sprintf('Starting %s (%d runs, %d presentations, ~%s)…', ...
                     kind,s.numRuns,s.presentations,durationText(s.duration)));
+                % Last, so an open monitor starts its clock and its tally on
+                % the plan that is actually about to run rather than the one
+                % the previous Start left behind.
+                app.bindProgress();
                 c.start();
             catch me
                 app.transport(false);      % unlock so the user can fix and retry
@@ -2158,10 +2176,48 @@ classdef App < handle
             delete(app.StimViewer);
         end
 
+        function onProgress(app)
+            % The schedule's progress, in its own window. On demand rather than
+            % at Start like the acquisition pair -- it answers a question the
+            % operator asks occasionally, not one they watch continuously --
+            % with the one exception onStart makes for stimulation-only runs,
+            % where it is the only window with anything in it.
+            isNewWindow = isempty(app.ProgressMon) || ~isvalid(app.ProgressMon);
+            if isNewWindow
+                app.ProgressMon = mabr.ui.ProgressMonitor();
+                f = app.ProgressMon.Figure;
+                mabr.ui.WindowPos.restore(f,'ProgressMonitor', ...
+                    app.defaultViewerPos('ProgressMonitor'),[420 380]);
+                f.CloseRequestFcn = @(~,~) app.closeProgress();
+            end
+            app.bindProgress();
+            figure(app.ProgressMon.Figure);
+        end
+
+        function bindProgress(app)
+            % Point an open monitor at whatever is current: the controller when
+            % there is one (it carries the live half of the tally), otherwise
+            % the plan alone, so the window fills in before Start as well as
+            % during a run. Safe to call at any time, and a no-op with no
+            % window open.
+            if isempty(app.ProgressMon) || ~isvalid(app.ProgressMon), return; end
+            if ~isempty(app.Controller) && isvalid(app.Controller)
+                app.ProgressMon.listenTo(app.Controller);
+            else
+                app.ProgressMon.attach([],[]);
+            end
+        end
+
+        function closeProgress(app)
+            mabr.ui.WindowPos.remember(app.ProgressMon.Figure,'ProgressMonitor');
+            delete(app.ProgressMon);
+        end
+
         function rememberViewerPositions(app)
             try, mabr.ui.WindowPos.remember(app.LivePlot.Figure,'LivePlot'); end %#ok<TRYNC>
             try, mabr.ui.WindowPos.remember(app.TraceOrg.Figure,'TraceOrganizer'); end %#ok<TRYNC>
             try, mabr.ui.WindowPos.remember(app.StimViewer.Figure,'StimulusViewer'); end %#ok<TRYNC>
+            try, mabr.ui.WindowPos.remember(app.ProgressMon.Figure,'ProgressMonitor'); end %#ok<TRYNC>
         end
 
         function pos = defaultViewerPos(app,name)
@@ -2178,6 +2234,13 @@ classdef App < handle
                     % On demand and transient, so it cascades off the main
                     % window rather than claiming a slot in the run layout.
                     pos = [a(1)+40, a(2)-40, 820, 500];
+                case 'ProgressMonitor'
+                    % Cascades off the main window rather than claiming a slot
+                    % in the run layout: the two acquisition viewers already
+                    % own the space to the right, and this one is small, opened
+                    % on demand, and usually dragged somewhere deliberate (a
+                    % second monitor, a corner) -- which is then remembered.
+                    pos = [a(1)+60, a(2)-60, 520, 500];
                 otherwise   % live plot, top-aligned with the main window
                     % Tall enough for the latest sweep AND the per-stimulus
                     % means stacked beneath it; the old 280 px only ever held
@@ -2487,6 +2550,23 @@ classdef App < handle
                             '................'
                             '................'
                             '................'};
+                case 'progress'  % three bars of a progress chart, part-filled
+                    rows = {'................'
+                            '................'
+                            '..XXXXXXXXXX....'
+                            '..XXXXXX...X....'
+                            '..XXXXXXXXXX....'
+                            '................'
+                            '..XXXXXXXXXXXX..'
+                            '..XXXX......X...'
+                            '..XXXXXXXXXXXX..'
+                            '................'
+                            '..XXXXXXXX......'
+                            '..XX.....X......'
+                            '..XXXXXXXX......'
+                            '................'
+                            '................'
+                            '................'};
                 case 'pin'       % pushpin: keep window on top
                     rows = {'................'
                             '.......XXXX....'
@@ -2556,22 +2636,12 @@ end
 
 function tf = isTerminal(state)
 % States a schedule rests in rather than passes through.
-tf = any(state == [mabr.ui.ProgState.Idle, ...
-                   mabr.ui.ProgState.SchedComplete, ...
-                   mabr.ui.ProgState.Error]);
+tf = mabr.ui.ProgState.isTerminal(state);
 end
 
 function [c,txt] = stateAppearance(state)
-switch state
-    case mabr.ui.ProgState.Idle,          c = [0.6 0.6 0.6]; txt = 'Idle';
-    case mabr.ui.ProgState.PrepBlock,     c = [0.95 0.8 0.2]; txt = 'Preparing block…';
-    case mabr.ui.ProgState.Acquire,       c = [0.2 0.8 0.2]; txt = 'Acquiring';
-    case mabr.ui.ProgState.BlockComplete, c = [0.2 0.5 0.9]; txt = 'Block complete';
-    case mabr.ui.ProgState.AdvanceBlock,  c = [0.95 0.8 0.2]; txt = 'Advancing…';
-    case mabr.ui.ProgState.SchedComplete, c = [0.2 0.5 0.9]; txt = 'Schedule complete';
-    case mabr.ui.ProgState.Error,         c = [0.9 0.2 0.2]; txt = 'Error';
-    otherwise,                            c = [0.6 0.6 0.6]; txt = char(state);
-end
+% One mapping, shared with mabr.ui.ProgressMonitor's lamp.
+[c,txt] = mabr.ui.ProgState.appearance(state);
 end
 
 function uialert_or_warn(msg)

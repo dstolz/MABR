@@ -45,6 +45,12 @@ This is the test that protects the core promise of the design: commands are hono
 
 Parts B and C are the only tests that exercise the full stack — controller, engine, worker, ring buffer, extraction, criterion, de-interleaving, finalization, save — in one pass.
 
+### verify_progress_monitor
+
+[tests/verify_progress_monitor.m](../tests/verify_progress_monitor.m) — the progress window, against a real `Schedule` with no engine and no pool. Asserts the tally (planned presentations per stimulus, and what a recorded run credits), each of the three views, counts/percent/none on both the bars and the header, grouping by a stimulus parameter, and a heat map that leaves a **hole** where the bank has no such condition.
+
+Its sharpest assertions are the two that involve a run in flight, driven through `mabrtest.FakeController`: mid-run sweeps must be attributed by the run's own `runSequence` — the same pairing `finalize_run` de-interleaves by — and must be *given up* the moment the run is credited to `RunCounts`, or every sweep is counted twice. It also checks that the refresh rate limit actually suppresses a repaint and that `force` overrides it, since a window that repaints on every one of the controller's 20 ticks a second would cost more than it reports.
+
 ### verify_stimgen_import
 
 [tests/verify_stimgen_import.m](../tests/verify_stimgen_import.m) — the stimgen bridge. Asserts a 2×2 variant grid becomes four entries at the DAC rate, that `informativeParams` is the *declared* list rather than every numeric scalar, that a `.spl` bank round-trips with its levels and repetitions intact, and that `Frequency`/`Level` produce a filename matching the offline regex.
@@ -70,4 +76,4 @@ Prefer building deterministic stimuli inline (as `verify_engine_loopback` does w
 
 ## What is not covered
 
-There is no automated test of the GUI, of real ASIO device behaviour, or of the offline analysis pipeline beyond the file-contract check in `verify_data_roundtrip`. Changes in those areas need manual verification on a rig.
+The viewer windows are covered (`verify_live_plot`, `verify_progress_monitor`, `verify_trace_organizer`, `verify_trace_inspector`) by driving them the way a user does and reading back what they actually drew — but the main window itself is not, nor is real ASIO device behaviour, nor the offline analysis pipeline beyond the file-contract check in `verify_data_roundtrip`. Changes in those areas need manual verification on a rig.
