@@ -134,6 +134,18 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 | [`rms_metric(D)`](../+mabr/+metrics/rms_metric.m) | Mean per-sweep RMS amplitude. Named to avoid shadowing SPT's `rms`. |
 | [`find_peaks(meanTrace,npeaks,findNegative)`](../+mabr/+metrics/find_peaks.m) | Peak/trough finder for ABR wave marking. Returns `pks`/`locs`/`w`/`p`. Named to avoid shadowing SPT's `findpeaks`. |
 
+### Online-analysis metrics — `+mabr/+metrics/+online/`
+
+One metric per stimulus **condition**, for the online analysis window ([`mabr.ui.MetricPlot`](../+mabr/+ui/MetricPlot.m)). These build on the pure functions above rather than reimplementing them, so a number here and the same number on a saved `Block` cannot disagree.
+
+| Item | Description |
+|------|-------------|
+| [`context(sweeps,t,Fs,info)`](../+mabr/+metrics/+online/context.m) | **The contract.** Builds the one struct every metric is called with: the sweeps windowed to `info.Window`, their mean, `Time` in **milliseconds** re onset, the unwindowed sweeps and pre-onset `Baseline`, the sweep/artifact bookkeeping, and the condition's `Label`/`ID`/`Params`/`Live`. |
+| [`catalog()`](../+mabr/+metrics/+online/catalog.m) | The built-ins as a struct array (`Key`, `Name`, `Units`, `Summary`, `Fcn`): RMS, peak-to-peak, peak, peak latency, sweep correlation, split-half correlation, SNR, residual noise, rectified area, clean sweeps, artifact rate. `catalog(key)` returns one. **Values are returned in the unit advertised**, not in volts. |
+| [`validate(fcn)`](../+mabr/+metrics/+online/validate.m) | `[ok,msg]` — does this function meet the contract (one numeric scalar, no error)? Run when a custom metric is selected, so a bad one is a dialog rather than an error on every refresh. |
+| [`sampleContext()`](../+mabr/+metrics/+online/sampleContext.m) | A representative context (64 sweeps, evoked-looking, deterministic) — what `validate` tests against, and what you develop a metric against at the command line. |
+| [`custom_template.m`](../+mabr/+metrics/+online/custom_template.m) | Copy-me template for a user-written metric. |
+
 ## Data model — `+mabr/+data/`
 
 | Item | Description |
@@ -185,6 +197,7 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 | [`mabr.ui.ProgState`](../+mabr/+ui/ProgState.m) | Enumeration: `Idle`, `PrepBlock`, `Acquire`, `BlockComplete`, `AdvanceBlock`, `SchedComplete`, `Error`. |
 | [`mabr.ui.ProgStateEventData`](../+mabr/+ui/ProgStateEventData.m) | Event payload carrying `State` and an `Info` struct. |
 | [`mabr.ui.LivePlot`](../+mabr/+ui/LivePlot.m) | Live view: the most-recent sweep on its own top axes, one running mean per stimulus in the run below it, correlation bar. Passive — draws what it is handed. |
+| [`mabr.ui.MetricPlot`](../+mabr/+ui/MetricPlot.m) | Online analysis: **one** metric per window, computed per stimulus condition and plotted against the stimulus parameters while the schedule runs. Deliberately **not a singleton** — every press of the toolbar's chart button opens another. |
 | [`mabr.ui.TraceOrganizer`](../+mabr/+ui/TraceOrganizer.m) | Interactive stacked-waveform viewer with drag-to-reposition and peak marking. |
 | [`mabr.ui.Trace`](../+mabr/+ui/Trace.m) | One waveform in the stack: data, time base, label, colour, offset, markers. |
 | [`mabr.ui.Marker`](../+mabr/+ui/Marker.m) | A peak marker (point + label) on a trace axes. |
@@ -202,12 +215,15 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 | `Window` | ADC window in seconds relative to onset (default `[0 0.01]`) |
 | `AdvanceFcn`, `AdvanceParams` | The criterion and its context. `targetSweeps` is overwritten per run with that run's presentation count |
 | `Filters` | A `mabr.FilterPolicy` applied to the live view *and* handed to each finalized `Recording`. Settable mid-acquisition; never reaches `Recording.Data`, so saved files stay raw |
+| `liveSnapshot()` | The run currently streaming, as of the last live tick, or `[]` when none is: `Time` (s, starting **negative**), `Sweeps` `[nSweeps x nSamples]`, `StimIndex`, `Bad`, `Stimuli`, `Labels`, `Run`, `SampleRate`. A **pull**, for a view that refreshes on its own slower clock (`MetricPlot`); cleared when a run begins and again when one completes, so a puller cannot double-count sweeps the finished run is about to be finalized into |
 | `Engine`, `Session`, `Stimuli`, `Schedule`, `LivePlot`, `State`, `Testing` | Read-only properties |
 | events `StateChanged`, `MetricsUpdated`, `BlockReady`, `BlockSaved`, `ScheduleComplete` | The front-end contract. `BlockReady` carries the finalized `Block` (`.Info.block`) and always fires; `BlockSaved` carries a path (`.Info.file`) and fires only when the `Session` has an `OutputPath` |
 
 At finalization the run's sweeps are split by `Schedule.runSequence`, yielding **one `Block` and one `.abr` per stimulus** that appeared in it. A homogeneous run saves the continuous trace; an intermixed one saves each stimulus's sweep windows concatenated, so files do not each carry a full copy of the shared recording.
 
 **`LivePlot`** — `LivePlot(parent)` (omit `parent` for its own figure), `update(sweeps,tvec,R,target,bad,info)`, `reset()`, `setFilterText(txt)`. `sweeps` is `[pre post]` as one contiguous segment and `tvec` its time base in seconds; `info.StimIndex`/`.Stimuli`/`.Labels` say which stimulus evoked each sweep (omit it for a single pooled mean). Display settings are the public properties `Layout` (`'overlay'`/`'separate'`), `TimeBase` (ms, default `[-2 10]`), `AmpMode` (`'each'`/`'common'`/`'manual'`) and `ManualLimit` (volts) — the window's control strip writes exactly these. See [Viewing Data](Viewing-Data.md#liveplot).
+
+**`MetricPlot`** — `MetricPlot(controller,parent)` (both optional), `attach(controller)`, `addBlock(block)`, `updateLive(snap,stimuli)`, `refresh()`, `clearData()`, `setCustomMetric(fcn,name)`, `conditions()`, `values()`, `dataTable()`. Analysis settings are the public properties `Metric` (a catalog `Key`, or `'custom'`), `Window` (ms, default `[0 10]`), `XParam`/`SeriesParam` (`''` = auto, `'Stimulus'`, `'none'`, or a parameter name), `PlotType` (`'auto'`/`'line'`/`'scatter'`/`'bar'`/`'heatmap'`/`'contour'`/`'surface'`), `UpdateInterval` (s, clamped to `[0.25 60]`) and `Style` — the control strip writes the first five, and the axes **right-click menu** writes `Style` and `PlotType`. Both are remembered in MATLAB prefs (`MABR`/`MetricPlot`), so the next window opens where the last one left off. See [Viewing Data](Viewing-Data.md#online-analysis).
 
 **`TraceOrganizer`** — `addBlock(block)`, `addTrace(data,time,label,stimID)`, `markPeaks(idx)`, `clearMarkers(idx)`, `show()`, `refresh()`, `clear()`, `isvalidView()`; live updates `listenTo(controller)`, `stopListening()`; selection `select(idx,extend)`, `selectedIndices()`, `targetIndices()`; display `scaleTraces(factor,idx)`, `resetGain(idx)`, `setSpacing(s)`, `restack()`, `moveTrace(idx,delta)`, `toggleVisible(idx)`, `removeTraces(idx)`; persistence `saveView(file)`, `loadView(file)`; properties `YSpacing`, `YScaling`, `NormalizeEach`, `ShowLabels`, `Colors`, `Traces`, and read-only `Figure`/`Axes`.
 

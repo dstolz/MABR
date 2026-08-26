@@ -41,7 +41,7 @@ Everything lives under the `+mabr` namespace. There is no other package.
 | [+data](../+mabr/+data/) | Data model and file IO: `Recording`, `Block`, `Session`, `io` |
 | [+stim](../+mabr/+stim/) | The stimulus boundary: source contract, block queue, advance criteria |
 | [+metrics](../+mabr/+metrics/) | Small, pure, tested functions: onset detection, sweep extraction, correlations, SNR |
-| [+ui](../+mabr/+ui/) | The GUI: app, controller, live plot, trace organizer |
+| [+ui](../+mabr/+ui/) | The GUI: app, controller, live plot, online analysis, trace organizer |
 | [+log](../+mabr/+log/) | Verbosity-gated logging |
 
 Plus [mabr.Config](../+mabr/Config.m) at the root: a plain **value** object holding hardware constants and runtime paths. It is not a superclass and nothing inherits from it — the app and engine each hold a copy.

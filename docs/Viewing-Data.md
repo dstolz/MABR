@@ -1,6 +1,6 @@
 # Viewing Data
 
-MABR has two viewers: a live plot for the condition being recorded now, and the Trace Organizer for comparing finished conditions. Both open with the app and are laid out beside the main window; the trace-on-axes and stacked-traces toolbar buttons raise them, and where you leave them is remembered across sessions.
+MABR has three viewers: a live plot for the condition being recorded now, the online analysis window for a metric across the conditions as they accumulate, and the Trace Organizer for comparing finished conditions. The live plot and the organizer open with the app and are laid out beside the main window; the analysis window opens on demand, as many at a time as you want. Where you leave a window is remembered across sessions.
 
 ## Live Plot
 
@@ -21,6 +21,66 @@ Opens with the app, and is raised by the trace-on-axes toolbar button or by pres
 **Correlation bar** — A single bar showing how reproducible the response currently is, on a 0–1 scale, with your threshold marked. It compares the split-half consistency of the response window against that of the pre-stimulus baseline, so it reflects genuine time-locked signal rather than sweeps merely looking alike. When the bar reaches the marked threshold, the correlation advance criterion fires and the condition ends.
 
 The plot refreshes about 20 times per second and resets at the start of each condition.
+
+## Online Analysis
+
+Opens from the chart toolbar button, or from **Analysis…** on the live plot's control strip. **Every press opens another window**, because each window shows exactly one metric: "RMS against level" and "sweep correlation against frequency" are two questions, and a window that could only answer one at a time would make you throw the first answer away to ask the second. Open as many as the screen holds and arrange them.
+
+Where the live plot shows you the *waveform* being recorded now, this shows you the *experiment* taking shape: one number per stimulus condition, plotted against the stimulus's own parameters, refreshed while the schedule runs.
+
+### What it computes
+
+Pick the metric from the control strip. The built-ins are all computed from the artifact-clean sweeps, filtered exactly as the live view shows them:
+
+| Metric | Unit | What it is |
+| --- | --- | --- |
+| RMS amplitude | µV | Root-mean-square of the averaged response in the analysis window |
+| Peak-to-peak | µV | Largest positive minus largest negative excursion of the average |
+| Peak amplitude | µV | Largest absolute excursion |
+| Peak latency | ms | Time of the **most prominent** peak — the same ranking the Trace Inspector's auto-detect uses |
+| Sweep correlation | *r* (Fisher z) | Mean pairwise correlation across sweeps: response reliability |
+| Split-half correlation | *r* | Odd-sweep average against even-sweep average |
+| SNR | dB | Plus/minus averaging (`mabr.metrics.snr`) |
+| Residual noise | µV | RMS of the odd-minus-even difference: what averaging has not removed yet |
+| Rectified area | µV·ms | Area under the rectified average |
+| Clean sweeps | count | Sweeps contributing to the average |
+| Artifact rate | % | Percentage of acquired sweeps rejected |
+
+**Window (ms)** is the part of each sweep the metric measures, relative to stimulus onset — narrow it to the wave you care about and the numbers follow.
+
+**Custom function…** takes any `.m` file that accepts the context struct and returns one number; see [Extending MABR](Extending.md#adding-a-metric). It is checked against the contract when you pick it, so a malformed one is refused there and then rather than erroring on every refresh.
+
+### Where the numbers come from
+
+Two sources, merged by stimulus ID:
+
+- **Finished conditions** — each block as it is finalized, plus a backfill of everything already done when the window opens. These are authoritative.
+- **The condition being acquired right now** — pulled from the live path on this window's own clock, so a point appears and firms up as the sweeps arrive. It is drawn with a **hollow ring**, and the subtitle says how many conditions are still filling, because a number from 40 sweeps is not the number the block will report.
+
+Repeats and make-up runs of the same stimulus **accumulate**: the condition's point is computed from all of its sweeps, not just the newest run's.
+
+### How the plot adapts
+
+The parameters are whatever the bank declares as identifying a condition (`informativeParams` — `Frequency`, `Level`, …).
+
+| Varying | Default plot |
+| --- | --- |
+| none | one bar per stimulus ID |
+| one | metric against that parameter, a line with symbols |
+| two | one line with symbols per level of the second, with a legend |
+| three or more | you choose the two axes; the rest are averaged into each point, and the subtitle says so |
+
+**X axis** and **Series** override the automatic choice. With two parameters chosen you can also ask for a **heat map**, **contour**, or **surface** from the right-click menu; if there is not yet a grid to draw — one parameter, or too few conditions — it falls back to lines and says why in the subtitle rather than drawing something that looks like a map and is not.
+
+**Every (s)** is the refresh interval, 0.25 to 60 s, 1 s by default. There is no reason to go faster: an average moves slowly, and every open window recomputes every metric on each tick.
+
+### Aesthetics: right-click the plot
+
+Everything visual is on the axes context menu, and it applies to the plot immediately: plot type, series palette, per-series colour, colormap (and reverse) for maps, marker and marker size, line style and width, grid, legend placement, log axes, manual Y limits, a value label on each point, font size, and a light/dark theme. Your choices are remembered, so the **next** window opens looking like the last one you tuned; **Reset aesthetics** puts one window back to the shipped defaults.
+
+The same menu takes the numbers away: **Copy data to clipboard** (tab-separated, ready for a spreadsheet), **Export data (CSV)…**, **Save image…**, and **Copy plot to a new figure** — a static copy to annotate and keep while the live one carries on updating.
+
+Nothing in this window writes to your data. It is a view over what the acquisition already owns.
 
 ## Trace Organizer
 

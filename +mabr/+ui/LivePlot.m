@@ -50,6 +50,13 @@ classdef LivePlot < handle
 %   when it was the one rejected, so a noisy electrode is visible as it happens
 %   rather than at the end of the block.
 %
+%   The control strip ends with NEW ANALYSIS…, which asks the host to open an
+%   online-analysis window (mabr.ui.MetricPlot) -- one metric across the
+%   conditions, refreshed while the schedule runs. It is deliberately a
+%   "new one every press": watching a trace is exactly when the question
+%   "and how is this growing with level?" arrives, and answering it should
+%   not cost the plot already on screen. See NewAnalysisFcn.
+%
 % Daniel Stolzberg (c) 2019-2026
 
     properties (Constant, Access = private)
@@ -66,6 +73,14 @@ classdef LivePlot < handle
 
     properties
         Title (1,:) char = 'MABR Live Plot';
+        % What the Analysis button opens. A handle taking no arguments,
+        % supplied by the host (mabr.ui.App points it at its own
+        % onMetricPlot), because THIS view has no business knowing about the
+        % controller or how many analysis windows are open -- it only knows
+        % that the operator asked for one more while watching a trace. Left
+        % empty the button is there but disabled: an unwired button that
+        % opened a window with nothing in it would be worse than a dead one.
+        NewAnalysisFcn = []
     end
 
     properties (SetAccess = private)
@@ -189,6 +204,11 @@ classdef LivePlot < handle
         end
 
         % --- Display settings ------------------------------------------------
+        function set.NewAnalysisFcn(obj,f)
+            obj.NewAnalysisFcn = f;
+            obj.syncAnalysisButton();
+        end
+
         function set.Layout(obj,v)
             obj.Layout = validatestring(v,{'overlay','separate'}, ...
                 'mabr.ui.LivePlot','Layout');
@@ -386,8 +406,23 @@ classdef LivePlot < handle
                  'all to one shared scale, or a fixed limit you set.']);
             [obj.Ctrl.manual,x] = obj.addEdit(p,x,54,@() obj.onManualControl(), ...
                 'Fixed +/- limit for the mean axes.');
-            obj.Ctrl.manualUnit = obj.addText(p,'uV',x,26);
+            [obj.Ctrl.manualUnit,x] = obj.addText(p,'uV',x,26);
 
+            % Opening an online-analysis window from HERE is the point of
+            % putting it here: the moment you want a metric plotted across
+            % conditions is the moment you are staring at the traces and
+            % wondering whether the response is growing with level. Every
+            % press opens ANOTHER window (mabr.ui.MetricPlot is deliberately
+            % not a singleton), which is why it says "New".
+            x = x + 10;
+            obj.Ctrl.analysis = uicontrol(p,'Style','pushbutton', ...
+                'String','Analysis…','Units','pixels', ...
+                'Position',[x 4 86 22],'Callback',@(~,~) obj.onAnalysis(), ...
+                'TooltipString',['Open ANOTHER online-analysis window: one ' ...
+                                 'metric across the conditions, refreshed ' ...
+                                 'while the schedule runs.']);
+
+            obj.syncAnalysisButton();
             obj.syncControls();
         end
 
@@ -409,6 +444,18 @@ classdef LivePlot < handle
                 'Position',[x 5 w 20],'BackgroundColor','w', ...
                 'Callback',@(~,~) fcn(),'TooltipString',tip);
             x = x + w + 3;
+        end
+
+        function onAnalysis(obj)
+            if isempty(obj.NewAnalysisFcn), return; end
+            obj.NewAnalysisFcn();
+        end
+
+        function syncAnalysisButton(obj)
+            if ~isfield(obj.Ctrl,'analysis') || ~isgraphics(obj.Ctrl.analysis)
+                return
+            end
+            obj.Ctrl.analysis.Enable = onOff(~isempty(obj.NewAnalysisFcn));
         end
 
         function onLayoutControl(obj)

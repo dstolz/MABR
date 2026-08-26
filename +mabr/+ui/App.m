@@ -21,6 +21,16 @@ classdef App < handle
 %   before Start; bindNotes hands it to the Session as soon as a controller
 %   exists.
 %
+%   The toolbar's chart button opens an ONLINE ANALYSIS window
+%   (mabr.ui.MetricPlot): one metric -- RMS, peak-to-peak, sweep correlation,
+%   SNR, latency, or a function the user wrote -- computed per stimulus
+%   condition and plotted against the stimulus parameters while the schedule
+%   runs. Every press opens another one, and so does the live plot's own
+%   "Analysis…" button, because one metric per window is the design: two
+%   questions are two windows, not a mode switch that loses the first answer.
+%   The App holds them only to re-point them at a rebuilt controller and to
+%   close them with itself (see onMetricPlot).
+%
 %   The layout code lives in createComponents (treated as generated); the
 %   wiring/logic lives in the callbacks and event handlers below.
 %
@@ -94,6 +104,13 @@ classdef App < handle
         Notes       mabr.data.SessionNotes
         NotesView   mabr.ui.Notes
         LivePlot    mabr.ui.LivePlot
+        % Online-analysis windows (mabr.ui.MetricPlot), an ARRAY because the
+        % window is deliberately not a singleton: one metric per window is the
+        % whole design, so RMS-against-level and correlation-against-frequency
+        % are two windows open at once rather than one behind a mode switch.
+        % Held only so they can be re-pointed at a rebuilt controller and torn
+        % down with the app; each otherwise looks after itself.
+        MetricPlots mabr.ui.MetricPlot
         TraceOrg    mabr.ui.TraceOrganizer
         StimViewer  mabr.ui.StimulusViewer
         TestRunner  mabr.ui.TestRunner
@@ -114,6 +131,7 @@ classdef App < handle
         TestMenuItem
         Toolbar
         LiveTool
+        MetricTool
         AlwaysOnTopTool
         Grid
         SubjectField
@@ -263,6 +281,7 @@ classdef App < handle
             try, delete(app.Controller); end %#ok<TRYNC>
             try, delete(app.TraceOrg);   end %#ok<TRYNC>
             try, delete(app.LivePlot);   end %#ok<TRYNC>
+            try, delete(app.MetricPlots); end %#ok<TRYNC>
             try, delete(app.StimViewer); end %#ok<TRYNC>
             try, delete(app.TestRunner); end %#ok<TRYNC>
             try, delete(app.UIFigure);   end %#ok<TRYNC>
@@ -644,6 +663,13 @@ classdef App < handle
             % stimulation-only mode, so it is also the one kept as a handle
             % (see syncAcquisitionEnables).
             app.LiveTool = app.toolButton('live',ink,'Live plot',@() app.onShowLive());
+            % Online analysis. Like the live view it has nothing to show when
+            % nothing is recorded, so it is the other tool syncAcquisitionEnables
+            % greys out under stimulation only. Every press opens ANOTHER
+            % window -- see onMetricPlot.
+            app.MetricTool = app.toolButton('metrics',ink, ...
+                'Online analysis — one metric across conditions (new window each press)', ...
+                @() app.onMetricPlot());
             app.toolButton('traces',ink, 'Trace organizer',  @() app.onTraceOrg());
             app.toolButton('stim',  ink, 'Stimulus viewer',  @() app.onStimViewer());
             % The notebook. Deliberately a toolbar button rather than a panel
@@ -1140,6 +1166,14 @@ classdef App < handle
             if ~isempty(app.TraceOrg) && isvalid(app.TraceOrg)
                 app.TraceOrg.listenTo(app.Controller);
             end
+            % Same for every open analysis window: attach() replaces its
+            % listeners rather than adding a second set, and backfills the new
+            % session's blocks, so one left open across a mode change keeps
+            % working instead of quietly going dead.
+            app.pruneMetricPlots();
+            for i = 1:numel(app.MetricPlots)
+                app.MetricPlots(i).attach(app.Controller);
+            end
             app.Controller.waitUntilReady(120);
             app.setStatus([mabr.acq.Engine.capitalize( ...
                 app.Controller.Engine.WorkerName) ' ready.']);
@@ -1555,7 +1589,8 @@ classdef App < handle
             else
                 app.AcqPanel.Title = 'Acquisition';
             end
-            app.LiveTool.Enable = onOff(~stimOnly);
+            app.LiveTool.Enable   = onOff(~stimOnly);
+            app.MetricTool.Enable = onOff(~stimOnly);
             % Advance is a CONFIG control: it is dead for the duration of a
             % schedule whatever the mode, and transport() owns putting it back
             % when one ends. Re-deriving it here mid-run would switch it on
@@ -2077,11 +2112,68 @@ classdef App < handle
                 % Closing disposes the viewer outright: it holds no state worth
                 % keeping, and that keeps the isvalid() check above honest.
                 f.CloseRequestFcn = @(~,~) app.closeLive();
+                % The live view offers "Analysis…" but knows nothing about
+                % controllers or how many windows are open; the App does, so
+                % the button is pointed straight at the same handler the
+                % toolbar button uses.
+                app.LivePlot.NewAnalysisFcn = @() app.onMetricPlot();
             end
             if ~isempty(app.Controller) && isvalid(app.Controller)
                 app.Controller.setLivePlot(app.LivePlot);
             end
             figure(app.LivePlot.Figure);
+        end
+
+        % --- Online analysis windows ----------------------------------------
+        % Not a singleton, on purpose (see mabr.ui.MetricPlot): one metric per
+        % window, so a second question is a second window rather than a mode
+        % switch that loses the first answer. The App keeps the array only to
+        % re-point them at a rebuilt controller and to close them with itself.
+        function mp = onMetricPlot(app)
+            app.pruneMetricPlots();
+            c = app.Controller;
+            if isempty(c) || ~isvalid(c), c = mabr.ui.AcqController.empty; end
+            mp = mabr.ui.MetricPlot(c);
+            f  = mp.Figure;
+            % Every window opens from the remembered position, cascaded past
+            % whatever is already up so a second one does not land exactly on
+            % the first.
+            mabr.ui.WindowPos.restore(f,'MetricPlot', ...
+                app.defaultViewerPos('MetricPlot'),[620 420]);
+            step = 28*numel(app.MetricPlots);
+            f.Position(1:2) = f.Position(1:2) + [step -step];
+            % ...and back onto the display, so a long cascade cannot walk a
+            % window off the bottom-right corner of the screen.
+            f.Position = mabr.ui.WindowPos.clampToScreen(f.Position);
+            f.CloseRequestFcn = @(~,~) app.closeMetricPlot(mp);
+
+            if isempty(app.MetricPlots)
+                app.MetricPlots = mp;
+            else
+                app.MetricPlots(end+1) = mp;
+            end
+            if isempty(app.Controller) || ~isvalid(app.Controller)
+                app.setStatus(['Online analysis opened — it fills in once a ' ...
+                    'schedule is running.']);
+            end
+        end
+
+        function closeMetricPlot(app,mp)
+            % Remember the position only when this is the LAST one open:
+            % every other window sits at a cascade offset, and storing one of
+            % those would walk the remembered origin across the screen a
+            % little further every session.
+            app.pruneMetricPlots();
+            if numel(app.MetricPlots) <= 1
+                try, mabr.ui.WindowPos.remember(mp.Figure,'MetricPlot'); end %#ok<TRYNC>
+            end
+            delete(mp);
+            app.pruneMetricPlots();
+        end
+
+        function pruneMetricPlots(app)
+            if isempty(app.MetricPlots), return; end
+            app.MetricPlots = app.MetricPlots(isvalid(app.MetricPlots));
         end
 
         function closeLive(app)
@@ -2159,6 +2251,13 @@ classdef App < handle
         end
 
         function rememberViewerPositions(app)
+            % Analysis windows cascade past one another, so only a lone one is
+            % worth storing -- see closeMetricPlot for why remembering a
+            % cascaded position walks the origin across the screen.
+            app.pruneMetricPlots();
+            if isscalar(app.MetricPlots)
+                try, mabr.ui.WindowPos.remember(app.MetricPlots(1).Figure,'MetricPlot'); end %#ok<TRYNC>
+            end
             try, mabr.ui.WindowPos.remember(app.LivePlot.Figure,'LivePlot'); end %#ok<TRYNC>
             try, mabr.ui.WindowPos.remember(app.TraceOrg.Figure,'TraceOrganizer'); end %#ok<TRYNC>
             try, mabr.ui.WindowPos.remember(app.StimViewer.Figure,'StimulusViewer'); end %#ok<TRYNC>
@@ -2174,6 +2273,12 @@ classdef App < handle
             switch name
                 case 'TraceOrganizer'
                     pos = [a(1)+a(3)+gap, a(2), 640, a(4)];
+                case 'MetricPlot'
+                    % Below the organizer's column on first run: the two
+                    % acquisition viewers own the top of the screen during a
+                    % run, and an analysis window is watched between blocks
+                    % rather than sweep by sweep.
+                    pos = [a(1)+a(3)+gap+40, max(60,a(2)-60), 620, 460];
                 case 'StimulusViewer'
                     % On demand and transient, so it cascades off the main
                     % window rather than claiming a slot in the run layout.
@@ -2468,6 +2573,23 @@ classdef App < handle
                             '......XX........'
                             '.....X..X.......'
                             'XXXXX....XXXXXXX'
+                            '................'
+                            '................'};
+                case 'metrics'   % three rising points on axes: a metric vs a parameter
+                    rows = {'................'
+                            '.X..............'
+                            '.X..........XX..'
+                            '.X.........X..X.'
+                            '.X..........XX..'
+                            '.X......XX......'
+                            '.X.....X..X.....'
+                            '.X......XX......'
+                            '.X..XX..........'
+                            '.X.X..X.........'
+                            '.X..XX..........'
+                            '.X..............'
+                            '.XXXXXXXXXXXXXX.'
+                            '................'
                             '................'
                             '................'};
                 case 'stim'      % loudspeaker radiating: what gets played

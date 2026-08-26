@@ -229,6 +229,31 @@ Put it in [+metrics](../+mabr/+metrics/) as a pure function taking a `[nSamples 
 
 Note the naming convention: [rms_metric](../+mabr/+metrics/rms_metric.m) and [find_peaks](../+mabr/+metrics/find_peaks.m) are named to avoid shadowing the Signal Processing Toolbox functions they call.
 
+### A metric for the online analysis window
+
+The [online analysis window](Viewing-Data.md#online-analysis) plots **one number per stimulus condition**. Its metrics are a separate, narrower contract, in [+metrics/+online](../+mabr/+metrics/+online/): one struct in, one number out.
+
+```matlab
+function v = my_metric(ctx)
+v = max(abs(ctx.Mean))/rms(ctx.Baseline(:));   % peak, in units of baseline noise
+end
+```
+
+`ctx` is built by [`mabr.metrics.online.context`](../+mabr/+metrics/+online/context.m), which is the authoritative field list. The ones you will use: `Sweeps` `[nSamples x nSweeps]` and their `Mean`, both windowed to the analysis window and in volts; `Time` in **milliseconds** re onset; `Baseline` (the pre-onset samples, empty once a run is finalized); `NumSweeps`/`NumTotal`/`NumArtifacts`/`ArtifactRate`; `Params` (the condition's informative parameters, e.g. `ctx.Params.Level`); and `Live`, true while the run producing it is still streaming.
+
+Return **one** number, in whatever unit you want the axis to read. `NaN` means "not enough data yet" and is drawn as a gap.
+
+Develop it at the command line, with no acquisition:
+
+```matlab
+ctx = mabr.metrics.online.sampleContext;
+v   = my_metric(ctx)
+```
+
+Then pick it from the window's **Metric ▸ Custom function…**. It is run through [`mabr.metrics.online.validate`](../+mabr/+metrics/+online/validate.m) at selection time, so a malformed one is refused with a reason instead of throwing on every refresh. Copy [custom_template.m](../+mabr/+metrics/+online/custom_template.m) to start.
+
+To add a metric to the shipped list instead, add an `entry(...)` line and a local function to [catalog.m](../+mabr/+metrics/+online/catalog.m) — and delegate the arithmetic to the pure functions in `+metrics` rather than reimplementing it, so the window and a saved `Block` cannot disagree.
+
 ## Before you commit
 
 Run [the verification suite](Testing.md):

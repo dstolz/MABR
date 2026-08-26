@@ -166,6 +166,14 @@ classdef AcqController < handle
         % verifyTimingLoop, [] until the first pass. start() re-verifies
         % whenever obj.Schedule's current values no longer match this.
         VerifiedAudioConfig = []
+        % The most recent live tick's sweeps, kept so a window that refreshes
+        % on its OWN clock can see the run in progress without re-reading the
+        % ring buffer or forcing the 20 Hz tick to push at them (see
+        % liveSnapshot). [] whenever no run is streaming: it is cleared when a
+        % run begins and again the moment one completes, so a puller can never
+        % double-count the sweeps a finished run is about to be finalized
+        % into. Costs a copy of arrays the tick has already computed.
+        LiveSnap = []
     end
 
     events
@@ -349,6 +357,36 @@ classdef AcqController < handle
             end
         end
 
+        function snap = liveSnapshot(obj)
+            % The sweeps of the run CURRENTLY STREAMING, as of the last live
+            % tick -- or [] when no run is. A pull, deliberately: the live
+            % view is pushed at 20 Hz because it is drawing every sweep as it
+            % lands, while an online-analysis window (mabr.ui.MetricPlot)
+            % refreshes at 1 Hz or slower and there may be several of them, so
+            % they read this when they are ready rather than being handed
+            % copies twenty times a second.
+            %
+            % Fields:
+            %   Run         index of the run in the schedule
+            %   SampleRate  Hz of the sweeps (the ADC rate)
+            %   Time        [1 x nSamples] seconds re onset; STARTS NEGATIVE,
+            %               because the live path carries the pre-onset
+            %               baseline as part of one contiguous segment
+            %   Sweeps      [nSweeps x nSamples] volts, filtered by the
+            %               display chain in force -- rows are sweeps, the
+            %               orientation the live path uses
+            %   StimIndex   [1 x nSweeps] which stimulus evoked each sweep
+            %   Bad         [1 x nSweeps] the artifact PREVIEW for each
+            %   Stimuli     [1 x nStim] stimulus indices this run presents
+            %   Labels      {1 x nStim} their IDs
+            %
+            % Nothing here is authoritative: the artifact verdict and the
+            % filtering are previews of what finalization will decide (see
+            % live_tick_body), which is exactly what makes them the right
+            % thing to watch WHILE it happens.
+            snap = obj.LiveSnap;
+        end
+
         function tf = canRepeat(obj)
             % True once a blocked-strategy run has completed, so its stimulus
             % can be repeated with a fresh run appended to the plan (see
@@ -395,6 +433,7 @@ classdef AcqController < handle
             obj.SweepState = struct();
             obj.CurMetrics = struct('numSweeps',0,'numArtifacts',0, ...
                                     'numClean',0,'corr',0);
+            obj.LiveSnap   = [];
             obj.BlockStart = char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss'));
             obj.RunStartTic = tic;
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot), obj.LivePlot.reset(); end
@@ -510,6 +549,10 @@ classdef AcqController < handle
         function on_block_completed(obj)
             if obj.SelfTestActive, return; end   % see verifyTimingLoop
             obj.stop_timer();
+            % Drop the live snapshot BEFORE anything is finalized: from here
+            % the run's sweeps arrive as a Block, and a puller that still saw
+            % the partial copy would count them twice.
+            obj.LiveSnap = [];
             obj.set_state(mabr.ui.ProgState.BlockComplete);
 
             % Remember what can be repeated -- only meaningful for a run that
@@ -617,6 +660,15 @@ classdef AcqController < handle
             obj.CurMetrics.numArtifacts = nnz(bad);
             obj.CurMetrics.numClean     = nnz(keep);
             obj.CurMetrics.corr         = R;
+
+            % Cache what a slow puller needs (see liveSnapshot). The arrays
+            % are already built; this is the only place they are kept.
+            n = size(post,1);
+            obj.LiveSnap = struct('Run',obj.CurRun, ...
+                'SampleRate',obj.Config.ADCSampleRate, ...
+                'Time',[tw.pre tw.post],'Sweeps',[pre post], ...
+                'StimIndex',obj.CurSeq(1:min(n,numel(obj.CurSeq))), ...
+                'Bad',bad(:)','Stimuli',obj.CurStim,'Labels',{obj.CurLabels});
 
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot)
                 % Hand over the baseline as well as the response, as one

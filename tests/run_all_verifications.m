@@ -16,6 +16,12 @@ function run_all_verifications()
 %                                  reaches the saved trace
 %       verify_live_plot         - live view: per-stimulus means, time base,
 %                                  amplitude scaling, control strip
+%       verify_metric_plot       - online analysis: the metric library and its
+%                                  contract, per-condition values, the plot
+%                                  adapting to 0/1/2 parameters (lines, bars,
+%                                  heat map, contour, surface), live
+%                                  conditions, the right-click aesthetics, and
+%                                  two independent windows
 %       verify_trace_organizer   - TraceOrganizer scaling/spacing/save/load
 %       verify_trace_inspector   - TraceInspector peak picking, and the
 %                                  transfer of peaks back to the organizer
@@ -47,9 +53,9 @@ function run_all_verifications()
 %   parses the calls below rather than keeping a second copy of them.
 %
 %   Requires the Parallel Computing Toolbox (all but verify_isi_jitter,
-%   verify_filters, verify_live_plot, verify_trace_organizer,
-%   verify_trace_inspector, and verify_audio_settings). None require audio
-%   hardware.
+%   verify_filters, verify_live_plot, verify_metric_plot,
+%   verify_trace_organizer, verify_trace_inspector, and
+%   verify_audio_settings). None require audio hardware.
 %
 % Daniel Stolzberg (c) 2026
 
@@ -58,7 +64,8 @@ tests = {@verify_isi_jitter, ...
          @verify_legacy_import,  @verify_online_advance, ...
          @verify_custom_advance, ...
          @verify_artifact_rejection, @verify_filters, ...
-         @verify_live_plot, @verify_trace_organizer, @verify_trace_inspector, ...
+         @verify_live_plot, @verify_metric_plot, ...
+         @verify_trace_organizer, @verify_trace_inspector, ...
          @verify_notes, @verify_audio_settings, ...
          @verify_stimgen_import, @verify_stimulation_only, ...
          @verify_timing_selftest, @verify_timing_loopback, @verify_test_runner};
