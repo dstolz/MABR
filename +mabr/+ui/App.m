@@ -2071,9 +2071,11 @@ classdef App < handle
                 f = app.LivePlot.Figure;
                 % A minimum size, because the live view is now two rows of
                 % axes plus a control strip: a position remembered from the
-                % single-axes days would reopen it too short to read.
+                % single-axes days would reopen it too short to read, and the
+                % strip -- which has since gained the Group menu -- too narrow
+                % to show its right-hand end.
                 mabr.ui.WindowPos.restore(f,'LivePlot', ...
-                    app.defaultViewerPos('LivePlot'),[560 420]);
+                    app.defaultViewerPos('LivePlot'),[740 440]);
                 % Closing disposes the viewer outright: it holds no state worth
                 % keeping, and that keeps the isvalid() check above honest.
                 f.CloseRequestFcn = @(~,~) app.closeLive();
@@ -2180,9 +2182,9 @@ classdef App < handle
                     pos = [a(1)+40, a(2)-40, 820, 500];
                 otherwise   % live plot, top-aligned with the main window
                     % Tall enough for the latest sweep AND the per-stimulus
-                    % means stacked beneath it; the old 280 px only ever held
-                    % one axes.
-                    pos = [a(1)+a(3)+gap+640+gap, a(2)+a(4)-560, 720, 560];
+                    % means stacked beneath it (the old 280 px only ever held
+                    % one axes), and wide enough for the whole control strip.
+                    pos = [a(1)+a(3)+gap+640+gap, a(2)+a(4)-580, 780, 580];
             end
         end
 

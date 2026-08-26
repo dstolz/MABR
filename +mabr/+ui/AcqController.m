@@ -148,6 +148,13 @@ classdef AcqController < handle
         % list is the RUN's, in presentation order -- not the whole bank's.
         CurStim    (1,:) double = [];
         CurLabels  (1,:) cell   = {};
+        % The stimulus parameters behind those entries (see
+        % mabr.stim.StimulusSet.paramTable), row-aligned with CurStim. The
+        % live view labels, orders, groups, and colours its means from this --
+        % a Frequency x Level run is not a list, and presentation order is not
+        % the order to read it in. Worked out once per run alongside the labels.
+        CurParams  (1,1) struct = struct('Names',{{}},'Values',zeros(0,0), ...
+                                         'Varying',false(1,0),'Units',{{}});
         HaltAfterBlock (1,1) logical = false;
         % Stimulus index of the most recently completed run, for the GUI's
         % Repeat button -- 0 until one exists. Only ever set for a BLOCKED
@@ -421,6 +428,7 @@ classdef AcqController < handle
             obj.CurStim   = unique(obj.CurSeq,'stable');
             obj.CurLabels = arrayfun(@(u) obj.Stimuli.id(u),obj.CurStim, ...
                 'UniformOutput',false);
+            obj.CurParams = obj.stimParams(obj.CurStim);
 
             % The live view's progress bar tracks this run's own presentation
             % count, which the schedule — not the advance criterion — fixes.
@@ -654,6 +662,38 @@ classdef AcqController < handle
             info = struct('StimIndex',obj.CurSeq(1:n), ...
                           'Stimuli',  obj.CurStim, ...
                           'Labels',   {obj.CurLabels});
+            % Assigned rather than passed to struct(): a struct field value is
+            % fine there, but only a cell is expanded, so keeping the two
+            % kinds apart is one less thing to get subtly wrong.
+            info.Params = obj.CurParams;
+        end
+
+        function P = stimParams(obj,idx)
+            % The parameter table for this run's stimuli, for the live view.
+            %
+            % Tabulated over the whole BANK and then cut down to this run's
+            % rows, rather than tabulated over the run: which parameters are
+            % informative is a property of the EXPERIMENT, not of one run. A
+            % blocked run holds a single condition and therefore varies
+            % nothing, and a view that dropped every parameter for that reason
+            % would leave the operator's own dimensions off the one label that
+            % says what is being acquired. `Varying` travels with the values so
+            % the view uses the bank's answer instead of re-deriving a run's.
+            %
+            % Never fatal: a bank whose extras cannot be tabulated costs the
+            % view its parameter labels, not the run its acquisition.
+            P = struct('Names',{{}},'Values',zeros(numel(idx),0), ...
+                       'Varying',false(1,0),'Units',{{}});
+            try
+                if ~isempty(obj.Stimuli) && isvalid(obj.Stimuli)
+                    P        = obj.Stimuli.paramTable();
+                    P.Values = P.Values(idx,:);
+                    P.IDs    = P.IDs(idx);
+                end
+            catch me
+                mabr.log.vprintf(2,'Stimulus parameters unavailable for the live view: %s', ...
+                    me.message);
+            end
         end
 
         function [pre,post] = filter_sweeps(obj,pre,post)

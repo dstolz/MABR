@@ -15,7 +15,17 @@ function verify_live_plot()
 %       6. amplitude scaling: each / shared / manual;
 %       7. the control strip drives exactly those properties;
 %       8. a call with no stimulus info still behaves as a single-mean view;
-%       9. the whole view embeds into a caller-supplied container.
+%       9. stimulus PARAMETERS: conditions labelled by the parameters that
+%          vary, ordered by them rather than by presentation order, and each
+%          mean still holding exactly its own stimulus's sweeps after the
+%          reordering;
+%      10. the parameter-aware layouts -- Grid (groups across columns, the
+%          within-group parameter up the rows) and Stacked (one axes per
+%          group, conditions offset and named on the y axis) -- and the Group
+%          control that drives them;
+%      11. mabr.stim.StimulusSet.paramTable, which is where a real bank's
+%          parameters come from;
+%      12. the whole view embeds into a caller-supplied container.
 %
 %   Run:  >> verify_live_plot
 %
@@ -182,7 +192,169 @@ lp.reset();
 assert(all(isnan(mean_ydata(lp))),'reset did not clear the traces');
 fprintf('  PASS: legacy single-mean call still works; reset clears\n');
 
-% --- 9. embedded in a container -----------------------------------------
+% --- 9. stimulus parameters: labels and ordering -------------------------
+% A Frequency x Level bank handed over in PRESENTATION order (which is not
+% parameter order), with a parameter that does not vary at all mixed in.
+pFreq  = [16  8 16  8 16  8];
+pLevel = [50 70 30 30 70 50];
+nP     = numel(pFreq);
+pIDs   = arrayfun(@(f,L) sprintf('%gkHz_%gdB',f,L),pFreq,pLevel, ...
+    'UniformOutput',false);
+pAmps  = (1:nP)*1e-7;                         % one distinct response each
+[Yp,tp,pIdx] = make_sweeps(pAmps,5);
+
+pinfo = struct('StimIndex',pIdx,'Stimuli',1:nP,'Labels',{pIDs});
+pinfo.Params = struct( ...
+    'Names', {{'Frequency','Level','Polarity'}}, ...
+    'Values',[pFreq(:) pLevel(:) ones(nP,1)], ...
+    'Units', {{'kHz','dB',''}});
+pbad = false(1,numel(pIdx));
+
+% The order the view must impose: Frequency ascending, then Level.
+[~,want] = sortrows([pFreq(:) pLevel(:)]);
+want = want(:)';
+
+lp.Layout  = 'separate';
+lp.AmpMode = 'common';
+lp.GroupBy = '';
+lp.update(Yp,tp,0.4,numel(pIdx),pbad,pinfo);
+
+assert(numel(lp.axMean) == nP,'expected %d panels, got %d',nP,numel(lp.axMean));
+for k = 1:nP
+    ttl = lp.axMean(k).Title.String;
+    lbl = sprintf('%g kHz, %g dB',pFreq(want(k)),pLevel(want(k)));
+    assert(contains(ttl,lbl), ...
+        'panel %d is titled "%s", not by its parameters ("%s")',k,ttl,lbl);
+    assert(~contains(ttl,'Polarity'), ...
+        'a parameter that never varies reached the label: %s',ttl);
+    assert(~contains(ttl,pIDs{want(k)}), ...
+        'panel %d fell back to the raw stimulus ID',k);
+end
+
+% The reordering must move the MEANS with the labels, not just the captions.
+means = mean_ydata(lp);
+for k = 1:nP
+    expect = mean(Yp(pIdx == want(k),:),1)*mult;
+    assert(max(abs(means(k,:) - expect)) < 1e-9, ...
+        'panel %d holds the wrong stimulus''s sweeps after reordering',k);
+end
+
+% A BLOCKED run is one condition: nothing varies within it, so the caller
+% says which parameters are informative (the bank's answer, not the run's)
+% and the single mean is named by them instead of by its raw ID.
+kOne = 2;
+sel1 = pIdx == kOne;
+one  = struct('StimIndex',repmat(kOne,1,nnz(sel1)),'Stimuli',kOne, ...
+              'Labels',{pIDs(kOne)});
+one.Params = struct('Names',{{'Frequency','Level','Polarity'}}, ...
+    'Values', [pFreq(kOne) pLevel(kOne) 1], ...
+    'Varying',[true true false], ...
+    'Units',  {{'kHz','dB',''}});
+lp.update(Yp(sel1,:),tp,0.3,nnz(sel1),false(1,nnz(sel1)),one);
+assert(isscalar(lp.axMean),'a single condition should still be one axes');
+ttl = lp.axMean(1).Title.String;
+assert(contains(ttl,sprintf('%g kHz, %g dB',pFreq(kOne),pLevel(kOne))), ...
+    'a blocked run''s mean is not named by its parameters: %s',ttl);
+assert(~contains(ttl,'Polarity'), ...
+    'a parameter the caller called uninformative reached the title: %s',ttl);
+assert(contains(ttl,sprintf('%d sweeps',nnz(sel1))), ...
+    'the single mean did not collect its run''s sweeps: %s',ttl);
+assert(max(abs(mean_ydata(lp) - mean(Yp(sel1,:),1)*mult)) < 1e-9, ...
+    'the single mean is not the average of that condition''s sweeps');
+lp.Layout = 'separate';
+lp.update(Yp,tp,0.4,numel(pIdx),pbad,pinfo);       % back to the whole run
+fprintf('  PASS: conditions labelled and ordered by their parameters\n');
+
+% --- 10. Grid, Stacked, and the Group control ----------------------------
+lp.Layout = 'grid';
+assert(numel(lp.axMean) == nP,'Grid did not give every condition a tile');
+px = arrayfun(@(a) a.Position(1),lp.axMean);
+py = arrayfun(@(a) a.Position(2),lp.axMean);
+assert(max(abs(diff(px(1:3)))) < 1e-9 && max(abs(diff(px(4:6)))) < 1e-9, ...
+    'a frequency''s levels are not in one column: %s',mat2str(px,3));
+assert(px(1) < px(4),'8 kHz is not the column left of 16 kHz');
+assert(all(diff(py(1:3)) > 0) && all(diff(py(4:6)) > 0), ...
+    'level does not ascend up the column: %s',mat2str(py,3));
+% Only the top tile of a column names the group; every tile names its own
+% level, and the grid still holds the right sweeps.
+assert(any(contains(string(lp.axMean(3).Title.String),'8 kHz')), ...
+    'the top tile of a column does not carry the group name');
+assert(any(contains(string(lp.axMean(1).Title.String),'30 dB')), ...
+    'a grid tile is not titled with its own level');
+means = mean_ydata(lp);
+for k = 1:nP
+    expect = mean(Yp(pIdx == want(k),:),1)*mult;
+    assert(max(abs(means(k,:) - expect)) < 1e-9,'grid tile %d holds the wrong sweeps',k);
+end
+fprintf('  PASS: Grid puts %d conditions on a 2 x 3 parameter grid\n',nP);
+
+lp.Layout = 'stacked';
+assert(numel(lp.axMean) == 2,'Stacked did not give each frequency one axes');
+levels = [30 50 70];                          % what each stack holds, upward
+for g = 1:2
+    ax  = lp.axMean(g);
+    lab = cellstr(ax.YTickLabel);
+    assert(numel(ax.YTick) == 3 && numel(lab) == 3, ...
+        'stack %d does not hold three levels',g);
+    for j = 1:3
+        assert(startsWith(lab{j},sprintf('%g dB',levels(j))), ...
+            'stack %d level %d is labelled "%s"',g,j,lab{j});
+    end
+    assert(all(diff(ax.YTick) > 0),'stack %d is not offset upward',g);
+    % Each trace is its own mean, lifted by its own offset -- nothing else.
+    h = stack_lines(ax);
+    for j = 1:3
+        idx    = want((g-1)*3 + j);
+        expect = mean(Yp(pIdx == idx,:),1)*mult + ax.YTick(j);
+        assert(max(abs(h(j).YData - expect)) < 1e-9, ...
+            'stack %d trace %d is not its mean at its offset',g,j);
+    end
+end
+assert(contains(lp.axMean(1).Title.String,'8 kHz'), ...
+    'a stack is not titled with the group it holds');
+fprintf('  PASS: Stacked gives one offset, y-labelled stack per group\n');
+
+c = live_controls(lp);
+items = cellstr(c.group.String);
+assert(isequal(items(:)',{'Auto','None','Frequency','Level'}), ...
+    'the Group menu does not offer exactly this run''s varying parameters: %s', ...
+    strjoin(items(:)',','));
+set_control(c.group,4);                       % group by Level instead
+assert(strcmp(lp.GroupBy,'Level'),'the Group control did not reach GroupBy');
+assert(numel(lp.axMean) == 3,'grouping by Level did not give three stacks');
+set_control(c.group,2);                       % None
+assert(isscalar(lp.axMean),'"None" still divided the conditions into groups');
+assert(numel(findobj(lp.axMean(1),'Type','line')) == nP, ...
+    'the ungrouped stack does not hold every condition');
+set_control(c.group,1);                       % back to Auto
+assert(isempty(lp.GroupBy) && numel(lp.axMean) == 2, ...
+    'Auto did not go back to grouping by Frequency');
+fprintf('  PASS: the Group control regroups the view\n');
+
+% --- 11. where a real bank's parameters come from ------------------------
+bank = mabr.stim.demoStimuli(mabr.Config,'Frequencies',[8 16],'Levels',[30 60]);
+P = bank.paramTable();
+assert(all(ismember({'Frequency','Level'},P.Names)), ...
+    'paramTable did not report the bank''s parameters: %s',strjoin(P.Names,','));
+assert(size(P.Values,1) == bank.numStimuli && size(P.Values,2) == numel(P.Names), ...
+    'paramTable values do not line up with the bank');
+jF = find(strcmp(P.Names,'Frequency'),1);
+jL = find(strcmp(P.Names,'Level'),1);
+assert(isequal(sort(unique(P.Values(:,jF)))',[8 16]) && ...
+       isequal(sort(unique(P.Values(:,jL)))',[30 60]), ...
+    'paramTable read the wrong values off the bank');
+assert(strcmp(P.Units{jF},'kHz') && strcmp(P.Units{jL},'dB'), ...
+    'paramTable did not carry the units the toolbox fixes by name');
+assert(P.Varying(jF) && P.Varying(jL),'a parameter that varies was called constant');
+jP = find(strcmp(P.Names,'Polarity'),1);
+assert(~isempty(jP) && ~P.Varying(jP), ...
+    'a parameter held constant across the bank was called varying');
+sub = bank.paramTable(1:2);                   % one frequency, both levels
+assert(size(sub.Values,1) == 2 && ~sub.Varying(jF) && sub.Varying(jL), ...
+    'paramTable of a subset does not describe the subset');
+fprintf('  PASS: StimulusSet.paramTable describes a bank and any subset\n');
+
+% --- 12. embedded in a container ----------------------------------------
 % docs/Extending.md promises a host UI can pass its own container and get the
 % whole view -- axes, means, and control strip -- inside it.
 host = figure('Visible','off','Position',[100 100 700 520]);
@@ -233,6 +405,13 @@ end
 M = cell2mat(arrayfun(@(h) h.YData,lines,'UniformOutput',false)');
 end
 
+function h = stack_lines(ax)
+% The mean traces on one stacked axes, in the order they were created (which
+% is the order they are offset in). findobj returns newest first.
+h = findobj(ax,'Type','line');
+h = h(end:-1:1);
+end
+
 function c = live_controls(lp)
 % The control strip, found the way a user would: by what it says.
 p = lp.CtrlPanel;
@@ -240,7 +419,7 @@ pop  = findobj(p,'Style','popupmenu');
 ed   = findobj(p,'Style','edit');
 txt  = findobj(p,'Style','text');
 pop  = sort_by_x(pop);  ed = sort_by_x(ed);  txt = sort_by_x(txt);
-c.layout = pop(1);  c.amp = pop(2);
+c.layout = pop(1);  c.group = pop(2);  c.amp = pop(3);
 c.t0 = ed(1); c.t1 = ed(2); c.manual = ed(3);
 c.manualUnit = txt(end);
 end

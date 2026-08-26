@@ -204,22 +204,9 @@ classdef StimulusSet < handle
             % presented is part of what it means, and offline analysis needs it.
             m.alternatePolarity = logical(s.alternatePolarity);
 
-            extra = setdiff(fieldnames(s),mabr.stim.StimulusSet.ReservedFields,'stable');
-            ip    = {};
+            [ip,extra] = mabr.stim.StimulusSet.informativeNames(s);
             for k = 1:numel(extra)
-                f = extra{k};
-                v = s.(f);
-                m.(f) = v;
-                if isnumeric(v) && isscalar(v), ip{end+1} = f; end %#ok<AGROW>
-            end
-
-            % A declared list wins over the inferred one. Keep only names that
-            % actually arrived as fields: a generator naming a parameter it
-            % then failed to pass through would otherwise put a phantom
-            % grouping dimension into every .abr it wrote.
-            if isfield(s,'informativeParams') && ~isempty(s.informativeParams)
-                declared = cellstr(s.informativeParams);
-                ip = declared(ismember(declared,extra));
+                m.(extra{k}) = s.(extra{k});
             end
 
             m.informativeParams = ip(:)';
@@ -229,6 +216,120 @@ classdef StimulusSet < handle
                 lbl{k} = sprintf('%s = %g',ip{k},double(m.(ip{k})));
             end
             m.Label = [{sprintf('ID = %s',m.ID)} lbl];
+        end
+
+        function P = paramTable(obj,idx)
+            % The informative parameters of a set of entries, as a table --
+            % which parameters they share, what each entry's value is, and
+            % which of those actually vary across the set.
+            %
+            %   P.Names   {1 x nP}       parameter names, in the order the
+            %                            first entry declares them
+            %   P.Values  [nStim x nP]   the value of each, row-aligned with
+            %                            `idx` (NaN where an entry lacks one)
+            %   P.Varying (1 x nP) logical   parameters that differ across idx
+            %   P.Units   {1 x nP}       'kHz' / 'dB' / '' -- see paramUnit
+            %   P.IDs     {1 x nStim}    each entry's ID
+            %
+            % `idx` defaults to the whole bank, and `Varying` is answered for
+            % exactly the entries asked for. Which SCOPE to ask about is the
+            % caller's decision and it matters: mabr.ui.AcqController asks for
+            % the whole bank and slices out the rows of the run it is about to
+            % play, because which parameters are informative is a property of
+            % the experiment rather than of one run -- a blocked run holds a
+            % single condition and therefore varies nothing at all.
+            %
+            % Only NUMERIC SCALAR parameters are tabulated. This is a table of
+            % dimensions to sort, group, and shade by, and a name with no
+            % order over its values cannot do any of those; the full metadata
+            % of an entry, categorical fields included, is meta().
+            %
+            % See also meta, mabr.ui.LivePlot.
+            if nargin < 2 || isempty(idx), idx = 1:obj.numStimuli; end
+            idx = double(idx(:)');
+            n   = numel(idx);
+
+            P = struct('Names',{{}},'Values',zeros(n,0), ...
+                       'Varying',false(1,0),'Units',{{}},'IDs',{cell(1,n)});
+            if n == 0 || obj.numStimuli == 0, return; end
+
+            % Names shared by EVERY requested entry: a parameter only some of
+            % them carry cannot describe the set, and a half-filled column
+            % would sort and group on values that mean nothing.
+            names = {};
+            for k = 1:n
+                obj.checkRange(idx(k));
+                s = obj.Stimuli(idx(k));
+                nk = mabr.stim.StimulusSet.informativeNames(s);
+                nk = nk(cellfun(@(f) isnumeric(s.(f)) && isscalar(s.(f)),nk));
+                if k == 1, names = nk;
+                else,      names = names(ismember(names,nk));
+                end
+            end
+
+            nP  = numel(names);
+            V   = nan(n,nP);
+            ids = cell(1,n);
+            for k = 1:n
+                s      = obj.Stimuli(idx(k));
+                ids{k} = char(string(s.ID));
+                for j = 1:nP
+                    V(k,j) = double(s.(names{j}));
+                end
+            end
+
+            varying = false(1,nP);
+            units   = cell(1,nP);
+            for j = 1:nP
+                v = V(:,j);
+                varying(j) = numel(unique(v(~isnan(v)))) > 1;
+                units{j}   = mabr.stim.StimulusSet.paramUnit(names{j});
+            end
+
+            P.Names   = names(:)';
+            P.Values  = V;
+            P.Varying = varying;
+            P.Units   = units;
+            P.IDs     = ids;
+        end
+    end
+
+    methods (Static, Access = private)
+        function [names,extra] = informativeNames(s)
+            % The parameters that identify one entry, and the passthrough
+            % fields they were chosen from. Inferred -- every numeric scalar
+            % extra -- unless the entry declares informativeParams, in which
+            % case the declared list wins. Either way only names that actually
+            % arrived as fields survive: a generator naming a parameter it then
+            % failed to pass through would otherwise put a phantom grouping
+            % dimension into every .abr it wrote.
+            extra = setdiff(fieldnames(s),mabr.stim.StimulusSet.ReservedFields,'stable');
+            names = {};
+            for k = 1:numel(extra)
+                v = s.(extra{k});
+                if isnumeric(v) && isscalar(v), names{end+1} = extra{k}; end %#ok<AGROW>
+            end
+            if isfield(s,'informativeParams') && ~isempty(s.informativeParams)
+                declared = cellstr(s.informativeParams);
+                names    = declared(ismember(declared,extra));
+            end
+            names = names(:)';
+            extra = extra(:)';
+        end
+
+        function u = paramUnit(name)
+            % The unit a parameter is carried in. Only the two the toolbox
+            % fixes by name and unit end-to-end are claimed: Frequency in kHz
+            % and Level in dB, which mabr.stim.fromStimgen converts into and
+            % mabr.data.io.buildFilename writes back out. Everything else is
+            % left unitless rather than guessed at -- a label reading '5 ms'
+            % over a parameter that was actually seconds is worse than one
+            % reading 'Duration 0.005'.
+            switch lower(char(name))
+                case 'frequency', u = 'kHz';
+                case 'level',     u = 'dB';
+                otherwise,        u = '';
+            end
         end
     end
 

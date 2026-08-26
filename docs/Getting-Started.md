@@ -78,7 +78,7 @@ Nothing is discarded by any of these — whatever was recorded before you presse
 
 Both viewers are already open — they launch with the app and sit to the right of the main window. The trace-on-axes and stacked-traces toolbar buttons raise them if they get buried.
 
-The **Live Plot** (**L**) displays the running average (black), the most recent sweep (blue), and a bar showing the current correlation against your threshold. It updates about 20 times a second.
+The **Live Plot** (**L**) shows the most recent sweep on its own axes at the top (blue), a bar with the current correlation against your threshold, and below them the running average of every condition the run is presenting. It updates about 20 times a second. Conditions are named by the parameters your bank varies — `8 kHz, 30 dB` — and the **Means** control lays them out overlaid, one panel each, as a Frequency × Level **grid**, or **stacked** into the offset level series a threshold is read from. See [Viewing Data](Viewing-Data.md#live-plot).
 
 The **Trace Organizer** (**T**) stacks the finished conditions on one axis so you can compare them, drag traces to reorder them vertically, and mark response peaks. See [Viewing Data](Viewing-Data.md).
 

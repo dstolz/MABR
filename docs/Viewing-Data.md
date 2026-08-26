@@ -10,11 +10,16 @@ Opens with the app, and is raised by the trace-on-axes toolbar button or by pres
 
 **Running means** — below it, one average per stimulus **the current run is presenting**, over the sweeps that passed the artifact criterion. This is the ABR taking shape: early on mostly noise, then the time-locked response emerges as the background flattens. A blocked run presents one stimulus, so there is one mean; an interleaved or shuffled run presents several at once, and each gets its own average rather than being pooled into one meaningless trace.
 
+**Conditions are named by their parameters.** A bank almost never varies along one dimension — the ordinary run is a Frequency × Level grid — so the averages are labelled `8 kHz, 30 dB` rather than by a raw stimulus ID, ordered by those parameters rather than by the order the schedule happened to present them in, and grouped by one of them. Only the parameters your bank actually varies appear: a bank at a single frequency labels its conditions `30 dB`, `50 dB`, `70 dB`, and a parameter that is the same everywhere never clutters a label. A blocked run's single mean is named the same way, in the axes title.
+
+Grouping is what makes a two-parameter run readable. Each group takes a colour, and its members shade from pale to full along the other parameter, so a level series looks like a series instead of five unrelated colours — and the group is what forms the columns of the Grid and Stacked layouts below.
+
 **Controls** — the strip along the bottom of the window:
 
-- **Means: Overlaid / Separate** — all the averages on one axes (easiest for comparing them directly), or one small panel each, titled with its stimulus ID and running count (easiest when there are many, or when they differ hugely in size).
+- **Means: Overlaid / Separate / Grid / Stacked** — all the averages on one axes (easiest for comparing them directly); one small panel each, titled with its condition and running count (easiest when there are many, or when they differ hugely in size); a **grid** with one group per column and the other parameter up the rows, largest at the top, which is the live version of the figure the offline pipeline draws; or **stacked**, one axes per group with its conditions offset into it and named on the y axis — the shape a threshold is actually read from, filling in as the session runs.
+- **Group** — the parameter the conditions are grouped by. *Auto* picks Frequency where your bank varies one, otherwise the coarsest parameter; *None* switches grouping off; or name one yourself. A run that varies only one parameter is deliberately left ungrouped — that one dimension is the series itself. The menu lists the parameters your bank varies, and is greyed out when it has none.
 - **Time (ms)** — the displayed window, `-2` to `10` by default. Negative time is the pre-onset baseline, which is what tells you what "no response" looks like on this preparation today. Widening past what was recorded simply stops at the recorded edge.
-- **Amplitude** — *Auto (each)* scales every stimulus to its own peak, which is what you want when levels differ by 40 dB; *Auto (shared)* holds them all to one scale, which is the only way an amplitude difference between conditions is visible; *Manual* pins the scale to a ± value you type, so it stops moving between refreshes. Overlaid means share an axis and so share a scale — *each* behaves as *shared* there. The latest-sweep axes always scales itself, Manual included.
+- **Amplitude** — *Auto (each)* scales every stimulus to its own peak, which is what you want when levels differ by 40 dB; *Auto (shared)* holds them all to one scale, which is the only way an amplitude difference between conditions is visible; *Manual* pins the scale to a ± value you type, so it stops moving between refreshes. Overlaid means share an axis and so share a scale — *each* behaves as *shared* there; in **Stacked** the same choice sets the spacing between traces. The latest-sweep axes always scales itself, Manual included.
 
 **Artifact readout** — when sweeps are being rejected, a red `N rejected (x%)` appears in the top-left corner of the latest-sweep panel, and the count also accumulates in the Run panel's `rejected:` readout beside the sweep count. Nothing appears while every sweep is being kept. A rate climbing through a few percent usually means the preparation needs attention rather than more sweeps. What the live view shows is a *preview* of the criterion applied to the sweeps as they arrive; the recorded verdict is made when the condition finalizes, and only that one reaches the file.
 
@@ -75,24 +80,38 @@ lp.reset();                           % clear between blocks
 | Field | Meaning |
 | --- | --- |
 | `.StimIndex` | `[1 x nSweeps]` the stimulus behind each sweep |
-| `.Stimuli` | `[1 x nStim]` the stimuli this run presents, in layout order |
-| `.Labels` | `{1 x nStim}` display label for each |
+| `.Stimuli` | `[1 x nStim]` the stimuli this run presents |
+| `.Labels` | `{1 x nStim}` fallback label for each — used where `.Params` cannot name the condition better |
+| `.Params` | the stimuli's informative parameters, row-aligned with `.Stimuli`: `.Names {1 x nP}`, `.Values [nStim x nP]`, `.Varying (1 x nP)` (optional — computed from the values when absent), `.Units {1 x nP}` — exactly what [`StimulusSet.paramTable`](../+mabr/+stim/StimulusSet.m) returns |
 | `.DetrendPoly`, `.SmoothSpan` | cosmetic post-processing of the means |
 
 Omit `info` and every sweep counts as one condition, which is the old single-mean view. `AcqController.live_info` builds it from `Schedule.renderSpec`'s per-onset stimulus index — the same pairing `finalize_run` de-interleaves by, so a live panel and the block eventually saved for that stimulus contain the same sweeps.
+
+### Multiple parameters
+
+A bank almost never varies along one dimension — the ordinary ABR run is a Frequency × Level grid — and a list of means labelled `Tone_8000_30` in whatever order the schedule presented them is not a view of one. Given `info.Params` the view uses the parameters three ways:
+
+* **Labels** come from the parameters the experiment varies — `8 kHz, 30 dB`, not the raw ID, and never a parameter that is the same everywhere in the bank. The scope is the **bank**, not the run: `AcqController.stimParams` tabulates the whole bank and takes the run's rows out of it, `Varying` and all, because a blocked run holds one condition and therefore varies nothing — deriving the answer from the run would leave a blocked run's single mean with no name but its ID. A blocked run's overlaid axes is titled with it (`8 kHz, 30 dB — mean of 512 sweeps`); with no parameters to name it, the title is the plain sweep count it always was.
+* **Order** comes from those parameters too, group parameter first: a level series reads as a series wherever it is drawn, whatever order the sweeps arrived in. The means move with their labels — panel *k* holds stimulus *k*'s sweeps and nothing else, exactly as before.
+* **Grouping** by one of them (`GroupBy`) gives each group a hue whose members ramp pale-to-full along the within-group parameter, so a series is visibly a series rather than seven unrelated colours — and it forms the columns of the two parameter-aware layouts.
+
+`GroupBy` defaults to automatic: `Frequency` where the run varies one, otherwise the coarsest varying parameter (fewest distinct values, so a grid comes out wide and short). A run with only **one** varying parameter is deliberately left ungrouped — a single dimension is the series itself, and grouping by it would put every condition in a group of one. `'none'` switches grouping off; naming a parameter the run does not vary falls back to automatic rather than erroring. The **Group** menu in the control strip offers exactly this run's varying parameters and is disabled when there are none.
+
+Without parameters nothing changes: the view is the ID-labelled, presentation-ordered list it always was.
 
 Display settings are public properties, and the control strip along the bottom of the window writes exactly those — so a script can drive the view the same way the user can:
 
 | Property | Default | Effect |
 | --- | --- | --- |
-| `Layout` | `'overlay'` | Means overlaid on one axes, or `'separate'` — one small axes each, titled with its stimulus ID and running count |
+| `Layout` | `'overlay'` | Means overlaid on one axes; `'separate'` — one small axes each, titled with its condition and running count; `'grid'` — one tile per condition, groups across columns and the within-group parameter up the rows, largest at the top (the live analogue of `plotABRGrid`), short columns bottom-aligned so a missing high level leaves a hole where it belongs; `'stacked'` — one axes per group, its conditions offset into a stack and named on the y axis, the y ticks doing the job a legend would |
+| `GroupBy` | `''` (auto) | The stimulus parameter the conditions are grouped by, or `'none'`. See [Multiple parameters](#multiple-parameters) |
 | `TimeBase` | `[-2 10]` ms | Displayed window, clamped to what was actually recorded |
 | `AmpMode` | `'common'` | `'each'` (every stimulus to its own peak), `'common'` (one shared scale — the only way an amplitude difference between conditions is visible), `'manual'` |
 | `ManualLimit` | `5e-6` V | The ± limit `'manual'` pins the mean axes to. Switching into Manual seeds it from what is on screen |
 
-Overlaid means share an axes and therefore one scale, so `'each'` behaves as `'common'` there. The latest-sweep axes always autoscales, `'manual'` included: it is a single sweep, tens of times the size of a mean, and a limit chosen to frame the averages would clip it away entirely.
+Overlaid means share an axes and therefore one scale, so `'each'` behaves as `'common'` there; in `'stacked'` the mode sets the offset between traces the same way, from the group's own largest response or the largest anywhere. Under `'each'` every tile keeps its y tick labels rather than only the left column — each is on its own scale, and hiding the numbers would leave a column of traces with no way to tell how big they are. The latest-sweep axes always autoscales, `'manual'` included: it is a single sweep, tens of times the size of a mean, and a limit chosen to frame the averages would clip it away entirely.
 
-`AcqController.live_tick_body` calls `update` from a single ~20 Hz `timer` (`ExecutionMode` `fixedSpacing`, `BusyMode` `drop`), which is the only timer in the program. The tick body is wrapped in a try/catch so a transient draw error cannot kill the timer and freeze the live view. The axes are rebuilt only when the run's stimulus list or the layout changes, never on a plain refresh.
+`AcqController.live_tick_body` calls `update` from a single ~20 Hz `timer` (`ExecutionMode` `fixedSpacing`, `BusyMode` `drop`), which is the only timer in the program. The tick body is wrapped in a try/catch so a transient draw error cannot kill the timer and freeze the live view. The axes are rebuilt only when the arrangement changes — the run's conditions, their labels, the grouping, or the layout — never on a plain refresh.
 
 [tests/verify_live_plot.m](../tests/verify_live_plot.m) covers all of this without hardware.
 

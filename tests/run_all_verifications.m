@@ -15,7 +15,9 @@ function run_all_verifications()
 %       verify_filters           - display filter chain, and that it never
 %                                  reaches the saved trace
 %       verify_live_plot         - live view: per-stimulus means, time base,
-%                                  amplitude scaling, control strip
+%                                  amplitude scaling, control strip, and the
+%                                  parameter-aware labelling, ordering,
+%                                  grouping, and Grid/Stacked layouts
 %       verify_trace_organizer   - TraceOrganizer scaling/spacing/save/load
 %       verify_trace_inspector   - TraceInspector peak picking, and the
 %                                  transfer of peaks back to the organizer

@@ -11,7 +11,7 @@ classdef LivePlot < handle
 %       flatten them, so it keeps its own,
 %     * a narrow correlation bar beside it (the online onset-contrast metric),
 %     * and below, the RUNNING MEAN of every stimulus the current run is
-%       presenting -- either overlaid on one axes or one small axes each.
+%       presenting -- overlaid, one axes each, or arranged by parameter.
 %
 %   That lower region is the point of the window during an intermixed run: the
 %   run interleaves several conditions, so a single pooled average would mix
@@ -27,10 +27,44 @@ classdef LivePlot < handle
 %   treated as one condition and the window degenerates to the old single-mean
 %   view. See update() for the fields.
 %
+%   MULTIPLE PARAMETERS
+%   -------------------
+%   A bank almost never varies along one dimension: the ordinary ABR run is a
+%   Frequency x Level grid, and a list of means labelled `Tone_8000_30` in
+%   whatever order the schedule happened to present them is not a view of it.
+%   Handed the stimuli's informative parameters (`info.Params`, which is what
+%   mabr.stim.StimulusSet.paramTable returns) the view uses them:
+%
+%     * conditions are LABELLED by the parameters that actually vary across
+%       this run -- '8 kHz, 30 dB' rather than a raw ID,
+%     * they are ORDERED by those parameters rather than by presentation
+%       order, so a level series reads as a series wherever it is drawn,
+%     * they are GROUPED by one of them (`GroupBy`), which decides both the
+%       colours -- one hue per group, ramping light-to-dark with the
+%       within-group parameter, so the members of a series are visibly a
+%       series and not seven unrelated colours -- and the arrangement of the
+%       two parameter-aware layouts:
+%
+%           'grid'      one tile per condition, groups across columns and the
+%                       within-group parameter down rows with the largest
+%                       value at the top: the live analogue of the offline
+%                       pipeline's plotABRGrid,
+%           'stacked'   one axes per group, its conditions offset vertically
+%                       into the stack a threshold series is actually read
+%                       from, each labelled on the y axis.
+%
+%   GroupBy defaults to automatic: Frequency where the run varies one, else
+%   the coarsest varying parameter (fewest distinct values), and NO grouping
+%   when only one parameter varies -- a single dimension is the series
+%   itself, not a way of dividing it. 'none' switches grouping off. Without
+%   parameters altogether nothing changes: the view is the ID-labelled,
+%   presentation-ordered list it always was.
+%
 %   Display controls (also settable programmatically, which is what the strip
 %   along the bottom of the window does):
 %
-%       Layout       'overlay' | 'separate'   means on one axes, or one each
+%       Layout       'overlay' | 'separate' | 'grid' | 'stacked'
+%       GroupBy      '' (auto) | 'none' | a parameter name
 %       TimeBase     [t0 t1] ms               default [-2 10]; the negative
 %                                             half is the pre-onset baseline
 %       AmpMode      'each' | 'common' | 'manual'
@@ -41,7 +75,8 @@ classdef LivePlot < handle
 %   which is the only way an amplitude difference between conditions is
 %   visible; 'manual' pins the scale so it stops moving between refreshes.
 %   Overlaid means share one axes and therefore one scale, so 'each' behaves as
-%   'common' there.
+%   'common' there; in 'stacked' the mode sets the offset between traces the
+%   same way, per group or shared.
 %
 %   Sweeps flagged in `bad` are EXCLUDED from the running means -- one electrode
 %   pop otherwise smears across the whole average and the view stops reflecting
@@ -59,6 +94,7 @@ classdef LivePlot < handle
         ControlHeight = 30;   % px reserved for the control strip
         TilesPerCol   = 4;    % separate plots stack this deep before columning
         MaxLegend     = 12;   % overlaid means beyond this get no legend
+        StackCols     = 4;    % stacked groups sit this many across before wrapping
         % Vertical split of the plot region: the latest sweep on top, the
         % means below it. Fractions of the plot panel.
         TopFrac       = 0.34;
@@ -75,7 +111,7 @@ classdef LivePlot < handle
         CtrlPanel
         axLatest
         axCorr
-        axMean = gobjects(1,0);   % one (overlay) or one per stimulus
+        axMean = gobjects(1,0);   % one (overlay), one per stimulus, or one per group
     end
 
     % --- Display settings ------------------------------------------------
@@ -84,13 +120,14 @@ classdef LivePlot < handle
     % change is visible immediately whether or not sweeps are still arriving.
     properties
         Layout      (1,:) char   = 'overlay'
+        GroupBy     (1,:) char   = ''          % '' = auto, 'none', or a param name
         TimeBase    (1,2) double = [-2 10]     % ms
         AmpMode     (1,:) char   = 'common'
         ManualLimit (1,1) double = 5e-6        % volts, +/-
     end
 
     properties (Access = private)
-        meanLines  = gobjects(1,0);   % one per stimulus, in axMean order
+        meanLines  = gobjects(1,0);   % one per stimulus, in layout order
         latestLine
         corrBar
         artifactText
@@ -98,8 +135,13 @@ classdef LivePlot < handle
         Ctrl = struct();      % the control-strip uicontrols
         StimList   = [];      % stimulus indices the current axes were built for
         StimLabels = {};
+        TileIsLeft = [];      % which tiles sit in the left column of a grid
         LayoutKey  (1,:) char = '';
         FilterText (1,:) char = '';
+        % The parameter names the Group menu is currently offering -- this
+        % run's varying ones, worked out at render. Kept here so syncControls
+        % can refresh the menu without asking the widget what it already says.
+        GroupChoices = {};
         Last = [];            % last update() payload, for re-render on a control change
     end
 
@@ -109,7 +151,7 @@ classdef LivePlot < handle
                 obj.Container = parent;
             else
                 obj.Figure = figure('Name',obj.Title,'NumberTitle','off','Color','w', ...
-                    'Tag','MABR_LIVEPLOT','Position',[100 100 720 560]);
+                    'Tag','MABR_LIVEPLOT','Position',[100 100 780 580]);
                 obj.Container = obj.Figure;
             end
             obj.build();
@@ -149,9 +191,31 @@ classdef LivePlot < handle
             % bad    : [1 x nSweeps] logical, sweeps flagged as artifact
             % info   : optional struct
             %            .StimIndex [1 x nSweeps] stimulus behind each sweep
-            %            .Stimuli   [1 x nStim]   stimuli this run presents,
-            %                                     in the order to lay them out
-            %            .Labels    {1 x nStim}   display label for each
+            %            .Stimuli   [1 x nStim]   stimuli this run presents
+            %            .Labels    {1 x nStim}   fallback label for each --
+            %                                     used where .Params cannot
+            %                                     name the condition better
+            %            .Params    the informative parameters of those
+            %                       stimuli, ROW-ALIGNED with .Stimuli:
+            %                         .Names   {1 x nP}
+            %                         .Values  [nStim x nP]
+            %                         .Varying (1 x nP) logical, optional --
+            %                                  which parameters count as
+            %                                  informative. The caller's answer
+            %                                  wins because the right SCOPE for
+            %                                  that question is the experiment,
+            %                                  not this run: a blocked run holds
+            %                                  one condition and varies nothing,
+            %                                  and dropping every parameter for
+            %                                  that reason would leave the
+            %                                  operator's own dimensions off the
+            %                                  one label naming what is being
+            %                                  acquired. Absent, it is computed
+            %                                  from the values handed over.
+            %                         .Units   {1 x nP}  ('' where unknown)
+            %                       exactly what mabr.stim.StimulusSet.paramTable
+            %                       returns (over the BANK, with this run's rows
+            %                       taken out of it -- see AcqController).
             %            .DetrendPoly, .SmoothSpan  cosmetic post-processing
             %          Omit it and every sweep counts as one condition.
             if nargin < 4, R = []; end
@@ -173,6 +237,7 @@ classdef LivePlot < handle
             S.bad    = bad;
             S.opts   = mabr.ui.LivePlot.resolveOpts(info);
             [S.stimIdx,S.stimList,S.labels] = mabr.ui.LivePlot.resolveStimuli(info,n);
+            S.params = mabr.ui.LivePlot.resolveParams(info,numel(S.stimList));
 
             obj.Last = S;
             obj.render();
@@ -190,8 +255,19 @@ classdef LivePlot < handle
 
         % --- Display settings ------------------------------------------------
         function set.Layout(obj,v)
-            obj.Layout = validatestring(v,{'overlay','separate'}, ...
+            obj.Layout = validatestring(v,{'overlay','separate','grid','stacked'}, ...
                 'mabr.ui.LivePlot','Layout');
+            obj.afterSettingChange();
+        end
+
+        function set.GroupBy(obj,v)
+            % Free text, deliberately: it names a stimulus parameter, and which
+            % names exist is a property of the bank being run, not of this
+            % class. A name no parameter answers to falls back to automatic at
+            % render rather than erroring at whoever typed it.
+            if isempty(v), obj.GroupBy = '';
+            else,          obj.GroupBy = char(string(v));
+            end
             obj.afterSettingChange();
         end
 
@@ -228,7 +304,7 @@ classdef LivePlot < handle
                 'Units','normalized');
             obj.buildControls();
             obj.buildTop();
-            obj.buildMeanAxes([],{});
+            obj.buildMeanAxes(mabr.ui.LivePlot.emptyGroup());
             obj.relayout();
             if isprop(c,'SizeChangedFcn'), c.SizeChangedFcn = @(~,~) obj.relayout(); end
         end
@@ -277,54 +353,87 @@ classdef LivePlot < handle
             title(obj.axCorr,'\rho_{post}-\rho_{pre}','FontSize',8);
         end
 
-        function buildMeanAxes(obj,stimList,labels)
+        function buildMeanAxes(obj,G)
             % (Re)build the lower region for exactly the stimuli this run
-            % presents. Called only when that list -- or the layout mode --
-            % changes, never on a plain refresh.
+            % presents, in the arrangement `G` resolved for them. Called only
+            % when that arrangement changes, never on a plain refresh.
             delete(obj.axMean(isgraphics(obj.axMean)));
             obj.axMean    = gobjects(1,0);
             obj.meanLines = gobjects(1,0);
             obj.legendHandle = [];
 
-            obj.StimList   = stimList;
-            obj.StimLabels = labels;
-            n   = max(1,numel(stimList));
-            col = mabr.ui.LivePlot.stimColors(n);
+            obj.StimList   = G.stimList;
+            obj.StimLabels = G.labels;
+            n   = max(1,numel(G.stimList));
+            col = G.colors;
+            if size(col,1) < n, col = mabr.ui.LivePlot.stimColors(n); end
             p   = obj.PlotPanel;
 
-            if strcmp(obj.Layout,'separate') && numel(stimList) > 1
-                [pos,isBottom,isLeft] = obj.tilePositions(n);
-                for k = 1:n
-                    ax = axes('Parent',p,'Units','normalized','Position',pos(k,:), ...
-                        'Box','on','NextPlot','add','FontSize',8);
+            obj.TileIsLeft = true(1,n);
+            switch G.mode
+                case 'separate'
+                    [pos,isBottom,isLeft] = obj.tilePositions(n);
+                    obj.TileIsLeft = isLeft;
+                    for k = 1:n
+                        ax = obj.newTile(p,pos(k,:),isBottom(k),isLeft(k),true);
+                        obj.axMean(k)    = ax;
+                        obj.meanLines(k) = line(ax,nan,nan,'Color',col(k,:),'LineWidth',1.5);
+                    end
+
+                case 'grid'
+                    [pos,isBottom,isLeft] = obj.gridPositions(G);
+                    obj.TileIsLeft = isLeft;
+                    for k = 1:n
+                        ax = obj.newTile(p,pos(k,:),isBottom(k),isLeft(k),true);
+                        obj.axMean(k)    = ax;
+                        obj.meanLines(k) = line(ax,nan,nan,'Color',col(k,:),'LineWidth',1.5);
+                    end
+
+                case 'stacked'
+                    % One axes per group; the group's conditions are offset
+                    % into it at render, so the lines belong to the group's
+                    % axes but stay indexed by stimulus like every other mode.
+                    pos = obj.stackPositions(G.nGroups);
+                    for g = 1:G.nGroups
+                        obj.axMean(g) = obj.newTile(p,pos(g,:),true,true,false);
+                    end
+                    for k = 1:n
+                        g  = 1;
+                        if k <= numel(G.group), g = G.group(k); end
+                        obj.meanLines(k) = line(obj.axMean(g),nan,nan, ...
+                            'Color',col(k,:),'LineWidth',1.5);
+                    end
+
+                otherwise   % 'overlay'
+                    ax = axes('Parent',p,'Units','normalized', ...
+                        'Position',[0.09 0.11 0.72 1-obj.TopFrac-0.16], ...
+                        'Box','on','NextPlot','add');
                     grid(ax,'on');
                     yline(ax,0,'Color',obj.ZeroColor);
                     xline(ax,0,'Color',obj.ZeroColor,'LineStyle',':');
-                    % Only the tile at the foot of each column is labelled:
-                    % repeating "Time (ms)" under every one of a dozen tiles
-                    % costs the height the traces need.
-                    if isBottom(k), xlabel(ax,'Time (ms)','FontSize',8);
-                    else,           ax.XTickLabel = [];
+                    obj.axMean = ax;
+                    for k = 1:n
+                        obj.meanLines(k) = line(ax,nan,nan,'Color',col(k,:),'LineWidth',1.5);
                     end
-                    if ~isLeft(k),   ax.YTickLabel = []; end
-                    obj.axMean(k)    = ax;
-                    obj.meanLines(k) = line(ax,nan,nan,'Color',col(k,:),'LineWidth',1.5);
-                end
-            else
-                ax = axes('Parent',p,'Units','normalized', ...
-                    'Position',[0.09 0.11 0.72 1-obj.TopFrac-0.16], ...
-                    'Box','on','NextPlot','add');
-                grid(ax,'on');
-                yline(ax,0,'Color',obj.ZeroColor);
-                xline(ax,0,'Color',obj.ZeroColor,'LineStyle',':');
-                obj.axMean = ax;
-                for k = 1:n
-                    obj.meanLines(k) = line(ax,nan,nan,'Color',col(k,:),'LineWidth',1.5);
-                end
-                obj.addOverlayLegend(labels);
-                xlabel(obj.axMean(1),'Time (ms)');
+                    obj.addOverlayLegend(G.labels);
+                    xlabel(obj.axMean(1),'Time (ms)');
             end
-            obj.LayoutKey = obj.layoutKey(stimList,labels);
+            obj.LayoutKey = mabr.ui.LivePlot.layoutKey(G);
+        end
+
+        function ax = newTile(obj,p,pos,bottom,left,zeroLine)
+            ax = axes('Parent',p,'Units','normalized','Position',pos, ...
+                'Box','on','NextPlot','add','FontSize',8);
+            grid(ax,'on');
+            if zeroLine, yline(ax,0,'Color',obj.ZeroColor); end
+            xline(ax,0,'Color',obj.ZeroColor,'LineStyle',':');
+            % Only the tile at the foot of each column is labelled: repeating
+            % "Time (ms)" under every one of a dozen tiles costs the height the
+            % traces need.
+            if bottom, xlabel(ax,'Time (ms)','FontSize',8);
+            else,      ax.XTickLabel = [];
+            end
+            if ~left, ax.YTickLabel = []; end
         end
 
         function addOverlayLegend(obj,labels)
@@ -345,13 +454,9 @@ classdef LivePlot < handle
             % are wide and short, so height is the scarce dimension.
             cols = max(1,ceil(n/obj.TilesPerCol));
             rows = ceil(n/cols);
-            x0 = 0.075; x1 = 0.985; y0 = 0.10; y1 = 1-obj.TopFrac-0.05;
-            wGap = 0.055; hGap = 0.030;
-            w = (x1-x0)/cols - wGap;
-            h = (y1-y0)/rows - hGap;
-            pos      = zeros(n,4);
-            isBottom = false(1,n);
-            isLeft   = false(1,n);
+            [pos,isBottom,isLeft] = deal(zeros(n,4),false(1,n),false(1,n));
+            [x0,y1,wGap,hGap,w,h] = mabr.ui.LivePlot.tileGeometry( ...
+                cols,rows,1-obj.TopFrac-0.05);
             for k = 1:n
                 c = floor((k-1)/rows);          % fill top-to-bottom, then across
                 r = mod(k-1,rows);
@@ -361,14 +466,64 @@ classdef LivePlot < handle
             end
         end
 
+        function [pos,isBottom,isLeft] = gridPositions(obj,G)
+            % One tile per condition: groups across columns, the within-group
+            % parameter down rows with the LARGEST value at the top -- the way
+            % a level series is drawn everywhere else, including the offline
+            % pipeline's grid. A group with fewer members than the tallest
+            % column is bottom-aligned, so a missing high level leaves a hole
+            % where it belongs rather than shifting the series.
+            n    = numel(G.stimList);
+            cols = max(1,G.nGroups);
+            rows = max(1,max(G.within));
+            % A little extra headroom: the top tile of each column carries the
+            % group name above its own title.
+            [x0,y1,wGap,hGap,w,h] = mabr.ui.LivePlot.tileGeometry( ...
+                cols,rows,1-obj.TopFrac-0.085);
+            [pos,isBottom,isLeft] = deal(zeros(n,4),false(1,n),false(1,n));
+            for k = 1:n
+                c = G.group(k) - 1;
+                r = rows - G.within(k);         % within 1 = lowest = bottom row
+                pos(k,:) = [x0 + c*(w+wGap), y1 - (r+1)*h - r*hGap, w, h];
+                isBottom(k) = G.within(k) == 1;
+                isLeft(k)   = (c == 0);
+            end
+        end
+
+        function pos = stackPositions(obj,nG)
+            % Stacks are tall: keep the groups on one row for as long as they
+            % fit, and only then wrap.
+            nG   = max(1,nG);
+            cols = min(nG,obj.StackCols);
+            rows = ceil(nG/cols);
+            [x0,y1,wGap,hGap,w,h] = mabr.ui.LivePlot.tileGeometry( ...
+                cols,rows,1-obj.TopFrac-0.05);
+            pos = zeros(nG,4);
+            for g = 1:nG
+                c = mod(g-1,cols);              % fill across, then down
+                r = floor((g-1)/cols);
+                pos(g,:) = [x0 + c*(w+wGap), y1 - (r+1)*h - r*hGap, w, h];
+            end
+        end
+
         % --- Control strip ---------------------------------------------------
         function buildControls(obj)
             p = obj.CtrlPanel;
             x = 8;
-            [~,x] = obj.addText(p,'Means:',x,44);
-            [obj.Ctrl.layout,x] = obj.addPopup(p,{'Overlaid','Separate'},x,88, ...
+            [~,x] = obj.addText(p,'Means:',x,40);
+            [obj.Ctrl.layout,x] = obj.addPopup(p, ...
+                {'Overlaid','Separate','Grid','Stacked'},x,88, ...
                 @() obj.onLayoutControl(), ...
-                'One axes for every stimulus mean, or one axes each.');
+                ['One axes for every stimulus mean, one axes each, a grid ' ...
+                 'arranged by stimulus parameter, or one offset stack per group.']);
+
+            x = x + 10;
+            [~,x] = obj.addText(p,'Group:',x,40);
+            [obj.Ctrl.group,x] = obj.addPopup(p,{'Auto','None'},x,92, ...
+                @() obj.onGroupControl(), ...
+                ['The stimulus parameter the conditions are grouped by: it ' ...
+                 'colours each group as a series and forms the columns of ' ...
+                 'Grid and Stacked.']);
 
             x = x + 10;
             [~,x] = obj.addText(p,'Time (ms):',x,62);
@@ -379,7 +534,7 @@ classdef LivePlot < handle
                 'End of the displayed window, relative to stimulus onset.');
 
             x = x + 10;
-            [~,x] = obj.addText(p,'Amplitude:',x,60);
+            [~,x] = obj.addText(p,'Amp:',x,32);
             [obj.Ctrl.amp,x] = obj.addPopup(p, ...
                 {'Auto (each)','Auto (shared)','Manual'},x,104,@() obj.onAmpControl(), ...
                 ['How the mean axes are scaled: each stimulus to its own peak, ' ...
@@ -412,8 +567,18 @@ classdef LivePlot < handle
         end
 
         function onLayoutControl(obj)
-            modes = {'overlay','separate'};
+            modes = {'overlay','separate','grid','stacked'};
             obj.Layout = modes{obj.Ctrl.layout.Value};
+        end
+
+        function onGroupControl(obj)
+            items = cellstr(obj.Ctrl.group.String);
+            v     = min(max(1,obj.Ctrl.group.Value),numel(items));
+            switch v
+                case 1, obj.GroupBy = '';        % Auto
+                case 2, obj.GroupBy = 'none';
+                otherwise, obj.GroupBy = items{v};
+            end
         end
 
         function onAmpControl(obj)
@@ -456,7 +621,8 @@ classdef LivePlot < handle
             % whatever unit the axes are currently labelled in, so the number
             % beside "uV" always means what it says.
             if ~isfield(obj.Ctrl,'layout') || ~isgraphics(obj.Ctrl.layout), return; end
-            obj.Ctrl.layout.Value = 1 + strcmp(obj.Layout,'separate');
+            obj.Ctrl.layout.Value = find(strcmp(obj.Layout, ...
+                {'overlay','separate','grid','stacked'}),1);
             obj.Ctrl.amp.Value    = find(strcmp(obj.AmpMode,{'each','common','manual'}),1);
             obj.Ctrl.t0.String    = num2str(obj.TimeBase(1),'%g');
             obj.Ctrl.t1.String    = num2str(obj.TimeBase(2),'%g');
@@ -464,6 +630,36 @@ classdef LivePlot < handle
             obj.Ctrl.manual.String     = num2str(obj.ManualLimit*s.mult,'%.4g');
             obj.Ctrl.manualUnit.String = s.plain;
             obj.Ctrl.manual.Enable     = onOff(strcmp(obj.AmpMode,'manual'));
+            obj.syncGroupControl();
+        end
+
+        function syncGroupControl(obj,choices)
+            % The Group menu is the run's own vocabulary: whichever of the
+            % bank's parameters actually vary across the stimuli on screen.
+            % Rebuilt only when that list changes -- this runs at 20 Hz behind
+            % the live tick, and rewriting a popupmenu's String every frame
+            % would drop the mouse out of it mid-click.
+            if nargin < 2, choices = obj.GroupChoices; end
+            obj.GroupChoices = choices;
+            if ~isfield(obj.Ctrl,'group') || ~isgraphics(obj.Ctrl.group), return; end
+            h     = obj.Ctrl.group;
+            items = [{'Auto','None'} choices(:)'];
+
+            v = 1;
+            if strcmpi(obj.GroupBy,'none')
+                v = 2;
+            elseif ~isempty(obj.GroupBy)
+                j = find(strcmpi(choices,obj.GroupBy),1);
+                if ~isempty(j), v = 2 + j; end
+            end
+
+            if ~isequal(h.String(:)',items)
+                h.Value  = 1;          % never leave Value past the new list
+                h.String = items;
+            end
+            if h.Value ~= v, h.Value = v; end
+            newEnable = onOff(~isempty(choices));
+            if ~strcmp(h.Enable,newEnable), h.Enable = newEnable; end
         end
 
         function afterSettingChange(obj)
@@ -479,13 +675,15 @@ classdef LivePlot < handle
             S = obj.Last;
             if isempty(S) || ~obj.isvalidView(), return; end
 
-            key = obj.layoutKey(S.stimList,S.labels);
+            G   = obj.resolveGrouping(S);
+            key = mabr.ui.LivePlot.layoutKey(G);
             if ~strcmp(key,obj.LayoutKey)
-                obj.buildMeanAxes(S.stimList,S.labels);
+                obj.buildMeanAxes(G);
                 obj.applyFilterText();
             end
+            obj.syncGroupControl(G.paramChoices);
 
-            [M,counts,rejected] = obj.stimulusMeans(S);
+            [M,counts,rejected] = obj.stimulusMeans(S,G);
             latest = S.Y(end,:);
             scale  = obj.pickScale(max([abs(M(:)); abs(latest(:)); 0]));
 
@@ -502,26 +700,14 @@ classdef LivePlot < handle
             % Interpreter 'none' wherever a stimulus ID can appear: an ID like
             % 8kHz_30dB is not TeX, and the default interpreter renders the
             % underscore as a subscript.
-            title(obj.axLatest,obj.latestTitle(S,counts),'Interpreter','none');
+            title(obj.axLatest,obj.latestTitle(S,G,counts),'Interpreter','none');
             obj.showArtifacts(nnz(S.bad),numel(S.bad));
 
             % --- per-stimulus means ------------------------------------------
-            yl = obj.meanLimits(M,scale);
-            for k = 1:numel(obj.meanLines)
-                set(obj.meanLines(k),'XData',S.t,'YData',M(k,:)*scale.mult);
-            end
-            for a = 1:numel(obj.axMean)
-                obj.setLimits(obj.axMean(a),S.t,yl(min(a,numel(yl))));
-            end
-            if numel(obj.axMean) > 1
-                for k = 1:numel(obj.axMean)
-                    title(obj.axMean(k),sprintf('%s  (n=%d)',S.labels{k},counts(k)-rejected(k)), ...
-                        'FontSize',8,'FontWeight','normal','Interpreter','none');
-                end
-                ylabel(obj.axMean(1),sprintf('Mean (%s)',scale.unit));
+            if strcmp(G.mode,'stacked')
+                obj.renderStacked(S,G,M,counts,rejected,scale);
             else
-                ylabel(obj.axMean(1),sprintf('Mean (%s)',scale.unit));
-                title(obj.axMean(1),obj.overlayTitle(S,counts,rejected),'Interpreter','none');
+                obj.renderPanels(S,G,M,counts,rejected,scale);
             end
 
             if ~isempty(S.R) && isscalar(S.R) && ~isnan(S.R)
@@ -530,14 +716,114 @@ classdef LivePlot < handle
             drawnow limitrate
         end
 
-        function [M,counts,rejected] = stimulusMeans(obj,S)
+        function renderPanels(obj,S,G,M,counts,rejected,scale)
+            % Overlay / Separate / Grid: one line per stimulus on its own axes
+            % or on the shared one. Only the titling differs between them.
+            yl = obj.meanLimits(M,scale);
+            for k = 1:numel(obj.meanLines)
+                set(obj.meanLines(k),'XData',S.t,'YData',M(k,:)*scale.mult);
+            end
+            for a = 1:numel(obj.axMean)
+                obj.setLimits(obj.axMean(a),S.t,yl(min(a,numel(yl))));
+            end
+
+            if numel(obj.axMean) > 1
+                isTop = mabr.ui.LivePlot.gridTopMask(G);
+                % A tile away from the left edge is normally left unlabelled --
+                % it repeats its neighbour's scale. Under 'each' it does not:
+                % every tile is on its own scale, and hiding the numbers would
+                % leave a column of traces with no way to tell how big they are.
+                showAll = strcmp(obj.AmpMode,'each');
+                for k = 1:numel(obj.axMean)
+                    leftTile = k > numel(obj.TileIsLeft) || obj.TileIsLeft(k);
+                    if showAll || leftTile
+                        obj.axMean(k).YTickLabelMode = 'auto';
+                    else
+                        obj.axMean(k).YTickLabel = [];
+                    end
+                    nEff = counts(k) - rejected(k);
+                    if strcmp(G.mode,'grid')
+                        txt = sprintf('%s  (n=%d)',G.shortLabels{k},nEff);
+                        gl  = G.groupLabels{G.group(k)};
+                        if isTop(k) && ~isempty(gl), txt = {gl; txt}; end
+                        title(obj.axMean(k),txt,'FontSize',7, ...
+                            'FontWeight','normal','Interpreter','none');
+                    else
+                        title(obj.axMean(k),sprintf('%s  (n=%d)',G.labels{k},nEff), ...
+                            'FontSize',8,'FontWeight','normal','Interpreter','none');
+                    end
+                end
+                ylabel(obj.axMean(1),sprintf('Mean (%s)',scale.unit));
+            else
+                ylabel(obj.axMean(1),sprintf('Mean (%s)',scale.unit));
+                title(obj.axMean(1),obj.overlayTitle(G,counts,rejected),'Interpreter','none');
+            end
+        end
+
+        function renderStacked(obj,S,G,M,counts,rejected,scale)
+            % One axes per group, its conditions offset into a stack and named
+            % on the y axis -- the y ticks ARE the labels, so a series needs no
+            % legend and no per-trace annotation to read.
+            Md = M*scale.mult;
+            for g = 1:numel(obj.axMean)
+                ax  = obj.axMean(g);
+                sel = find(G.group == g);
+                if isempty(sel)
+                    ax.YTick = []; continue
+                end
+                [~,ord] = sort(G.within(sel));
+                sel  = sel(ord);
+                step = obj.stackStep(Md,G,g,scale.mult);
+                offs = (0:numel(sel)-1)*step;
+
+                lbl = cell(1,numel(sel));
+                for j = 1:numel(sel)
+                    k = sel(j);
+                    set(obj.meanLines(k),'XData',S.t,'YData',Md(k,:)+offs(j));
+                    lbl{j} = sprintf('%s (%d)',G.shortLabels{k}, ...
+                        counts(k)-rejected(k));
+                end
+
+                obj.setXLim(ax,S.t);
+                ax.YLim       = [offs(1)-0.75*step, offs(end)+0.75*step];
+                ax.YTick      = offs;
+                ax.YTickLabel = lbl;
+                ax.FontSize   = 8;
+                head = G.groupLabels{g};
+                if isempty(head), head = 'Means'; end
+                title(ax,sprintf('%s   (step %.3g %s)',head,step,scale.plain), ...
+                    'FontSize',8,'FontWeight','normal','Interpreter','none');
+            end
+        end
+
+        function step = stackStep(obj,Md,G,g,mult)
+            % The vertical offset between the traces of one stack, in DISPLAY
+            % units. AmpMode decides what it is measured against, exactly as it
+            % decides an axis limit elsewhere: the group's own largest response
+            % ('each'), the largest anywhere ('common'), or the fixed limit.
+            % 2.2x it, so neighbouring traces have somewhere to go before they
+            % collide and the stack stops being readable.
+            switch obj.AmpMode
+                case 'manual'
+                    step = 2.2*obj.ManualLimit*mult;
+                case 'each'
+                    step = 2.2*max(abs(Md(G.group == g,:)),[],'all');
+                otherwise
+                    step = 2.2*max(abs(Md),[],'all');
+            end
+            % Nothing averaged yet (every mean still NaN), or a dead channel:
+            % any positive step will do -- the labels still have to sit apart.
+            if isempty(step) || ~isfinite(step) || step <= 0, step = 1; end
+        end
+
+        function [M,counts,rejected] = stimulusMeans(obj,S,G)
             % One running mean per stimulus, over the sweeps that survived the
             % artifact preview -- the average the block will actually hold.
             n = numel(obj.meanLines);
             M = nan(n,numel(S.t));
             counts = zeros(1,n); rejected = zeros(1,n);
             for k = 1:n
-                if k <= numel(S.stimList), sel = S.stimIdx == S.stimList(k);
+                if k <= numel(G.stimList), sel = S.stimIdx == G.stimList(k);
                 else,                      sel = true(size(S.stimIdx));
                 end
                 counts(k)   = nnz(sel);
@@ -572,7 +858,7 @@ classdef LivePlot < handle
             yl(~isfinite(yl) | yl == 0) = 1;
         end
 
-        function setLimits(obj,ax,t,ylim_)
+        function setXLim(obj,ax,t)
             % Clamp the requested time base to what was actually recorded: the
             % window can be widened past the extracted sweep, and an axis
             % showing empty space either side reads as missing data.
@@ -581,6 +867,10 @@ classdef LivePlot < handle
             xl(2) = min(xl(2),t(end));
             if ~(xl(2) > xl(1)), xl = [t(1) t(end)]; end
             ax.XLim = xl;
+        end
+
+        function setLimits(obj,ax,t,ylim_)
+            obj.setXLim(ax,t);
             if ~isfinite(ylim_) || ylim_ == 0, ylim_ = 1; end
             ax.YLim = [-1.1 1.1]*ylim_;
         end
@@ -590,7 +880,7 @@ classdef LivePlot < handle
             % "Manual" seeds itself from.
             lim = 0;
             if isempty(obj.Last), return; end
-            M   = obj.stimulusMeans(obj.Last);
+            M   = obj.stimulusMeans(obj.Last,obj.resolveGrouping(obj.Last));
             lim = max(abs(M(:)));
             if ~isfinite(lim) || lim == 0, lim = obj.ManualLimit; end
         end
@@ -605,29 +895,37 @@ classdef LivePlot < handle
             end
         end
 
-        function txt = latestTitle(~,S,counts)
+        function txt = latestTitle(~,S,G,counts)
             done = sum(counts);
             if isnan(S.target), sweeps = sprintf('%d sweeps',done);
             else,               sweeps = sprintf('%d / %d sweeps',done,S.target);
             end
             % Name the condition the latest sweep belongs to only when the run
             % holds more than one -- otherwise it just repeats the axes below.
-            if numel(S.stimList) > 1
-                k = find(S.stimList == S.stimIdx(end),1);
+            if numel(G.stimList) > 1
+                k = find(G.stimList == S.stimIdx(end),1);
                 if ~isempty(k)
-                    txt = sprintf('Latest — %s   (%s)',S.labels{k},sweeps);
+                    txt = sprintf('Latest — %s   (%s)',G.labels{k},sweeps);
                     return
                 end
             end
             txt = sprintf('Latest sweep   (%s)',sweeps);
         end
 
-        function txt = overlayTitle(~,S,counts,rejected)
-            if numel(S.stimList) > 1
+        function txt = overlayTitle(~,G,counts,rejected)
+            done = sum(counts) - sum(rejected);
+            if numel(G.stimList) > 1
                 txt = sprintf('Means — %d stimuli, %d sweeps averaged', ...
-                    numel(S.stimList),sum(counts)-sum(rejected));
+                    numel(G.stimList),done);
+            elseif ~isempty(G.named) && G.named(1)
+                % A blocked run is one condition, and the axes below is the
+                % only thing in the window that could say WHICH -- but only
+                % where the parameters actually named it. A fallback label is
+                % either the ID (already on the file this becomes) or the
+                % placeholder 'Stimulus 1', and neither is worth a title.
+                txt = sprintf('%s — mean of %d sweeps',G.labels{1},done);
             else
-                txt = sprintf('Mean of %d sweeps',sum(counts)-sum(rejected));
+                txt = sprintf('Mean of %d sweeps',done);
             end
         end
 
@@ -650,9 +948,118 @@ classdef LivePlot < handle
                 'FontAngle','italic','Color',[0.45 0.45 0.45]);
         end
 
-        function k = layoutKey(obj,stimList,labels)
-            k = sprintf('%s|%s|%s',obj.Layout,mat2str(stimList(:).'), ...
-                strjoin(labels,'>'));
+        % --- Parameter-aware grouping ----------------------------------------
+        function G = resolveGrouping(obj,S)
+            % Work out, from this run's stimuli and their parameters, the order
+            % to lay the means out in, what to call each, which group it
+            % belongs to, and what colour it gets. Recomputed on every render
+            % rather than cached at update(): GroupBy and Layout can change
+            % between sweeps, and the answer depends on both.
+            G    = mabr.ui.LivePlot.emptyGroup();
+            list = S.stimList(:)';
+            n    = numel(list);
+            if n == 0, return; end
+
+            P    = S.params;
+            vary = mabr.ui.LivePlot.varyingCols(P,n);
+            G.paramChoices = P.Names(vary);
+            gCol = obj.pickGroupCol(P,vary);
+            if gCol > 0, G.groupName = P.Names{gCol}; end
+
+            % --- order --------------------------------------------------------
+            if isempty(vary)
+                order = 1:n;                    % nothing to sort by: as given
+            else
+                cols = vary;
+                if gCol > 0, cols = [gCol vary(vary ~= gCol)]; end
+                [~,order] = sortrows(P.Values(:,cols));
+                order = order(:)';
+            end
+            G.order    = order;
+            G.stimList = list(order);
+
+            % --- labels -------------------------------------------------------
+            % `named` records which labels the PARAMETERS produced, as opposed
+            % to the caller's fallback -- the difference between naming a
+            % condition and repeating a stimulus ID (or, with no info at all,
+            % the placeholder 'Stimulus 1', which is worth saying nowhere).
+            G.labels      = cell(1,n);
+            G.shortLabels = cell(1,n);
+            G.named       = false(1,n);
+            within = vary(vary ~= gCol);
+            for k = 1:n
+                r   = order(k);
+                lab = mabr.ui.LivePlot.paramText(P,r,vary);
+                G.named(k)  = ~isempty(lab);
+                if isempty(lab), lab = S.labels{r}; end
+                G.labels{k} = lab;
+                G.shortLabels{k} = '';
+                if gCol > 0 && ~isempty(within)
+                    G.shortLabels{k} = mabr.ui.LivePlot.paramText(P,r,within);
+                end
+                if isempty(G.shortLabels{k}), G.shortLabels{k} = G.labels{k}; end
+            end
+
+            % --- groups -------------------------------------------------------
+            if gCol > 0
+                gv = P.Values(order,gCol);
+                % `order` already sorted by this column, so unique's ascending
+                % answer runs left to right across the columns of a grid.
+                [uv,~,gi] = unique(gv);
+                G.group       = gi(:)';
+                G.nGroups     = numel(uv);
+                G.groupLabels = cell(1,G.nGroups);
+                for j = 1:G.nGroups
+                    G.groupLabels{j} = mabr.ui.LivePlot.paramValueText(P,gCol,uv(j));
+                end
+            else
+                G.group = ones(1,n); G.nGroups = 1; G.groupLabels = {''};
+            end
+
+            G.within = zeros(1,n);
+            for j = 1:G.nGroups
+                sel = find(G.group == j);
+                G.within(sel) = 1:numel(sel);   % ascending in the within-param
+            end
+
+            G.colors = mabr.ui.LivePlot.seriesColors(G);
+            G.mode   = obj.Layout;
+            % One condition is one axes whatever the setting says: a grid of a
+            % single tile and a stack of a single trace are both just the mean.
+            if n < 2, G.mode = 'overlay'; end
+        end
+
+        function gCol = pickGroupCol(obj,P,vary)
+            % Which parameter column groups the run, or 0 for none.
+            gCol = 0;
+            if isempty(vary) || strcmpi(obj.GroupBy,'none'), return; end
+            names = P.Names(vary);
+
+            if ~isempty(obj.GroupBy)
+                j = find(strcmpi(names,obj.GroupBy),1);
+                if ~isempty(j), gCol = vary(j); return; end
+                % Named a parameter this run does not vary: fall through to
+                % automatic rather than showing one undivided group. The menu
+                % re-derives itself from the run, so this settles by itself.
+            end
+
+            % ONE varying parameter is the series itself, not a way of
+            % dividing it -- grouping by it would put every condition in a
+            % group of one and destroy exactly the comparison it is for.
+            if numel(vary) < 2, return; end
+
+            j = find(strcmpi(names,'Frequency'),1);
+            if ~isempty(j), gCol = vary(j); return; end
+
+            % Otherwise the coarsest dimension: fewest distinct values, so the
+            % grid comes out wide and short rather than one column per level.
+            nu = zeros(1,numel(vary));
+            for k = 1:numel(vary)
+                v     = P.Values(:,vary(k));
+                nu(k) = numel(unique(v(~isnan(v))));
+            end
+            [~,k] = min(nu);
+            gCol  = vary(k);
         end
     end
 
@@ -691,10 +1098,141 @@ classdef LivePlot < handle
             end
         end
 
-        function opts = resolveOpts(info)
-            opts = struct('DetrendPoly',-1,'SmoothSpan',0);
-            if isfield(info,'DetrendPoly'), opts.DetrendPoly = info.DetrendPoly; end
-            if isfield(info,'SmoothSpan'),  opts.SmoothSpan  = info.SmoothSpan;  end
+        function P = resolveParams(info,nStim)
+            % Normalize info.Params. Anything that does not line up with the
+            % stimulus list is DROPPED rather than half-used: mislabelling a
+            % condition is worse than not naming its parameters at all.
+            P = struct('Names',{{}},'Values',zeros(nStim,0), ...
+                       'Varying',false(1,0),'Units',{{}});
+            if ~isfield(info,'Params') || ~isstruct(info.Params) ...
+                    || ~isscalar(info.Params), return; end
+            Q = info.Params;
+            if ~isfield(Q,'Names') || ~isfield(Q,'Values'), return; end
+            if isempty(Q.Names) || isempty(Q.Values), return; end
+
+            names = cellstr(Q.Names);
+            names = names(:)';
+            V     = double(Q.Values);
+            if size(V,1) ~= nStim || size(V,2) ~= numel(names), return; end
+
+            units = repmat({''},1,numel(names));
+            if isfield(Q,'Units') && numel(Q.Units) == numel(names)
+                u = cellstr(Q.Units);
+                units = u(:)';
+            end
+
+            % Which parameters are informative: the caller's answer where it
+            % gave one (see above -- it knows the experiment, this view only
+            % sees a run), otherwise whatever differs across the stimuli here.
+            varying = false(1,numel(names));
+            for j = 1:numel(names)
+                v = V(:,j);
+                v = v(~isnan(v));
+                varying(j) = numel(unique(v)) > 1;
+            end
+            if isfield(Q,'Varying') && numel(Q.Varying) == numel(names)
+                varying = logical(Q.Varying(:)');
+            end
+
+            P.Names   = names;
+            P.Values  = V;
+            P.Varying = varying;
+            P.Units   = units;
+        end
+
+        function vary = varyingCols(P,n)
+            % The informative parameter columns -- the dimensions the
+            % experiment varies. A parameter constant across the whole bank
+            % names every condition identically and is only clutter, so it
+            % never reaches a label; resolveParams settled which is which.
+            vary = zeros(1,0);
+            if isempty(P.Names) || size(P.Values,1) ~= n, return; end
+            vary = find(P.Varying(:)');
+        end
+
+        function s = paramValueText(P,col,v)
+            % One parameter value as it is written on a label. Frequency and
+            % Level carry the units the whole toolbox fixes for them (kHz, dB
+            % -- see mabr.data.io.buildFilename and mabr.stim.fromStimgen);
+            % anything else is named rather than given a unit MABR would be
+            % guessing at.
+            if isnan(v), s = ''; return; end
+            u = '';
+            if col <= numel(P.Units), u = P.Units{col}; end
+            if isempty(u), s = sprintf('%s %g',P.Names{col},v);
+            else,          s = sprintf('%g %s',v,u);
+            end
+        end
+
+        function s = paramText(P,row,cols)
+            parts = cell(1,numel(cols));
+            for j = 1:numel(cols)
+                parts{j} = mabr.ui.LivePlot.paramValueText(P,cols(j),P.Values(row,cols(j)));
+            end
+            parts = parts(~cellfun(@isempty,parts));
+            s = strjoin(parts,', ');
+        end
+
+        function G = emptyGroup()
+            G = struct('mode','overlay','order',[],'stimList',[], ...
+                'labels',{{}},'shortLabels',{{}},'named',false(1,0), ...
+                'group',[],'within',[],'nGroups',1,'groupLabels',{{''}}, ...
+                'groupName','','colors',zeros(0,3),'paramChoices',{{}});
+        end
+
+        function k = layoutKey(G)
+            % Everything the built axes depend on -- the arrangement, the
+            % conditions in it, and what they are called. Not the colours or
+            % the short labels: those are written on every render anyway.
+            k = sprintf('%s|%s|%s|%s|%s',G.mode,mat2str(G.stimList(:).'), ...
+                strjoin(G.labels,'>'),mat2str(G.group(:).'),mat2str(G.within(:).'));
+        end
+
+        function m = gridTopMask(G)
+            % The topmost occupied tile of each column -- the one that carries
+            % the group's name above its own title.
+            n = numel(G.stimList);
+            m = false(1,n);
+            for k = 1:n
+                m(k) = G.within(k) == max(G.within(G.group == G.group(k)));
+            end
+        end
+
+        function c = seriesColors(G)
+            % Ungrouped, every condition gets its own colour, as it always
+            % has. GROUPED, colour has a second job: it has to say which
+            % conditions belong to one series. So each group takes a hue and
+            % its members ramp from pale to full along the within-group
+            % parameter -- a level series looks like a level series, and two
+            % frequencies never trade colours between refreshes.
+            n = numel(G.stimList);
+            if G.nGroups < 2 || n < 2
+                c = mabr.ui.LivePlot.stimColors(max(1,n));
+                return
+            end
+            base = mabr.ui.LivePlot.stimColors(G.nGroups);
+            c    = zeros(n,3);
+            for j = 1:G.nGroups
+                sel = find(G.group == j);
+                m   = numel(sel);
+                for r = 1:m
+                    if m < 2, s = 1; else, s = 0.40 + 0.60*(r-1)/(m-1); end
+                    c(sel(r),:) = 1 - s*(1 - base(j,:));
+                end
+            end
+        end
+
+        function [x0,y1,wGap,hGap,w,h] = tileGeometry(cols,rows,yTop)
+            % One tile grid, shared by every multi-axes layout: the left edge,
+            % the top edge, the gaps, and a tile size. The GAPS shrink as the
+            % grid deepens rather than the tiles vanishing -- a cramped grid is
+            % still a grid, one whose tiles have gone to zero height is not.
+            x0 = 0.075; x1 = 0.985; y0 = 0.10; y1 = yTop;
+            cols = max(1,cols); rows = max(1,rows);
+            wGap = min(0.055,(x1-x0)/(3*cols));
+            hGap = min(0.030,(y1-y0)/(2*rows));
+            w = (x1-x0)/cols - wGap;
+            h = (y1-y0)/rows - hGap;
         end
 
         function c = stimColors(n)
@@ -720,6 +1258,12 @@ classdef LivePlot < handle
                 [p,~,mu] = polyfit(tms,m,opts.DetrendPoly);
                 m = m - polyval(p,tms,[],mu);
             end
+        end
+
+        function opts = resolveOpts(info)
+            opts = struct('DetrendPoly',-1,'SmoothSpan',0);
+            if isfield(info,'DetrendPoly'), opts.DetrendPoly = info.DetrendPoly; end
+            if isfield(info,'SmoothSpan'),  opts.SmoothSpan  = info.SmoothSpan;  end
         end
 
         function s = pickScale(maxAbs)
