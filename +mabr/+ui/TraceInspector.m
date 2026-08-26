@@ -320,6 +320,7 @@ classdef TraceInspector < handle
 
             obj.Axes = axes('Parent',obj.Figure,'Units','pixels','Box','on', ...
                 'NextPlot','add','XGrid','on','YGrid','on','GridLineStyle',':');
+            mabr.ui.hideAxesToolbar(obj.Axes);
             xlabel(obj.Axes,'Time re stimulus onset (ms)');
             obj.Axes.ButtonDownFcn = @(~,~) obj.onAxesClick();
 

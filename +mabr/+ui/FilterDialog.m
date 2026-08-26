@@ -105,6 +105,7 @@ ordDrop.Layout.Row = 4; ordDrop.Layout.Column = [2 4];
 % Row 5: the response, which is the only honest way to show what the four
 % numbers above actually do to a signal.
 ax = uiaxes(g);
+mabr.ui.hideAxesToolbar(ax);
 ax.Layout.Row = 5; ax.Layout.Column = [1 4];
 ax.XScale = 'log';
 ax.XLim   = [1 Fs/2];

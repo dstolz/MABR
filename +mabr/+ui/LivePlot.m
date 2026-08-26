@@ -422,6 +422,7 @@ classdef LivePlot < handle
 
             obj.axCorr = axes('Parent',p,'Units','normalized', ...
                 'Position',[0.88 y+0.06 0.09 obj.TopFrac-0.13],'Box','on');
+            mabr.ui.hideAxesToolbar([obj.axLatest obj.axCorr]);
             obj.corrBar = bar(obj.axCorr,1,0,'FaceColor',[0.2 0.2 0.2]);
             obj.axCorr.YLim  = [0 1];
             obj.axCorr.XTick = [];
@@ -484,6 +485,7 @@ classdef LivePlot < handle
                     ax = axes('Parent',p,'Units','normalized', ...
                         'Position',[0.09 0.11 0.72 1-obj.TopFrac-0.16], ...
                         'Box','on','NextPlot','add');
+                    mabr.ui.hideAxesToolbar(ax);
                     grid(ax,'on');
                     yline(ax,0,'Color',obj.ZeroColor);
                     xline(ax,0,'Color',obj.ZeroColor,'LineStyle',':');
@@ -514,6 +516,7 @@ classdef LivePlot < handle
         function ax = newTile(obj,p,pos,bottom,left,zeroLine)
             ax = axes('Parent',p,'Units','normalized','Position',pos, ...
                 'Box','on','NextPlot','add','FontSize',8);
+            mabr.ui.hideAxesToolbar(ax);
             grid(ax,'on');
             if zeroLine, yline(ax,0,'Color',obj.ZeroColor); end
             xline(ax,0,'Color',obj.ZeroColor,'LineStyle',':');

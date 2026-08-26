@@ -108,6 +108,7 @@ classdef StimulusViewer < handle
             ylabel(obj.axSpec,'Magnitude (dB re peak)');
             grid(obj.axSpec,'on'); box(obj.axSpec,'on');
             obj.axSpec.XScale = 'log';
+            mabr.ui.hideAxesToolbar([obj.axWave obj.axSpec]);
         end
 
         function n = count(obj)

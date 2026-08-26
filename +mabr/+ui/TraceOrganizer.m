@@ -564,6 +564,7 @@ classdef TraceOrganizer < handle
                 'SizeChangedFcn',@(~,~) obj.fitLabelMargin());
             obj.Axes = axes('Parent',obj.Figure,'Box','on','NextPlot','add', ...
                 'YTick',[],'XGrid','on','YGrid','on','GridLineStyle',':');
+            mabr.ui.hideAxesToolbar(obj.Axes);
             xlabel(obj.Axes,'Time (ms)');
             obj.buildToolbar();
             obj.buildMenus();

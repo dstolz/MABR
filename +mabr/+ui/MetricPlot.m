@@ -425,6 +425,7 @@ classdef MetricPlot < handle
 
             obj.Axes = axes('Parent',obj.PlotPanel,'Units','normalized', ...
                 'Position',[0.12 0.16 0.78 0.70],'Box','on','NextPlot','add');
+            mabr.ui.hideAxesToolbar(obj.Axes);
 
             obj.buildControls();
             obj.buildMenus();
@@ -1476,6 +1477,7 @@ classdef MetricPlot < handle
             f  = figure('Name',[obj.Title ' (copy)'],'NumberTitle','off', ...
                 'Color',obj.Axes.Color);
             ax = copyobj(obj.Axes,f);
+            mabr.ui.hideAxesToolbar(ax);
             ax.Units       = 'normalized';
             ax.Position    = [0.13 0.13 0.775 0.75];
             ax.ContextMenu = [];

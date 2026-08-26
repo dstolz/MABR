@@ -386,7 +386,7 @@ classdef ProgressMonitor < handle
             obj.Axes = uiaxes(obj.PlotPanel,'Units','normalized', ...
                 'OuterPosition',[0 0 1 1],'PositionConstraint','outerposition', ...
                 'Color',obj.PaperColor);
-            obj.Axes.Toolbar.Visible = 'off';   % nothing here is pannable
+            mabr.ui.hideAxesToolbar(obj.Axes);   % nothing here is pannable
             disableDefaultInteractivity(obj.Axes);
         end
 
@@ -1142,7 +1142,7 @@ classdef ProgressMonitor < handle
             obj.Axes.Units              = 'normalized';
             obj.Axes.PositionConstraint = 'outerposition';
             obj.Axes.OuterPosition      = [0 0 1 1];
-            obj.Axes.Toolbar.Visible    = 'off';
+            mabr.ui.hideAxesToolbar(obj.Axes);
             disableDefaultInteractivity(obj.Axes);
         end
     end
