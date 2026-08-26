@@ -166,6 +166,21 @@ classdef Schedule < handle
         function obj = Schedule(set,cfg)
             if nargin < 2 || isempty(cfg), cfg = mabr.Config; end
             if nargin < 1 || isempty(set), set = mabr.stim.StimulusSet([],cfg); end
+            % One clock, checked at the point a plan is built rather than
+            % discovered when the worker opens the device at one rate and the
+            % ring buffer is windowed at another. renderSpec sends the SET's
+            % rate to the device while mabr.ui.AcqController decimates by the
+            % CONFIG's, so a mismatch here is not a rounding problem -- it is
+            % two different clocks, and every latency the session reports would
+            % be wrong by their ratio. Reached when the audio device's sample
+            % rate is changed under a bank that cannot be regenerated at the
+            % new one (see mabr.ui.App.retuneStimuli).
+            assert(set.numStimuli == 0 || set.SampleRate == cfg.DACSampleRate, ...
+                'mabr:stim:Schedule:sampleRate', ...
+                ['The stimulus bank is rendered at %g Hz but the device is set to ' ...
+                 '%g Hz. Reload or rebuild the bank at %g Hz, or set the device ' ...
+                 'back to %g Hz in Settings > Audio Device (ASIO).'], ...
+                set.SampleRate,cfg.DACSampleRate,cfg.DACSampleRate,set.SampleRate);
             obj.Set         = set;
             obj.Config      = cfg;
             obj.Repetitions = mabr.stim.Schedule.startingRepetitions(set);

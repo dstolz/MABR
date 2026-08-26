@@ -26,6 +26,15 @@ function results = verify_timing_loopback(opts)
 %                               is bit-exact and therefore the reference the
 %                               real numbers are read against; false = open the
 %                               real ASIO device
+%       SampleRate        (Hz)  rate the device is opened at, default 192000.
+%                               Set it to whatever the rig is configured for
+%                               (Settings > Audio Device (ASIO)): latency,
+%                               jitter, and drift are all rate-dependent, so a
+%                               loop-back measured at another rate describes a
+%                               chain the session never uses -- and a device
+%                               that does not offer 192 kHz would fail to open
+%                               at all. mabr.ui.TestRunner passes the saved
+%                               rate automatically.
 %       Device            (char) ASIO device name ('' = default)
 %       PlayerChannels          [DACsignal DACtiming], default [1 2]
 %       RecorderChannels        [ADCsignal ADCtiming], default [1 2]
@@ -69,6 +78,12 @@ arguments
     opts.Duration         (1,1) double  {mustBePositive} = 5
     opts.PulseWidth       (1,1) double  {mustBeNonnegative} = 0
     opts.Testing          (1,1) logical = true
+    % The rig's own rate, not the toolbox default. A loop-back characterised
+    % at 192 kHz says nothing about a rig running at 48 kHz -- and on hardware
+    % that does not offer 192 kHz the device would not open at all, turning a
+    % diagnostic into a failure about the wrong thing. mabr.ui.TestRunner
+    % passes whatever mabr.AudioSettings has saved.
+    opts.SampleRate       (1,1) double  {mustBePositive} = mabr.Config.DefaultDACSampleRate
     opts.Device           (1,:) char    = ''
     opts.PlayerChannels   (1,2) double  = [1 2]
     opts.RecorderChannels (1,2) double  = [1 2]
@@ -82,9 +97,10 @@ end
 
 fprintf('== verify_timing_loopback ==\n');
 
-cfg = mabr.Config;
+cfg = mabr.Config(opts.SampleRate);
 Fs  = cfg.DACSampleRate;
 fl  = cfg.frameLength;
+fprintf('   sample rate: %g Hz (stores %g Hz)\n',Fs,cfg.ADCSampleRate);
 
 % ---- Build the pulse train ------------------------------------------------
 period = round(Fs/opts.PulseRate);

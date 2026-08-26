@@ -1,26 +1,54 @@
 classdef Config
 % mabr.Config  Constants and runtime paths for the MABR toolbox.
 %
-%   C = mabr.Config returns a plain value object holding the fixed hardware
+%   C = mabr.Config returns a plain value object holding the hardware
 %   constants (sample rates, frame length, ring-buffer size), release
 %   metadata, required-toolbox list, and the runtime/error-log paths used by
 %   the acquisition engine.
+%
+%   C = mabr.Config(fs) builds one at a DAC (device) sample rate other than
+%   the 192 kHz default. The rate is IMMUTABLE once constructed -- a Config is
+%   a value object, so changing the rate means building a new one and handing
+%   it to whatever holds the old (see mabr.ui.App.applyAudioSettings, which
+%   does exactly that and rebuilds the acquisition controller around it). The
+%   rate the app runs at is a rig SETTING and lives in mabr.AudioSettings; its
+%   config() method is the one place that setting becomes a Config.
+%
+%   ADCSampleRate is DERIVED, not chosen: sweep extraction windows the
+%   ring buffer with an integer stride (mabr.metrics.extract_sweeps), so the
+%   analysis/storage rate has to be the DAC rate divided by a whole number.
+%   decimationFactor is that whole number -- whichever puts the result closest
+%   to ADCTargetRate (12 kHz) -- so 192/96/48 kHz all land on exactly 12 kHz,
+%   while the 44.1 kHz family lands on 11.025 kHz rather than pretending to a
+%   rate no integer stride can reach.
 %
 %   This is deliberately NOT a handle class and NOT a superclass of anything
 %   (unlike the legacy abr.Universal). Nothing inherits from it; the app and
 %   engine simply hold a copy.
 %
 %   Static helpers (do not require constructing the object):
-%       mabr.Config.root         - repository root folder
-%       mabr.Config.runtimeDir   - .runtime_data folder (created if missing)
-%       mabr.Config.errorLogDir  - .error_logs folder (created if missing)
+%       mabr.Config.root            - repository root folder
+%       mabr.Config.runtimeDir      - .runtime_data folder (created if missing)
+%       mabr.Config.errorLogDir     - .error_logs folder (created if missing)
+%       mabr.Config.decimationFor   - integer stride for a candidate DAC rate
+%       mabr.Config.adcRateFor      - the ADC rate that stride yields
+%       mabr.Config.describeRate    - one-line "192 kHz -> 12 kHz (/16)" summary
 %
 % Daniel Stolzberg (c) 2019-2026
 
     properties (Constant)
         % --- Hardware / streaming constants ---------------------------------
-        DACSampleRate        (1,1) double = 192000;   % Hz, playback + full-duplex record rate
-        ADCSampleRate        (1,1) double = 12000;    % Hz, decimated storage/analysis rate
+        % The rate a rig runs at unless mabr.AudioSettings says otherwise, and
+        % the rate every saved bank, pref, and .mabrcfg predating the setting
+        % is read back at.
+        DefaultDACSampleRate (1,1) double = 192000;   % Hz
+        % What ADCSampleRate aims for. Not a promise: it is reached exactly
+        % only when the DAC rate is a whole multiple of it (see decimationFor).
+        ADCTargetRate        (1,1) double = 12000;    % Hz
+        % Offered by mabr.ui.AudioSettingsDialog's rate picker. Not a
+        % restriction -- the picker is editable and any positive rate the
+        % device grants is allowed -- just the rates worth listing.
+        SupportedSampleRates (1,:) double = [44100 48000 88200 96000 176400 192000 384000];
         frameLength          (1,1) double = 1024;     % samples per play/record frame
         maxInputBufferLength (1,1) double = 2^26;     % ring-buffer length (samples); ~5.8 min @ 192 kHz
 
@@ -45,8 +73,26 @@ classdef Config
                              'Parallel Computing Toolbox', 6.13};
     end
 
+    properties (SetAccess = immutable)
+        % Hz: playback + full-duplex record rate, i.e. the rate the ASIO
+        % device is opened at and every stimulus must already be rendered at.
+        % Immutable because a Config is a value object that half the toolbox
+        % holds a copy of: changing a rig's rate means building a new Config
+        % and handing it out, which is exactly what mabr.ui.App does, rather
+        % than mutating one copy and leaving the rest disagreeing about the
+        % clock. Set it through mabr.AudioSettings.SampleRate, not here.
+        %
+        % The literal here rather than DefaultDACSampleRate: a property
+        % default referencing the same class's own Constant is evaluated at
+        % class load, which is exactly the moment the class is not yet loaded.
+        % The constructor assigns from DefaultDACSampleRate, so that is still
+        % the one place the number is decided for every Config anyone builds.
+        DACSampleRate (1,1) double = 192000
+    end
+
     properties (Dependent)
-        decimationFactor            % DACSampleRate / ADCSampleRate
+        ADCSampleRate               % Hz, decimated storage/analysis rate (DERIVED)
+        decimationFactor            % integer stride: DACSampleRate / ADCSampleRate
         runtimePath                 % .runtime_data folder
         errorLogPath                % .error_logs folder
         signalBufferFile            % memmap ring buffer: recorded signal channel
@@ -55,15 +101,23 @@ classdef Config
     end
 
     methods
-        function obj = Config()
+        function obj = Config(dacSampleRate)
             % Touch the runtime directories so they exist before the engine
             % memory-maps files into them.
             mabr.Config.runtimeDir;
             mabr.Config.errorLogDir;
+            if nargin < 1 || isempty(dacSampleRate)
+                dacSampleRate = mabr.Config.DefaultDACSampleRate;
+            end
+            obj.DACSampleRate = mabr.Config.validateSampleRate(dacSampleRate);
         end
 
         function f = get.decimationFactor(obj)
-            f = obj.DACSampleRate ./ obj.ADCSampleRate;
+            f = mabr.Config.decimationFor(obj.DACSampleRate);
+        end
+
+        function r = get.ADCSampleRate(obj)
+            r = obj.DACSampleRate ./ obj.decimationFactor;
         end
 
         function p = get.runtimePath(~),      p = mabr.Config.runtimeDir;  end
@@ -116,6 +170,58 @@ classdef Config
         function p = errorLogDir()
             p = fullfile(mabr.Config.root,'.error_logs');
             if ~isfolder(p), mkdir(p); end
+        end
+
+        function fs = validateSampleRate(fs)
+            % Accept any rate a device might actually grant, and refuse the
+            % ones that are a typo rather than a choice. Deliberately NOT
+            % restricted to SupportedSampleRates: that list is what the picker
+            % offers, and an ASIO box running at some rate nobody listed is
+            % still a rate MABR can render, stream, and decimate at.
+            assert(isnumeric(fs) && isscalar(fs) && isfinite(fs) && isreal(fs) && fs > 0, ...
+                'mabr:Config:badSampleRate', ...
+                'The DAC sample rate must be a positive finite scalar (got %s).', ...
+                mat2str(fs));
+            % Below the target rate there is nothing left to decimate and the
+            % analysis band collapses: 12 kHz storage exists because an ABR
+            % lives under ~3 kHz, and a device slower than that is not a rig
+            % this toolbox can be honest about.
+            assert(fs >= mabr.Config.ADCTargetRate,'mabr:Config:sampleRateTooLow', ...
+                ['The DAC sample rate must be at least the %g Hz analysis rate ' ...
+                 '(got %g Hz).'],mabr.Config.ADCTargetRate,fs);
+            fs = double(fs);
+        end
+
+        function df = decimationFor(dacSampleRate)
+            % The integer stride taking a candidate DAC rate closest to
+            % ADCTargetRate. Integer because mabr.metrics.extract_sweeps
+            % windows the ring buffer with it as a colon stride and
+            % mabr.ui.AcqController.finalize_run resamples 1:df -- neither can
+            % take a fraction. So 192/96/48 kHz give 16/8/4 and land on exactly
+            % 12 kHz, while 44.1 kHz gives 4 and lands on 11.025 kHz: an
+            % honest rate an integer stride can actually reach, rather than a
+            % round number it cannot.
+            df = max(1,round(dacSampleRate ./ mabr.Config.ADCTargetRate));
+        end
+
+        function fs = adcRateFor(dacSampleRate)
+            % The analysis/storage rate decimationFor's stride yields.
+            fs = dacSampleRate ./ mabr.Config.decimationFor(dacSampleRate);
+        end
+
+        function s = describeRate(dacSampleRate)
+            % One line for a settings dialog: what is played, what is stored,
+            % and the stride between them.
+            df = mabr.Config.decimationFor(dacSampleRate);
+            s = sprintf('%s kHz out · %s kHz stored (decimate %dx)', ...
+                mabr.Config.rateText(dacSampleRate), ...
+                mabr.Config.rateText(mabr.Config.adcRateFor(dacSampleRate)),df);
+        end
+
+        function s = rateText(fs)
+            % kHz with just enough decimals to stay exact for the 44.1 family
+            % (44.1, 11.025) without printing 192.000 for the round ones.
+            s = strtrim(sprintf('%g',round(fs/1e3,4)));
         end
 
         function tf = version_ge(haveStr,needNum)

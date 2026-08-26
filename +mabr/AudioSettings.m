@@ -9,6 +9,12 @@ classdef AudioSettings
 %
 %       Device            ASIO device name ('' = whatever audioPlayerRecorder
 %                         opens by default)
+%       SampleRate        Hz the device is opened at, and therefore the rate
+%                         every stimulus must be rendered at and the ring
+%                         buffer runs at. config() is the one place it becomes
+%                         a mabr.Config; the analysis/storage rate is DERIVED
+%                         from it there (mabr.Config.adcRateFor), never chosen
+%                         separately.
 %       PlayerChannels    [DACsignal DACtiming] output channel mapping
 %       RecorderChannels  [ADCsignal ADCtiming] input channel mapping
 %       Testing           true = run the whole engine with no audio device
@@ -37,18 +43,33 @@ classdef AudioSettings
 %   (mabr.ui.App.configControls), because the worker's audioPlayerRecorder is
 %   already open on whatever device Start handed it.
 %
-%   The DAC/ADC sample rates are NOT settable here -- mabr.Config fixes them
-%   (192 kHz full-duplex, decimated to 12 kHz for storage/analysis) because
+%   SampleRate is the one setting here that reaches beyond the device. It is
+%   the rate the ASIO device is opened at, so it is also the rate
 %   mabr.stim.StimulusSet requires every stimulus to already be rendered at
-%   Config.DACSampleRate. What IS worth determining is whether the SELECTED
-%   ASIO device actually honours that rate: probeSampleRate briefly opens a
-%   real audioPlayerRecorder on it and reports what it granted, rather than
-%   trusting the request silently.
+%   and the rate the ring buffer is filled at -- which is why changing it is
+%   not merely a device edit: mabr.ui.App.applyAudioSettings rebuilds its
+%   mabr.Config from it, regenerates the stimulus bank at the new rate where
+%   the bank's own Source allows, and rebuilds the acquisition controller so
+%   the engine, the live view, and finalization are all on one clock. The
+%   ANALYSIS rate is not a second setting: mabr.Config derives it by integer
+%   decimation, because sweep extraction windows the ring buffer with a whole
+%   stride and cannot take a fraction.
+%
+%   Asking for a rate is not the same as getting one: probeSampleRate briefly
+%   opens a real device on it and reports what the driver actually granted,
+%   rather than trusting the request silently.
 %
 % Daniel Stolzberg (c) 2026
 
     properties
         Device           (1,:) char   = ''      % '' = audioPlayerRecorder default
+
+        % Hz the device is opened at (and every stimulus rendered at). The
+        % storage/analysis rate is NOT a companion setting -- mabr.Config
+        % derives it from this one by integer decimation, so there is no way
+        % to pick a pair that cannot actually be resampled between.
+        SampleRate       (1,1) double = mabr.Config.DefaultDACSampleRate
+
         PlayerChannels   (1,2) double = [1 2]   % [DACsignal DACtiming]
         RecorderChannels (1,2) double = [1 2]   % [ADCsignal ADCtiming]
         Testing          (1,1) logical = true   % loopback, no hardware
@@ -82,11 +103,28 @@ classdef AudioSettings
             tf = obj.StimulationOnly && ~obj.Testing;
         end
 
+        function cfg = config(obj)
+            % The one place this setting becomes a mabr.Config. Everything
+            % downstream reads the rate off a Config -- the schedule renders
+            % against it, extract_sweeps strides by its decimationFactor,
+            % finalize_run resamples to its ADCSampleRate -- so building the
+            % Config here, from the setting, is what keeps those three on one
+            % clock instead of three copies of a constant.
+            cfg = mabr.Config(obj.SampleRate);
+        end
+
         function s = describe(obj)
             % One-line summary for the status line / menu, mirroring
             % FilterPolicy.describe / ArtifactPolicy.describe.
+            %
+            % The rate is named in EVERY branch, Testing included: it is the
+            % rate stimuli are rendered at and the ring buffer is filled at,
+            % which a loopback run does just as much as a real one -- it is
+            % the only setting here that still means something with no device
+            % open.
+            rate = sprintf('%s kHz',mabr.Config.rateText(obj.SampleRate));
             if obj.Testing
-                s = 'TESTING (loopback, no hardware)';
+                s = sprintf('TESTING (loopback, no hardware), %s',rate);
                 return
             end
             if isempty(obj.Device)
@@ -97,29 +135,37 @@ classdef AudioSettings
             if obj.isStimulationOnly()
                 % No recorder mapping to report -- an output-only device has
                 % no input side to map.
-                s = sprintf('%s, player [%d %d], stimulation only (no recording)', ...
-                    dev,obj.PlayerChannels);
+                s = sprintf('%s @ %s, player [%d %d], stimulation only (no recording)', ...
+                    dev,rate,obj.PlayerChannels);
                 return
             end
-            s = sprintf('%s, player [%d %d], recorder [%d %d]', ...
-                dev,obj.PlayerChannels,obj.RecorderChannels);
+            s = sprintf('%s @ %s, player [%d %d], recorder [%d %d]', ...
+                dev,rate,obj.PlayerChannels,obj.RecorderChannels);
         end
 
-        function [achievedHz,ok,msg] = probeSampleRate(obj,cfg)
+        function [achievedHz,ok,msg] = probeSampleRate(obj)
             % Briefly open a real device on this Device and report the sample
             % rate it actually grants -- so a mismatched or misconfigured ASIO
             % driver is caught from the settings dialog, not partway into a
             % session. Never called in TESTING mode: there is no device to
             % probe there.
             %
+            % The rate requested is this object's own SampleRate, not a
+            % Config's: the dialog probes what the user is about to commit,
+            % which is the whole point of a Test Device button sitting under an
+            % editable rate picker. Nothing is adopted from the answer -- a
+            % driver that quietly substitutes another rate is reported, not
+            % accommodated, because the stimuli are rendered at the requested
+            % one and a silent substitution would mis-scale every one of them.
+            %
             % The device opened is the one the worker will open (see
             % mabr.acq.worker_loop's prepare_device): an output-only
             % audioDeviceWriter under StimulationOnly, an audioPlayerRecorder
             % otherwise. Probing full-duplex in stimulation-only mode would
             % fail on exactly the input-less hardware that mode exists for.
-            if nargin < 2 || isempty(cfg), cfg = mabr.Config; end
+            wantHz = obj.SampleRate;
             achievedHz = NaN; ok = false;
-            args = {'SampleRate',cfg.DACSampleRate,'BitDepth','32-bit float'};
+            args = {'SampleRate',wantHz,'BitDepth','32-bit float'};
             if ~isempty(obj.Device), args = [args,{'Device',obj.Device}]; end
             apr = [];
             try
@@ -133,12 +179,14 @@ classdef AudioSettings
                     apr = audioPlayerRecorder(args{:});
                 end
                 achievedHz = apr.SampleRate;
-                ok = achievedHz == cfg.DACSampleRate;
+                ok = achievedHz == wantHz;
                 if ok
-                    msg = sprintf('Confirmed: device runs at %g Hz.',achievedHz);
+                    msg = sprintf('Confirmed: device runs at %g Hz (stores %g Hz).', ...
+                        achievedHz,mabr.Config.adcRateFor(achievedHz));
                 else
-                    msg = sprintf(['Device granted %g Hz, not the required %g Hz -- ' ...
-                        'check the ASIO control panel.'],achievedHz,cfg.DACSampleRate);
+                    msg = sprintf(['Device granted %g Hz, not the %g Hz requested -- ' ...
+                        'check the ASIO control panel, or select %g Hz here.'], ...
+                        achievedHz,wantHz,achievedHz);
                 end
             catch me
                 msg = sprintf('Could not open device: %s',me.message);
@@ -154,7 +202,8 @@ classdef AudioSettings
             % file -- a named, shareable setup, distinct from loadPrefs/
             % savePrefs's "last used" persistence in MATLAB prefs, though the
             % two travel through the same validated fields.
-            s = struct('Device',obj.Device,'PlayerChannels',obj.PlayerChannels, ...
+            s = struct('Device',obj.Device,'SampleRate',obj.SampleRate, ...
+                       'PlayerChannels',obj.PlayerChannels, ...
                        'RecorderChannels',obj.RecorderChannels,'Testing',obj.Testing, ...
                        'StimulationOnly',obj.StimulationOnly, ...
                        'MicChannel',obj.MicChannel);
@@ -182,6 +231,7 @@ classdef AudioSettings
             % a pref edited by hand should not stop the app from opening).
             obj = mabr.AudioSettings;
             obj.Device           = mabr.AudioSettings.getChar('AudioDevice',obj.Device);
+            obj.SampleRate       = mabr.AudioSettings.getRate('AudioSampleRate',obj.SampleRate);
             obj.PlayerChannels   = mabr.AudioSettings.getChannels('AudioPlayerChannels',obj.PlayerChannels);
             obj.RecorderChannels = mabr.AudioSettings.getChannels('AudioRecorderChannels',obj.RecorderChannels);
             obj.Testing          = mabr.AudioSettings.getLogical('AudioTesting',obj.Testing);
@@ -191,6 +241,7 @@ classdef AudioSettings
 
         function savePrefs(obj)
             setpref('MABR','AudioDevice',           obj.Device);
+            setpref('MABR','AudioSampleRate',       obj.SampleRate);
             setpref('MABR','AudioPlayerChannels',   obj.PlayerChannels);
             setpref('MABR','AudioRecorderChannels', obj.RecorderChannels);
             setpref('MABR','AudioTesting',          obj.Testing);
@@ -206,6 +257,9 @@ classdef AudioSettings
             obj = mabr.AudioSettings;
             if isfield(s,'Device')
                 obj.Device = mabr.AudioSettings.coerceChar(s.Device,obj.Device);
+            end
+            if isfield(s,'SampleRate')
+                obj.SampleRate = mabr.AudioSettings.coerceRate(s.SampleRate,obj.SampleRate);
             end
             if isfield(s,'PlayerChannels')
                 obj.PlayerChannels = mabr.AudioSettings.coerceChannels(s.PlayerChannels,obj.PlayerChannels);
@@ -234,6 +288,10 @@ classdef AudioSettings
             v = mabr.AudioSettings.coerceLogical(getpref('MABR',name,default),default);
         end
 
+        function v = getRate(name,default)
+            v = mabr.AudioSettings.coerceRate(getpref('MABR',name,default),default);
+        end
+
         function v = getChannel(name,default)
             % Scalar sibling of getChannels, same forgiving contract: a pref
             % edited by hand should not stop the app from opening.
@@ -251,6 +309,18 @@ classdef AudioSettings
         function v = coerceLogical(v,default)
             if ~islogical(v) && ~(isnumeric(v) && isscalar(v)), v = default; end
             v = logical(v);
+        end
+
+        function v = coerceRate(v,default)
+            % Same forgiving contract as the rest: a pref or configuration file
+            % holding a rate this MABR will not accept falls back to the
+            % default rather than stopping the app from opening. Validation is
+            % mabr.Config's, so there is one rule about what a rate may be.
+            try
+                v = mabr.Config.validateSampleRate(v);
+            catch
+                v = default;
+            end
         end
 
         function v = coerceChannel(v,default)

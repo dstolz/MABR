@@ -22,7 +22,8 @@ function verify_filters()
 
 fprintf('== verify_filters ==\n');
 
-Fs = mabr.Config.ADCSampleRate;      % 12 kHz: the rate both views filter at
+cfg = mabr.Config;                   % default rig: 192 kHz out, 12 kHz stored
+Fs = cfg.ADCSampleRate;              % the rate both views filter at
 
 % ---- Part A: sections are independent, and the response is real ---------
 p = mabr.FilterPolicy;

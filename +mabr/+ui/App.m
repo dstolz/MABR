@@ -232,7 +232,13 @@ classdef App < handle
                 error('mabr:ui:App:alreadyOpen', ...
                     'MABR is already open -- bringing the existing window to the front.');
             end
-            app.Config = mabr.Config;
+            % Audio first: the Config is built FROM it, because the rig's
+            % sample rate is a setting (mabr.AudioSettings.SampleRate) and
+            % everything a Config answers about rates is derived from that one
+            % number. A pref that has never been written yields the 192 kHz
+            % default, which is the rate every MABR before the setting ran at.
+            app.Audio  = mabr.AudioSettings.loadPrefs();
+            app.Config = app.Audio.config();
             try
                 app.Config.verifyToolboxes(true);
             catch me
@@ -240,7 +246,6 @@ classdef App < handle
             end
             app.Artifacts = mabr.ArtifactPolicy.loadPrefs();
             app.Filters   = mabr.FilterPolicy.loadPrefs();
-            app.Audio     = mabr.AudioSettings.loadPrefs();
             % stimgen (when present) logs through MABR's logger from here on
             % -- one console stream and one .error_logs/ file instead of a
             % second daily file under tempdir. The seam is stimgen's
@@ -978,7 +983,25 @@ classdef App < handle
                 app.setDropValue(app.OutputField,char(cfg.OutputPath));
             end
 
+            % Before the bank, not after it: a configuration's Audio carries
+            % the sample rate, and applyConfigStimuli reloads the bank AT
+            % app.Config's rate. Restoring the rate afterwards would leave the
+            % bank rendered at the old one and the device opened at the new.
+            if isfield(cfg,'Audio')
+                app.Audio = mabr.AudioSettings.fromStruct(cfg.Audio);
+                mabr.AudioSettings.savePrefs(app.Audio);
+                app.applySampleRate();
+            end
+
             warn = app.applyConfigStimuli(cfg);
+            % applyConfigStimuli reloads at app.Config's rate, so this is
+            % normally a no-op. It is the safety net for the case it leaves
+            % alone: a configuration that names no reloadable bank, restoring
+            % a rate that the bank already loaded was not rendered at.
+            rateWarn = app.retuneStimuli();
+            if ~isempty(rateWarn)
+                if isempty(warn), warn = rateWarn; else, warn = [warn ' ' rateWarn]; end
+            end
 
             if isfield(cfg,'Strategy') && any(strcmp(cfg.Strategy,mabr.stim.Schedule.Strategies))
                 app.StrategyDrop.Value = cfg.Strategy;
@@ -1027,18 +1050,110 @@ classdef App < handle
                 app.syncFilterFields();
                 app.applyFilters();
             end
-            if isfield(cfg,'Audio')
-                app.Audio = mabr.AudioSettings.fromStruct(cfg.Audio);
-                mabr.AudioSettings.savePrefs(app.Audio);
-            end
-            % Last, and unconditionally: a restored Audio can put the app into
-            % stimulation only, which disables the entire Acquisition panel --
-            % including the artifact and filter controls the two blocks above
-            % just re-enabled from the same file.
+            % Last, and unconditionally: the Audio restored above can have put
+            % the app into stimulation only, which disables the entire
+            % Acquisition panel -- including the artifact and filter controls
+            % the two blocks above just re-enabled from the same file.
             app.syncAcquisitionEnables();
 
             app.checkOverlap();
             app.refreshPlan();
+        end
+
+        function changed = applySampleRate(app)
+            % Rebuild app.Config from app.Audio's rate, and report whether that
+            % was actually a change. mabr.Config holds its rate immutably --
+            % it is a value object half the toolbox keeps a copy of, so a rate
+            % change is a NEW Config handed out, never a mutation one holder
+            % sees and the rest do not. Everything downstream either reads
+            % app.Config directly (buildSchedule, the filter dialog) or is
+            % rebuilt around it (ensureController, which compares rates for
+            % exactly this reason).
+            changed = app.Config.DACSampleRate ~= app.Audio.SampleRate;
+            if changed, app.Config = app.Audio.config(); end
+        end
+
+        function warn = retuneStimuli(app)
+            % Bring the loaded bank onto app.Config's rate, and say so when it
+            % cannot be done. A bank is rendered waveforms, so a rate change
+            % invalidates it outright -- mabr.stim.StimulusSet will not be
+            % built at a rate other than the Config's, and mabr.stim.Schedule
+            % will not plan against a mismatch.
+            %
+            % Where a bank knows its own source it is simply regenerated at the
+            % new rate: demoStimuli rebuilds, and a stimgen bank re-synthesizes
+            % from parameters -- which is precisely why mabr.stim.fromStimgen
+            % takes parameters and never a cached Signal. A bank built live in
+            % the designer and never saved has no source to regenerate from; it
+            % is left exactly as it is and the plan refuses until the user
+            % reloads it, because silently resampling somebody's calibrated
+            % waveforms would be a worse answer than asking for them again.
+            %
+            % Returns a one-line warning (empty if none), the same contract
+            % applyConfigStimuli follows.
+            warn = '';
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
+            fs = app.Config.DACSampleRate;
+            if app.Stimuli.SampleRate == fs
+                app.refreshPlan();   % the duration estimate moves with the rate
+                return
+            end
+
+            src  = app.Stimuli.Source;
+            ids  = app.Stimuli.IDs();
+            reps = app.Reps;
+            set  = [];
+            why  = '';
+            switch lower(src.Kind)
+                case 'demo'
+                    try
+                        set = mabr.stim.demoStimuli(app.Config);
+                    catch me
+                        why = me.message;
+                    end
+                case {'file','stimgen'}
+                    if ~isempty(src.File) && isfile(src.File)
+                        try
+                            set = mabr.stim.StimulusSet.fromFile(src.File,app.Config);
+                        catch me
+                            why = me.message;
+                        end
+                    else
+                        why = 'its source file is no longer available';
+                    end
+                otherwise
+                    why = 'it came from no reloadable source';
+            end
+
+            if isempty(set)
+                warn = sprintf(['The stimulus bank is rendered at %s kHz but the device ' ...
+                    'is now set to %s kHz, and it could not be regenerated (%s). ' ...
+                    'Load the bank again — nothing can run until the two match.'], ...
+                    mabr.Config.rateText(app.Stimuli.SampleRate), ...
+                    mabr.Config.rateText(fs),why);
+                app.setSourceLabel();   % the label carries the mismatch meanwhile
+                app.refreshPlan();
+                return
+            end
+
+            app.adoptStimuli(set,false);   % resets Reps to the bank's own defaults
+            app.applyRepsById(ids,reps);
+        end
+
+        function applyRepsById(app,ids,counts)
+            % Carry per-stimulus repetition counts across a bank reload,
+            % matched by ID rather than position: a bank regenerated from the
+            % same source reproduces the same IDs, and matching by name is what
+            % survives it having gained or dropped an entry meanwhile.
+            if isempty(ids) || isempty(counts), return; end
+            newIds = app.Stimuli.IDs();
+            r = app.Reps;
+            for k = 1:min(numel(ids),numel(counts))
+                idx = find(strcmp(newIds,ids{k}),1);
+                if ~isempty(idx), r(idx) = counts(k); end
+            end
+            app.Reps = r;
+            if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
         end
 
         function warn = applyConfigStimuli(app,cfg)
@@ -1133,8 +1248,17 @@ classdef App < handle
         function ensureController(app)
             testing  = app.Audio.Testing;
             stimOnly = app.Audio.isStimulationOnly();
+            % The sample rate joins Testing as a reason to rebuild rather than
+            % reuse. Unlike the stimulation-only flag it does NOT ride per
+            % block: the controller captured a mabr.Config at construction and
+            % everything it does with rates reads that copy -- the live view's
+            % decimation stride, the filter design rate, finalize_run's
+            % resample, and the Session's own stored rates. Handing it a run
+            % rendered at another rate would leave every one of those silently
+            % describing a clock the data is not on.
             if ~isempty(app.Controller) && isvalid(app.Controller) ...
-                    && app.Controller.Testing == testing
+                    && app.Controller.Testing == testing ...
+                    && app.Controller.Config.DACSampleRate == app.Config.DACSampleRate
                 % The mode rides per block, so a worker built for one is
                 % reused for the other -- but it is re-labelled for what it is
                 % about to do (mabr.acq.Engine.setRole, from AcqController's
@@ -1301,10 +1425,17 @@ classdef App < handle
             app.setStatus('Loaded built-in test stimuli.');
         end
 
-        function adoptStimuli(app,set)
+        function adoptStimuli(app,set,announce)
             % Take on a new stimulus bank and reset the repetition counts to
             % whatever the bank suggests (its own Repetitions field, else the
             % schedule default).
+            %
+            % announce (default true) governs only the uncalibrated-levels
+            % alert. retuneStimuli passes false: re-rendering the bank the user
+            % already adopted at a new sample rate is not a new bank, the alert
+            % was raised when it was first loaded, and raising it again would
+            % put a modal alert behind the still-open modal audio dialog that
+            % prompted the re-render.
             app.Stimuli = set;
             app.Reps    = mabr.stim.Schedule.startingRepetitions(set);
             if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
@@ -1317,7 +1448,9 @@ classdef App < handle
             app.syncDesignButton();
             app.checkOverlap();
             app.refreshPlan();
-            app.warnUncalibratedLevels(set);
+            if nargin < 3 || announce
+                app.warnUncalibratedLevels(set);
+            end
         end
 
         function warnUncalibratedLevels(app,set)
@@ -1655,6 +1788,12 @@ classdef App < handle
             % them, and re-derive whatever the main window shows from them.
             app.Audio = s;
             mabr.AudioSettings.savePrefs(app.Audio);
+            % The sample rate is the one setting here that is not confined to
+            % the device: the Config is rebuilt from it and the stimulus bank
+            % re-rendered at it, both before anything below reads either.
+            rateWarn = '';
+            rateChanged = app.applySampleRate();
+            if rateChanged, rateWarn = app.retuneStimuli(); end
             % Stimulation only takes the entire Acquisition panel out of play,
             % so committing is the moment that has to be reflected.
             app.syncAcquisitionEnables();
@@ -1663,6 +1802,15 @@ classdef App < handle
                 msg = [msg ' Nothing will be recorded — each run saves its ' ...
                        'stimulation sequence to a .stimlog file instead.'];
             end
+            if rateChanged
+                % The worker's Config is fixed at construction, so a new rate
+                % means a new worker (see ensureController) -- said plainly,
+                % because the restart is slow and otherwise looks like a hang.
+                msg = [msg ' The acquisition worker restarts on the next Start.'];
+            end
+            % A bank left at the wrong rate outranks all of that: nothing can
+            % run until it is fixed.
+            if ~isempty(rateWarn), msg = rateWarn; end
             app.setStatus(msg);
             % The dialog is modal and still up, so nothing would flush the
             % queue until it closes -- and the point of committing early is to
@@ -2584,6 +2732,18 @@ classdef App < handle
                 app.SourceLabel.Text = sprintf('%d stimuli',n);
             else
                 app.SourceLabel.Text = sprintf('%d stimuli · %s',n,src);
+            end
+            % A bank rendered at a rate the device is no longer set to cannot
+            % be played at all (mabr.stim.Schedule refuses to plan against it),
+            % which outranks calibration: red, and named, since the number the
+            % label otherwise shows would look perfectly healthy.
+            if n > 0 && app.Stimuli.SampleRate ~= app.Config.DACSampleRate
+                app.SourceLabel.Text = sprintf('%s · %s kHz ≠ device %s kHz', ...
+                    app.SourceLabel.Text, ...
+                    mabr.Config.rateText(app.Stimuli.SampleRate), ...
+                    mabr.Config.rateText(app.Config.DACSampleRate));
+                app.SourceLabel.FontColor = [0.8 0.2 0];
+                return
             end
             [cal,known] = app.Stimuli.isCalibrated();
             if n > 0 && known && ~cal

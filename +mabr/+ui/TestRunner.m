@@ -280,14 +280,17 @@ classdef TestRunner < handle
             % The suite takes no arguments -- with one exception. Its help
             % calls verify_timing_loopback with Testing=false the rig
             % diagnostic, and a diagnostic run against defaults would be
-            % measuring the wrong wiring, so hand it whatever device and
-            % channel mapping the rig actually has saved.
+            % measuring the wrong wiring, so hand it whatever device, sample
+            % rate, and channel mapping the rig actually has saved -- the rate
+            % included, since a loop-back characterised at a rate the rig never
+            % runs at is a measurement of nothing.
             args = {};
             if ~obj.HardwareCheck.Value, return; end
             switch name
                 case 'verify_timing_loopback'
                     a = mabr.AudioSettings.loadPrefs();
                     args = {'Testing',false,'Device',a.Device, ...
+                            'SampleRate',a.SampleRate, ...
                             'PlayerChannels',a.PlayerChannels, ...
                             'RecorderChannels',a.RecorderChannels};
             end

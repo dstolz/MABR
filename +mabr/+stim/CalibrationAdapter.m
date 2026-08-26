@@ -27,7 +27,8 @@ classdef CalibrationAdapter < stimgen.calibration.HwAdapter
 %
 %   Rate
 %   ----
-%   sample_rate() reports Config.DACSampleRate, and the device is opened at it.
+%   sample_rate() reports the rig's DAC rate (mabr.AudioSettings.SampleRate,
+%   via the Config built from it), and the device is opened at it.
 %   This is not bookkeeping: mabr.stim.fromStimgen regenerates every stimulus
 %   at the DAC rate, and stimgen's design_filter produces a rate-specific FIR
 %   equalization, so a calibration measured at any other rate would be applied
@@ -64,7 +65,20 @@ classdef CalibrationAdapter < stimgen.calibration.HwAdapter
     methods
         function obj = CalibrationAdapter(audio,cfg,controller)
             if nargin < 1 || isempty(audio), audio = mabr.AudioSettings.loadPrefs(); end
-            if nargin < 2 || isempty(cfg),   cfg   = mabr.Config; end
+            if nargin < 2 || isempty(cfg),   cfg   = audio.config(); end
+            % The two arguments can only disagree about one thing, and it is
+            % the one that matters most here: which rate the measurement is
+            % made at. The device setting wins, because that is the rate the
+            % device will actually be opened at -- calibrating at a rate the
+            % stimuli are not rendered at describes a chain the experiment
+            % never uses, which is the whole reason this adapter exists rather
+            % than stimgen measuring through its own default path.
+            if cfg.DACSampleRate ~= audio.SampleRate
+                mabr.log.vprintf(1,['CalibrationAdapter: config says %g Hz, device ' ...
+                    'setting says %g Hz -- measuring at the device rate.'], ...
+                    cfg.DACSampleRate,audio.SampleRate);
+                cfg = audio.config();
+            end
             obj.Audio  = audio;
             obj.Config = cfg;
             if nargin >= 3, obj.Controller = controller; end

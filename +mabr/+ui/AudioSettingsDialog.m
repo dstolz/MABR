@@ -37,12 +37,37 @@ function settings = AudioSettingsDialog(settings0,cfg,applyFcn)
 %   and Testing wins: it opens no device at all, which leaves nothing for
 %   stimulation only to be a mode of.
 %
-%   The DAC/ADC sample rates are shown but not editable here: mabr.Config
-%   fixes them because every stimulus must already be rendered at
-%   Config.DACSampleRate (see mabr.stim.StimulusSet). What this dialog adds is
-%   a way to DETERMINE whether the selected device actually honours that rate
-%   -- "Test Device" briefly opens a real audioPlayerRecorder and reports back
-%   what it granted, rather than trusting the request silently.
+%   Sample rate is the setting with the longest reach, and the one control
+%   here that stays live under Testing: it is the rate the device is opened at
+%   AND the rate every stimulus is rendered at and the ring buffer filled at,
+%   so a loopback run depends on it exactly as much as a real one. Committing
+%   a change to it is therefore not just a device edit -- mabr.ui.App rebuilds
+%   its mabr.Config, regenerates the stimulus bank at the new rate where the
+%   bank can be regenerated, and rebuilds the acquisition worker. The picker
+%   is EDITABLE rather than a fixed list: the listed rates
+%   (mabr.Config.SupportedSampleRates) are the ones worth offering, not the
+%   only ones a device may run at.
+%
+%   The storage/analysis rate beside it is DERIVED and deliberately not a
+%   second control: sweep extraction windows the ring buffer with a whole-
+%   number stride (mabr.metrics.extract_sweeps), so the only reachable
+%   analysis rates are the DAC rate over an integer. mabr.Config picks the
+%   integer landing closest to 12 kHz and the readout says what that works out
+%   to -- 192/96/48 kHz all give exactly 12 kHz; 44.1 kHz gives 11.025 kHz.
+%
+%   Asking a driver for a rate is not the same as getting it, which is what
+%   "Test Device" is for: it briefly opens the real device at the rate
+%   currently selected and reports what was actually granted, rather than
+%   letting a silent substitution be discovered from the data. Audio Toolbox
+%   offers no way to enumerate the rates a device supports -- info() reports
+%   the driver, the name, and the channel counts, and nothing else -- so
+%   asking one at a time is the only answer there is.
+%
+%   "ASIO panel..." is the other half of that. On most ASIO hardware the
+%   DRIVER owns the rate: MATLAB asks and the device serves whatever its own
+%   control panel is set to. asiosettings opens that panel, so the argument
+%   can be settled here rather than somewhere else on the machine -- set it
+%   there, press Test Device, and the readout says whether the two now agree.
 %
 % Daniel Stolzberg (c) 2026
 
@@ -55,13 +80,13 @@ committed = [];                      % what the controls last agreed with
 devices   = mabr.AudioSettings.availableDevices();
 
 % ---- layout -------------------------------------------------------------
-fig = uifigure('Name','Audio Device (ASIO)','Position',[100 100 440 452], ...
+fig = uifigure('Name','Audio Device (ASIO)','Position',[100 100 460 492], ...
     'WindowStyle','modal','Resize','off', ...
     'CloseRequestFcn',@(~,~) onCancel());
 mabr.ui.WindowPos.restore(fig,'AudioSettingsDialog',fig.Position);
 
-g = uigridlayout(fig,[11 3]);
-g.RowHeight   = {28,28,28,32,32,32,48,24,32,18,32};
+g = uigridlayout(fig,[12 3]);
+g.RowHeight   = {28,28,28,32,32,32,32,48,24,32,18,32};
 g.ColumnWidth = {100,'1x','fit'};
 g.Padding     = [12 10 12 10];
 g.RowSpacing  = 8;
@@ -154,36 +179,72 @@ micNote = uilabel(micRow,'Text','input channel, calibration only', ...
     'FontColor',[0.4 0.4 0.4]);
 micNote.Layout.Row = 1; micNote.Layout.Column = 2;
 
-% Row 7: the fixed rates -- informational only, see mabr.Config
-rateLbl = uilabel(g,'WordWrap','on','FontColor',[0.3 0.3 0.3], ...
-    'Text',sprintf(['Fixed by Config: %g kHz full-duplex, decimated %gx to %g ' ...
-        'kHz for storage/analysis. Every stimulus must already be rendered ' ...
-        'at %g kHz.'], ...
-        cfg.DACSampleRate/1e3,cfg.decimationFactor,cfg.ADCSampleRate/1e3,cfg.DACSampleRate/1e3));
-rateLbl.Layout.Row = 7; rateLbl.Layout.Column = [1 3];
+% Row 7: the rate the device is opened at -- and, because the play matrix is
+% rendered against it, the rate the whole session runs at. Editable rather
+% than a fixed list: SupportedSampleRates is what is worth offering, not a
+% claim about what hardware exists. The last value that VALIDATED is kept
+% beside it, so a half-typed rate cannot make readControls throw on the
+% keystroke-by-keystroke path syncCommitEnable runs on.
+lastGoodRate = settings0.SampleRate;
+rateLabel = uilabel(g,'Text','Sample rate','HorizontalAlignment','right', ...
+    'Tooltip','Hz the ASIO device is opened at, and the rate every stimulus is rendered at.');
+rateLabel.Layout.Row = 7; rateLabel.Layout.Column = 1;
+rateRow = uigridlayout(g,[1 3]);
+rateRow.Layout.Row = 7; rateRow.Layout.Column = [2 3];
+rateRow.ColumnWidth  = {90,'1x','fit'};
+rateRow.Padding      = [0 0 0 0];
+rateRow.ColumnSpacing = 8;
+rateDrop = uidropdown(rateRow,'Editable','on', ...
+    'Tooltip',['Hz. Pick a standard rate or type one the device supports. ' ...
+        'This is the only setting here that still matters under Testing: ' ...
+        'stimuli are rendered at it whether or not a device is opened.'], ...
+    'ValueChangedFcn',@(~,~) onRateChanged());
+rateDrop.Layout.Row = 1; rateDrop.Layout.Column = 1;
+setRateItems(settings0.SampleRate);
+rateNote = uilabel(rateRow,'Text','','FontColor',[0.3 0.3 0.3]);
+rateNote.Layout.Row = 1; rateNote.Layout.Column = 2;
+% Many ASIO drivers own the rate outright: MATLAB asks, and the driver serves
+% whatever its own control panel is set to. Audio Toolbox ships a function
+% that opens exactly that panel (asiosettings), so the honest place to finish
+% an argument about the rate is one button away rather than somewhere else on
+% the machine. Set the panel, then press Test Device to see what was granted.
+panelBtn = uibutton(rateRow,'Text','ASIO panel…', ...
+    'Tooltip',['Open the device driver''s own control panel. Most ASIO drivers ' ...
+        'set the sample rate there and MATLAB follows it -- change it, then ' ...
+        'press Test Device to confirm what the device grants.'], ...
+    'ButtonPushedFcn',@(~,~) onAsioPanel());
+panelBtn.Layout.Row = 1; panelBtn.Layout.Column = 3;
 
-% Row 8: determine the sample rate the selected device actually grants
+% Row 8: what the rate above costs and constrains -- informational only
+rateLbl = uilabel(g,'WordWrap','on','FontColor',[0.3 0.3 0.3],'Text', ...
+    ['The storage rate is derived, not chosen: sweeps are windowed with a whole-' ...
+     'sample stride, so it is always the rate above divided by an integer (the ' ...
+     'one closest to 12 kHz). Committing a new rate re-renders the stimulus ' ...
+     'bank at it and rebuilds the worker.']);
+rateLbl.Layout.Row = 8; rateLbl.Layout.Column = [1 3];
+
+% Row 9: determine the sample rate the selected device actually grants
 probeBtn = uibutton(g,'Text','Test Device','ButtonPushedFcn',@(~,~) onProbe());
-probeBtn.Layout.Row = 8; probeBtn.Layout.Column = 1;
+probeBtn.Layout.Row = 9; probeBtn.Layout.Column = 1;
 probeLbl = uilabel(g,'Text','','WordWrap','on');
-probeLbl.Layout.Row = 8; probeLbl.Layout.Column = [2 3];
+probeLbl.Layout.Row = 9; probeLbl.Layout.Column = [2 3];
 
-% Row 9: what this does and does not touch
+% Row 10: what this does and does not touch
 noteLbl = uilabel(g,'WordWrap','on','FontColor',[0.3 0.3 0.3], ...
     'Text','Locked while a schedule is running -- switching devices mid-acquisition is not supported.');
-noteLbl.Layout.Row = 9; noteLbl.Layout.Column = [1 3];
+noteLbl.Layout.Row = 10; noteLbl.Layout.Column = [1 3];
 
-% Row 10: validation / status
+% Row 11: validation / status
 msgLbl = uilabel(g,'Text','','FontColor',[0.8 0.2 0]);
-msgLbl.Layout.Row = 10; msgLbl.Layout.Column = [1 3];
+msgLbl.Layout.Row = 11; msgLbl.Layout.Column = [1 3];
 
-% Row 11: transport. Commit applies without closing (see the header), so the
+% Row 12: transport. Commit applies without closing (see the header), so the
 % pair is Commit/Cancel rather than OK/Cancel.
 commitBtn = uibutton(g,'Text','Commit','BackgroundColor',[0.6 0.9 0.6], ...
     'FontWeight','bold','ButtonPushedFcn',@(~,~) onCommit());
-commitBtn.Layout.Row = 11; commitBtn.Layout.Column = 2;
+commitBtn.Layout.Row = 12; commitBtn.Layout.Column = 2;
 cancelBtn = uibutton(g,'Text','Cancel','ButtonPushedFcn',@(~,~) onCancel());
-cancelBtn.Layout.Row = 11; cancelBtn.Layout.Column = 3;
+cancelBtn.Layout.Row = 12; cancelBtn.Layout.Column = 3;
 
 if isempty(devices)
     msgLbl.Text = 'No ASIO devices found -- check the driver is installed and selected.';
@@ -195,6 +256,7 @@ end
 % settings0 holding both flags would show as pending the moment it opened.
 committed = readControls();
 
+refreshRateNote();
 syncTestingEnable();
 syncCommitEnable();
 
@@ -217,9 +279,72 @@ uiwait(fig);
         end
     end
 
+    function setRateItems(selected)
+        % Standard rates plus whatever is actually selected, so a rig running
+        % at a rate nobody listed still shows its own value rather than
+        % silently snapping to a listed one.
+        rates = mabr.Config.SupportedSampleRates;
+        if ~any(rates == selected), rates = sort([rates selected]); end
+        rateDrop.Items = arrayfun(@(r) sprintf('%g',r),rates,'UniformOutput',false);
+        rateDrop.Value = sprintf('%g',selected);
+    end
+
+    function [fs,ok] = readRate()
+        % Never throws: syncCommitEnable reads the controls on every edit, and
+        % an editable dropdown is mid-typing for most of them. An unusable
+        % entry reports itself and the last rate that DID validate stands in,
+        % so the rest of the dialog keeps working while the field is wrong.
+        fs = str2double(rateDrop.Value);
+        ok = true;
+        try
+            fs = mabr.Config.validateSampleRate(fs);
+            lastGoodRate = fs;
+        catch
+            ok = false;
+            fs = lastGoodRate;
+        end
+    end
+
+    function refreshRateNote()
+        % What the selected rate works out to downstream: the derived storage
+        % rate and the stride to it. The longest run the ring buffer can hold
+        % scales with the rate too, which is a real consequence of the choice
+        % and the reason cfg is still worth having here.
+        [fs,ok] = readRate();
+        df  = mabr.Config.decimationFor(fs);
+        adc = mabr.Config.adcRateFor(fs);
+        rateNote.Text = sprintf('→ %s kHz stored (÷%d)',mabr.Config.rateText(adc),df);
+        rateNote.Tooltip = sprintf(['Storage/analysis rate, derived. At %s kHz the ' ...
+            'ring buffer holds a run of up to %.1f min.'], ...
+            mabr.Config.rateText(fs),cfg.maxInputBufferLength/fs/60);
+        if ok
+            rateNote.FontColor = [0.3 0.3 0.3];
+        else
+            rateNote.FontColor = [0.8 0.2 0];
+        end
+    end
+
+    function onRateChanged()
+        if ~isgraphics(fig), return; end
+        [fs,ok] = readRate();
+        if ~ok
+            setMessage(sprintf('Not a usable sample rate — keeping %g Hz.',fs),false);
+            setRateItems(fs);         % put the field back to the last good value
+        else
+            setMessage('',false);
+            setRateItems(fs);         % normalize "192000.0" etc. to a listed item
+        end
+        % A probe result describes the rate it was run at, so it stops being
+        % true the moment the rate changes.
+        probeLbl.Text = '';
+        refreshRateNote();
+        syncCommitEnable();
+    end
+
     function p = readControls()
         p = mabr.AudioSettings;
         p.Testing          = testCheck.Value;
+        p.SampleRate       = readRate();
         % Testing wins: it opens no device at all, so there is nothing for
         % stimulation only to be a mode of. The checkbox is greyed rather than
         % cleared while Testing is set, so this is where the two are reconciled.
@@ -255,6 +380,13 @@ uiwait(fig);
         end
         devDrop.Enable    = onoff;
         refreshBtn.Enable = onoff;
+        % The rate picker stays live under Testing (see below); the button that
+        % opens a real driver's panel cannot.
+        panelBtn.Enable   = onoff;
+        % rateDrop is deliberately absent from all of this and never greyed.
+        % Every other control here describes a device; the rate also decides
+        % what mabr.stim.Schedule renders and what the ring buffer is clocked
+        % at, both of which a Testing run does exactly as a real one does.
         plSig.Enable = onoff; plTim.Enable = onoff;
         rcSig.Enable = inputs; rcTim.Enable = inputs;
         % The mic channel goes with the recorder mapping under Testing --
@@ -267,7 +399,8 @@ uiwait(fig);
         if testing
             probeBtn.Tooltip = 'Not available in Testing (loopback) mode -- there is no device to probe.';
         else
-            probeBtn.Tooltip = 'Briefly opens the selected device and reports the sample rate it actually grants.';
+            probeBtn.Tooltip = ['Briefly opens the selected device at the rate above and ' ...
+                'reports the rate it actually grants.'];
         end
     end
 
@@ -328,10 +461,28 @@ uiwait(fig);
         syncCommitEnable();
     end
 
+    function onAsioPanel()
+        % The panel is the driver's, not MATLAB's, so this only ever opens it
+        % -- nothing is read back. Whatever the user changes there shows up in
+        % what Test Device reports, which is the one number this dialog can
+        % honestly state about the device.
+        working = readControls();
+        try
+            if isempty(working.Device)
+                asiosettings();
+            else
+                asiosettings(working.Device);
+            end
+            setMessage('ASIO panel opened — press Test Device to see the result.',true);
+        catch me
+            setMessage(sprintf('Could not open the ASIO panel: %s',me.message),false);
+        end
+    end
+
     function onProbe()
         probeLbl.Text = 'Probing…'; probeLbl.FontColor = [0.3 0.3 0.3]; drawnow;
         working = readControls();
-        [~,ok,msg] = working.probeSampleRate(cfg);
+        [~,ok,msg] = working.probeSampleRate();
         probeLbl.Text = msg;
         if ok
             probeLbl.FontColor = [0 0.5 0];

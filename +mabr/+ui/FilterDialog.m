@@ -6,7 +6,7 @@ function policy = FilterDialog(policy0,Fs)
 %   cancelled.
 %
 %   p = mabr.ui.FilterDialog(p0,Fs) designs and draws the chain at sample
-%   rate Fs (default mabr.Config.ADCSampleRate, the rate the live sweeps and
+%   rate Fs (default the ADC rate of a default mabr.Config, the rate live sweeps and
 %   the saved trace both live at).
 %
 %   The three filters are independent switches, because that is how they are
@@ -29,7 +29,10 @@ function policy = FilterDialog(policy0,Fs)
 % Daniel Stolzberg (c) 2026
 
 if nargin < 1 || isempty(policy0), policy0 = mabr.FilterPolicy; end
-if nargin < 2 || isempty(Fs),      Fs = mabr.Config.ADCSampleRate; end
+% Constructed rather than read off the class: the analysis rate is derived
+% from the rig's DAC rate now (see mabr.Config), so there is no constant to
+% read. A caller with an opinion passes one -- mabr.ui.App always does.
+if nargin < 2 || isempty(Fs),      c = mabr.Config; Fs = c.ADCSampleRate; end
 
 policy  = [];                       % [] unless OK is pressed
 working = policy0;
