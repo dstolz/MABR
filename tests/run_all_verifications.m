@@ -22,6 +22,12 @@ function run_all_verifications()
 %       verify_progress_monitor  - acquisition progress window: the tally,
 %                                  simple/bar/heat-map views, counts vs
 %                                  percent, and the mid-run attribution
+%       verify_metric_plot       - online analysis: the metric library and its
+%                                  contract, per-condition values, the plot
+%                                  adapting to 0/1/2 parameters (lines, bars,
+%                                  heat map, contour, surface), live
+%                                  conditions, the right-click aesthetics, and
+%                                  two independent windows
 %       verify_trace_organizer   - TraceOrganizer scaling/spacing/save/load
 %       verify_trace_inspector   - TraceInspector peak picking, and the
 %                                  transfer of peaks back to the organizer
@@ -54,8 +60,8 @@ function run_all_verifications()
 %
 %   Requires the Parallel Computing Toolbox (all but verify_isi_jitter,
 %   verify_filters, verify_live_plot, verify_progress_monitor,
-%   verify_trace_organizer, verify_trace_inspector, and verify_audio_settings).
-%   None require audio hardware.
+%   verify_metric_plot, verify_trace_organizer, verify_trace_inspector, and
+%   verify_audio_settings). None require audio hardware.
 %
 % Daniel Stolzberg (c) 2026
 
@@ -65,6 +71,7 @@ tests = {@verify_isi_jitter, ...
          @verify_custom_advance, ...
          @verify_artifact_rejection, @verify_filters, ...
          @verify_live_plot, @verify_progress_monitor, ...
+         @verify_metric_plot, ...
          @verify_trace_organizer, @verify_trace_inspector, ...
          @verify_notes, @verify_audio_settings, ...
          @verify_stimgen_import, @verify_stimulation_only, ...

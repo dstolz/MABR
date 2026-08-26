@@ -11,7 +11,7 @@ Start here if your job is to record ABRs, not to modify the code.
 | [Installation](Installation.md) | What you need, how to set it up, how to check it works |
 | [Getting Started](Getting-Started.md) | Your first recording, start to finish |
 | [The Acquisition App](Acquisition-App.md) | Every control in the main window, and what it does |
-| [Viewing Data](Viewing-Data.md) | Live plot and Trace Organizer |
+| [Viewing Data](Viewing-Data.md) | Live plot, Online Analysis, and Trace Organizer |
 | [Data Files](Data-Files.md) | Where files go, how they're named, what's inside |
 | [Offline Analysis](Offline-Analysis.md) | Batch-processing saved recordings into thresholds |
 | [Troubleshooting](Troubleshooting.md) | Common problems and what they mean |

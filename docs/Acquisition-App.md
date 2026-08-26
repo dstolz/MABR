@@ -163,12 +163,13 @@ Each button is drawn as what its window shows; hover for the tooltip if the pict
 | Button | Effect |
 | --- | --- |
 | a trace on axes | Raises the Live Plot. |
+| three rising points on axes | Opens **another** Online Analysis window — one metric across the conditions, refreshed while the schedule runs. Not a raise: every press gives you a new one, so a second question does not cost you the first answer. |
 | a stack of traces | Raises the Trace Organizer, refreshed with the conditions completed so far. |
 | a loudspeaker | Opens the Stimulus Viewer on the loaded bank. |
 | three part-filled bars | Opens the [Progress Monitor](Viewing-Data.md#progressmonitor) — how much of the schedule is done, and which conditions are still short. |
 | **?** | Opens the [MABR wiki](https://github.com/dstolz/MABR/wiki) in a browser (same as **Help ▸ MABR Wiki**). |
 
-Both viewers are described in [Viewing Data](Viewing-Data.md).
+All three viewers are described in [Viewing Data](Viewing-Data.md). Under **Stimulation only** the live-plot and analysis buttons are disabled along with the whole Acquisition panel: nothing is recorded, so there is nothing for either to show.
 
 Where you drag the two viewer windows is remembered across sessions ([mabr.ui.WindowPos](../+mabr/+ui/WindowPos.m) stores each position in MATLAB prefs under group `MABR`). A remembered position is clamped back onto the current display before it is applied, so unplugging a monitor cannot strand a window off-screen. The first time you run MABR they are laid out to the right of the main window: the Trace Organizer beside it, the Live Plot beyond that.
 
