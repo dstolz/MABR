@@ -17,7 +17,8 @@ function run_all_verifications()
 %       verify_live_plot         - live view: per-stimulus means, time base,
 %                                  amplitude scaling, control strip, and the
 %                                  parameter-aware labelling, ordering,
-%                                  grouping, and Grid/Stacked layouts
+%                                  grouping, Grid/Stacked layouts, and the
+%                                  SD/SEM/CI error bands and their statistics
 %       verify_trace_organizer   - TraceOrganizer scaling/spacing/save/load
 %       verify_trace_inspector   - TraceInspector peak picking, and the
 %                                  transfer of peaks back to the organizer

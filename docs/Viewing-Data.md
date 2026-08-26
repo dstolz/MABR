@@ -14,6 +14,18 @@ Opens with the app, and is raised by the trace-on-axes toolbar button or by pres
 
 Grouping is what makes a two-parameter run readable. Each group takes a colour, and its members shade from pale to full along the other parameter, so a level series looks like a series instead of five unrelated colours — and the group is what forms the columns of the Grid and Stacked layouts below.
 
+**Error bands** — right-click the means for **Error band**, and each average gains a shaded region in its own colour:
+
+| | Shows | Read it when |
+| --- | --- | --- |
+| **± 1 SD** | how much a *single sweep* varies | you want the noise floor. It does **not** shrink as sweeps accumulate — it describes the recording, not the average |
+| **± 1 SEM** | how well the *mean* is pinned down | you want to know whether the average has settled. This is the one that visibly tightens as the run goes |
+| **90 / 95 / 99% confidence** | the parametric interval for the mean | you want a stated criterion. Student's t, so it stays honest over the first few sweeps rather than over-promising |
+
+A condition with fewer than two surviving sweeps gets no band — not a band of zero width, which would claim a precision nothing has established. The y label names the statistic in force, so a screenshot never leaves it ambiguous.
+
+SEM and confidence bands are part of the amplitude scaling: turning one on frames it. An SD band deliberately is not, and will run off the axes — on an ABR the spread of a single sweep is tens of times the average, and letting it set the scale would flatten every mean in the window to a line. That is the SD band's message rather than a bug.
+
 **Controls** — the strip along the bottom of the window:
 
 - **Means: Overlaid / Separate / Grid / Stacked** — all the averages on one axes (easiest for comparing them directly); one small panel each, titled with its condition and running count (easiest when there are many, or when they differ hugely in size); a **grid** with one group per column and the other parameter up the rows, largest at the top, which is the live version of the figure the offline pipeline draws; or **stacked**, one axes per group with its conditions offset into it and named on the y axis — the shape a threshold is actually read from, filling in as the session runs.
@@ -108,6 +120,8 @@ Display settings are public properties, and the control strip along the bottom o
 | `TimeBase` | `[-2 10]` ms | Displayed window, clamped to what was actually recorded |
 | `AmpMode` | `'common'` | `'each'` (every stimulus to its own peak), `'common'` (one shared scale — the only way an amplitude difference between conditions is visible), `'manual'` |
 | `ManualLimit` | `5e-6` V | The ± limit `'manual'` pins the mean axes to. Switching into Manual seeds it from what is on screen |
+| `ErrorBand` | `'none'` | `'std'`, `'sem'`, or `'ci'` — a patch behind each mean, in its colour, from [error_band](../+mabr/+metrics/error_band.m). Chosen from the right-click menu. `'sem'`/`'ci'` widen the axes to fit; `'std'` does not (see above) |
+| `ConfidenceLevel` | `0.95` | The level `'ci'` uses. The menu offers 90 / 99 as well; any value in (0,1) works from a script |
 
 Overlaid means share an axes and therefore one scale, so `'each'` behaves as `'common'` there; in `'stacked'` the mode sets the offset between traces the same way, from the group's own largest response or the largest anywhere. Under `'each'` every tile keeps its y tick labels rather than only the left column — each is on its own scale, and hiding the numbers would leave a column of traces with no way to tell how big they are. The latest-sweep axes always autoscales, `'manual'` included: it is a single sweep, tens of times the size of a mean, and a limit chosen to frame the averages would clip it away entirely.
 

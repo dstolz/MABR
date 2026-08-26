@@ -25,7 +25,11 @@ function verify_live_plot()
 %          control that drives them;
 %      11. mabr.stim.StimulusSet.paramTable, which is where a real bank's
 %          parameters come from;
-%      12. the whole view embeds into a caller-supplied container.
+%      12. ERROR BANDS: the SD / SEM / confidence-interval patch drawn around
+%          each mean, the statistics behind them (mabr.metrics.error_band and
+%          mabr.metrics.t_quantile), and the axis limits growing to fit;
+%      13. the right-click menu that chooses one;
+%      14. the whole view embeds into a caller-supplied container.
 %
 %   Run:  >> verify_live_plot
 %
@@ -354,7 +358,124 @@ assert(size(sub.Values,1) == 2 && ~sub.Varying(jF) && sub.Varying(jL), ...
     'paramTable of a subset does not describe the subset');
 fprintf('  PASS: StimulusSet.paramTable describes a bank and any subset\n');
 
-% --- 12. embedded in a container ----------------------------------------
+% --- 12. error bands -----------------------------------------------------
+% The arithmetic first, on its own: a band is a claim about the data, and a
+% plausible-looking shaded region computed the wrong way is worse than none.
+assert(abs(mabr.metrics.t_quantile(0.975,10) - 2.228138852) < 1e-6, ...
+    't_quantile(0.975,10) should be the table value 2.2281');
+assert(abs(mabr.metrics.t_quantile(0.975,1) - 12.70620474) < 1e-6, ...
+    't_quantile(0.975,1) should be the table value 12.7062');
+assert(abs(mabr.metrics.t_quantile(0.975,1e6) - 1.959963985) < 1e-4, ...
+    't_quantile should approach the normal quantile as nu grows');
+assert(abs(mabr.metrics.t_quantile(0.5,7)) < 1e-12, ...
+    'the median of a t distribution is 0');
+assert(abs(mabr.metrics.t_quantile(0.025,10) + 2.228138852) < 1e-6, ...
+    't_quantile is not symmetric about zero');
+assert(all(isnan(mabr.metrics.t_quantile([0 1 0.5],[5 5 0]))), ...
+    'a degenerate p or nu should give NaN rather than a number or an error');
+
+nSw = 5;                                      % sweeps per condition, above
+oneCond = Yp(pIdx == 1,:);
+assert(all(isnan(mabr.metrics.error_band(oneCond(1,:),'sem'))), ...
+    'a single sweep has no spread to report, so the band must be NaN');
+assert(max(abs(mabr.metrics.error_band(oneCond,'std') - std(oneCond,0,1))) < 1e-18, ...
+    'the std band is not the sample standard deviation');
+assert(max(abs(mabr.metrics.error_band(oneCond,'sem') - std(oneCond,0,1)/sqrt(nSw))) < 1e-18, ...
+    'the SEM band is not std/sqrt(n)');
+
+lp.Layout  = 'separate';
+lp.AmpMode = 'common';
+assert(strcmp(lp.ErrorBand,'none'),'the default view should draw no band');
+bands = band_patches(lp);
+assert(numel(bands) == nP,'expected one band patch per panel');
+assert(all(arrayfun(@(h) all(isnan(h.YData(:))),bands)), ...
+    'a band was drawn with ErrorBand ''none''');
+
+for mode = {'std','sem','ci'}
+    lp.ErrorBand = mode{1};
+    bands = band_patches(lp);
+    for k = 1:nP
+        Ysel = Yp(pIdx == want(k),:);
+        hw   = expected_halfwidth(Ysel,mode{1},lp.ConfidenceLevel);
+        [lo,hi] = band_edges(bands(k));
+        assert(max(abs(lo - (mean(Ysel,1)-hw)*mult)) < 1e-9 && ...
+               max(abs(hi - (mean(Ysel,1)+hw)*mult)) < 1e-9, ...
+            'the %s band on panel %d is not mean +/- the right half-width',mode{1},k);
+        assert(isequal(bands(k).XData(:).',[t_ms(lp) fliplr(t_ms(lp))]), ...
+            'the %s band on panel %d is not a closed polygon over the time base', ...
+            mode{1},k);
+    end
+end
+fprintf('  PASS: SD / SEM / CI bands drawn as mean +/- the right half-width\n');
+
+% A wider confidence level is a wider band -- the one thing a reader would
+% assume without checking, and the one a wrong tail probability would break.
+lp.ErrorBand = 'ci';
+lp.ConfidenceLevel = 0.90;  w90 = band_width(band_patches(lp),1);
+lp.ConfidenceLevel = 0.99;  w99 = band_width(band_patches(lp),1);
+assert(w99 > w90,'a 99%% band is not wider than a 90%% one (%g vs %g)',w99,w90);
+
+% An SD band describes a single SWEEP, which on an ABR is tens of times the
+% average -- so it is drawn but is deliberately NOT allowed to set the scale,
+% or every mean in the window would be squashed to a flat line.
+lp.ErrorBand = 'none'; limNone = lp.axMean(1).YLim(2);
+lp.ErrorBand = 'std';  limStd  = lp.axMean(1).YLim(2);
+assert(abs(limStd - limNone) < 1e-12, ...
+    'an SD band was allowed to drive the amplitude scale (%g -> %g)',limNone,limStd);
+assert(contains(lp.axMean(1).YLabel.String,'SD'), ...
+    'the y label does not say which statistic the band is: %s', ...
+    lp.axMean(1).YLabel.String);
+
+% A SEM band DOES describe the mean, so it is framed rather than clipped: the
+% shared limit is the outermost edge of the widest one.
+lp.ErrorBand = 'sem';
+Aall = 0;
+for k = 1:nP
+    Ysel = Yp(pIdx == want(k),:);
+    Aall = max(Aall,max(abs(mean(Ysel,1)) + std(Ysel,0,1)/sqrt(nSw)));
+end
+lim = arrayfun(@(a) a.YLim(2),lp.axMean);
+assert(max(abs(lim - 1.1*Aall*mult)) < 1e-9, ...
+    'the axes are scaled to the means, not to the outside of their SEM bands');
+assert(lim(1) > limNone,'the SEM band did not widen the axes at all');
+
+lp.ErrorBand = 'none';
+assert(all(arrayfun(@(h) all(isnan(h.YData(:))),band_patches(lp))), ...
+    'turning the band off did not clear the patches');
+fprintf('  PASS: bands widen with confidence, fit inside the axes, and clear\n');
+
+% --- 13. the right-click menu picks the statistic ------------------------
+% Found by what it offers rather than by being the only one in the figure --
+% MATLAB creates context menus of its own for the figure's own furniture.
+cm = findall(lp.Figure,'Type','uicontextmenu');
+cm = cm(arrayfun(@(c) ~isempty(findall(c,'Type','uimenu','Label','Error band')),cm));
+assert(isscalar(cm),'the live plot has no single Error band right-click menu');
+assert(isequal(lp.PlotPanel.ContextMenu,cm) && isequal(lp.axMean(1).ContextMenu,cm), ...
+    'the right-click menu is not attached to the plot region and its axes');
+assert(strcmp(band_item(cm,'None').Checked,'on'), ...
+    '"None" is not ticked while no band is shown');
+
+fire_menu(band_item(cm,'± 1 SEM'));
+assert(strcmp(lp.ErrorBand,'sem'),'the menu did not set the band statistic');
+assert(strcmp(band_item(cm,'± 1 SEM').Checked,'on') && ...
+       strcmp(band_item(cm,'None').Checked,'off'), ...
+    'the tick did not follow the selection');
+
+fire_menu(band_item(cm,'99% confidence'));
+assert(strcmp(lp.ErrorBand,'ci') && abs(lp.ConfidenceLevel - 0.99) < 1e-12, ...
+    'the menu did not set both the statistic and its confidence level');
+assert(strcmp(band_item(cm,'95% confidence').Checked,'off'), ...
+    'two confidence levels are ticked at once');
+assert(contains(lp.axMean(1).YLabel.String,'99'), ...
+    'the y label does not name the confidence level in force');
+
+fire_menu(band_item(cm,'None'));
+assert(strcmp(lp.ErrorBand,'none') && ...
+       all(arrayfun(@(h) all(isnan(h.YData(:))),band_patches(lp))), ...
+    'the menu did not turn the band back off');
+fprintf('  PASS: the right-click menu drives the band and ticks what is shown\n');
+
+% --- 14. embedded in a container ----------------------------------------
 % docs/Extending.md promises a host UI can pass its own container and get the
 % whole view -- axes, means, and control strip -- inside it.
 host = figure('Visible','off','Position',[100 100 700 520]);
@@ -410,6 +531,56 @@ function h = stack_lines(ax)
 % is the order they are offset in). findobj returns newest first.
 h = findobj(ax,'Type','line');
 h = h(end:-1:1);
+end
+
+function P = band_patches(lp)
+% The error-band patch of every mean, in panel order (one per axes in the
+% Separate layout, which is what the band checks use).
+P = gobjects(1,0);
+for a = 1:numel(lp.axMean)
+    h = findobj(lp.axMean(a),'Type','patch');
+    P = [P h(end:-1:1)']; %#ok<AGROW>  findobj returns newest first
+end
+end
+
+function [lo,hi] = band_edges(h)
+% A band patch is the lower edge left-to-right then the upper edge back, so
+% the second half reversed is the upper edge sample for sample.
+y  = h.YData(:).';
+n  = numel(y)/2;
+lo = y(1:n);
+hi = fliplr(y(n+1:end));
+end
+
+function w = band_width(P,k)
+[lo,hi] = band_edges(P(k));
+w = max(hi - lo);
+end
+
+function t = t_ms(lp)
+% The time base the view is drawing on, in ms, read back off a mean trace.
+h = findobj(lp.axMean(1),'Type','line');
+h = h(arrayfun(@(x) numel(x.XData) > 2,h));
+t = h(end).XData;
+end
+
+function hw = expected_halfwidth(Y,mode,conf)
+n  = size(Y,1);
+sd = std(Y,0,1);
+switch mode
+    case 'std', hw = sd;
+    case 'sem', hw = sd/sqrt(n);
+    case 'ci',  hw = mabr.metrics.t_quantile(1-(1-conf)/2,n-1)*sd/sqrt(n);
+end
+end
+
+function h = band_item(cm,label)
+h = findall(cm,'Type','uimenu','Label',label);
+assert(isscalar(h),'expected exactly one "%s" entry in the right-click menu',label);
+end
+
+function fire_menu(h)
+h.Callback(h,struct());
 end
 
 function c = live_controls(lp)

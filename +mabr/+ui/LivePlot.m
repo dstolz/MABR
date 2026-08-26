@@ -60,8 +60,35 @@ classdef LivePlot < handle
 %   parameters altogether nothing changes: the view is the ID-labelled,
 %   presentation-ordered list it always was.
 %
+%   ERROR BANDS
+%   -----------
+%   Every mean can carry a shaded band, drawn as a patch behind its trace and
+%   in its colour. Which statistic it shows is `ErrorBand`, chosen from the
+%   RIGHT-CLICK menu over the means (or set programmatically):
+%
+%       'std'  +/- 1 SD across sweeps -- how much a single sweep varies. It
+%              does not shrink as sweeps accumulate: it describes the
+%              RECORDING, and a band that stays wide is telling you the noise
+%              floor has not moved,
+%       'sem'  +/- 1 SEM -- how well the MEAN is pinned down, which is the one
+%              that visibly tightens as an average builds,
+%       'ci'   the parametric confidence interval for the mean at
+%              `ConfidenceLevel` (Student's t, so it is honest over the first
+%              few sweeps). The menu offers 90 / 95 / 99%.
+%
+%   A condition with fewer than two clean sweeps has no spread to report and
+%   gets no band -- not a band of zero width, which would claim a precision
+%   nothing has established.
+%
+%   SEM and CI bands are part of the amplitude scaling, so turning one on
+%   frames it rather than clipping it. An SD band deliberately is NOT: on an
+%   ABR the spread of a single sweep is tens of times the average, and letting
+%   it set the scale would flatten every mean in the window to a flat line.
+%   It is drawn, and runs off the axes when that is the truth about the
+%   recording -- which is the thing it was turned on to say.
+%
 %   Display controls (also settable programmatically, which is what the strip
-%   along the bottom of the window does):
+%   along the bottom of the window and the right-click menu do):
 %
 %       Layout       'overlay' | 'separate' | 'grid' | 'stacked'
 %       GroupBy      '' (auto) | 'none' | a parameter name
@@ -69,6 +96,8 @@ classdef LivePlot < handle
 %                                             half is the pre-onset baseline
 %       AmpMode      'each' | 'common' | 'manual'
 %       ManualLimit  volts                    the +/- limit AmpMode 'manual' uses
+%       ErrorBand    'none' | 'std' | 'sem' | 'ci'
+%       ConfidenceLevel  0<c<1                default 0.95, used by 'ci'
 %
 %   'each' lets every stimulus autoscale to its own response, which is what
 %   you want when levels differ by 40 dB; 'common' holds them all to one scale,
@@ -95,6 +124,8 @@ classdef LivePlot < handle
         TilesPerCol   = 4;    % separate plots stack this deep before columning
         MaxLegend     = 12;   % overlaid means beyond this get no legend
         StackCols     = 4;    % stacked groups sit this many across before wrapping
+        BandAlpha     = 0.18; % error-band patch opacity
+        CILevels      = [0.90 0.95 0.99];   % offered in the right-click menu
         % Vertical split of the plot region: the latest sweep on top, the
         % means below it. Fractions of the plot panel.
         TopFrac       = 0.34;
@@ -124,10 +155,17 @@ classdef LivePlot < handle
         TimeBase    (1,2) double = [-2 10]     % ms
         AmpMode     (1,:) char   = 'common'
         ManualLimit (1,1) double = 5e-6        % volts, +/-
+        ErrorBand   (1,:) char   = 'none'      % none | std | sem | ci
+        ConfidenceLevel (1,1) double = 0.95    % used by ErrorBand 'ci'
     end
 
     properties (Access = private)
         meanLines  = gobjects(1,0);   % one per stimulus, in layout order
+        bandPatches = gobjects(1,0);  % error band behind each of them
+        ContextMenu                   % right-click menu over the plot region
+        BandItems  = gobjects(1,0);   % its error-band entries, in menu order
+        BandModes  = {};              % the ErrorBand each one selects
+        BandConfs  = [];              % ... and the ConfidenceLevel, or NaN
         latestLine
         corrBar
         artifactText
@@ -172,6 +210,8 @@ classdef LivePlot < handle
             obj.Last = [];
             if ~obj.isvalidView(), return; end
             set(obj.meanLines(isgraphics(obj.meanLines)),'XData',nan,'YData',nan);
+            set(obj.bandPatches(isgraphics(obj.bandPatches)), ...
+                'XData',nan(3,1),'YData',nan(3,1));
             if isgraphics(obj.latestLine)
                 set(obj.latestLine,'XData',nan,'YData',nan,'Color',obj.RecentColor);
             end
@@ -290,6 +330,20 @@ classdef LivePlot < handle
             obj.ManualLimit = double(v);
             obj.afterSettingChange();
         end
+
+        function set.ErrorBand(obj,v)
+            obj.ErrorBand = validatestring(v,{'none','std','sem','ci'}, ...
+                'mabr.ui.LivePlot','ErrorBand');
+            obj.afterSettingChange();
+        end
+
+        function set.ConfidenceLevel(obj,v)
+            assert(isscalar(v) && isfinite(v) && v > 0 && v < 1, ...
+                'mabr:ui:LivePlot:confidenceLevel', ...
+                'ConfidenceLevel must be a probability strictly between 0 and 1.');
+            obj.ConfidenceLevel = double(v);
+            obj.afterSettingChange();
+        end
     end
 
     % =====================================================================
@@ -304,6 +358,7 @@ classdef LivePlot < handle
                 'Units','normalized');
             obj.buildControls();
             obj.buildTop();
+            obj.buildContextMenu();
             obj.buildMeanAxes(mabr.ui.LivePlot.emptyGroup());
             obj.relayout();
             if isprop(c,'SizeChangedFcn'), c.SizeChangedFcn = @(~,~) obj.relayout(); end
@@ -358,8 +413,9 @@ classdef LivePlot < handle
             % presents, in the arrangement `G` resolved for them. Called only
             % when that arrangement changes, never on a plain refresh.
             delete(obj.axMean(isgraphics(obj.axMean)));
-            obj.axMean    = gobjects(1,0);
-            obj.meanLines = gobjects(1,0);
+            obj.axMean      = gobjects(1,0);
+            obj.meanLines   = gobjects(1,0);
+            obj.bandPatches = gobjects(1,0);
             obj.legendHandle = [];
 
             obj.StimList   = G.stimList;
@@ -376,8 +432,8 @@ classdef LivePlot < handle
                     obj.TileIsLeft = isLeft;
                     for k = 1:n
                         ax = obj.newTile(p,pos(k,:),isBottom(k),isLeft(k),true);
-                        obj.axMean(k)    = ax;
-                        obj.meanLines(k) = line(ax,nan,nan,'Color',col(k,:),'LineWidth',1.5);
+                        obj.axMean(k) = ax;
+                        [obj.bandPatches(k),obj.meanLines(k)] = obj.newMean(ax,col(k,:));
                     end
 
                 case 'grid'
@@ -385,8 +441,8 @@ classdef LivePlot < handle
                     obj.TileIsLeft = isLeft;
                     for k = 1:n
                         ax = obj.newTile(p,pos(k,:),isBottom(k),isLeft(k),true);
-                        obj.axMean(k)    = ax;
-                        obj.meanLines(k) = line(ax,nan,nan,'Color',col(k,:),'LineWidth',1.5);
+                        obj.axMean(k) = ax;
+                        [obj.bandPatches(k),obj.meanLines(k)] = obj.newMean(ax,col(k,:));
                     end
 
                 case 'stacked'
@@ -400,8 +456,8 @@ classdef LivePlot < handle
                     for k = 1:n
                         g  = 1;
                         if k <= numel(G.group), g = G.group(k); end
-                        obj.meanLines(k) = line(obj.axMean(g),nan,nan, ...
-                            'Color',col(k,:),'LineWidth',1.5);
+                        [obj.bandPatches(k),obj.meanLines(k)] = ...
+                            obj.newMean(obj.axMean(g),col(k,:));
                     end
 
                 otherwise   % 'overlay'
@@ -413,12 +469,26 @@ classdef LivePlot < handle
                     xline(ax,0,'Color',obj.ZeroColor,'LineStyle',':');
                     obj.axMean = ax;
                     for k = 1:n
-                        obj.meanLines(k) = line(ax,nan,nan,'Color',col(k,:),'LineWidth',1.5);
+                        [obj.bandPatches(k),obj.meanLines(k)] = obj.newMean(ax,col(k,:));
                     end
                     obj.addOverlayLegend(G.labels);
                     xlabel(obj.axMean(1),'Time (ms)');
             end
+            obj.attachContextMenu(obj.axMean);
+            obj.attachContextMenu(obj.meanLines);
+            obj.attachContextMenu(obj.bandPatches);
             obj.LayoutKey = mabr.ui.LivePlot.layoutKey(G);
+        end
+
+        function [band,ln] = newMean(obj,ax,c)
+            % One condition's band and mean trace, in that order: the patch is
+            % created FIRST so the line it belongs to draws over it rather
+            % than under its own shading. 'PickableParts' none keeps the band
+            % out of the way of a right-click, which belongs to the axes.
+            band = patch('Parent',ax,'XData',nan(3,1),'YData',nan(3,1), ...
+                'FaceColor',c,'FaceAlpha',obj.BandAlpha,'EdgeColor','none', ...
+                'PickableParts','none');
+            ln   = line(ax,nan,nan,'Color',c,'LineWidth',1.5);
         end
 
         function ax = newTile(obj,p,pos,bottom,left,zeroLine)
@@ -506,6 +576,82 @@ classdef LivePlot < handle
             end
         end
 
+        % --- Right-click menu ------------------------------------------------
+        function buildContextMenu(obj)
+            % One context menu for the whole plot region: right-click the
+            % means (or the panel behind them) to choose an error band.
+            %
+            % A menu rather than another control in the strip, because the
+            % strip is already full at the window's minimum width, and because
+            % the band is a question you ask OF the traces you are looking at
+            % -- which is exactly what a right-click on them is for.
+            f = ancestor(obj.PlotPanel,'figure');
+            if isempty(f), return; end
+            obj.ContextMenu = uicontextmenu(f);
+            parent = uimenu(obj.ContextMenu,'Label','Error band');
+
+            % A flat radio list, deliberately: one click reaches any of the
+            % six answers, where a Statistic > Level nesting would cost two
+            % for the confidence intervals and buy nothing.
+            nCI = numel(obj.CILevels);
+            obj.BandModes = [{'none','std','sem'} repmat({'ci'},1,nCI)];
+            obj.BandConfs = [NaN NaN NaN obj.CILevels];
+            labels = [{'None','± 1 SD','± 1 SEM'} ...
+                arrayfun(@(c) sprintf('%g%% confidence',100*c),obj.CILevels, ...
+                         'UniformOutput',false)];
+            sep = false(1,numel(labels));
+            sep(min(2,end)) = true;      % None | the two descriptive bands
+            sep(min(4,end)) = true;      % ... | the confidence intervals
+
+            obj.BandItems = gobjects(1,numel(labels));
+            for i = 1:numel(labels)
+                % 'Label'/'Callback' rather than 'Text'/'MenuSelectedFcn', the
+                % same pair mabr.ui.TraceOrganizer uses: both work everywhere.
+                obj.BandItems(i) = uimenu(parent,'Label',labels{i}, ...
+                    'Callback',@(~,~) obj.onBandMenu(i));
+                if sep(i), obj.BandItems(i).Separator = 'on'; end
+            end
+
+            obj.attachContextMenu(obj.PlotPanel);
+            obj.syncBandMenu();
+        end
+
+        function attachContextMenu(obj,h)
+            % ContextMenu is R2020a+; UIContextMenu is what came before it.
+            % The same two-release dance mabr.ui.TraceOrganizer does.
+            if isempty(obj.ContextMenu) || ~isgraphics(obj.ContextMenu), return; end
+            for k = 1:numel(h)
+                if ~isgraphics(h(k)), continue; end
+                try
+                    h(k).ContextMenu = obj.ContextMenu;
+                catch
+                    set(h(k),'UIContextMenu',obj.ContextMenu);
+                end
+            end
+        end
+
+        function onBandMenu(obj,i)
+            % Level first, then the statistic: the mode is what puts a band on
+            % screen, so setting it last means the band is never briefly drawn
+            % at the level the user just moved away from.
+            if ~isnan(obj.BandConfs(i)), obj.ConfidenceLevel = obj.BandConfs(i); end
+            obj.ErrorBand = obj.BandModes{i};
+        end
+
+        function syncBandMenu(obj)
+            % Tick the entry the view is actually showing. A ConfidenceLevel
+            % only a script could have set (0.9973, say) matches no entry and
+            % leaves them all unticked -- the axis label still names it.
+            for i = 1:numel(obj.BandItems)
+                if ~isgraphics(obj.BandItems(i)), continue; end
+                on = strcmp(obj.ErrorBand,obj.BandModes{i});
+                if on && ~isnan(obj.BandConfs(i))
+                    on = abs(obj.ConfidenceLevel - obj.BandConfs(i)) < 1e-9;
+                end
+                obj.BandItems(i).Checked = onOff(on);
+            end
+        end
+
         % --- Control strip ---------------------------------------------------
         function buildControls(obj)
             p = obj.CtrlPanel;
@@ -515,7 +661,8 @@ classdef LivePlot < handle
                 {'Overlaid','Separate','Grid','Stacked'},x,88, ...
                 @() obj.onLayoutControl(), ...
                 ['One axes for every stimulus mean, one axes each, a grid ' ...
-                 'arranged by stimulus parameter, or one offset stack per group.']);
+                 'arranged by stimulus parameter, or one offset stack per ' ...
+                 'group.  Right-click the means for an error band.']);
 
             x = x + 10;
             [~,x] = obj.addText(p,'Group:',x,40);
@@ -667,6 +814,7 @@ classdef LivePlot < handle
             % the cached sweeps, so a control does something even between runs.
             if ~obj.isvalidView(), return; end
             obj.syncControls();
+            obj.syncBandMenu();
             if ~isempty(obj.Last), obj.render(); end
         end
 
@@ -683,9 +831,12 @@ classdef LivePlot < handle
             end
             obj.syncGroupControl(G.paramChoices);
 
-            [M,counts,rejected] = obj.stimulusMeans(S,G);
+            D      = obj.stimulusMeans(S,G);
             latest = S.Y(end,:);
-            scale  = obj.pickScale(max([abs(M(:)); abs(latest(:)); 0]));
+            % D.A is what the mean axes have to fit -- the traces plus any
+            % band that speaks for them -- so switching a SEM or CI band on
+            % frames it instead of clipping it.
+            scale  = obj.pickScale(max([D.A(:); abs(latest(:)); 0]));
 
             % --- latest sweep ------------------------------------------------
             set(obj.latestLine,'XData',S.t,'YData',latest*scale.mult);
@@ -700,14 +851,14 @@ classdef LivePlot < handle
             % Interpreter 'none' wherever a stimulus ID can appear: an ID like
             % 8kHz_30dB is not TeX, and the default interpreter renders the
             % underscore as a subscript.
-            title(obj.axLatest,obj.latestTitle(S,G,counts),'Interpreter','none');
+            title(obj.axLatest,obj.latestTitle(S,G,D.counts),'Interpreter','none');
             obj.showArtifacts(nnz(S.bad),numel(S.bad));
 
             % --- per-stimulus means ------------------------------------------
             if strcmp(G.mode,'stacked')
-                obj.renderStacked(S,G,M,counts,rejected,scale);
+                obj.renderStacked(S,G,D,scale);
             else
-                obj.renderPanels(S,G,M,counts,rejected,scale);
+                obj.renderPanels(S,G,D,scale);
             end
 
             if ~isempty(S.R) && isscalar(S.R) && ~isnan(S.R)
@@ -716,12 +867,13 @@ classdef LivePlot < handle
             drawnow limitrate
         end
 
-        function renderPanels(obj,S,G,M,counts,rejected,scale)
+        function renderPanels(obj,S,G,D,scale)
             % Overlay / Separate / Grid: one line per stimulus on its own axes
             % or on the shared one. Only the titling differs between them.
-            yl = obj.meanLimits(M,scale);
+            yl = obj.meanLimits(D.A,scale);
             for k = 1:numel(obj.meanLines)
-                set(obj.meanLines(k),'XData',S.t,'YData',M(k,:)*scale.mult);
+                set(obj.meanLines(k),'XData',S.t,'YData',D.M(k,:)*scale.mult);
+                obj.setBand(obj.bandPatches(k),S.t,D.M(k,:),D.E(k,:),scale.mult,0);
             end
             for a = 1:numel(obj.axMean)
                 obj.setLimits(obj.axMean(a),S.t,yl(min(a,numel(yl))));
@@ -741,7 +893,7 @@ classdef LivePlot < handle
                     else
                         obj.axMean(k).YTickLabel = [];
                     end
-                    nEff = counts(k) - rejected(k);
+                    nEff = D.counts(k) - D.rejected(k);
                     if strcmp(G.mode,'grid')
                         txt = sprintf('%s  (n=%d)',G.shortLabels{k},nEff);
                         gl  = G.groupLabels{G.group(k)};
@@ -753,18 +905,61 @@ classdef LivePlot < handle
                             'FontSize',8,'FontWeight','normal','Interpreter','none');
                     end
                 end
-                ylabel(obj.axMean(1),sprintf('Mean (%s)',scale.unit));
+                ylabel(obj.axMean(1),obj.meanYLabel(scale));
             else
-                ylabel(obj.axMean(1),sprintf('Mean (%s)',scale.unit));
-                title(obj.axMean(1),obj.overlayTitle(G,counts,rejected),'Interpreter','none');
+                ylabel(obj.axMean(1),obj.meanYLabel(scale));
+                title(obj.axMean(1),obj.overlayTitle(G,D.counts,D.rejected), ...
+                    'Interpreter','none');
             end
         end
 
-        function renderStacked(obj,S,G,M,counts,rejected,scale)
+        function setBand(~,h,t,m,e,mult,offset)
+            % One condition's band as a closed polygon: the lower edge left to
+            % right, the upper edge back again. All three statistics are
+            % symmetric about the mean, so one half-width draws both edges.
+            %
+            % A band with any non-finite edge is blanked outright rather than
+            % drawn with a gap: a patch is one face, and a NaN vertex in the
+            % middle of it does not mean "no data here", it means the polygon
+            % is undefined. e is all-NaN exactly when there is no band to draw
+            % (band off, or fewer than two clean sweeps), so this is
+            % all-or-nothing by construction.
+            if isempty(h) || ~isgraphics(h), return; end
+            lo = (m - e)*mult + offset;
+            hi = (m + e)*mult + offset;
+            if ~all(isfinite(lo)) || ~all(isfinite(hi))
+                set(h,'XData',nan(3,1),'YData',nan(3,1));
+                return
+            end
+            t = t(:);
+            set(h,'XData',[t; flipud(t)],'YData',[lo(:); flipud(hi(:))]);
+        end
+
+        function s = meanYLabel(obj,scale)
+            % The mean axes' y label doubles as the statement of what the band
+            % is: it is written once per layout, in the place the reader is
+            % already looking to find out what the numbers mean.
+            b = obj.bandLabel();
+            if isempty(b), s = sprintf('Mean (%s)',scale.unit);
+            else,          s = sprintf('Mean %s (%s)',b,scale.unit);
+            end
+        end
+
+        function s = bandLabel(obj)
+            switch obj.ErrorBand
+                case 'std', s = '± 1 SD';
+                case 'sem', s = '± 1 SEM';
+                case 'ci',  s = sprintf('± %g%% CI',100*obj.ConfidenceLevel);
+                otherwise,  s = '';
+            end
+        end
+
+        function renderStacked(obj,S,G,D,scale)
             % One axes per group, its conditions offset into a stack and named
             % on the y axis -- the y ticks ARE the labels, so a series needs no
             % legend and no per-trace annotation to read.
-            Md = M*scale.mult;
+            Md = D.M*scale.mult;
+            Ad = D.A*scale.mult;      % mean + band: what has to clear the gap
             for g = 1:numel(obj.axMean)
                 ax  = obj.axMean(g);
                 sel = find(G.group == g);
@@ -773,15 +968,17 @@ classdef LivePlot < handle
                 end
                 [~,ord] = sort(G.within(sel));
                 sel  = sel(ord);
-                step = obj.stackStep(Md,G,g,scale.mult);
+                step = obj.stackStep(Ad,G,g,scale.mult);
                 offs = (0:numel(sel)-1)*step;
 
                 lbl = cell(1,numel(sel));
                 for j = 1:numel(sel)
                     k = sel(j);
                     set(obj.meanLines(k),'XData',S.t,'YData',Md(k,:)+offs(j));
+                    obj.setBand(obj.bandPatches(k),S.t,D.M(k,:),D.E(k,:), ...
+                        scale.mult,offs(j));
                     lbl{j} = sprintf('%s (%d)',G.shortLabels{k}, ...
-                        counts(k)-rejected(k));
+                        D.counts(k)-D.rejected(k));
                 end
 
                 obj.setXLim(ax,S.t);
@@ -791,69 +988,106 @@ classdef LivePlot < handle
                 ax.FontSize   = 8;
                 head = G.groupLabels{g};
                 if isempty(head), head = 'Means'; end
-                title(ax,sprintf('%s   (step %.3g %s)',head,step,scale.plain), ...
+                % No y label here -- the y axis carries the condition names --
+                % so the band is named in the same parenthetical as the step.
+                tail = obj.bandLabel();
+                if ~isempty(tail), tail = [', ' tail]; end
+                title(ax,sprintf('%s   (step %.3g %s%s)',head,step,scale.plain,tail), ...
                     'FontSize',8,'FontWeight','normal','Interpreter','none');
             end
         end
 
-        function step = stackStep(obj,Md,G,g,mult)
+        function step = stackStep(obj,Ad,G,g,mult)
             % The vertical offset between the traces of one stack, in DISPLAY
-            % units. AmpMode decides what it is measured against, exactly as it
-            % decides an axis limit elsewhere: the group's own largest response
-            % ('each'), the largest anywhere ('common'), or the fixed limit.
-            % 2.2x it, so neighbouring traces have somewhere to go before they
-            % collide and the stack stops being readable.
+            % units, measured against the mean PLUS its band (Ad) so that
+            % switching a band on widens the stack instead of overlapping it.
+            % AmpMode decides the scope, exactly as it decides an axis limit
+            % elsewhere: the group's own largest response ('each'), the largest
+            % anywhere ('common'), or the fixed limit. 2.2x it, so neighbouring
+            % traces have somewhere to go before they collide.
             switch obj.AmpMode
                 case 'manual'
                     step = 2.2*obj.ManualLimit*mult;
                 case 'each'
-                    step = 2.2*max(abs(Md(G.group == g,:)),[],'all');
+                    step = 2.2*max(Ad(G.group == g,:),[],'all');
                 otherwise
-                    step = 2.2*max(abs(Md),[],'all');
+                    step = 2.2*max(Ad,[],'all');
             end
             % Nothing averaged yet (every mean still NaN), or a dead channel:
             % any positive step will do -- the labels still have to sit apart.
             if isempty(step) || ~isfinite(step) || step <= 0, step = 1; end
         end
 
-        function [M,counts,rejected] = stimulusMeans(obj,S,G)
+        function D = stimulusMeans(obj,S,G)
             % One running mean per stimulus, over the sweeps that survived the
-            % artifact preview -- the average the block will actually hold.
+            % artifact preview -- the average the block will actually hold --
+            % together with the error band around it and the sweep counts
+            % behind both. Returned as one bundle because every consumer wants
+            % the same four things and they must describe the same sweeps.
+            %
+            %   .M  [n x nSamples] the means            .counts   sweeps seen
+            %   .E  [n x nSamples] band half-widths     .rejected of those, bad
+            %   .A  what the axes have to fit, and what a stack has to clear:
+            %       abs(M), plus the band where the band is a statement about
+            %       the MEAN (see below)
             n = numel(obj.meanLines);
-            M = nan(n,numel(S.t));
-            counts = zeros(1,n); rejected = zeros(1,n);
+            D = struct('M',nan(n,numel(S.t)),'E',nan(n,numel(S.t)), ...
+                       'A',nan(n,numel(S.t)), ...
+                       'counts',zeros(1,n),'rejected',zeros(1,n));
+            wantBand = ~strcmp(obj.ErrorBand,'none');
             for k = 1:n
                 if k <= numel(G.stimList), sel = S.stimIdx == G.stimList(k);
                 else,                      sel = true(size(S.stimIdx));
                 end
-                counts(k)   = nnz(sel);
-                rejected(k) = nnz(sel & S.bad);
+                D.counts(k)   = nnz(sel);
+                D.rejected(k) = nnz(sel & S.bad);
                 good = sel & ~S.bad;
                 % Every sweep of this condition rejected so far: there is no
                 % mean to show, and a flat line at zero would be a lie.
-                if any(good)
-                    M(k,:) = mabr.ui.LivePlot.postprocess( ...
-                        mean(S.Y(good,:),1),S.t,S.opts);
-                end
+                if ~any(good), continue; end
+                D.M(k,:) = mabr.ui.LivePlot.postprocess( ...
+                    mean(S.Y(good,:),1),S.t,S.opts);
+                if ~wantBand, continue; end
+                e = mabr.metrics.error_band(S.Y(good,:), ...
+                    obj.ErrorBand,obj.ConfidenceLevel);
+                % Smoothed with the mean it is drawn around, so the two follow
+                % the same curve. NOT detrended: a detrend moves a mean, it
+                % does not change a spread.
+                if S.opts.SmoothSpan > 0, e = movmean(e,S.opts.SmoothSpan); end
+                D.E(k,:) = e;
+            end
+            D.A = abs(D.M);
+            % A band that describes the MEAN -- its standard error, or a
+            % confidence interval for it -- is part of the thing being drawn
+            % and has to be framed. An SD band is not: it describes a single
+            % SWEEP, which on an ABR is tens of times the average, so folding
+            % it into the scale would squash every mean to a flat line. It is
+            % drawn and left to run off the axes, which is exactly the
+            % statement it was switched on to make.
+            if any(strcmp(obj.ErrorBand,{'sem','ci'}))
+                ok = isfinite(D.E);
+                D.A(ok) = D.A(ok) + D.E(ok);
             end
         end
 
-        function yl = meanLimits(obj,M,scale)
-            % One limit per mean axes, in display units. Overlaid means share
-            % an axes and so cannot be scaled individually -- 'each' collapses
-            % to 'common' there rather than silently picking one stimulus.
-            n = size(M,1);
+        function yl = meanLimits(obj,A,scale)
+            % One limit per mean axes, in display units, from A -- the mean
+            % plus its band, so a band is framed rather than clipped. Overlaid
+            % means share an axes and so cannot be scaled individually --
+            % 'each' collapses to 'common' there rather than silently picking
+            % one stimulus.
+            n = size(A,1);
             switch obj.AmpMode
                 case 'manual'
                     yl = repmat(obj.ManualLimit*scale.mult,1,n);
                 case 'each'
                     if numel(obj.axMean) > 1
-                        yl = max(abs(M),[],2).'*scale.mult;
+                        yl = max(A,[],2).'*scale.mult;
                     else
-                        yl = repmat(max(abs(M(:)))*scale.mult,1,n);
+                        yl = repmat(max(A(:))*scale.mult,1,n);
                     end
                 otherwise
-                    yl = repmat(max(abs(M(:)))*scale.mult,1,n);
+                    yl = repmat(max(A(:))*scale.mult,1,n);
             end
             yl(~isfinite(yl) | yl == 0) = 1;
         end
@@ -880,8 +1114,8 @@ classdef LivePlot < handle
             % "Manual" seeds itself from.
             lim = 0;
             if isempty(obj.Last), return; end
-            M   = obj.stimulusMeans(obj.Last,obj.resolveGrouping(obj.Last));
-            lim = max(abs(M(:)));
+            D   = obj.stimulusMeans(obj.Last,obj.resolveGrouping(obj.Last));
+            lim = max(D.A(:));
             if ~isfinite(lim) || lim == 0, lim = obj.ManualLimit; end
         end
 
