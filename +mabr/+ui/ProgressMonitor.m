@@ -7,9 +7,15 @@ classdef ProgressMonitor < handle
 %   done, and which conditions are still short. This window answers only that,
 %   in one of three views:
 %
-%     'simple'   two bars -- the whole session, and the run streaming now.
-%                What to leave on a second monitor when the answer wanted is
-%                "how long until I can go home".
+%     'simple'   NO plot at all -- the lamp, the three header labels beside
+%                it, and the control strip. That header already says how far
+%                along the session is, what the rig is doing, and how much
+%                longer, which is the whole of what the question needs; a
+%                bar underneath it was a second drawing of the same number.
+%                The window sizes itself DOWN to those two strips, so this is
+%                what to leave in a corner or on a second monitor when the
+%                answer wanted is "how long until I can go home". Asking for
+%                either plot view grows the window back to make room for it.
 %     'bars'     one bar per stimulus, or per value of any one stimulus
 %                parameter (GroupBy). A 5-level x 4-frequency bank is 20 bars
 %                by stimulus, 5 by Level, 4 by Frequency -- the same progress,
@@ -107,6 +113,12 @@ classdef ProgressMonitor < handle
         MaxLabelled = 40;
         % Beyond this many heat-map cells the overlay stops fitting inside one.
         MaxCells    = 400;
+        % The window with no plot in it: 8 padding + 56 header + 6 spacing +
+        % 1 collapsed plot row + 6 spacing + 66 control strip + 8 padding.
+        % Stated rather than measured because uigridlayout offers no way to
+        % ask what a 'fit' would come to before it is laid out.
+        CompactHeight     = 152;
+        DefaultPlotHeight = 500;
     end
 
     properties
@@ -168,15 +180,21 @@ classdef ProgressMonitor < handle
         Frozen     (1,1) double = NaN
         Listeners
         Building   (1,1) logical = false
+        PlotShown  (1,1) logical = true    % is the plot row currently open
+        PlotHeight (1,1) double = 500      % height the plot views were left at
     end
 
     methods
         function obj = ProgressMonitor(parent)
+            obj.restorePlotHeight();
             if nargin >= 1 && ~isempty(parent) && isgraphics(parent)
                 obj.Container = parent;
             else
+                % Opens at whatever the DEFAULT view needs, which is the
+                % compact one -- a window that opened tall and immediately
+                % shrank would read as a glitch.
                 obj.Figure = uifigure('Name',obj.Title,'Tag','MABR_PROGRESS', ...
-                    'Position',[100 100 560 540],'Color',obj.PanelColor);
+                    'Position',[100 100 560 obj.CompactHeight],'Color',obj.PanelColor);
                 obj.Container = obj.Figure;
             end
             obj.Building = true;
@@ -189,11 +207,39 @@ classdef ProgressMonitor < handle
 
         function delete(obj)
             obj.stopListening();
+            obj.rememberPlotHeight();
             if ~isempty(obj.Figure) && isgraphics(obj.Figure), delete(obj.Figure); end
         end
 
         function tf = isvalidView(obj)
             tf = ~isempty(obj.Axes) && isgraphics(obj.Axes);
+        end
+
+        function tf = hasPlot(obj)
+            % Whether this window currently draws anything at all -- false in
+            % the 'simple' view, where the header IS the report.
+            tf = ~strcmp(obj.View,'simple');
+        end
+
+        function fitToView(obj)
+            % Size the window to the view it is showing: down to the two
+            % strips with no plot, back up to whatever height the plot views
+            % were last left at.
+            %
+            % Only the HEIGHT moves. The width means the same thing in both
+            % forms and is the user's to choose, and the TOP edge is held so
+            % the window grows and shrinks downwards rather than jumping out
+            % from under the pointer that just changed the view. Public
+            % because a host that places this window itself (mabr.ui.App
+            % restores a remembered position) has to be able to hand the size
+            % back afterwards -- the spot is the user's, the height is the
+            % view's.
+            if isempty(obj.Figure) || ~isgraphics(obj.Figure), return; end
+            if obj.hasPlot(), h = obj.PlotHeight; else, h = obj.CompactHeight; end
+            p = obj.Figure.Position;
+            if abs(p(4) - h) < 1, return; end
+            top = p(2) + p(4);
+            obj.Figure.Position = mabr.ui.WindowPos.clampToScreen([p(1) top-h p(3) h]);
         end
 
         % --- What to watch ---------------------------------------------------
@@ -356,6 +402,57 @@ classdef ProgressMonitor < handle
             obj.buildHeader(g);
             obj.buildPlot(g);
             obj.buildControls(g);
+            obj.applyViewLayout(true);
+        end
+
+        function applyViewLayout(obj,force)
+            % Open or collapse the plot row to match the view, and resize the
+            % window to suit. The axes and its panel are COLLAPSED rather than
+            % destroyed -- asking for a plot view is then a row height and a
+            % Visible, not a rebuild, and the embedded form (which has no
+            % window to resize) gets the same behaviour from the same code.
+            if nargin < 2, force = false; end
+            if isempty(obj.Root) || ~isgraphics(obj.Root), return; end
+            want = obj.hasPlot();
+            if ~force && want == obj.PlotShown, return; end
+            % Leaving a plot view is the moment to note how tall the user had
+            % made it; coming back is the moment to give that height back.
+            if obj.PlotShown && ~want, obj.rememberPlotHeight(); end
+
+            obj.PlotPanel.Visible = matlab.lang.OnOffSwitchState(want);
+            rh = obj.Root.RowHeight;
+            % 1 pixel rather than 0: a collapsed row still has to be a valid
+            % height, and one pixel of paper is invisible between two panels
+            % of the same colour.
+            if want, rh{2} = '1x'; else, rh{2} = 1; end
+            obj.Root.RowHeight = rh;
+            obj.PlotShown = want;
+            obj.fitToView();
+        end
+
+        function rememberPlotHeight(obj)
+            % Per rig, like the always-on-top pref: an operator who made the
+            % heat map big wants it that big tomorrow too.
+            if isempty(obj.Figure) || ~isgraphics(obj.Figure), return; end
+            if ~obj.PlotShown, return; end
+            h = obj.Figure.Position(4);
+            % A window still at (or below) compact height has no plot height
+            % worth keeping -- storing one would fix the plot views at a size
+            % that cannot show a plot.
+            if h < obj.CompactHeight + 60, return; end
+            obj.PlotHeight = h;
+            try, setpref('MABR','ProgressPlotHeight',h); end %#ok<TRYNC>
+        end
+
+        function restorePlotHeight(obj)
+            obj.PlotHeight = obj.DefaultPlotHeight;
+            try
+                h = getpref('MABR','ProgressPlotHeight',obj.DefaultPlotHeight);
+                if isnumeric(h) && isscalar(h) && isfinite(h) && h >= obj.CompactHeight + 60
+                    obj.PlotHeight = double(h);
+                end
+            catch
+            end
         end
 
         function buildHeader(obj,g)
@@ -472,6 +569,7 @@ classdef ProgressMonitor < handle
 
         function settingChanged(obj)
             if obj.Building || ~obj.isvalidView(), return; end
+            obj.applyViewLayout();
             obj.syncControls();
             obj.refresh(true);
         end
@@ -842,33 +940,25 @@ classdef ProgressMonitor < handle
         end
 
         function drawBody(obj,done,target,active,sch)
+            if ~obj.hasPlot()
+                % The header carries the whole report in this view and the
+                % axes is collapsed to a pixel, so anything drawn here would
+                % be work nobody can see. Clear it once so a view switched
+                % away from cannot leave stale patches behind, then leave it.
+                if ~strcmp(obj.LayoutKey,'none')
+                    obj.clearAxes();
+                    obj.LayoutKey = 'none';
+                end
+                return
+            end
             if isempty(done) || isempty(sch)
                 obj.showMessage('No schedule to report on yet.');
                 return
             end
             switch obj.View
-                case 'simple',  obj.drawSimple(done,target,sch);
                 case 'bars',    obj.drawBars(done,target,active);
                 case 'heatmap', obj.drawHeat(done,target);
             end
-        end
-
-        function drawSimple(obj,done,target,sch)
-            % Two bars: the whole plan, and the run streaming now.
-            runDone = 0; runTarget = 0;
-            r = sch.current();
-            if r >= 1 && r <= sch.NumRuns
-                runTarget = numel(sch.runSequence(r));
-                if obj.inRun()
-                    runDone = min(obj.LiveSweeps,runTarget);
-                elseif obj.StateNow == mabr.ui.ProgState.BlockComplete
-                    runDone = runTarget;
-                end
-            end
-            d = [sum(done) runDone];
-            t = [sum(target) runTarget];
-            a = [false obj.inRun()];
-            obj.paintBars({'Session','This run'},d,t,a,'',14,'simple');
         end
 
         function drawBars(obj,done,target,active)

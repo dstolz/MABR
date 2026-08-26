@@ -5,7 +5,8 @@ function verify_progress_monitor()
 %   audio hardware, no acquisition engine and no parallel pool, and checks:
 %       1. the tally -- planned presentations per stimulus, and what a
 %          recorded run credits;
-%       2. the simple view: one bar for the session, one for the current run;
+%       2. the simple view: NO plot at all, and a window sized down to suit --
+%          and grown back when a plot view is asked for;
 %       3. counts / percent / none, on the bars and in the header;
 %       4. bars grouped by stimulus and by a stimulus parameter, aggregating
 %          the right entries into the right bar;
@@ -25,12 +26,17 @@ function verify_progress_monitor()
 
 fprintf('== verify_progress_monitor ==\n');
 
-% The window persists an always-on-top preference; a verification run must not
-% leave the rig's own setting changed.
-hadPref = ispref('MABR','ProgressOnTop');
-oldPref = false;   % defined either way: an anonymous function captures it now
-if hadPref, oldPref = getpref('MABR','ProgressOnTop'); end
-restorePref = onCleanup(@() restore_pref(hadPref,oldPref));
+% The window persists an always-on-top preference and the height its plot
+% views were last left at; a verification run must not leave the rig's own
+% settings changed.
+prefNames = {'ProgressOnTop','ProgressPlotHeight'};
+hadPref = false(1,numel(prefNames));
+oldPref = cell(1,numel(prefNames));   % defined either way: a closure captures them now
+for iP = 1:numel(prefNames)
+    hadPref(iP) = ispref('MABR',prefNames{iP});
+    if hadPref(iP), oldPref{iP} = getpref('MABR',prefNames{iP}); end
+end
+restorePref = onCleanup(@() restore_prefs(prefNames,hadPref,oldPref));
 
 cfg  = mabr.Config;
 % 3 frequencies x 2 levels = 6 entries, in that order:
@@ -61,33 +67,47 @@ assert(isequal(pm.Counts,[10 0 0 0 0 0]), ...
     'a recorded run did not reach the tally: %s',mat2str(pm.Counts));
 fprintf('  PASS: planned and recorded presentations tallied per stimulus\n');
 
-% --- 2/3. simple view, and what the numbers read as ---------------------
-pm.View = 'simple';
-f = bar_fracs(pm);
-assert(numel(f) == 2,'the simple view should be two bars, got %d',numel(f));
-assert(abs(f(1) - 10/sum(reps)) < 1e-9, ...
-    'the session bar is at %g, expected %g',f(1),10/sum(reps));
-assert(f(2) == 0,'nothing is streaming, so the run bar should be empty');
+% --- 2/3. simple view: no plot, a small window, and the header numbers ---
+% The default view, so this is also what the window opened as.
+assert(strcmp(pm.View,'simple'),'the monitor should open in the simple view');
+assert(~pm.hasPlot(),'the simple view should draw no plot');
+assert(isempty(pm.TrackPatch) && isempty(pm.FillPatch) && isempty(pm.ValueText), ...
+    'the simple view left bars on the axes');
+compactH = pm.Figure.Position(4);
+assert(compactH < 220, ...
+    'the plotless window is %g px tall -- it should be sized to its two strips',compactH);
 
-txt = {pm.ValueText.String};
-assert(strcmp(txt{1},sprintf('%d/%d',10,sum(reps))), ...
-    'the session bar reads "%s"',txt{1});
+% Everything this view reports is in the header.
 pct = pm.headerText();
 assert(strcmp(pct,sprintf('%d / %d',10,sum(reps))), ...
     'the header reads "%s" under Counts',pct);
-
 pm.Labels = 'percent';
-txt = {pm.ValueText.String};
-assert(strcmp(txt{1},sprintf('%.0f%%',100*10/sum(reps))), ...
-    'the session bar reads "%s" under Percent',txt{1});
 pct = pm.headerText();
 assert(strcmp(pct,sprintf('%.0f%%',100*10/sum(reps))), ...
     'the header reads "%s" under Percent',pct);
-
-pm.Labels = 'none';
-assert(all_hidden(pm.ValueText),'None left the bar values on screen');
 pm.Labels = 'counts';
-fprintf('  PASS: simple view, and counts / percent / none on bars and header\n');
+
+% Asking for a plot grows the window; going without one shrinks it again. The
+% width means the same thing either way, so it is left alone, and the top edge
+% is held so the window does not jump out from under the pointer.
+% Somewhere with room below it: growing a window that would otherwise hang off
+% the bottom of the screen legitimately moves its top edge, and that clamping
+% is not what this check is about.
+pm.Figure.Position(2) = 420;
+w0   = pm.Figure.Position(3);
+top0 = sum(pm.Figure.Position([2 4]));
+pm.View = 'bars';
+assert(pm.hasPlot(),'the bars view should draw a plot');
+plotH = pm.Figure.Position(4);
+assert(plotH > compactH + 100, ...
+    'asking for a plot left the window at %g px -- it should have grown',plotH);
+assert(pm.Figure.Position(3) == w0,'switching views changed the window width');
+assert(abs(sum(pm.Figure.Position([2 4])) - top0) < 1, ...
+    'the window did not keep its top edge across the resize');
+pm.View = 'simple';
+assert(abs(pm.Figure.Position(4) - compactH) < 1, ...
+    'going back to the plotless view left the window %g px tall',pm.Figure.Position(4));
+fprintf('  PASS: simple view is plotless and compact; a plot view grows the window\n');
 
 % --- 4. bars, by stimulus and by parameter ------------------------------
 pm.View    = 'bars';
@@ -108,6 +128,14 @@ lab = strtrim(string(pm.Axes.YTickLabel));
 assert(isequal(lab(:)',["30" "60"]),'the Level bars are labelled %s',join(lab,','));
 txt = {pm.ValueText.String};
 assert(strcmp(txt{1},'10/90'),'the Level 30 bar reads "%s"',txt{1});
+
+pm.Labels = 'percent';
+txt = {pm.ValueText.String};
+assert(strcmp(txt{1},sprintf('%.0f%%',100*10/90)), ...
+    'the Level 30 bar reads "%s" under Percent',txt{1});
+pm.Labels = 'none';
+assert(all_hidden(pm.ValueText),'None left the bar values on screen');
+pm.Labels = 'counts';
 
 pm.GroupBy = 'Frequency';
 f = bar_fracs(pm);
@@ -300,10 +328,12 @@ s = struct('signal',{w,w,w}, ...
            'Level',{30,60,30});
 end
 
-function restore_pref(had,value)
-if had
-    setpref('MABR','ProgressOnTop',value);
-elseif ispref('MABR','ProgressOnTop')
-    rmpref('MABR','ProgressOnTop');
+function restore_prefs(names,had,values)
+for k = 1:numel(names)
+    if had(k)
+        setpref('MABR',names{k},values{k});
+    elseif ispref('MABR',names{k})
+        rmpref('MABR',names{k});
+    end
 end
 end

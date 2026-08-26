@@ -2429,7 +2429,13 @@ classdef App < handle
                 app.ProgressMon = mabr.ui.ProgressMonitor();
                 f = app.ProgressMon.Figure;
                 mabr.ui.WindowPos.restore(f,'ProgressMonitor', ...
-                    app.defaultViewerPos('ProgressMonitor'),[420 380]);
+                    app.defaultViewerPos('ProgressMonitor'),[420 0]);
+                % The remembered SPOT is the user's; the HEIGHT belongs to the
+                % view, which is why there is no minimum here and why the
+                % monitor is asked to size itself afterwards -- a remembered
+                % heat-map height would otherwise reopen the default (plotless)
+                % view as a tall window with nothing in the middle of it.
+                app.ProgressMon.fitToView();
                 f.CloseRequestFcn = @(~,~) app.closeProgress();
             end
             app.bindProgress();
@@ -2495,6 +2501,8 @@ classdef App < handle
                     % own the space to the right, and this one is small, opened
                     % on demand, and usually dragged somewhere deliberate (a
                     % second monitor, a corner) -- which is then remembered.
+                    % The height here is only a placeholder: fitToView sets it
+                    % from the view the window actually opens in.
                     pos = [a(1)+60, a(2)-60, 520, 500];
                 otherwise   % live plot, top-aligned with the main window
                     % Tall enough for the latest sweep AND the per-stimulus
