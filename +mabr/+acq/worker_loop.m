@@ -21,7 +21,15 @@ function worker_loop(rootPath,resultQueue,testing)
 %   Message shapes:
 %       client -> worker : struct('cmd',mabr.acq.Cmd,'data',payload)
 %           Prep payload  : struct with fields
-%                 PlayMatrix        [N x 2] single (col1 signal, col2 timing)
+%                 Plan              mabr.stim.PlayPlan -- the run's waveforms,
+%                                   onsets, stimulus indices and polarities.
+%                                   stream_block renders each frame from it
+%                                   (Plan.range) as the device is ready, so no
+%                                   whole play matrix ever crosses the queue
+%                                   or sits in either process's memory.
+%                 PlayMatrix        [N x 2] single (col1 signal, col2 timing),
+%                                   accepted in place of Plan for hand-built
+%                                   blocks (the timing self-test, the tests)
 %                 SampleRate        (Hz)
 %                 PlayerChannels    [1x2] device output channels  (default [1 2])
 %                 RecorderChannels  [1x2] device input channels   (default [1 2])
@@ -144,9 +152,9 @@ function [reason,nStreamed] = stream_block(cmdQueue,resultQueue,rb,apr,spec,cfg,
 % which is the whole matrix unless a Stop/Kill cut it short. Analogue of the
 % legacy acquire_block.m tight loop.
 
-fl = cfg.frameLength;
-X  = spec.PlayMatrix;          % [N x 2] single
-N  = size(X,1);
+fl  = cfg.frameLength;
+src = mabr.stim.PlayPlan.fromSpec(spec);   % frames on demand -- never a whole matrix
+N   = src.N;
 % Loopback pacing. With no device there is no sample clock to throttle the
 % loop, so without this the whole run streams as fast as the CPU can copy
 % frames and the requested ISI means nothing in wall-clock terms. The client
@@ -191,7 +199,7 @@ while i <= N
 
     % --- one frame --------------------------------------------------------
     hi    = min(i+fl-1,N);
-    frame = X(i:hi,:);
+    frame = src.range(i,hi);   % [n x 2] single: signal, timing
 
     if testing
         % Hardware-free loopback: DAC -> ADC with a trace of noise.

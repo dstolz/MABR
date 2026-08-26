@@ -4,6 +4,9 @@ function run_all_verifications()
 %   Runs, in order:
 %       verify_isi_jitter        - presentation timing: fixed grid vs uniformly
 %                                  randomized ISI, and what still reads it back
+%       verify_play_plan         - mabr.stim.PlayPlan: frames synthesized on
+%                                  demand are bit-identical to a whole-matrix
+%                                  render, and the worker streams from one
 %       verify_engine_loopback   - acquisition engine (ring buffer, Pause/Stop/Kill)
 %       verify_data_roundtrip    - .abr writer satisfies the offline pipeline
 %       verify_legacy_import     - legacy .abr import shim
@@ -65,7 +68,7 @@ function run_all_verifications()
 %
 % Daniel Stolzberg (c) 2026
 
-tests = {@verify_isi_jitter, ...
+tests = {@verify_isi_jitter, @verify_play_plan, ...
          @verify_engine_loopback, @verify_data_roundtrip, ...
          @verify_legacy_import,  @verify_online_advance, ...
          @verify_custom_advance, ...

@@ -70,8 +70,8 @@ classdef Schedule < handle
 %   ----------------
 %   When mabr.ArtifactPolicy.Repeat is set, the controller calls appendMakeup
 %   after finalizing a run to re-present whatever that run lost to artifact.
-%   Make-up runs are appended to the end of the plan (a run's play matrix is
-%   rendered before streaming starts and cannot grow mid-flight), hold one
+%   Make-up runs are appended to the end of the plan (a run's presentation
+%   plan is fixed before streaming starts and cannot grow mid-flight), hold one
 %   stimulus each, and are bounded by MakeupLimit. reset() drops them, so a
 %   re-started schedule always begins from the plan build() produced, and
 %   dropPendingMakeup() drops just the ones not yet reached — what the
@@ -319,8 +319,8 @@ classdef Schedule < handle
             %   mabr.ArtifactPolicy.Repeat is set.
             %
             %   The make-up goes at the END of the plan rather than extending
-            %   the run that lost the sweeps: a run's play matrix is rendered
-            %   in full before the worker starts streaming it and cannot grow
+            %   the run that lost the sweeps: a run's presentation plan is
+            %   fixed before the worker starts streaming it and cannot grow
             %   mid-flight. Appending also keeps every condition's first pass
             %   ahead of any second, so a session cut short still covers the
             %   whole design rather than over-sampling its early conditions.
@@ -486,40 +486,25 @@ classdef Schedule < handle
                     1e3*longest/Fs,what,1e3*minPeriod/Fs);
             end
 
-            samples = zeros(N,1,'single');
-            timing  = zeros(N,1,'single');
-            for k = 1:nPres
-                i  = seq(k);
-                w  = obj.Set.signal(i);
-                i0 = onsets(k);
-                i1 = i0 + numel(w) - 1;
-                % Overlapping presentations are summed rather than clipped; the
-                % GUI warns about this up front and the log line above records it.
-                samples(i0:i1) = samples(i0:i1) + pol(k).*w;
-
-                t = obj.Set.timing(i);
-                if isempty(t)
-                    timing(i0:i1) = 1;
-                else
-                    timing(i0:i1) = max(timing(i0:i1),t);
-                end
-            end
-
-            y = [samples timing];
-
-            % bracket with silence for device settling / response tail
-            if P > 0
-                y      = [zeros(P,2,'single'); y; zeros(P,2,'single')];
-                onsets = onsets + P;
-            end
-
-            % pad to an integer number of frames (to `total`, already checked
-            % against the ring-buffer capacity above)
-            rem_ = mod(size(y,1),fl);
-            if rem_ > 0, y = [y; zeros(fl-rem_,2,'single')]; end
+            % Nothing is allocated here. The run is described -- the stimuli
+            % it presents, where, and with what sign -- and the worker
+            % synthesizes each frame from that as the device is ready for it
+            % (mabr.stim.PlayPlan; overlapping presentations are summed there
+            % exactly as a whole-matrix render would, and the GUI warns about
+            % the overlap up front). So a run costs the client the size of
+            % its bank, not of its duration, and the Prep message the same.
+            %
+            % `total` already brackets the run in SilencePad (2P) and rounds it
+            % up to whole frames -- the padding the matrix used to carry.
+            onsets  = onsets + P;                 % silence bracket in front
+            present = unique(seq,'stable');
+            [~,loc] = ismember(seq,present);      % bank index -> plan index
+            signals = arrayfun(@(u) obj.Set.signal(u),present,'UniformOutput',false);
+            timings = arrayfun(@(u) obj.Set.timing(u),present,'UniformOutput',false);
+            plan    = mabr.stim.PlayPlan(signals,timings,onsets,loc(:),pol(:),total);
 
             spec = struct();
-            spec.PlayMatrix        = y;
+            spec.Plan              = plan;
             spec.SampleRate        = Fs;
             spec.ExpectedOnsets    = onsets;
             spec.StimulusIndex     = seq(:);      % which stimulus at each onset

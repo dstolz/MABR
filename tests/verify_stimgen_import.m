@@ -135,10 +135,11 @@ sch.Repetitions(:) = 4;
 sch.ISI = 0.05;
 sch.build();
 spec = sch.renderSpec(sch.current());
-assert(size(spec.PlayMatrix,2) == 2,'Play matrix is not 2-channel.');
+assert(isa(spec.Plan,'mabr.stim.PlayPlan'),'Rendered run carries no PlayPlan.');
+assert(size(spec.Plan.range(1,cfg.frameLength),2) == 2,'Play matrix is not 2-channel.');
 assert(~isempty(spec.ExpectedOnsets),'Rendered run has no onsets.');
 fprintf('  schedule renders: %s play matrix, %d onsets\n', ...
-    mat2str(size(spec.PlayMatrix)),numel(spec.ExpectedOnsets));
+    mat2str([spec.Plan.N 2]),numel(spec.ExpectedOnsets));
 
 % --- 6. .spl bank round-trip -----------------------------------------
 % Written in the shape stimgen.StimPlayer.save_bank produces, so the file

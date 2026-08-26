@@ -92,7 +92,8 @@ fprintf('  PASS Part C: %d intervals, %.2f..%.2f ms (mean %.2f), range %.2f..%.2
 % ---- Part D: the timing channel carries the jittered onsets ---------------
 % Sweep extraction reads onsets off the timing column and nothing else, so a
 % jittered run is legible to it only if the pulses moved with the stimuli.
-timing = rspec.PlayMatrix(:,2);
+play   = rspec.Plan.matrix();
+timing = play(:,2);
 found  = mabr.metrics.find_timing_onsets(timing,round(0.002*Fs),0.1);
 assert(isequal(found(:),rspec.ExpectedOnsets(:)), ...
     ['the timing channel must carry one pulse at each jittered onset ' ...
@@ -101,7 +102,7 @@ assert(isequal(found(:),rspec.ExpectedOnsets(:)), ...
 
 % And the stimulus really moved with the pulse rather than staying on the old
 % grid: each pip's full energy sits in the window starting at its own onset.
-sig  = rspec.PlayMatrix(:,1);
+sig  = play(:,1);
 nPip = numel(set.signal(1));
 pk   = arrayfun(@(o) max(abs(sig(o:o+nPip-1))),rspec.ExpectedOnsets);
 assert(all(pk > 0.5*max(abs(sig))), ...
