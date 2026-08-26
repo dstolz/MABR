@@ -1,6 +1,8 @@
 # Viewing Data
 
-MABR has two viewers: a live plot for the condition being recorded now, and the Trace Organizer for comparing finished conditions. Both open with the app and are laid out beside the main window; the trace-on-axes and stacked-traces toolbar buttons raise them, and where you leave them is remembered across sessions.
+MABR has two viewers for the data itself: a live plot for the condition being recorded now, and the Trace Organizer for comparing finished conditions. Both open with the app and are laid out beside the main window; the trace-on-axes and stacked-traces toolbar buttons raise them, and where you leave them is remembered across sessions.
+
+A third window, the **Progress Monitor**, reports on the *schedule* rather than the data: how much of the plan is done and which conditions are still short. It opens on demand from the toolbar (and by itself for a stimulation-only run, where nothing is recorded and it is the only window with anything in it).
 
 ## Live Plot
 
@@ -38,6 +40,22 @@ SEM and confidence bands are part of the amplitude scaling: turning one on frame
 **Correlation bar** — A single bar showing how reproducible the response currently is, on a 0–1 scale, with your threshold marked. It compares the split-half consistency of the response window against that of the pre-stimulus baseline, so it reflects genuine time-locked signal rather than sweeps merely looking alike. When the bar reaches the marked threshold, the correlation advance criterion fires and the condition ends.
 
 The plot refreshes about 20 times per second and resets at the start of each condition.
+
+## Progress Monitor
+
+Opens from the three-bars toolbar button. Small, cheap to leave open, and pinnable — **Always on top** keeps it above every other window, which is the point of it on a second monitor or in the corner of a busy screen. The setting is remembered per rig, along with where you leave the window.
+
+Across the top: how far along the whole schedule is, the state lamp and the run number, and elapsed time with an estimate of what is left. The estimate is measured from the rate the session is actually going at once there is enough of one to measure, and from the plan's own timing before that — either way it is an estimate, since a randomized ISI makes a duration an expectation and an advance criterion can end any run early.
+
+**View** picks what fills the rest of the window:
+
+- **Simple** — two bars: the whole session, and the run streaming right now. What to leave up when the question is "how long until I can go home".
+- **Bars** — one bar per stimulus, or, with **Group** set to a stimulus parameter, one bar per value of it. A 4-frequency × 5-level bank is 20 bars by stimulus, 4 by Frequency, 5 by Level — the same progress, asked three ways. A bar being presented right now is amber; a finished one turns green.
+- **Heat map** — the classic grid: one parameter across (frequency), one up (level), each cell shaded by how complete that condition is. This is the one view that shows a **hole** — a condition the bank does not contain, drawn empty rather than as a small number — which is how a design mistake becomes visible before the session ends rather than during analysis.
+
+**Show** decides what the numbers read as: **Counts** (`128/512`), **Percent**, or **None** — the shading alone, which is the right setting for a window read from across the rig.
+
+**What is being counted** is presentations, not files: a condition is complete when every sweep the plan asked for has been presented. Two consequences are worth knowing. Sweeps arriving during a run are counted as they arrive, so a bar moves continuously rather than jumping once per condition. And when artifact **Repeat** appends make-up runs, the plan gets *larger* — so overall progress steps back slightly at that moment. That is the truth: the work grew. In a stimulation-only run nothing is recorded, so the counts are presentations *played* (the header says so) and the bars step once per run.
 
 ## Trace Organizer
 
@@ -130,6 +148,33 @@ Overlaid means share an axes and therefore one scale, so `'each'` behaves as `'c
 [tests/verify_live_plot.m](../tests/verify_live_plot.m) covers all of this without hardware.
 
 Passing a container to the constructor embeds the plot rather than opening a figure, which is the hook for a docked or multi-panel UI.
+
+### ProgressMonitor
+
+[mabr.ui.ProgressMonitor](../+mabr/+ui/ProgressMonitor.m) owns a `uifigure` (or embeds in a container you pass) and follows either a controller or a bare plan:
+
+```matlab
+pm = mabr.ui.ProgressMonitor();     % or ProgressMonitor(parentContainer) to embed
+pm.listenTo(controller);            % follow an AcqController
+pm.attach(schedule,stimulusSet);    % or a plan with no controller behind it
+pm.View = 'heatmap';                % 'simple' | 'bars' | 'heatmap'
+```
+
+`listenTo` re-points rather than stacking listeners, so re-opening the window (or rebuilding the controller) cannot double-count anything. The controller's `Schedule` is read on every refresh rather than held, because `setStimuli` *replaces* it.
+
+The tally is deliberately computed from the plan rather than accumulated:
+
+| Half | Source |
+| --- | --- |
+| planned | every presentation in `Schedule.Runs`, summed per stimulus — so make-up and repeat runs enlarge it |
+| recorded | `Schedule.RunCounts`, written by the controller at finalization |
+| in flight | the current run's sweep count paired against `Schedule.runSequence`, the same pairing `finalize_run` de-interleaves by |
+
+Nothing is accumulated across events, so no missed or duplicated event can put the window out of step with the schedule — the worst a dropped repaint costs is a number that is briefly stale.
+
+**Cost.** The window runs no timer. It rides the controller's existing ~20 Hz `MetricsUpdated` tick, repaints at most every `MinInterval` seconds (0.2 by default), and then only when the tallies actually changed; state changes and finished blocks force a repaint regardless. Nothing is created per refresh — the bars are two patches whose vertices are rewritten, the heat map one image whose `CData` is, the labels a fixed array of text objects. Layout is rebuilt only when the view, the grouping, or the plan itself changes.
+
+The grouping dimensions come from `StimulusSet.meta` — the same `informativeParams` the offline pipeline groups by, so what the progress window calls a condition and what `batchABRAnalysis` calls one are the same thing.
 
 ### TraceOrganizer
 
