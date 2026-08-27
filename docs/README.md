@@ -25,7 +25,7 @@ Start here if you are extending, embedding, or debugging MABR.
 | [Architecture](Architecture.md) | How the pieces fit: engine, data model, GUI, boundaries |
 | [Acquisition Engine](Acquisition-Engine.md) | The parpool worker, ring buffer, command/state protocol |
 | [Compute Workers](Compute-Workers.md) | The pipeline, the DSP and metrics workers, the publish buffers, and how each degrades |
-| [Extending MABR](Extending.md) | Stimulus sources, advance criteria, embedding the engine, custom UIs |
+| [Extending MABR](Extending.md) | Stimulus sources, presentation strategies, advance criteria, embedding the engine, custom UIs |
 | [API Reference](API-Reference.md) | Every class and function, grouped, with links |
 | [Testing](Testing.md) | The no-hardware verification suite |
 

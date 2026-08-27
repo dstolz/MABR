@@ -9,6 +9,12 @@ classdef WindowPos
 %       mabr.ui.WindowPos.restore(fig,'LivePlot',defaultPos);  % on open
 %       mabr.ui.WindowPos.remember(fig,'LivePlot');            % on close
 %
+%   snapshot/applyAll are the same store taken WHOLE: every remembered
+%   position at once, which is what mabr.ui.App's save/load configuration file
+%   carries so that a named setup restores the layout it was arranged with,
+%   not just the settings. Positions stay in prefs either way -- a
+%   configuration overwrites them, it is not a second place they live.
+%
 %   A remembered position is only honoured if it still lands on the current
 %   display -- monitors get unplugged, and a window restored onto a screen
 %   that no longer exists is unreachable. Everything is clamped into the
@@ -53,6 +59,69 @@ classdef WindowPos
             % close paths where the figure may or may not still be there.
             if isempty(fig) || ~isgraphics(fig), return; end
             setpref('MABR',['WindowPos_' name],fig.Position);
+        end
+
+        function s = snapshot()
+            % Every remembered window position, as one plain struct keyed by
+            % window name (the 'WindowPos_' prefix dropped, since it is this
+            % class's storage detail and not part of a saved file's contract).
+            % Empty struct when nothing has been remembered yet.
+            s = struct();
+            try
+                if ~ispref('MABR'), return; end
+                stored = getpref('MABR');   % NOT 'all' -- isfinite needs it
+                if ~isstruct(stored), return; end
+                f = fieldnames(stored);
+                for i = 1:numel(f)
+                    if ~startsWith(f{i},'WindowPos_'), continue; end
+                    v = stored.(f{i});
+                    if isnumeric(v) && numel(v) == 4 && all(isfinite(v))
+                        s.(f{i}(numel('WindowPos_')+1:end)) = double(v(:)');
+                    end
+                end
+            catch me
+                mabr.log.vprintf(2,'WindowPos: snapshot failed (%s).',me.message);
+            end
+        end
+
+        function n = applyAll(s)
+            % Write a snapshot back, so the next open of each window lands
+            % where the configuration says. Returns how many were restored.
+            % Defensive field by field, the rule every loadPrefs in MABR
+            % follows: a file saved by another version names windows this one
+            % may not have, and one bad entry must not cost the rest.
+            n = 0;
+            if ~isstruct(s) || ~isscalar(s), return; end
+            f = fieldnames(s);
+            for i = 1:numel(f)
+                v = s.(f{i});
+                if ~isnumeric(v) || numel(v) ~= 4 || ~all(isfinite(v)) || any(v(3:4) <= 0)
+                    continue
+                end
+                try
+                    setpref('MABR',['WindowPos_' f{i}],double(v(:)'));
+                    n = n + 1;
+                catch me
+                    mabr.log.vprintf(2,'WindowPos: could not restore "%s" (%s).', ...
+                        f{i},me.message);
+                end
+            end
+        end
+
+        function place(fig,name)
+            % Move an ALREADY OPEN window onto its remembered position. The
+            % restore/remember pair covers a window being built; this is for
+            % the one case where the pref changes under a window that is
+            % already on screen (loading a configuration), where the point of
+            % restoring a layout is watching it happen rather than being told
+            % it will apply next time.
+            if isempty(fig) || ~isgraphics(fig), return; end
+            pos = getpref('MABR',['WindowPos_' name],[]);
+            if ~isnumeric(pos) || numel(pos) ~= 4 || ~all(isfinite(pos)) || any(pos(3:4) <= 0)
+                return
+            end
+            if strcmp(fig.Resize,'off'), pos(3:4) = fig.Position(3:4); end
+            fig.Position = mabr.ui.WindowPos.clampToScreen(pos);
         end
 
         function pos = clampToScreen(pos)

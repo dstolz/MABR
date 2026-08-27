@@ -14,6 +14,11 @@ function run_all_verifications()
 %       verify_custom_advance    - the custom advance-function contract:
 %                                  context, validator, template, and a
 %                                  file-resolved user criterion stopping early
+%       verify_custom_strategy   - the custom presentation-strategy contract:
+%                                  context, the accepted return shapes, the
+%                                  validator, the template, polarity parity
+%                                  with the built-ins, and a file-resolved
+%                                  user strategy driving the run order
 %       verify_artifact_rejection- artifact criteria, prefs, and make-up runs
 %       verify_filters           - display filter chain, and that it never
 %                                  reaches the saved trace
@@ -59,6 +64,11 @@ function run_all_verifications()
 %                                  .stimlog, and a .torg
 %       verify_audio_settings    - ASIO device/channel settings: prefs,
 %                                  graceful device query, schedule wiring
+%       verify_view_prefs        - what MABR recalls between sessions beyond
+%                                  those settings: which windows open at
+%                                  Start (mabr.ViewPolicy), the whole window
+%                                  layout as one snapshot, and the live and
+%                                  analysis views' look
 %       verify_stimgen_import    - stimgen bank -> StimulusSet: one variant per
 %                                  entry, regenerated at the DAC rate, and the
 %                                  waveform matching its own label. SKIPS when
@@ -76,29 +86,36 @@ function run_all_verifications()
 %       verify_test_runner       - the window that runs this list
 %                                  (mabr.ui.TestRunner): discovery, ordering,
 %                                  output capture, verdicts
+%       verify_shutdown_pool     - MABR gives the parallel pool back when the
+%                                  GUI closes, and declines to touch a BUSY
+%                                  one. LAST because it ends with no pool
+%                                  open -- anything after it would pay the
+%                                  relaunch.
 %
 %   This file is also the ORDER mabr.ui.TestRunner lists the suite in -- it
 %   parses the calls below rather than keeping a second copy of them.
 %
 %   Requires the Parallel Computing Toolbox (all but verify_isi_jitter,
 %   verify_filters, verify_live_plot, verify_progress_monitor,
-%   verify_metric_plot, verify_trace_organizer, verify_trace_inspector, and
-%   verify_audio_settings). None require audio hardware.
+%   verify_metric_plot, verify_trace_organizer, verify_trace_inspector,
+%   verify_audio_settings, and verify_view_prefs). None require audio
+%   hardware.
 %
 % Daniel Stolzberg (c) 2026
 
 tests = {@verify_isi_jitter, @verify_play_plan, ...
          @verify_engine_loopback, @verify_data_roundtrip, ...
          @verify_legacy_import,  @verify_online_advance, ...
-         @verify_custom_advance, ...
+         @verify_custom_advance, @verify_custom_strategy, ...
          @verify_artifact_rejection, @verify_filters, ...
          @verify_live_plot, @verify_live_refresh, ...
          @verify_compute_worker, @verify_stimulus_alignment, ...
          @verify_progress_monitor, @verify_metric_plot, ...
          @verify_trace_organizer, @verify_trace_inspector, ...
-         @verify_notes, @verify_audio_settings, ...
+         @verify_notes, @verify_audio_settings, @verify_view_prefs, ...
          @verify_stimgen_import, @verify_stimulation_only, ...
-         @verify_timing_selftest, @verify_timing_loopback, @verify_test_runner};
+         @verify_timing_selftest, @verify_timing_loopback, @verify_test_runner, ...
+         @verify_shutdown_pool};
 
 nPass = 0;
 for i = 1:numel(tests)

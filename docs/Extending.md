@@ -1,6 +1,6 @@
 # Extending MABR
 
-The three extension points, in order of how often they are used: supplying stimuli, defining when a run ends, and building a different front end.
+The four extension points, in order of how often they are used: supplying stimuli, ordering how they are presented, defining when a run ends, and building a different front end.
 
 ## Supplying stimuli
 
@@ -99,8 +99,9 @@ The strategies:
 | `interleaved` | one | `A B C A B C …` |
 | `shuffled-cycles` | one | as interleaved, each cycle shuffled independently |
 | `shuffled` | one | the whole multiset shuffled uniformly |
+| `custom` | as many as you return | whatever your own function decides — see [Ordering presentations yourself](#ordering-presentations-yourself) |
 
-All five are permutations of a **fixed multiset**, never probabilistic sampling — every entry is presented exactly its repetition count under any strategy. The names say "shuffled" rather than "random" for precisely that reason.
+The five built-ins are permutations of a **fixed multiset**, never probabilistic sampling — every entry is presented exactly its repetition count under any of them. The names say "shuffled" rather than "random" for precisely that reason. A `custom` strategy is expected to hold to the same invariant and is warned when it does not, but is not refused.
 
 The last three **intermix** different stimuli inside one continuous acquisition run. MABR records which stimulus fired at each onset (`spec.StimulusIndex`) and de-interleaves the recorded sweeps at save time, so **each stimulus ID still gets its own `.abr` file** regardless of presentation order. An entry that has met its repetition count drops out of later cycles, so unequal counts stay spread out instead of clumping at the end.
 
@@ -112,6 +113,174 @@ Two constraints worth knowing:
 
 - If a stimulus is longer than `MinISI` — the ISI, or the bottom of `ISIRange` — presentations are **summed** where they overlap and the condition is logged; the GUI warns before acquisition starts.
 - One run is recorded in one ring-buffer pass, so a run may not exceed `Config.maxInputBufferLength` (~5.8 min at 192 kHz). `renderSpec` refuses with `mabr:stim:Schedule:tooLong` rather than silently discarding the earliest sweeps. Intermixed strategies put every presentation in one run, so this is the ceiling that bites first — the GUI's plan summary shows the estimated duration before you start.
+
+## Ordering presentations yourself
+
+When none of the five built-in strategies describes the design you want, `Strategy = 'custom'` hands the ordering to a function of yours. It is a **pure function from a design to an order** — one stereotyped input, one stereotyped output:
+
+```matlab
+function runs = my_strategy(ctx)   % ctx in, the presentation order out
+```
+
+The contract is defined in one place, [mabr.stim.strategy.context](../+mabr/+stim/+strategy/context.m), which builds the `ctx` every strategy is called under. Your function is called **once, when the plan is built**, and never again during acquisition — so unlike an advance criterion it may be as expensive as it likes, and for the same reason it cannot react to incoming data. (Reacting to data is what an [advance criterion](#defining-when-a-run-ends) is for; the two compose.)
+
+### What you are given
+
+| `ctx` field | Kind | Meaning |
+|-------------|------|---------|
+| `numStimuli` | design | entries in the bank |
+| `repetitions` | design | `[1 x n]` presentations owed per entry, already normalized (a scalar arrives expanded over the bank) |
+| `alternatePolarity` | design | `[1 x n]` logical, which entries alternate polarity |
+| `IDs` | design | `{1 x n}` each entry's ID |
+| `durations` | design | `[1 x n]` seconds, one presentation of each |
+| `params` | design | the bank as a table — `.Names`, `.Values [n x nP]`, `.Varying`, `.Units` — from [`StimulusSet.paramTable`](../+mabr/+stim/StimulusSet.m) |
+| `sampleRate` | timing | Hz, the DAC rate the plan renders at |
+| `isi` / `isiMode` / `isiRange` / `minISI` / `meanISI` | timing | the spacing settings, as `Schedule` holds them |
+| `silencePad` | timing | s of silence bracketing each run |
+| `maxRunSamples` | timing | `Config.maxInputBufferLength` — one run is one ring-buffer pass |
+| `randStream` | — | the schedule's own `RandStream`; **shuffle with this** |
+
+`ctx.params` is the field that makes a strategy readable. A bank almost never varies along one dimension — the ordinary ABR run is a Frequency × Level grid — and it lets you sort, group, and select by those dimensions **by name** instead of parsing IDs:
+
+```matlab
+jLevel = find(strcmp(ctx.params.Names,'Level'),1);
+level  = ctx.params.Values(:,jLevel);        % one row per bank entry
+```
+
+Anything you put in `Schedule.StrategyParams` arrives in `ctx` under its own field name, so a strategy can carry its own knobs — exactly as `AdvanceParams` feeds an advance criterion.
+
+### What you return
+
+Return whichever shape is least effort for your design; [mabr.stim.strategy.normalize](../+mabr/+stim/+strategy/normalize.m) reads all three:
+
+| Return | Means |
+|--------|-------|
+| `seq` — a numeric vector | **one** run presenting those stimulus indices, in that order |
+| `{seq1,seq2,…}` — a cell of vectors | that many runs, in that order |
+| `struct('Runs',…,'Polarities',…)` | the same, with polarity placed by you |
+
+Indices are 1-based into the bank `ctx` describes. Empty runs are dropped rather than streamed as a block of silence, and returning nothing at all is a plan with nothing in it — not an error.
+
+**Polarity is assigned for you** unless you ask otherwise. The k-th presentation of an entry flagged `alternatePolarity` gets `+1` for odd k and `-1` for even k, counted *across the whole plan* rather than restarted per run — so an entry spread over several runs still comes out balanced between the two polarities, which is the entire reason for alternating them. This reproduces the built-in strategies' polarity **exactly**: a custom reordering of a blocked or cycled plan gets the same signs the built-in would have given it. Supply `.Polarities` only when you need otherwise.
+
+### Three rules
+
+1. **Shuffle from `ctx.randStream`** — `randperm(ctx.randStream,n)`, not `randperm(n)`. Building a plan must not perturb global `rng`, and it is what makes `Schedule.Seed` reproduce a whole session: order and, under `ISIMode = 'random'`, timing with it.
+2. **Watch the run length.** One run is recorded in one pass of the ring buffer, so roughly `numel(run)*ctx.meanISI*ctx.sampleRate` must stay under `ctx.maxRunSamples` (~5.8 min at 192 kHz). Putting every presentation in one run is what makes this bite; split into several and the ceiling is per-run.
+3. **Present each entry its `ctx.repetitions` count**, unless you mean not to. Departing is allowed and *logged*, not refused — but the usual cause is a cycle that assumed equal counts, not a design.
+
+Structural mistakes are errors rather than warnings, because no design intends them and none can be presented at all: an index off the end of the bank, a non-integer, a polarity that is not ±1.
+
+### A worked example
+
+[custom_template.m](../+mabr/+stim/+strategy/custom_template.m) is a copy-me stereotype and a real strategy: **one run per condition, grouped by frequency, loudest first within each group.**
+
+No built-in can express it — `blocked` presents in array order and the shuffled ones scramble it — and it is what an ABR threshold series usually wants. The loud conditions respond visibly, so a dead electrode or a slipped ear plug shows up in the first minute rather than after twenty spent collecting noise near threshold.
+
+```matlab
+function runs = descending_levels(ctx)
+    level = paramColumn(ctx,'Level');
+    freq  = paramColumn(ctx,'Frequency');
+    if isempty(level) && isempty(freq)
+        order = 1:ctx.numStimuli;                 % nothing to sort by
+    else
+        if isempty(freq),  freq  = zeros(ctx.numStimuli,1); end
+        if isempty(level), level = zeros(ctx.numStimuli,1); end
+        [~,order] = sortrows([freq(:) -level(:)]);   % freq up, level down
+        order = order(:)';
+    end
+
+    runs = {};
+    for i = order
+        if ctx.repetitions(i) <= 0, continue, end
+        runs{end+1} = repmat(i,1,ctx.repetitions(i));   %#ok<AGROW>
+    end
+end
+
+function v = paramColumn(ctx,name)
+    v = [];
+    if isempty(ctx.params.Names), return, end
+    j = find(strcmpi(ctx.params.Names,name),1);
+    if isempty(j), return, end
+    v = ctx.params.Values(:,j);
+end
+```
+
+On an 8/16 kHz × 30/60/90 dB bank that plans six runs in the order `8 kHz 90 dB`, `8 kHz 60`, `8 kHz 30`, `16 kHz 90`, `16 kHz 60`, `16 kHz 30`. Note the `paramColumn` helper returns `[]` rather than throwing when the bank has no such parameter, and the strategy falls back to bank order: **a strategy that errors on a bank missing the field it hoped for is worse than one that degrades to the obvious thing.**
+
+Drive it directly:
+
+```matlab
+sch             = mabr.stim.Schedule(stimulusSet,cfg);
+sch.Strategy    = 'custom';
+sch.StrategyFcn = @descending_levels;
+sch.Repetitions(:) = 512;
+sch.build();
+```
+
+Try one at the command line without building a bank at all — [`sampleContext`](../+mabr/+stim/+strategy/sampleContext.m) returns a representative design (a Frequency × Level grid with unequal repetition counts and one entry alternating polarity):
+
+```matlab
+ctx  = mabr.stim.strategy.sampleContext();
+runs = descending_levels(ctx)
+```
+
+### Two more shapes
+
+**Several runs from one design** — a paired ABBA ordering, one cycle per run, so the operator can stop cleanly between them:
+
+```matlab
+function runs = abba_cycles(ctx)
+    fwd  = 1:ctx.numStimuli;
+    back = fliplr(fwd);
+    runs = {};
+    for c = 1:max(ctx.repetitions)
+        if mod(c,2), cycle = fwd; else, cycle = back; end
+        runs{end+1} = cycle(ctx.repetitions(cycle) >= c);  %#ok<AGROW>
+    end
+end
+```
+
+**A reproducible shuffle with a constraint** — no stimulus twice in a row, drawn from the schedule's own stream so a `Seed` reproduces it. Note it *constructs* the order rather than reshuffling until one happens to satisfy the constraint: on a real bank a uniform shuffle of a few thousand presentations essentially never comes out repeat-free, so a retry loop would always exhaust its attempts and hand back an order that quietly breaks the rule it was written to enforce.
+
+```matlab
+function seq = no_repeats(ctx)
+    % Greedy: at each step take whichever entry has the most presentations
+    % still owed, excluding the one just placed. This is what makes the
+    % constraint reachable -- taking the most-owed first is what stops one
+    % entry piling up at the end with nothing to separate it from itself.
+    left = ctx.repetitions;
+    seq  = zeros(1,sum(left));
+    prev = 0;
+    for k = 1:numel(seq)
+        avail = find(left > 0);
+        avail(avail == prev) = [];
+        if isempty(avail)
+            % Only the just-placed entry is left: an unavoidable repeat, not
+            % a bug -- a bank of one entry can never satisfy the constraint.
+            avail = find(left > 0);
+        end
+        best   = avail(left(avail) == max(left(avail)));
+        pick   = best(randi(ctx.randStream,numel(best)));   % tie-break, seeded
+        seq(k) = pick;
+        left(pick) = left(pick) - 1;
+        prev       = pick;
+    end
+end
+```
+
+### Selecting one from the GUI
+
+The Presentation panel's **Strategy** dropdown has a **Custom function…** item: pick it, choose your function's `.m` file, and MABR puts its folder on the path and checks it against the contract with [mabr.stim.strategy.validate](../+mabr/+stim/+strategy/validate.m) before accepting it. The validator runs your function on the same representative design `sampleContext` supplies — unequal repetition counts included — so a strategy that assumes every entry is owed the same number is refused at selection time rather than at Start with the rig warmed up.
+
+Once accepted the dropdown reads `Custom: <name>`, and the choice is remembered **by file** in a saved [configuration](Acquisition-App.md) so it re-resolves next session; a file that has moved or no longer conforms leaves the built-in strategy in place and says so, rather than selecting a `custom` with nothing behind it.
+
+Two consequences worth knowing:
+
+- **Early stop follows the plan, not the name.** Whether a custom strategy intermixes is a property of the runs it produced, so `Schedule.isIntermixed` asks the built plan whether any run holds more than one stimulus. A custom strategy emitting one stimulus per run keeps the correlation early-stop, the Repeat button, and the live view's correlation bar; one that mixes loses all three, exactly as the built-in intermixed strategies do.
+- **The record names your function.** A `.stimlog`'s `Presentation.Strategy` reads `custom: descending_levels`, not just `custom` — a record of what was presented that cannot name the function that ordered it cannot be reproduced from.
+
+Setting `Strategy = 'custom'` with no `StrategyFcn` is refused (`mabr:stim:Schedule:noStrategyFcn`) rather than quietly falling back to a built-in: a session presented in an order nobody chose is worse than one that will not start.
 
 ## Defining when a run ends
 

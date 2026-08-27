@@ -31,6 +31,23 @@ classdef App < handle
 %   The App holds them only to re-point them at a rebuilt controller and to
 %   close them with itself (see onMetricPlot).
 %
+%   PREFERENCES ARE RECALLED BETWEEN SESSIONS. Three settings objects come
+%   back from MATLAB prefs on their own (mabr.ArtifactPolicy,
+%   mabr.FilterPolicy, mabr.AudioSettings), each viewer window remembers where
+%   it was left (mabr.ui.WindowPos) and how it was set to draw
+%   (mabr.ui.LivePlot / mabr.ui.MetricPlot), WHICH windows open at Start is
+%   mabr.ViewPolicy, and everything else the window owns -- subject, output
+%   folder, bank, per-stimulus repetitions, strategy, advance criterion,
+%   timing -- is captured at Start and at close and applied at the next launch
+%   (saveLastSession/restoreLastSession, off through Settings > Restore
+%   settings from last session).
+%
+%   The same snapshot is what File > Save/Load Configuration writes to a
+%   .mabrcfg file, with File > Recent Configurations for the last nine. The
+%   difference is only which door it comes through: a configuration file is a
+%   named place a user returns to deliberately (one per protocol on a shared
+%   rig), the pref is the one they land in by doing nothing at all.
+%
 %   The layout code lives in createComponents (treated as generated); the
 %   wiring/logic lives in the callbacks and event handlers below.
 %
@@ -43,14 +60,23 @@ classdef App < handle
         % up along one edge down the whole window.
         LabelWidth = 82;
 
-        % Display names for mabr.stim.Schedule.Strategies, in the same order
-        % (the dropdown carries the canonical names as ItemsData).
+        % Display names for the BUILT-IN mabr.stim.Schedule.Strategies, in the
+        % same order (the dropdown carries the canonical names as ItemsData).
+        % 'custom' is deliberately not here: it has no fixed label, being
+        % named after whichever function the user resolved -- see
+        % ensureCustomStrategyItem.
         StrategyItems = { ...
             'Blocked — one stimulus per run', ...
             'Blocked, shuffled run order', ...
             'Interleaved — A B C A B C …', ...
             'Interleaved, shuffled each cycle', ...
             'Fully shuffled'};
+
+        % ItemsData for the dropdown's "Custom function…" item. A sentinel
+        % rather than 'custom', so picking it is distinguishable from having
+        % already resolved one: the sentinel opens the file picker, 'custom'
+        % is the resolved selection.
+        StrategyPickSentinel = '__mabr_choose_strategy__';
 
         % Stamped on the UIFigure so a second launch can find the first
         % instance's window rather than opening a duplicate onto the same
@@ -91,6 +117,15 @@ classdef App < handle
         % worker's audioPlayerRecorder is already open on whatever device
         % Start handed it (see configControls).
         Audio       (1,1) mabr.AudioSettings = mabr.AudioSettings
+        % Which viewer windows open by themselves at Start. Owned and
+        % persisted on the same terms as the three policies above
+        % (mabr.ViewPolicy.loadPrefs), and in NEITHER control list: it decides
+        % nothing until the next Start, so it is safe to change mid-schedule.
+        % What it cannot override is a rule about the run -- the trace
+        % organizer still needs the transfer preference, and a
+        % stimulation-only schedule still opens the progress monitor alone
+        % (see openViewers and mabr.ViewPolicy).
+        Views       (1,1) mabr.ViewPolicy = mabr.ViewPolicy
         % The rig notebook for this session: what the operator writes down
         % while it is happening, stamped with the run and sweep it happened at,
         % and saved into every file the session produces. Owned HERE rather
@@ -129,6 +164,14 @@ classdef App < handle
         AudioMenuItem
         CalMenuItem
         ComputeMenuItem
+        PoolMenuItem
+        TraceXferMenuItem
+        StartupMenu
+        % The checkable items under it, one per mabr.ViewPolicy window, in
+        % mabr.ViewPolicy.names() order so the menu and the policy cannot
+        % drift apart.
+        StartupItems = gobjects(1,0)
+        RestoreMenuItem
         HelpMenu
         TestMenuItem
         Toolbar
@@ -164,6 +207,20 @@ classdef App < handle
         CustomAdvanceName (1,:) char = ''
         CustomAdvanceFile (1,:) char = ''
         LastAdvanceValue  (1,:) char = 'All Repetitions'
+        % A user-selected custom presentation strategy, resolved and persisted
+        % exactly as the advance criterion above is (picked .m file, folder
+        % onto the path, checked against mabr.stim.strategy.validate, saved by
+        % path rather than as a handle). LastStrategyValue is the last good,
+        % non-sentinel selection to fall back to when a pick is cancelled.
+        CustomStrategyFcn  = []
+        CustomStrategyName (1,:) char = ''
+        CustomStrategyFile (1,:) char = ''
+        LastStrategyValue  (1,:) char = 'blocked'
+        % Whether the last plan that actually BUILT intermixes its runs. Only
+        % consulted for 'custom', where the strategy's name cannot answer it
+        % -- see currentStrategyIntermixes. True until a plan says otherwise,
+        % since the conservative answer is the safe one for early stop.
+        PlanIntermixed (1,1) logical = true
         % The Acquisition panel itself, so its title can say when nothing in
         % it applies -- a greyed control says "not now", a greyed panel with a
         % reason in its title says why (see syncAcquisitionEnables).
@@ -247,6 +304,7 @@ classdef App < handle
             end
             app.Artifacts = mabr.ArtifactPolicy.loadPrefs();
             app.Filters   = mabr.FilterPolicy.loadPrefs();
+            app.Views     = mabr.ViewPolicy.loadPrefs();
             % stimgen (when present) logs through MABR's logger from here on
             % -- one console stream and one .error_logs/ file instead of a
             % second daily file under tempdir. The seam is stimgen's
@@ -275,6 +333,13 @@ classdef App < handle
             app.syncAcquisitionEnables();
             app.syncISIFields();
             app.syncRecentConfigsMenu();
+            % Last, once every control exists to be written into: whatever the
+            % previous session was set up with -- bank, repetitions, strategy,
+            % ISI, subject, output folder. The three policy objects above are
+            % already back from their own prefs; this is everything else the
+            % window owns, which until now had to be re-entered by hand or
+            % re-loaded from a configuration file at every launch.
+            app.restoreLastSession();
             if nargout == 0, clear app; end
         end
 
@@ -283,6 +348,12 @@ classdef App < handle
             % next session, so capture it before anything is torn down.
             app.rememberViewerPositions();
             mabr.ui.WindowPos.remember(app.UIFigure,'MABR');
+            % ... and whatever the window was set up to run. Written here
+            % rather than on every edit because a setting is only "the last
+            % one used" once the session that used it is over -- and again at
+            % Start (see onStart), so a MATLAB that never gets to close still
+            % leaves behind the settings something was actually acquired with.
+            app.saveLastSession();
             try, delete(app.Listeners);  end %#ok<TRYNC>
             try, delete(app.NotesView);  end %#ok<TRYNC>
             try, delete(app.Controller); end %#ok<TRYNC>
@@ -293,6 +364,76 @@ classdef App < handle
             try, delete(app.ProgressMon); end %#ok<TRYNC>
             try, delete(app.TestRunner); end %#ok<TRYNC>
             try, delete(app.UIFigure);   end %#ok<TRYNC>
+            % Last, and only once every worker above has been killed and
+            % waited for -- mabr.shutdownPool leaves a busy pool alone, and
+            % MABR's own futures have to be off it before that test can mean
+            % what it says. After the window is gone, too: reaping workers
+            % takes a moment and there is nothing left to draw.
+            try %#ok<TRYNC>
+                if app.poolShutdownEnabled(), mabr.shutdownPool(); end
+            end
+        end
+
+        function figs = windows(app)
+            % Every MABR window currently open, main window LAST.
+            %
+            % Two sources, because the App is not the only owner. The viewers
+            % it built are taken from its own handles, which is authoritative
+            % and gives them a stable order; everything else MABR puts on
+            % screen -- a trace inspector opened from the organizer, a
+            % notebook the organizer popped out, an analysis window's static
+            % copy -- belongs to somebody whose handle is private, so it is
+            % found by Tag/Name instead. 'MABR' is what those windows have in
+            % common and what a user's own figures do not, which is the whole
+            % test; the main window is excluded there and appended by handle
+            % afterwards so it cannot land in the middle of the list.
+            figs = matlab.ui.Figure.empty(1,0);
+            figs = addFig(figs,viewerFigure(app.LivePlot));
+            app.pruneMetricPlots();
+            for i = 1:numel(app.MetricPlots)
+                figs = addFig(figs,viewerFigure(app.MetricPlots(i)));
+            end
+            figs = addFig(figs,viewerFigure(app.TraceOrg));
+            figs = addFig(figs,viewerFigure(app.StimViewer));
+            figs = addFig(figs,viewerFigure(app.ProgressMon));
+            figs = addFig(figs,viewerFigure(app.NotesView));
+            figs = addFig(figs,viewerFigure(app.TestRunner,'UIFigure'));
+
+            others = findall(groot,'Type','figure');
+            for i = 1:numel(others)
+                if mabr.ui.App.isMabrWindow(others(i))
+                    figs = addFig(figs,others(i));
+                end
+            end
+            figs = addFig(figs,app.UIFigure);
+        end
+
+        function n = bringToFront(app)
+            % Raise every open MABR window above whatever else is on the
+            % desktop. The main window goes last (see windows) so the press
+            % hands focus back to the window it came from -- the viewers are
+            % laid out beside it rather than over it, so nothing is buried by
+            % that. A minimized window is restored first: figure() raises a
+            % minimized window without un-minimizing it, which would quietly
+            % drop it from the "all" this promises. Returns how many were
+            % raised, the main window included.
+            figs = app.windows();
+            n = 0;
+            for i = 1:numel(figs)
+                f = figs(i);
+                if ~isgraphics(f), continue; end
+                try
+                    if isprop(f,'WindowState') && strcmp(f.WindowState,'minimized')
+                        f.WindowState = 'normal';
+                    end
+                    figure(f);
+                    n = n + 1;
+                catch me
+                    mabr.log.vprintf(2,'App: could not raise "%s" (%s).', ...
+                        get(f,'Name'),me.message);
+                end
+            end
+            drawnow limitrate
         end
     end
 
@@ -334,6 +475,63 @@ classdef App < handle
                            'extra parallel-pool workers instead of in this window. Takes ' ...
                            'effect at the next Start, which restarts the parallel pool.'], ...
                 'MenuSelectedFcn',@(~,~) app.onComputeWorkers());
+            % The other half of that preference: the workers are killed when
+            % this window closes (deleting an Engine sends Kill and waits),
+            % but the pool they ran on outlives them, and an idle pool is
+            % still one to three worker processes holding a MATLAB's worth of
+            % memory each. Default on, since a pool nobody is acquiring with
+            % is pure cost -- and mabr.shutdownPool declines to touch a busy
+            % one, so a parfor of the user's own is never cancelled by it.
+            app.PoolMenuItem = uimenu(app.SettingsMenu,'Text','Shut down parallel pool on exit', ...
+                'Checked',onOff(app.poolShutdownEnabled()), ...
+                'Tooltip',['Delete the parallel pool when MABR closes, releasing its ' ...
+                           'worker processes. Switch off to keep the pool warm for ' ...
+                           'other work (or for the next launch of MABR).'], ...
+                'MenuSelectedFcn',@(~,~) app.onPoolShutdown());
+            % A viewer preference, and unlike the one above it takes effect at
+            % once: it only decides whether finished blocks are handed to the
+            % trace organizer, which is safe to change at any moment -- so it
+            % is in neither configControls nor liveControls and stays live
+            % throughout a schedule.
+            app.TraceXferMenuItem = uimenu(app.SettingsMenu,'Text','Send blocks to trace organizer', ...
+                'Checked',onOff(app.traceTransferEnabled()), ...
+                'Tooltip',['Add each finalized block to the trace organizer as a ' ...
+                           'trace (and open it at Start, if it is in the list below). ' ...
+                           'Switch off to acquire without it; the organizer can still ' ...
+                           'be opened by hand to load a .torg.'], ...
+                'MenuSelectedFcn',@(~,~) app.onTraceTransfer());
+
+            % Which windows come up by themselves at Start. A submenu of
+            % ticks rather than a dialog: there is one question per window and
+            % the answer is yes or no, so the menu IS the editor. Like the
+            % transfer preference above it is in neither control list -- it
+            % decides nothing until the next Start.
+            app.StartupMenu = uimenu(app.SettingsMenu,'Text','Windows to open at Start', ...
+                'Separator','on', ...
+                'Tooltip',['Which MABR windows open by themselves when a schedule ' ...
+                           'starts. Every one of them can still be opened from the ' ...
+                           'toolbar at any time.']);
+            names  = mabr.ViewPolicy.names();
+            labels = mabr.ViewPolicy.labels();
+            app.StartupItems = gobjects(1,numel(names));
+            for k = 1:numel(names)
+                app.StartupItems(k) = uimenu(app.StartupMenu,'Text',labels{k}, ...
+                    'Checked',onOff(app.Views.opens(names{k})), ...
+                    'MenuSelectedFcn',@(~,~) app.onStartupWindow(names{k}));
+            end
+
+            % The session-to-session recall of everything else the window owns
+            % (see saveLastSession/restoreLastSession). A preference because a
+            % shared rig may want every session to start from the same known
+            % state instead of from whatever the last user left behind, which
+            % is exactly the case where reopening onto someone else's subject
+            % and bank is worse than reopening empty.
+            app.RestoreMenuItem = uimenu(app.SettingsMenu,'Text','Restore settings from last session', ...
+                'Checked',onOff(app.restoreSessionEnabled()), ...
+                'Tooltip',['Reopen MABR with the subject, output folder, stimulus ' ...
+                           'bank, repetitions, strategy and timing the last session ' ...
+                           'ended with. Takes effect at the next launch.'], ...
+                'MenuSelectedFcn',@(~,~) app.onRestoreSession());
 
             app.HelpMenu = uimenu(app.UIFigure,'Text','&Help');
             uimenu(app.HelpMenu,'Text','MABR Wiki', ...
@@ -443,10 +641,12 @@ classdef App < handle
 
             app.addLabel(g,'Strategy',1,1);
             app.StrategyDrop = uidropdown(g, ...
-                'Items',mabr.ui.App.StrategyItems, ...
-                'ItemsData',mabr.stim.Schedule.Strategies, ...
-                'Tooltip','How the bank is ordered: one stimulus per run, or intermixed within a run.', ...
-                'ValueChangedFcn',@(~,~) app.onStrategyChanged());
+                'Items',[mabr.ui.App.StrategyItems {'Custom function…'}], ...
+                'ItemsData',[mabr.ui.App.builtinStrategies() {mabr.ui.App.StrategyPickSentinel}], ...
+                'Tooltip',['How the bank is ordered: one stimulus per run, or intermixed ' ...
+                           'within a run. "Custom function…" prompts for a function file — ' ...
+                           'see +mabr/+stim/+strategy/custom_template.m.'], ...
+                'ValueChangedFcn',@(~,~) app.onStrategySelected());
             app.StrategyDrop.Layout.Row = 1; app.StrategyDrop.Layout.Column = [2 3];
 
             app.addLabel(g,'Repetitions',2,1);
@@ -706,8 +906,18 @@ classdef App < handle
             app.NotesView = mabr.ui.Notes.toolbarButton(app.Toolbar,app.Notes, ...
                 'Name','Session','Color',ink);
 
+            % Window management, grouped together after the viewers: one
+            % button gathers the windows up, the other pins this one down.
+            % Never disabled, for the same reason the notebook is not --
+            % losing a viewer behind another application is a thing that
+            % happens most during a run, which is exactly when every other
+            % control is locked.
+            app.toolButton('front',ink, ...
+                'Bring all MABR windows to the front', ...
+                @() app.onBringToFront(),true);
+
             onTop = strcmp(app.UIFigure.WindowStyle,'alwaysontop');
-            app.AlwaysOnTopTool = uitoggletool(app.Toolbar,'Separator','on', ...
+            app.AlwaysOnTopTool = uitoggletool(app.Toolbar,'Separator','off', ...
                 'CData',mabr.ui.Icon.fromArt(mabr.ui.App.glyph('pin'),ink), ...
                 'State',matlab.lang.OnOffSwitchState(onTop), ...
                 'Tooltip','Keep the MABR window on top of other windows', ...
@@ -728,6 +938,15 @@ classdef App < handle
                 app.UIFigure.WindowStyle = 'normal';
             end
             setpref('MABR','AlwaysOnTop',onTop);
+        end
+
+        function onBringToFront(app)
+            n = app.bringToFront();
+            if n <= 1
+                app.setStatus('No other MABR windows are open.');
+            else
+                app.setStatus(sprintf('Raised %d MABR windows.',n));
+            end
         end
 
         function h = toolButton(app,glyph,rgb,tip,fcn,sep)
@@ -959,7 +1178,12 @@ classdef App < handle
                 cfg.Reps = struct('ID',ids(:),'Count',num2cell(app.Reps(:)));
             end
 
-            cfg.Strategy      = app.StrategyDrop.Value;
+            cfg.Strategy      = app.strategySetting();
+            % Saved as its FILE for the same reason the advance criterion is:
+            % a path re-resolves across sessions and MABR versions where a
+            % serialised handle, with its captured workspace, would not.
+            cfg.StrategyCustomFile = app.CustomStrategyFile;
+            cfg.StrategyCustomName = app.CustomStrategyName;
             cfg.Advance       = app.AdvanceDrop.Value;
             cfg.CorrThreshold = app.CorrField.Value;
             % A custom criterion is saved as its FILE, not its handle: a path
@@ -976,6 +1200,33 @@ classdef App < handle
             cfg.Artifacts = app.Artifacts.toStruct();
             cfg.Filters   = app.Filters.toStruct();
             cfg.Audio     = app.Audio.toStruct();
+
+            % The rest of what a session IS, beyond what it plays: which
+            % windows come up, how they are arranged, and how the two plotting
+            % windows are set to draw. A configuration that restored the
+            % protocol but not the layout would still leave the operator
+            % rebuilding their screen at every switch, which is most of the
+            % work switching protocols actually costs.
+            cfg.Views = app.Views.toStruct();
+            % From the open live view where there is one -- it is the
+            % authority on its own look, and its pref is only written when a
+            % user changes a control (see mabr.ui.LivePlot.savePrefs).
+            if isempty(app.LivePlot) || ~isvalid(app.LivePlot)
+                cfg.LiveView = mabr.ui.LivePlot.loadDefaults();
+            else
+                cfg.LiveView = app.LivePlot.displaySettings();
+            end
+            % The analysis windows each own their look and write it to the
+            % same pref as they are tuned, so the pref IS the last choice --
+            % there is no one window to ask, and asking the first of several
+            % would be a coin toss.
+            cfg.Analysis = mabr.ui.MetricPlot.loadDefaults();
+            % Positions are read out of the windows first, so a configuration
+            % saves the layout as it is on screen rather than as it was when
+            % something last closed.
+            app.rememberViewerPositions();
+            mabr.ui.WindowPos.remember(app.UIFigure,'MABR');
+            cfg.WindowPos = mabr.ui.WindowPos.snapshot();
         end
 
         function warn = applyConfiguration(app,cfg)
@@ -1015,9 +1266,24 @@ classdef App < handle
                 if isempty(warn), warn = rateWarn; else, warn = [warn ' ' rateWarn]; end
             end
 
-            if isfield(cfg,'Strategy') && any(strcmp(cfg.Strategy,mabr.stim.Schedule.Strategies))
+            % Re-resolve a saved custom strategy first, so its "Custom: <name>"
+            % item exists before cfg.Strategy tries to select 'custom'. When
+            % the file has moved or no longer conforms the item is simply
+            % absent, and the guard below then leaves the strategy alone
+            % rather than selecting a 'custom' with no function behind it --
+            % which build() would refuse at Start.
+            warn = app.applyConfigCustomStrategy(cfg,warn);
+            if isfield(cfg,'Strategy') ...
+                    && ~strcmp(cfg.Strategy,mabr.ui.App.StrategyPickSentinel) ...
+                    && any(strcmp(cfg.Strategy,app.StrategyDrop.ItemsData))
                 app.StrategyDrop.Value = cfg.Strategy;
+                app.LastStrategyValue  = cfg.Strategy;
             end
+            % The plan decides whether a restored custom strategy intermixes,
+            % and syncAdvanceEnables below is about to ask. Building it here
+            % also puts the plan summary in step with the settings just
+            % restored, which the ISI/repetition restores further down redo.
+            app.refreshPlan();
             % Re-resolve a saved custom criterion first, so its "Custom: <name>"
             % item is back in the dropdown before the Advance value below tries
             % to select it. Defensive throughout: a moved, deleted, or
@@ -1061,6 +1327,28 @@ classdef App < handle
                 app.Filters = mabr.FilterPolicy.fromStruct(cfg.Filters);
                 app.syncFilterFields();
                 app.applyFilters();
+            end
+            if isfield(cfg,'Views')
+                app.Views = mabr.ViewPolicy.fromStruct(cfg.Views);
+                mabr.ViewPolicy.savePrefs(app.Views);
+                app.syncStartupMenu();
+            end
+            if isfield(cfg,'LiveView')
+                % Into the open view AND into the pref, so the window on
+                % screen changes now and the next one to open agrees with it.
+                mabr.ui.LivePlot.saveDefaults(cfg.LiveView);
+                if ~isempty(app.LivePlot) && isvalid(app.LivePlot)
+                    app.LivePlot.applySettings(cfg.LiveView);
+                end
+            end
+            if isfield(cfg,'Analysis')
+                % Pref only: an analysis window's look is its own once opened
+                % (see mabr.ui.MetricPlot.saveDefaults), so this shows up in
+                % the next one opened rather than rewriting the ones up now.
+                mabr.ui.MetricPlot.saveDefaults(cfg.Analysis);
+            end
+            if isfield(cfg,'WindowPos')
+                app.applyWindowPositions(cfg.WindowPos);
             end
             % Last, and unconditionally: the Audio restored above can have put
             % the app into stimulation only, which disables the entire
@@ -1221,6 +1509,42 @@ classdef App < handle
             end
         end
 
+        function warn = applyConfigCustomStrategy(app,cfg,warn)
+            % Re-resolve the custom presentation strategy a configuration was
+            % saved with, restoring its dropdown item so cfg.Strategy can
+            % select 'custom'. Returns the (possibly appended) one-line
+            % warning -- see applyConfiguration. A missing/moved/malformed
+            % file is not an error: the item is simply not restored, and
+            % because 'custom' is then absent from ItemsData the strategy
+            % restore leaves whatever was selected before.
+            if ~isfield(cfg,'StrategyCustomFile') || isempty(cfg.StrategyCustomFile)
+                return
+            end
+            file = char(cfg.StrategyCustomFile);
+            [pn,nm,ext] = fileparts(file);
+            note = '';
+            if ~isfile(file) || ~strcmpi(ext,'.m')
+                note = ['Configuration''s custom presentation strategy could not be found at "' ...
+                        file '"; the built-in strategy is used instead.'];
+            else
+                app.addToPath(pn);
+                fcn = str2func(nm);
+                [ok,why] = mabr.stim.strategy.validate(fcn);
+                if ok
+                    app.CustomStrategyFcn  = fcn;
+                    app.CustomStrategyName = nm;
+                    app.CustomStrategyFile = file;
+                    app.ensureCustomStrategyItem(nm);
+                else
+                    note = ['Configuration''s custom presentation strategy "' nm ...
+                            '" no longer conforms (' why '); the built-in strategy is used.'];
+                end
+            end
+            if ~isempty(note)
+                if isempty(warn), warn = note; else, warn = [warn ' ' note]; end
+            end
+        end
+
         function warn = applyConfigCustomAdvance(app,cfg,warn)
             % Re-resolve the custom advance function a configuration was saved
             % with, restoring its dropdown item so cfg.Advance can select it.
@@ -1320,10 +1644,9 @@ classdef App < handle
             % one the controller built for itself and be left on an orphan.
             app.bindNotes();
             % An organizer left open across a controller rebuild would still be
-            % listening to the deleted one, so re-point it at the new.
-            if ~isempty(app.TraceOrg) && isvalid(app.TraceOrg)
-                app.TraceOrg.listenTo(app.Controller);
-            end
+            % listening to the deleted one, so re-point it at the new -- or
+            % leave it unattached, if the transfer preference is off.
+            app.bindTraceOrg();
             app.bindProgress();
             % Same for every open analysis window: attach() replaces its
             % listeners rather than adding a second set, and backfills the new
@@ -1544,7 +1867,7 @@ classdef App < handle
             v         = app.AdvanceDrop.Value;
             isCorr    = strcmp(v,'Correlation Threshold');
             isCustom  = startsWith(v,'Custom: ');
-            canEarly  = ~mabr.stim.Schedule.strategyIntermixes(app.StrategyDrop.Value);
+            canEarly  = ~app.currentStrategyIntermixes();
             % The threshold field feeds AdvanceParams.corrThreshold, which the
             % correlation criterion reads directly and a custom one may read
             % too, so it is live for either — but never for plain "All
@@ -1633,14 +1956,143 @@ classdef App < handle
             end
         end
 
+        function onStrategySelected(app)
+            % The dropdown's ValueChangedFcn: only fired by a genuine user
+            % pick, so this is the one place the "Custom function…" file
+            % picker may open. Everything programmatic (config load, transport)
+            % calls onStrategyChanged directly and never trips a dialog.
+            if strcmp(app.StrategyDrop.Value,mabr.ui.App.StrategyPickSentinel)
+                app.chooseCustomStrategy();
+            end
+            app.onStrategyChanged();
+        end
+
         function onStrategyChanged(app)
-            intermixed = mabr.stim.Schedule.strategyIntermixes(app.StrategyDrop.Value);
+            % refreshPlan FIRST: it is what builds the plan, and for a custom
+            % strategy the built plan is the only thing that knows whether the
+            % runs intermix (see currentStrategyIntermixes). Deriving the
+            % advance enables before it would judge a custom plan on the
+            % static's conservative guess and disable an early stop the plan
+            % in fact allows. Nothing in refreshPlan reads the advance
+            % controls, so the order is free for the built-in strategies.
+            app.refreshPlan();
+            intermixed = app.currentStrategyIntermixes();
             app.syncAdvanceEnables();
+            % Remember the last real selection so a cancelled or rejected
+            % Custom function... pick has somewhere to fall back to. Without
+            % this a user who had chosen 'interleaved', then opened the
+            % picker and cancelled, would land back on 'blocked' -- their
+            % strategy silently changed by a dialog they dismissed.
+            if ~strcmp(app.StrategyDrop.Value,mabr.ui.App.StrategyPickSentinel)
+                app.LastStrategyValue = app.StrategyDrop.Value;
+            end
             if intermixed
                 app.setStatus(['Intermixed runs play to completion — ' ...
                     'correlation early-stop is available for blocked strategies only.']);
             end
-            app.refreshPlan();
+        end
+
+        function tf = currentStrategyIntermixes(app)
+            % Whether the selected strategy mixes stimuli inside one run.
+            %
+            % For the five built-ins the name settles it. For 'custom' it
+            % cannot -- that is a property of the runs the user's function
+            % produced -- so the last plan that actually built is the
+            % authority, and PlanIntermixed's conservative default stands
+            % until one has (the function unresolved, or it errored).
+            v = app.strategySetting();
+            if strcmp(v,'custom'), tf = app.PlanIntermixed; return, end
+            tf = mabr.stim.Schedule.strategyIntermixes(v);
+        end
+
+        function chooseCustomStrategy(app)
+            % Prompt for a .m strategy function, resolve it to a handle, and
+            % accept it only if it conforms to the contract. On cancel or
+            % rejection the dropdown falls back to the last good selection, so
+            % the sentinel is never left standing as the live value.
+            [fn,pn] = uigetfile({'*.m','MATLAB function (*.m)'}, ...
+                'Select a custom presentation strategy');
+            figure(app.UIFigure);
+            if isequal(fn,0), app.revertStrategySelection(); return; end
+
+            file = fullfile(pn,fn);
+            [dn,name] = fileparts(file);        % dn has no trailing separator
+            app.addToPath(dn);
+            fcn = str2func(name);
+            [ok,why] = mabr.stim.strategy.validate(fcn);
+            if ~ok
+                uialert(app.UIFigure, sprintf(['"%s" is not a valid presentation strategy.' ...
+                    '\n\n%s\n\nA strategy takes one context struct describing the design ' ...
+                    'and returns the stimulus indices to present — a vector for one run, ' ...
+                    'or a cell of vectors for several. Copy ' ...
+                    '+mabr/+stim/+strategy/custom_template.m to get the contract right.'], ...
+                    name,why),'Invalid presentation strategy');
+                app.revertStrategySelection();
+                return
+            end
+
+            app.CustomStrategyFcn  = fcn;
+            app.CustomStrategyName = name;
+            app.CustomStrategyFile = file;
+            app.ensureCustomStrategyItem(name);
+            app.StrategyDrop.Value = 'custom';
+            app.LastStrategyValue  = 'custom';
+            app.setStatus(sprintf('Custom presentation strategy: %s',name));
+        end
+
+        function ensureCustomStrategyItem(app,name)
+            % Make sure a "Custom: <name>" item exists just before the
+            % "Custom function…" sentinel, replacing any previous custom item.
+            % Setting Items/Value programmatically does NOT fire
+            % ValueChangedFcn, so this never re-enters the picker.
+            % Both in ONE set(): assigning Items first would leave it a
+            % longer list than ItemsData until the next line, and a
+            % dropdown whose two lists disagree has no defined Value.
+            set(app.StrategyDrop, ...
+                'Items',    [mabr.ui.App.StrategyItems ...
+                             {['Custom: ' name],'Custom function…'}], ...
+                'ItemsData',[mabr.ui.App.builtinStrategies() ...
+                             {'custom',mabr.ui.App.StrategyPickSentinel}]);
+        end
+
+        function revertStrategySelection(app)
+            % Back to the last non-sentinel selection. If that was itself a
+            % custom item that no longer exists (never resolved), the base
+            % list has no such entry, so fall back to 'blocked'.
+            v = app.LastStrategyValue;
+            if ~any(strcmp(v,app.StrategyDrop.ItemsData)), v = 'blocked'; end
+            app.StrategyDrop.Value = v;
+        end
+
+        function v = strategySetting(app)
+            % The Strategy as a SETTING rather than as a widget state.
+            %
+            % The picker sentinel is a transient dropdown value -- it
+            % stands only while the file dialog is open -- and is not a
+            % strategy at all: saved into a configuration it would come
+            % back as a dropdown reading "Custom function..." with no
+            % function behind it, and Schedule.build would then refuse it
+            % as an unknown strategy. Everything that treats the selection
+            % as a setting -- captureConfiguration, buildSchedule, onStart
+            % -- goes through here rather than reading Value raw.
+            v = app.StrategyDrop.Value;
+            if ~strcmp(v,mabr.ui.App.StrategyPickSentinel), return, end
+            v = app.LastStrategyValue;
+            if strcmp(v,mabr.ui.App.StrategyPickSentinel), v = 'blocked'; end
+        end
+
+        function fcn = currentStrategyFcn(app)
+            % Map the dropdown's current selection to the ordering handle
+            % buildSchedule hands the schedule. Empty for a built-in, which is
+            % what Schedule.build expects for the five it plans itself.
+            % strategySetting, not Value: buildSchedule asks it for the
+            % strategy, so asking it anything else here could hand a
+            % 'custom' Strategy an empty StrategyFcn, which build refuses.
+            if strcmp(app.strategySetting(),'custom')
+                fcn = app.CustomStrategyFcn;
+            else
+                fcn = [];
+            end
         end
 
         function syncAdvanceEnables(app)
@@ -1654,7 +2106,7 @@ classdef App < handle
                 app.CorrField.Enable   = 'off';
                 return
             end
-            if mabr.stim.Schedule.strategyIntermixes(app.StrategyDrop.Value)
+            if app.currentStrategyIntermixes()
                 app.AdvanceDrop.Value  = 'All Repetitions';
                 app.AdvanceDrop.Enable = 'off';
             else
@@ -1808,6 +2260,155 @@ classdef App < handle
             if tf, word = 'on'; else, word = 'off'; end
             app.setStatus(sprintf(['Background compute workers %s. Takes effect at the ' ...
                 'next Start (the parallel pool is restarted).'],word));
+        end
+
+        function tf = poolShutdownEnabled(~)
+            % The preference behind Settings > Shut down parallel pool on exit.
+            % Default on: MABR is what sized the pool (see mabr.pool) and the
+            % workers on it never return, so once this window is gone the pool
+            % is only costing memory.
+            tf = getpref('MABR','ShutdownPool',true);
+            tf = (islogical(tf) || isnumeric(tf)) && isscalar(tf) && tf ~= 0;
+        end
+
+        function onPoolShutdown(app)
+            tf = ~app.poolShutdownEnabled();
+            setpref('MABR','ShutdownPool',tf);
+            app.PoolMenuItem.Checked = onOff(tf);
+            if tf
+                msg = 'The parallel pool will be shut down when MABR closes.';
+            else
+                msg = 'The parallel pool will be left running when MABR closes.';
+            end
+            app.setStatus(msg);
+        end
+
+        % --- Transfer to the trace organizer ----------------------------------
+        function tf = traceTransferEnabled(~)
+            % The preference behind Settings > Send blocks to trace organizer.
+            % Default on: watching the stack fill condition by condition is
+            % what the organizer is for during a run. Off is for the rig that
+            % only wants the live view (or one whose organizer is being used to
+            % read an old .torg while a schedule runs).
+            tf = getpref('MABR','TraceTransfer',true);
+            tf = (islogical(tf) || isnumeric(tf)) && isscalar(tf) && tf ~= 0;
+        end
+
+        function onTraceTransfer(app)
+            % Unlike the compute workers this takes effect immediately: an
+            % organizer already open is attached or detached on the spot, so
+            % the menu tick and what the window is doing cannot disagree.
+            tf = ~app.traceTransferEnabled();
+            setpref('MABR','TraceTransfer',tf);
+            app.TraceXferMenuItem.Checked = onOff(tf);
+            app.bindTraceOrg();
+            if tf
+                app.setStatus(['Finalized blocks will be sent to the trace organizer ' ...
+                    '(it opens at Start when Settings > Windows to open at Start says so).']);
+            else
+                app.setStatus(['Finalized blocks will not be sent to the trace organizer. ' ...
+                    'Open it from the toolbar to load a saved view.']);
+            end
+        end
+
+        function bindTraceOrg(app)
+            % The one place the preference reaches an open organizer. With the
+            % transfer on it tracks the current controller (listenTo re-points
+            % rather than stacking, so calling this again is safe); with it off
+            % the listener is dropped -- listenTo with nothing to listen to is
+            % how the organizer says "stop", and it keeps whatever traces are
+            % already in there.
+            if isempty(app.TraceOrg) || ~isvalid(app.TraceOrg), return; end
+            if app.traceTransferEnabled() && ~isempty(app.Controller) ...
+                    && isvalid(app.Controller)
+                app.TraceOrg.listenTo(app.Controller);
+            else
+                app.TraceOrg.listenTo([]);
+            end
+        end
+
+        % --- Which windows open at Start --------------------------------------
+        function onStartupWindow(app,name)
+            % One tick from Settings > Windows to open at Start. Takes effect
+            % at the next Start; nothing is opened or closed now, since the
+            % press says what the NEXT schedule should come up with and a
+            % window appearing under the pointer would be a surprise nobody
+            % asked for.
+            app.Views = app.Views.setOpen(name,~app.Views.opens(name));
+            mabr.ViewPolicy.savePrefs(app.Views);
+            app.syncStartupMenu();
+            app.setStatus(app.Views.summary());
+        end
+
+        function syncStartupMenu(app)
+            % Re-derive the ticks from the policy -- called when it changes by
+            % any route, a configuration file included.
+            names = mabr.ViewPolicy.names();
+            for k = 1:min(numel(app.StartupItems),numel(names))
+                if ~isgraphics(app.StartupItems(k)), continue; end
+                app.StartupItems(k).Checked = onOff(app.Views.opens(names{k}));
+            end
+        end
+
+        % --- Session-to-session recall ----------------------------------------
+        % The counterpart of the configuration FILE: everything the window
+        % owns, written on the way out and read back on the way in, so a rig
+        % reopens set up the way it was left instead of on the class defaults.
+        % The two are the same snapshot (captureConfiguration/
+        % applyConfiguration) through different doors -- a file is a named
+        % place a user returns to deliberately, this is the one they land in
+        % by doing nothing at all.
+        function tf = restoreSessionEnabled(~)
+            tf = getpref('MABR','RestoreSession',true);
+            tf = (islogical(tf) || isnumeric(tf)) && isscalar(tf) && tf ~= 0;
+        end
+
+        function onRestoreSession(app)
+            tf = ~app.restoreSessionEnabled();
+            setpref('MABR','RestoreSession',tf);
+            app.RestoreMenuItem.Checked = onOff(tf);
+            if tf
+                app.setStatus(['MABR will reopen with the settings this session ' ...
+                    'ends with.']);
+            else
+                app.setStatus(['MABR will reopen with its defaults. This session''s ' ...
+                    'settings are still saved, and Load Configuration still works.']);
+            end
+        end
+
+        function saveLastSession(app)
+            % Store the snapshot whether or not the preference is on: the
+            % preference says what to do on the way IN, and a session whose
+            % settings were never captured is one the user cannot get back by
+            % switching it on afterwards. Guarded -- a rig with no writable
+            % prefs must not fail to close over it.
+            try
+                setpref('MABR','LastSession',app.captureConfiguration());
+            catch me
+                mabr.log.vprintf(2,'App: last-session settings not saved (%s).',me.message);
+            end
+        end
+
+        function restoreLastSession(app)
+            % Apply that snapshot at launch. Every failure here is survivable
+            % and none of them may stop the window from opening: a bank whose
+            % file has moved, a pref written by another version, a struct
+            % edited by hand. The status line says what happened, since a
+            % window that silently comes up on someone else's subject is worse
+            % than one that says whose settings these are.
+            if ~app.restoreSessionEnabled(), return; end
+            try
+                if ~ispref('MABR','LastSession'), return; end
+                cfg = getpref('MABR','LastSession');
+                if ~isstruct(cfg) || ~isscalar(cfg), return; end
+                warn = app.applyConfiguration(cfg);
+                msg  = 'Settings restored from the last session.';
+                if ~isempty(warn), msg = [msg ' ' warn]; end
+                app.setStatus(msg);
+            catch me
+                app.setStatus(['Last session''s settings could not be restored: ' me.message]);
+                mabr.log.vprintf(1,'App: last-session restore failed (%s).',me.message);
+            end
         end
 
         % --- ASIO device / channel mapping -----------------------------------
@@ -2094,6 +2695,11 @@ classdef App < handle
                 app.PlanLabel.Text = ['plan error: ' me.message];
                 return
             end
+            % The one place a custom plan's shape becomes known -- summary()
+            % asks the built runs, not the strategy's name. Recorded so
+            % currentStrategyIntermixes can answer without rebuilding, and
+            % left at its conservative default when the build above threw.
+            app.PlanIntermixed = s.intermixed;
             if s.intermixed, kind = 'intermixed'; else, kind = 'blocked'; end
             app.PlanLabel.Text = sprintf( ...
                 '%d runs (%s)  ·  %d presentations  ·  ~%s', ...
@@ -2104,7 +2710,11 @@ classdef App < handle
             % One place that turns the GUI's settings into a schedule, shared
             % by the plan preview and onStart so they cannot drift apart.
             sch             = mabr.stim.Schedule(app.Stimuli,app.Config);
-            sch.Strategy    = app.StrategyDrop.Value;
+            sch.Strategy    = app.strategySetting();
+            % Empty for the five built-ins, which is what build() expects;
+            % under 'custom' it is the whole plan, and build() refuses without
+            % it rather than falling back to an order nobody chose.
+            sch.StrategyFcn = app.currentStrategyFcn();
             sch.Repetitions = app.Reps;
             % Both settings travel every time and the mode picks between them,
             % so the one not in force is still whatever the user last set it to.
@@ -2177,7 +2787,8 @@ classdef App < handle
 
                 % The controller builds its own schedule in setStimuli; replace
                 % it with the one the GUI has been previewing.
-                c.Schedule.Strategy    = app.StrategyDrop.Value;
+                c.Schedule.Strategy    = app.strategySetting();
+                c.Schedule.StrategyFcn = app.currentStrategyFcn();
                 c.Schedule.Repetitions = app.Reps;
                 c.Schedule.ISI         = app.ISIField.Value/1e3;   % ms -> s
                 c.Schedule.ISIRange    = [app.ISIMinField.Value app.ISIMaxField.Value]/1e3;
@@ -2220,7 +2831,7 @@ classdef App < handle
                     figure(app.UIFigure);      % the main window keeps focus
                 else
                     app.openViewers();
-                    c.setLivePlot(app.LivePlot);
+                    c.setLivePlot(app.liveView());
                     % Clear whatever the last run left here -- a preceding
                     % stimulation-only schedule leaves run progress and "no
                     % recording" in place, which would be a lie until the
@@ -2250,6 +2861,11 @@ classdef App < handle
                 % the plan that is actually about to run rather than the one
                 % the previous Start left behind.
                 app.bindProgress();
+                % These settings have now been used to acquire with, which is
+                % the point at which they are worth reopening on -- and saving
+                % them here rather than only in delete() is what makes the
+                % recall survive a MATLAB that never gets to close cleanly.
+                app.saveLastSession();
                 c.start();
             catch me
                 app.transport(false);      % unlock so the user can fix and retry
@@ -2292,22 +2908,69 @@ classdef App < handle
         end
 
         % --- Viewer windows -------------------------------------------------
-        % Both viewers open at Start/Preview rather than with the app: there is
+        % Viewers open at Start/Preview rather than with the app: there is
         % nothing to watch until a schedule is in flight, and launching into
         % three windows costs the user two closes before they can even pick a
-        % subject. The toolbar buttons still open either on demand at any time.
-        % Each remembers where it was last left (mabr.ui.WindowPos).
-        function openViewers(app)
+        % subject. WHICH of them open is the user's (mabr.ViewPolicy, edited
+        % from Settings > Windows to open at Start) -- the live view and the
+        % trace organizer by default, which is what MABR always did, and any
+        % of the six for a rig that works another way. The toolbar buttons
+        % still open every one of them on demand at any time, and each
+        % remembers where it was last left (mabr.ui.WindowPos).
+        function n = openViewers(app)
             % Called from onStart. Only a viewer whose *window* is absent is
             % opened -- one already up is left exactly as the user arranged it,
-            % and deliberately not raised over whatever is in front of it.
-            newLive  = isempty(app.LivePlot) || ~isvalid(app.LivePlot);
-            newTrace = isempty(app.TraceOrg) || ~isvalid(app.TraceOrg) ...
-                || ~app.TraceOrg.isvalidView();
-            if newTrace, app.onTraceOrg(); end
-            if newLive,  app.onShowLive(); end
-            if newTrace || newLive
+            % and deliberately not raised over whatever is in front of it, so
+            % this is safe to call at every Start. Returns how many were
+            % opened, which is what decides whether focus has to be taken back.
+            n = 0;
+            % The organizer additionally needs the transfer preference:
+            % nothing would ever arrive in one opened with it off, and a
+            % window that stays empty for a whole session is worse than one
+            % the user opened deliberately (see traceTransferEnabled).
+            if app.Views.opens('TraceOrganizer') && app.traceTransferEnabled() ...
+                    && (isempty(app.TraceOrg) || ~isvalid(app.TraceOrg) ...
+                        || ~app.TraceOrg.isvalidView())
+                app.onTraceOrg();   n = n + 1;
+            end
+            if app.Views.opens('LivePlot') && (isempty(app.LivePlot) || ~isvalid(app.LivePlot))
+                app.onShowLive();   n = n + 1;
+            end
+            % One analysis window, and only when none is up: the window is
+            % deliberately not a singleton, but opening a NEW one at every
+            % Start would stack a session's worth of them up.
+            app.pruneMetricPlots();
+            if app.Views.opens('Analysis') && isempty(app.MetricPlots)
+                app.onMetricPlot();  n = n + 1;
+            end
+            if app.Views.opens('StimulusViewer') && (isempty(app.StimViewer) ...
+                    || ~isvalid(app.StimViewer) || ~app.StimViewer.isvalidView())
+                app.onStimViewer();  n = n + 1;
+            end
+            if app.Views.opens('ProgressMonitor') && (isempty(app.ProgressMon) ...
+                    || ~isvalid(app.ProgressMon))
+                app.onProgress();    n = n + 1;
+            end
+            if app.Views.opens('Notes') && ~isempty(app.NotesView) ...
+                    && isvalid(app.NotesView) && ~app.NotesView.isopen()
+                app.NotesView.popOut();   n = n + 1;
+            end
+            if n > 0
                 figure(app.UIFigure);   % the main window keeps focus
+            end
+        end
+
+        function lp = liveView(app)
+            % The live view to hand the controller: the one that is open, or
+            % nothing. Empty is a supported answer (it is what a
+            % stimulation-only run passes), and it is now also what a rig that
+            % has switched the live view off at Start passes -- the controller
+            % simply has nowhere to draw, which costs it a plot and nothing
+            % else.
+            if isempty(app.LivePlot) || ~isvalid(app.LivePlot)
+                lp = mabr.ui.LivePlot.empty;
+            else
+                lp = app.LivePlot;
             end
         end
 
@@ -2399,15 +3062,20 @@ classdef App < handle
             % Once it exists it keeps itself current through BlockReady, so
             % pressing T is a pure raise -- re-running the backfill would
             % discard whatever the user has arranged or loaded in there.
+            % With the transfer preference off the organizer is opened EMPTY
+            % and stays that way: the backfill is as much a transfer as the
+            % live one, and the reason to open it by hand in that mode is to
+            % load a .torg into it.
             if isempty(app.TraceOrg) || ~isvalid(app.TraceOrg)
                 app.TraceOrg = mabr.ui.TraceOrganizer();
-                if ~isempty(app.Controller) && isvalid(app.Controller)
+                if app.traceTransferEnabled() && ~isempty(app.Controller) ...
+                        && isvalid(app.Controller)
                     for i = 1:app.Controller.Session.NumBlocks
                         app.TraceOrg.addBlock(app.Controller.Session.Blocks(i));
                     end
-                    app.TraceOrg.listenTo(app.Controller);
                 end
             end
+            app.bindTraceOrg();
             % Unconditionally, and whether or not a controller exists yet: the
             % session's notebook is the App's, so an organizer opened before
             % Start shows the same log as one opened after. A no-op when it is
@@ -2518,6 +3186,39 @@ classdef App < handle
             try, mabr.ui.WindowPos.remember(app.TraceOrg.Figure,'TraceOrganizer'); end %#ok<TRYNC>
             try, mabr.ui.WindowPos.remember(app.StimViewer.Figure,'StimulusViewer'); end %#ok<TRYNC>
             try, mabr.ui.WindowPos.remember(app.ProgressMon.Figure,'ProgressMonitor'); end %#ok<TRYNC>
+        end
+
+        function applyWindowPositions(app,s)
+            % Restore a saved layout: into the prefs, so windows not open yet
+            % come up in the right place, and onto the windows that ARE open,
+            % because the point of restoring a layout is watching it happen
+            % rather than being told it will apply next time. Guarded per
+            % window -- a monitor that has since been unplugged is
+            % mabr.ui.WindowPos.place's problem to clamp, and a window this
+            % MABR does not have is simply not there to move.
+            n = mabr.ui.WindowPos.applyAll(s);
+            if n == 0, return; end
+            mabr.ui.WindowPos.place(app.UIFigure,'MABR');
+            placeIf(viewerFigure(app.LivePlot),   'LivePlot');
+            placeIf(viewerFigure(app.TraceOrg),   'TraceOrganizer');
+            placeIf(viewerFigure(app.StimViewer), 'StimulusViewer');
+            placeIf(viewerFigure(app.ProgressMon),'ProgressMonitor');
+            app.pruneMetricPlots();
+            if isscalar(app.MetricPlots)
+                % Only a lone one, for the same reason only a lone one is
+                % remembered: the others sit at cascade offsets and moving
+                % them all onto one spot would stack them.
+                placeIf(viewerFigure(app.MetricPlots(1)),'MetricPlot');
+            end
+
+            function placeIf(f,name)
+                if isempty(f) || ~isgraphics(f), return; end
+                try
+                    mabr.ui.WindowPos.place(f,name);
+                catch me
+                    mabr.log.vprintf(2,'App: could not place "%s" (%s).',name,me.message);
+                end
+            end
         end
 
         function pos = defaultViewerPos(app,name)
@@ -2815,6 +3516,25 @@ classdef App < handle
     end
 
     methods (Static, Access = private)
+        function c = builtinStrategies()
+            % The canonical names of the five strategies Schedule plans
+            % itself, in StrategyItems' order -- everything in
+            % Schedule.Strategies except 'custom', which the dropdown carries
+            % separately because its label names the resolved function.
+            c = setdiff(mabr.stim.Schedule.Strategies,{'custom'},'stable');
+        end
+
+        function tf = isMabrWindow(f)
+            % Is this figure one of MABR's? Every window the toolbox opens
+            % names itself 'MABR ...' or carries a 'MABR...' Tag, and the
+            % main window is deliberately NOT one of them here -- windows()
+            % appends it by handle so it always comes last.
+            tf = false;
+            if ~isgraphics(f), return; end
+            if strcmp(get(f,'Tag'),mabr.ui.App.InstanceTag), return; end
+            tf = startsWith(get(f,'Tag'),'MABR') || startsWith(get(f,'Name'),'MABR');
+        end
+
         function rows = glyph(name)
             % 16x16 toolbar art, one 16-char string per row; see mabr.ui.Icon.
             % Kept as art rather than index math because the shapes have to
@@ -2905,6 +3625,23 @@ classdef App < handle
                             '................'
                             '................'
                             '................'};
+                case 'front'     % three cascaded windows, the front one solid
+                    rows = {'................'
+                            '..XXXXXXXXXX....'
+                            '..X........X....'
+                            '..X.XXXXXXXXXX..'
+                            '..X.X...........'
+                            '..X.X.XXXXXXXXXX'
+                            '..X.X.XXXXXXXXXX'
+                            '..X.X.X........X'
+                            '..XXX.X........X'
+                            '....X.X........X'
+                            '....X.X........X'
+                            '......X........X'
+                            '......X........X'
+                            '......XXXXXXXXXX'
+                            '................'
+                            '................'};
                 case 'pin'       % pushpin: keep window on top
                     rows = {'................'
                             '.......XXXX....'
@@ -2949,6 +3686,27 @@ end
 % ======================= local helpers ================================
 function s = onOff(tf)
 if tf, s = 'on'; else, s = 'off'; end
+end
+
+function figs = addFig(figs,h)
+% Append a figure handle to the list, skipping anything that is not a live
+% figure and anything already in it -- the two collection passes in
+% App.windows overlap by design (a viewer the App holds is also found by the
+% Tag/Name sweep), and raising one twice would fight the ordering.
+if isempty(h) || ~isscalar(h), return; end
+if ~isa(h,'matlab.ui.Figure') || ~isgraphics(h), return; end
+if any(figs == h), return; end
+figs(end+1) = h;
+end
+
+function f = viewerFigure(obj,prop)
+% The window a viewer object is showing, or [] when it has none: never
+% built, already closed, or -- LivePlot and ProgressMonitor both support it
+% -- embedded in somebody else's container rather than owning a figure.
+if nargin < 2, prop = 'Figure'; end
+f = [];
+if isempty(obj) || ~isscalar(obj) || ~isvalid(obj) || ~isprop(obj,prop), return; end
+try, f = obj.(prop); end %#ok<TRYNC>
 end
 
 function setEnable(controls,tf)

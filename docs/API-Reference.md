@@ -56,22 +56,25 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 
 | Member | Description |
 |--------|-------------|
-| `Strategies` | Constant. `blocked`, `shuffled-blocks`, `interleaved`, `shuffled-cycles`, `shuffled`. All are permutations of a fixed multiset — never probabilistic sampling |
+| `Strategies` | Constant. `blocked`, `shuffled-blocks`, `interleaved`, `shuffled-cycles`, `shuffled`, `custom`. The five built-ins are permutations of a fixed multiset — never probabilistic sampling |
 | `ISI` | Inter-stimulus interval (s, onset-to-onset). Default `1/21.1` |
 | `Repetitions` | Per-entry repetition counts; a scalar is broadcast to every entry |
 | `Strategy`, `Seed` | How entries combine, and the shuffle seed (`[]` = fresh shuffle, via a private `RandStream`) |
+| `StrategyFcn`, `StrategyParams` | Under `Strategy = 'custom'`, the user's ordering function and its knobs. Called once per `build()` with [`strategy.context`](../+mabr/+stim/+strategy/context.m); `build()` refuses without one |
 | `build()` | (Re)build `Runs` from `Repetitions` + `Strategy`. **Required after changing either** |
 | `NumRuns`, `current()`, `advance()`, `reset()`, `isComplete()` | Run walk; `advance` returns `[]` when finished |
 | `runSequence(r)` | The stimulus index presented at each onset of run `r` |
 | `runPolarity(r)` | The polarity (`+1`/`-1`) applied at each onset of run `r` |
 | `renderSpec(r)` | Build the acquisition spec for run `r` — the argument to `Engine.prep` |
-| `isIntermixed()` | True when one run mixes stimuli (the last three strategies) |
+| `isIntermixed()` | True when one run mixes stimuli. For `custom` it asks the built **runs**, not the strategy name |
+| `strategyLabel()` | The strategy as a record should name it — `custom: my_ordering`, not bare `custom` |
+| `normalizedRepetitions()` | `Repetitions` as the plan uses them: scalar expanded, zero-filled, rounded |
 | `summary()` | Plan overview: `numRuns`, `presentations`, `repetitions`, `duration` (s), `intermixed` |
 | `overlaps()` | True when the longest stimulus does not fit inside the ISI |
 | `recordRun(r,counts)` | Record presentations actually acquired, per stimulus |
 | `SilencePad`, `PlayerChannels`, `RecorderChannels`, `Device` | Padding and device/channel mapping |
 | `TestingFrameDelay` | Per-frame pause used to pace loopback in tests only |
-| `strategyIntermixes(s)` | Static. Whether strategy `s` intermixes — used by the GUI to gate early stop |
+| `strategyIntermixes(s)` | Static. Whether strategy `s` intermixes — used by the GUI to gate early stop. `custom` answers `true` conservatively, having no plan to inspect |
 | `startingRepetitions(set)` | Static. Per-entry `Repetitions` where supplied, else `512` |
 
 `renderSpec` adds `StimulusIndex` to the spec — the stimulus behind each onset, which `AcqController` uses to de-interleave an intermixed run at save time. It errors with `mabr:stim:Schedule:tooLong` if the run would exceed `Config.maxInputBufferLength`, checked **before** allocating.

@@ -72,10 +72,13 @@ The **Bank** field shows `(none loaded)` in red until stimuli are loaded, then t
 | Interleaved — A B C A B C … | One continuous run cycling through every stimulus |
 | Interleaved, shuffled each cycle | The same, with each cycle's order shuffled independently |
 | Fully shuffled | One continuous run, every presentation shuffled |
+| Custom function… | The order your own function returns — see below |
 
 The last three **intermix** stimuli within a single continuous run, which removes drift and order effects from the comparison between conditions. You still get one `.abr` file per stimulus: MABR knows which stimulus it played at every onset and separates the sweeps when it saves.
 
-Shuffling only reorders — it never resamples. Every stimulus is presented exactly the number of times you asked for under any of the five strategies, so the counts are identical whichever you pick; only the order changes.
+Shuffling only reorders — it never resamples. Every stimulus is presented exactly the number of times you asked for under any of the five built-in strategies, so the counts are identical whichever you pick; only the order changes.
+
+**Custom strategies.** Picking **Custom function…** opens a file browser; choose a function that takes one context struct describing the design — the bank, the repetition counts, and the stimulus parameters as a table — and returns the stimulus indices to present, a vector for one run or a cell of vectors for several. MABR puts its folder on the path and checks it against the contract before accepting it, running it on a representative design with unequal repetition counts, so a malformed one is refused at selection rather than at Start. Once chosen it appears as `Custom: <name>` and is remembered by file in a saved configuration. Polarity is assigned for you, balanced across the whole plan exactly as the built-ins balance it. Copy [`+mabr/+stim/+strategy/custom_template.m`](../+mabr/+stim/+strategy/custom_template.m) — which is itself a useful strategy, one run per condition ordered loudest-first within each frequency — and see [Extending](Extending.md#ordering-presentations-yourself) for the full contract and more worked examples.
 
 **Repetitions** — How many times each stimulus is presented. The number field applies one value to every stimulus. **Per stimulus…** opens a small editor where you can either keep one value for the whole bank or give each stimulus its own count; it shows the running total and estimated acquisition time as you type. Stimuli with unequal counts drop out of the cycle once they are done, so the extra repetitions of the others stay spread out rather than clumping at the end.
 

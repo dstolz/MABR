@@ -91,6 +91,18 @@ ctrl.AuxPeriod = 2.0;
 % view can be sampled and there is no rate to measure.
 ctrl.Schedule.TestingFrameDelay = 1024/cfg.DACSampleRate;
 
+% The live view opens on the display settings last chosen in one, so take
+% that pref out of the way: what this script measures must not depend on the
+% layout the user happens to have left their own window in.
+hadLivePref = ispref('MABR','LivePlot');
+if hadLivePref
+    oldLivePref = getpref('MABR','LivePlot');
+    rmpref('MABR','LivePlot');
+else
+    oldLivePref = [];
+end
+restoreLivePref = onCleanup(@() restore_live_pref(hadLivePref,oldLivePref)); %#ok<NASGU>
+
 lp = mabr.ui.LivePlot();
 ctrl.setLivePlot(lp);
 pm = mabr.ui.ProgressMonitor();  pm.listenTo(ctrl);
@@ -152,6 +164,16 @@ fprintf(['  PASS Part C: aux served at %.1f Hz (AuxPeriod %g s) against a ' ...
     '%.0f Hz live tick\n'],auxRate,ctrl.AuxPeriod,1/live(1).Period);
 
 fprintf('== verify_live_refresh PASSED ==\n');
+end
+
+function restore_live_pref(had,value)
+% Put the user's live-view preference back exactly as it was -- including
+% "there wasn't one".
+if had
+    setpref('MABR','LivePlot',value);
+elseif ispref('MABR','LivePlot')
+    rmpref('MABR','LivePlot');
+end
 end
 
 function bump(m,k)

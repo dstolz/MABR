@@ -9,7 +9,10 @@ classdef LivePlot < handle
 %       sweep on its own -- it is a different quantity from an average (one
 %       sweep, tens of times larger) and sharing an axis with the means would
 %       flatten them, so it keeps its own,
-%     * a narrow correlation bar beside it (the online onset-contrast metric),
+%     * a narrow correlation bar beside it (the online onset-contrast metric)
+%       -- present only while the run holds ONE condition, since that metric
+%       is an average converging on itself and an intermixed run's average is
+%       several conditions at once (see corrVisible),
 %     * and below, the RUNNING MEAN of every stimulus the current run is
 %       presenting -- overlaid, one axes each, or arranged by parameter.
 %
@@ -114,6 +117,11 @@ classdef LivePlot < handle
 %   'common' there; in 'stacked' the mode sets the offset between traces the
 %   same way, per group or shared.
 %
+%   The latest sweep keeps its own scale under every one of those modes -- a
+%   single sweep is tens of times a mean, and a limit chosen to frame the
+%   averages would clip it off the axes -- but that scale moves in DISCRETE
+%   STEPS rather than tracking the peak. See LatestLadder.
+%
 %   Sweeps flagged in `bad` are EXCLUDED from the running means -- one electrode
 %   pop otherwise smears across the whole average and the view stops reflecting
 %   what the block will contain. They are reported instead: the count and rate
@@ -131,6 +139,12 @@ classdef LivePlot < handle
 % Daniel Stolzberg (c) 2019-2026
 
     properties (Constant, Access = private)
+        % Where the display settings below are remembered between sessions.
+        % The same group everything else in MABR persists into, and the same
+        % idiom mabr.ui.MetricPlot follows: the WINDOW owns its look, and a
+        % look chosen once should be the one the next session opens with.
+        PrefGroup     = 'MABR';
+        PrefKey       = 'LivePlot';
         RecentColor   = [0.2 0.6 1];      % latest sweep, kept
         ArtifactColor = [0.85 0.15 0.1];  % latest sweep, rejected
         ZeroColor     = [0.6 0.6 0.6];
@@ -143,6 +157,35 @@ classdef LivePlot < handle
         % Vertical split of the plot region: the latest sweep on top, the
         % means below it. Fractions of the plot panel.
         TopFrac       = 0.34;
+        % Horizontal split of that top region: the RIGHT EDGE of the latest
+        % sweep's axes with the correlation bar beside it, and once the bar is
+        % gone (see corrVisible) -- the trace takes the room back rather than
+        % leaving a gap where a hidden axes used to be. Right edges rather
+        % than widths because the LEFT edge is measured from the labels that
+        % have to fit beside it (see fitLabelGutters), and only one of the two
+        % can be the fixed one.
+        LatestRightNarrow = 0.81;   % with the correlation bar beside it
+        LatestRightWide   = 0.97;   % without
+        OverlayRight      = 0.81;   % ... and the overlaid means' right edge
+        % Bounds on a measured label gutter. The floor is there for an axes
+        % that answers with nothing; the ceiling is the point past which a
+        % margin wide enough for the labels has swallowed the plot they were
+        % labelling, and clipping them is the better trade.
+        MinGutter     = 0.02;
+        MaxGutter     = 0.30;
+        % The latest sweep's own vertical scale. It is ONE sweep, redrawn at
+        % the live tick rate, and the single question a raw sweep is watched
+        % for -- is this one bigger than the last? -- is exactly the one a
+        % limit tracking its own peak destroys, since the ruler then grows
+        % with the thing being measured and every sweep looks the same size.
+        % The limit therefore stands on a 1-2-5 ladder and moves in whole
+        % rungs: UP the instant a sweep would not fit (clipping the signal is
+        % never the better trade) and DOWN only after the smaller rung has
+        % been enough for LatestShrinkHold consecutive refreshes, so one big
+        % sweep does not leave the scale walking back down over the quiet ones
+        % behind it. The rungs are also where MATLAB puts readable ticks.
+        LatestLadder     = [1 2 5 10];
+        LatestShrinkHold = 15;   % refreshes (~0.75 s at the 20 Hz live tick)
     end
 
     properties
@@ -203,6 +246,37 @@ classdef LivePlot < handle
         % can refresh the menu without asking the widget what it already says.
         GroupChoices = {};
         Last = [];            % last update() payload, for re-render on a control change
+        % The latest-sweep axes' current +/- limit in VOLTS (0 = none chosen
+        % yet) and how many consecutive refreshes have asked for a smaller
+        % rung than it. See LatestLadder.
+        LatestLim    (1,1) double = 0
+        LatestShrink (1,1) double = 0
+        % Room reserved for the y axis labels, in fractions of the plot panel:
+        % left of the first column of means, between columns, and left of the
+        % latest-sweep axes. All three are MEASURED from what is actually on
+        % screen (fitLabelGutters) rather than assumed -- see it for why no
+        % fixed margin is right for every layout. These are only the starting
+        % estimates; the fit is the sole writer after that.
+        LeftGutter   (1,1) double = 0.075
+        ColGutter    (1,1) double = 0
+        LatestGutter (1,1) double = 0.09
+        GutterKey    (1,:) char   = ''     % what those were last measured for
+        % render() is NOT re-entrant: legend() and drawnow both process the
+        % event queue, so a live tick can land inside a render started by a
+        % control callback (or the other way about) -- and the inner call
+        % rebuilds the mean axes the outer one is still holding handles to,
+        % which leaves the outer's axes orphaned on the panel and its
+        % captions written onto somebody else's. A render that finds one in
+        % progress is REMEMBERED rather than run: the outer call draws it
+        % once it is done, from obj.Last, which by then is the newer data.
+        % (Skipping outright, as mabr.ui.MetricPlot does, is right for a
+        % window whose timer will come round again; here a setting changed
+        % BETWEEN runs would have no tick behind it and would never appear.)
+        Rendering     (1,1) logical = false
+        RenderPending (1,1) logical = false
+        PanelPx      (1,1) double = 0      % plot panel width, px (see relayout)
+        CorrShown    (1,1) logical = true  % is the correlation bar in place?
+        LastGroup    = []      % last resolved grouping, for a re-fit on resize
     end
 
     methods
@@ -214,6 +288,12 @@ classdef LivePlot < handle
                     'Tag','MABR_LIVEPLOT','Position',[100 100 780 580]);
                 obj.Container = obj.Figure;
             end
+            % Whatever layout, time base, scaling and error band the last
+            % window was left showing. Applied BEFORE build(), so the control
+            % strip is drawn from them rather than flickering through the
+            % class defaults on the way. Nothing is persisted from here -- see
+            % savePrefs, which only user-driven changes call.
+            obj.applySettings(mabr.ui.LivePlot.loadDefaults());
             obj.build();
         end
 
@@ -230,6 +310,11 @@ classdef LivePlot < handle
             % next run rebuilds them for its own stimulus list on the first
             % update, and rebuilding here would flash an empty grid in between.
             obj.Last = [];
+            % The next run is scaled on its own evidence: a rung held over
+            % from the run before would frame the first sweeps of this one
+            % against an amplitude nothing here has shown.
+            obj.LatestLim    = 0;
+            obj.LatestShrink = 0;
             if ~obj.isvalidView(), return; end
             set(obj.meanLines(isgraphics(obj.meanLines)),'XData',nan,'YData',nan);
             set(obj.bandPatches(isgraphics(obj.bandPatches)), ...
@@ -278,6 +363,12 @@ classdef LivePlot < handle
             %                       exactly what mabr.stim.StimulusSet.paramTable
             %                       returns (over the BANK, with this run's rows
             %                       taken out of it -- see AcqController).
+            %            .Intermixed  logical, optional -- does ONE run mix
+            %                         several conditions (an interleaved or
+            %                         shuffled strategy)? It decides whether
+            %                         the onset-contrast bar is drawn at all;
+            %                         absent, a run presenting more than one
+            %                         stimulus is taken to be intermixed.
             %            .DetrendPoly, .SmoothSpan  cosmetic post-processing
             %          Omit it and every sweep counts as one condition.
             if nargin < 4, R = []; end
@@ -420,6 +511,88 @@ classdef LivePlot < handle
             obj.ConfidenceLevel = double(v);
             obj.afterSettingChange();
         end
+
+        % --- Persistence ------------------------------------------------------
+        % Every display setting above in one struct: what the pref holds, and
+        % what mabr.ui.App's configuration file carries so that a named setup
+        % restores the view it was arranged with. Deliberately NOT written by
+        % the setters: a script driving the view (or a verification script) is
+        % not a user choosing a look, and only a choice belongs in a
+        % preference. The control strip and the right-click menu -- the two
+        % places a person changes one -- call savePrefs themselves.
+        function s = displaySettings(obj)
+            s = struct('Layout',obj.Layout,'GroupBy',obj.GroupBy, ...
+                       'TimeBase',obj.TimeBase,'AmpMode',obj.AmpMode, ...
+                       'ManualLimit',obj.ManualLimit,'ErrorBand',obj.ErrorBand, ...
+                       'ConfidenceLevel',obj.ConfidenceLevel);
+        end
+
+        function applySettings(obj,s)
+            % Inverse of displaySettings(), forgiving field by field -- a struct from
+            % an older MABR, a hand-edited pref, or a configuration file must
+            % restore whatever validates and leave the rest alone rather than
+            % refusing the lot. Each assignment goes through the property's
+            % own setter, so nothing invalid gets in by this door either.
+            if ~isstruct(s) || ~isscalar(s), return; end
+            f = {'Layout','GroupBy','TimeBase','AmpMode','ManualLimit', ...
+                 'ErrorBand','ConfidenceLevel'};
+            for i = 1:numel(f)
+                if ~isfield(s,f{i}), continue; end
+                try
+                    obj.(f{i}) = s.(f{i});
+                catch me
+                    mabr.log.vprintf(2,'LivePlot: ignoring %s (%s).',f{i},me.message);
+                end
+            end
+        end
+
+        function savePrefs(obj)
+            % Guarded: a rig with no writable prefs must not lose a window
+            % over a look it cannot store.
+            try
+                setpref(mabr.ui.LivePlot.PrefGroup,mabr.ui.LivePlot.PrefKey, ...
+                    obj.displaySettings());
+            catch %#ok<CTCH>
+            end
+        end
+    end
+
+    % =====================================================================
+    methods (Static)
+        function d = loadDefaults()
+            % What a NEW live view opens with: the settings last chosen in
+            % one. Defensive throughout, the rule every loadPrefs in MABR
+            % follows -- a pref written by an older version is missing
+            % whatever has been added since, and must not stop a window from
+            % opening. Validating each value is applySettings' job (and
+            % ultimately the property setters'), so whatever is in there
+            % survives being handed back.
+            d = struct('Layout','overlay','GroupBy','','TimeBase',[-2 10], ...
+                       'AmpMode','common','ManualLimit',5e-6, ...
+                       'ErrorBand','none','ConfidenceLevel',0.95);
+            try
+                if ~ispref(mabr.ui.LivePlot.PrefGroup,mabr.ui.LivePlot.PrefKey)
+                    return
+                end
+                p = getpref(mabr.ui.LivePlot.PrefGroup,mabr.ui.LivePlot.PrefKey);
+                if ~isstruct(p) || ~isscalar(p), return; end
+                f = fieldnames(d);
+                for i = 1:numel(f)
+                    if isfield(p,f{i}), d.(f{i}) = p.(f{i}); end
+                end
+            catch %#ok<CTCH>
+            end
+        end
+
+        function saveDefaults(d)
+            % Write the pref with no window in hand: what mabr.ui.App does
+            % when a configuration file restores a live-view look while no
+            % live view is open, so the next one opens wearing it.
+            try
+                setpref(mabr.ui.LivePlot.PrefGroup,mabr.ui.LivePlot.PrefKey,d);
+            catch %#ok<CTCH>
+            end
+        end
     end
 
     % =====================================================================
@@ -449,6 +622,11 @@ classdef LivePlot < handle
             h = min(max(h,0.02),0.5);
             obj.CtrlPanel.Position = [0 0 1 h];
             obj.PlotPanel.Position = [0 h 1 1-h];
+            obj.measurePanelPx();
+            % The label gutters are fractions of that panel, so a resize is a
+            % new question even though nothing was redrawn: the same labels
+            % now take a different share of the width.
+            obj.fitLabelGutters(obj.LastGroup);
         end
 
         function px = containerHeight(obj)
@@ -462,7 +640,9 @@ classdef LivePlot < handle
             p = obj.PlotPanel;
             y = 1 - obj.TopFrac;
             obj.axLatest = axes('Parent',p,'Units','normalized', ...
-                'Position',[0.09 y+0.06 0.72 obj.TopFrac-0.13],'Box','on','NextPlot','add');
+                'Position',[obj.LatestGutter y+0.06, ...
+                    obj.LatestRightNarrow-obj.LatestGutter obj.TopFrac-0.13], ...
+                'Box','on','NextPlot','add');
             grid(obj.axLatest,'on');
             yline(obj.axLatest,0,'Color',obj.ZeroColor,'LineWidth',1);
             xline(obj.axLatest,0,'Color',obj.ZeroColor,'LineStyle',':');
@@ -485,6 +665,49 @@ classdef LivePlot < handle
             title(obj.axCorr,'\rho_{post}-\rho_{pre}','FontSize',8);
         end
 
+        function tf = corrVisible(~,S)
+            % Whether the rho_post-rho_pre bar means anything for this run.
+            %
+            % It is the online onset-contrast metric over the run's POOLED
+            % sweeps -- the correlation between the running average and the
+            % sweeps still arriving, post-onset against the pre-onset
+            % baseline. That is a statement about ONE condition: the response
+            % has stopped changing as sweeps accumulate. An INTERMIXED run
+            % (interleaved / shuffled-cycles / shuffled) pools several
+            % conditions into that average, so the number compares one
+            % condition's mean against another condition's sweeps and is a
+            % convergence measure of nothing. It is the same reason
+            % mabr.ui.AcqController evaluates no advance criterion for those
+            % runs -- and the bar goes with it, rather than sitting there
+            % being read.
+            %
+            % The caller's answer wins (info.Intermixed, which AcqController
+            % takes from mabr.stim.Schedule.isIntermixed, so the view follows
+            % the strategy rather than guessing at it); absent one, a run
+            % presenting more than one stimulus is intermixed by definition.
+            if isfield(S.opts,'Intermixed') && ~isempty(S.opts.Intermixed)
+                tf = ~logical(S.opts.Intermixed);
+            else
+                tf = numel(S.stimList) <= 1;
+            end
+        end
+
+        function applyCorrBar(obj,tf)
+            % Show or hide the bar, handing its width to the latest-sweep axes
+            % when it goes -- an empty strip where an axes used to be reads as
+            % a plot that failed to draw. The axes is hidden, never destroyed:
+            % the next run may well be blocked, and rebuilding the top region
+            % would take the trace on screen with it.
+            if ~isgraphics(obj.axCorr) || ~isgraphics(obj.axLatest), return; end
+            obj.CorrShown = tf;
+            obj.applyLatestPosition();
+            % An invisible axes still draws its children, so the bar itself
+            % has to be told; the title follows the axes.
+            obj.axCorr.Visible = onOff(tf);
+            kids = obj.axCorr.Children;
+            if ~isempty(kids), set(kids,'Visible',onOff(tf)); end
+        end
+
         function buildMeanAxes(obj,G)
             % (Re)build the lower region for exactly the stimuli this run
             % presents, in the arrangement `G` resolved for them. Called only
@@ -494,6 +717,13 @@ classdef LivePlot < handle
             obj.meanLines   = gobjects(1,0);
             obj.bandPatches = gobjects(1,0);
             obj.legendHandle = [];
+            % Belt and braces over the re-entrancy guard above: whatever the
+            % cause, an axes on this panel that is not one of ours is one an
+            % earlier build lost track of, and it would otherwise sit there
+            % for the rest of the session with a stale run drawn on it.
+            % Nothing but this view puts axes here, so the sweep is safe and
+            % makes the leak self-healing rather than permanent.
+            obj.dropStrayAxes();
 
             obj.StimList   = G.stimList;
             obj.StimLabels = G.labels;
@@ -526,7 +756,8 @@ classdef LivePlot < handle
                     % One axes per group; the group's conditions are offset
                     % into it at render, so the lines belong to the group's
                     % axes but stay indexed by stimulus like every other mode.
-                    pos = obj.stackPositions(G.nGroups);
+                    [pos,isLeft] = obj.stackPositions(G.nGroups);
+                    obj.TileIsLeft = isLeft;
                     for g = 1:G.nGroups
                         obj.axMean(g) = obj.newTile(p,pos(g,:),true,true,false);
                     end
@@ -539,7 +770,7 @@ classdef LivePlot < handle
 
                 otherwise   % 'overlay'
                     ax = axes('Parent',p,'Units','normalized', ...
-                        'Position',[0.09 0.11 0.72 1-obj.TopFrac-0.16], ...
+                        'Position',obj.overlayPosition(), ...
                         'Box','on','NextPlot','add');
                     mabr.ui.hideAxesToolbar(ax);
                     grid(ax,'on');
@@ -556,6 +787,21 @@ classdef LivePlot < handle
             obj.attachContextMenu(obj.meanLines);
             obj.attachContextMenu(obj.bandPatches);
             obj.LayoutKey = mabr.ui.LivePlot.layoutKey(G);
+        end
+
+        function dropStrayAxes(obj)
+            % Delete any axes on the plot panel that this view is not holding
+            % a handle to. Called from buildMeanAxes, where the mean axes have
+            % just been given up and are about to be rebuilt, so the only
+            % things left to keep are the two at the top.
+            if ~obj.isvalidView(), return; end
+            keep = [obj.axMean(:); obj.axLatest(:); obj.axCorr(:)];
+            keep = keep(isgraphics(keep));
+            stray = findobj(obj.PlotPanel,'-depth',1,'Type','axes');
+            for k = numel(stray):-1:1
+                if any(stray(k) == keep), stray(k) = []; end
+            end
+            if ~isempty(stray), delete(stray); end
         end
 
         function [band,ln] = newMean(obj,ax,c)
@@ -605,7 +851,7 @@ classdef LivePlot < handle
             rows = ceil(n/cols);
             [pos,isBottom,isLeft] = deal(zeros(n,4),false(1,n),false(1,n));
             [x0,y1,wGap,hGap,w,h] = mabr.ui.LivePlot.tileGeometry( ...
-                cols,rows,1-obj.TopFrac-0.05);
+                cols,rows,1-obj.TopFrac-0.05,obj.LeftGutter,obj.ColGutter);
             for k = 1:n
                 c = floor((k-1)/rows);          % fill top-to-bottom, then across
                 r = mod(k-1,rows);
@@ -628,7 +874,7 @@ classdef LivePlot < handle
             % A little extra headroom: the top tile of each column carries the
             % group name above its own title.
             [x0,y1,wGap,hGap,w,h] = mabr.ui.LivePlot.tileGeometry( ...
-                cols,rows,1-obj.TopFrac-0.085);
+                cols,rows,1-obj.TopFrac-0.085,obj.LeftGutter,obj.ColGutter);
             [pos,isBottom,isLeft] = deal(zeros(n,4),false(1,n),false(1,n));
             for k = 1:n
                 c = G.group(k) - 1;
@@ -639,19 +885,191 @@ classdef LivePlot < handle
             end
         end
 
-        function pos = stackPositions(obj,nG)
+        function pos = meanPositions(obj,G)
+            % Where the mean axes go, in axMean order, for the arrangement G
+            % and the label gutters as currently measured. buildMeanAxes
+            % CREATES them here and fitLabelGutters MOVES them here -- one
+            % answer to the question, so a re-measured gutter cannot leave the
+            % two disagreeing about where a tile belongs.
+            switch G.mode
+                case 'separate', pos = obj.tilePositions(max(1,numel(G.stimList)));
+                case 'grid',     pos = obj.gridPositions(G);
+                case 'stacked',  pos = obj.stackPositions(G.nGroups);
+                otherwise,       pos = obj.overlayPosition();
+            end
+        end
+
+        function pos = overlayPosition(obj)
+            % The overlaid means: one axes, its right edge fixed and its left
+            % wherever the y label and the numbers need it to be.
+            x = min(max(obj.LeftGutter,obj.MinGutter),obj.MaxGutter);
+            pos = [x 0.11 max(0.1,obj.OverlayRight-x) 1-obj.TopFrac-0.16];
+        end
+
+        function applyMeanPositions(obj,G)
+            pos = obj.meanPositions(G);
+            for k = 1:min(size(pos,1),numel(obj.axMean))
+                if ~isgraphics(obj.axMean(k)), continue; end
+                if ~isequal(obj.axMean(k).Position,pos(k,:))
+                    obj.axMean(k).Position = pos(k,:);
+                end
+            end
+        end
+
+        function applyLatestPosition(obj)
+            % The latest-sweep axes between its measured left gutter and
+            % whichever right edge the correlation bar has left it.
+            if ~isgraphics(obj.axLatest), return; end
+            r = obj.LatestRightWide;
+            if obj.CorrShown, r = obj.LatestRightNarrow; end
+            x   = min(max(obj.LatestGutter,obj.MinGutter),obj.MaxGutter);
+            pos = obj.axLatest.Position;
+            new = [x pos(2) max(0.1,r-x) pos(4)];
+            if ~isequal(pos,new), obj.axLatest.Position = new; end
+        end
+
+        function fitLabelGutters(obj,G)
+            % Give the y axis labels the room they actually take.
+            %
+            % How much that is depends on the layout, and no fixed margin is
+            % right for all of them: a mean axes is labelled with three-digit
+            % microvolts, while a 'stacked' one is labelled with the condition
+            % NAMES ("60 dB (136)") and EVERY column of stacks carries them,
+            % not just the leftmost. A margin sized for the numbers clips the
+            % names -- and clips them into the neighbouring tile, where they
+            % land on top of somebody else's trace rather than simply being
+            % cut off. So the margins are measured from what is on screen
+            % (TightInset is exactly the room the labels asked for) and the
+            % tiles are re-tiled around them.
+            %
+            % Measuring costs a graphics query, so it is done only when the
+            % answer could have changed: a new arrangement, a label that
+            % gained a character, or a resized window -- the margins are
+            % fractions of the panel, so its width is part of the question.
+            if ~obj.isvalidView() || isempty(G), return; end
+            key = obj.gutterKey(G);
+            if strcmp(key,obj.GutterKey), return; end
+            obj.GutterKey = key;
+
+            [l,c,lat] = obj.measureGutters();
+            l   = obj.pickGutter(obj.LeftGutter,l);
+            c   = obj.pickGutter(obj.ColGutter,c);
+            lat = obj.pickGutter(obj.LatestGutter,lat);
+            if isequal([l c lat],[obj.LeftGutter obj.ColGutter obj.LatestGutter])
+                return
+            end
+            obj.LeftGutter   = l;
+            obj.ColGutter    = c;
+            obj.LatestGutter = lat;
+            obj.applyMeanPositions(G);
+            obj.applyLatestPosition();
+        end
+
+        function g = pickGutter(~,cur,want)
+            % Take a measured gutter, or keep the one in force.
+            %
+            % It GROWS the instant the labels need it -- a label that does not
+            % fit is the whole reason this exists -- and shrinks only once
+            % there is real room to give back. The asymmetry is what keeps the
+            % fit stable: a narrower axes can be relabelled by MATLAB with
+            % shorter ticks, which would ask for a narrower gutter, which
+            % would widen the axes again, and a symmetric rule would sit there
+            % swapping between the two answers on alternate refreshes.
+            if want > cur + 0.002 || want < cur - 0.015
+                g = want;
+            else
+                g = cur;
+            end
+        end
+
+        function [l,c,lat] = measureGutters(obj)
+            % What the labels now drawn need, in fractions of the plot panel:
+            % left of the first column, between columns, and left of the
+            % latest-sweep axes. TightInset(1) IS that width -- the tick
+            % labels plus the y label where there is one -- and the pad is the
+            % gap between a label and whatever sits to its left.
+            pad = 0.006;
+            l = obj.MinGutter; c = 0; lat = obj.MinGutter;
+            for k = 1:numel(obj.axMean)
+                ti = obj.leftInset(obj.axMean(k));
+                if isnan(ti), continue; end
+                if k > numel(obj.TileIsLeft) || obj.TileIsLeft(k)
+                    l = max(l,ti+pad);
+                else
+                    c = max(c,ti+pad);
+                end
+            end
+            ti = obj.leftInset(obj.axLatest);
+            if ~isnan(ti), lat = max(lat,ti+pad); end
+            l   = min(l,obj.MaxGutter);
+            c   = min(c,obj.MaxGutter);
+            lat = min(lat,obj.MaxGutter);
+        end
+
+        function v = leftInset(~,ax)
+            % The room an axes' y labels take, in the axes' OWN units (which
+            % are normalized to the panel, as every axes here is). NaN rather
+            % than zero for an axes that cannot answer -- one not yet drawn
+            % reports zeros, and zero is not a measurement.
+            v = NaN;
+            if isempty(ax) || ~isgraphics(ax), return; end
+            try
+                ti = ax.TightInset;
+            catch
+                return
+            end
+            if ~isempty(ti) && isfinite(ti(1)) && ti(1) > 0, v = ti(1); end
+        end
+
+        function k = gutterKey(obj,G)
+            % What a measured gutter depends on: the arrangement, the panel's
+            % width (the gutters are fractions of it), and how LONG the labels
+            % are. Their length rather than their text, deliberately -- a
+            % sweep count ticking from 136 to 137 is not a new question, and
+            % asking it twenty times a second would put a graphics query in
+            % the live tick for nothing.
+            ax = [obj.axMean(:).' obj.axLatest];
+            n  = zeros(1,numel(ax));
+            for i = 1:numel(ax)
+                n(i) = mabr.ui.LivePlot.labelWidthChars(ax(i));
+            end
+            if obj.PanelPx <= 0, obj.measurePanelPx(); end
+            k = sprintf('%s|%d|%s',G.mode,round(obj.PanelPx),mat2str(n));
+        end
+
+        function measurePanelPx(obj)
+            % The plot panel's width in pixels, cached. It can only change
+            % when the container is resized, which is exactly when relayout
+            % runs -- and asking for it means flipping the panel's Units
+            % twice, which is not something the live tick should be doing
+            % twenty times a second for an answer that has not moved.
+            p = obj.PlotPanel;
+            oldU = p.Units; p.Units = 'pixels';
+            obj.PanelPx = max(1,p.Position(3));
+            p.Units = oldU;
+        end
+
+        function [pos,isLeft] = stackPositions(obj,nG)
             % Stacks are tall: keep the groups on one row for as long as they
             % fit, and only then wrap.
+            %
+            % Unlike the other tiled layouts EVERY stack is labelled -- the y
+            % ticks are the condition names, not a scale a neighbour repeats
+            % -- so isLeft is reported for the gutter measurement's sake and
+            % is the only thing that tells the first column's labels (which
+            % have the panel edge to grow into) from the rest (which have a
+            % tile there instead).
             nG   = max(1,nG);
             cols = min(nG,obj.StackCols);
             rows = ceil(nG/cols);
             [x0,y1,wGap,hGap,w,h] = mabr.ui.LivePlot.tileGeometry( ...
-                cols,rows,1-obj.TopFrac-0.05);
-            pos = zeros(nG,4);
+                cols,rows,1-obj.TopFrac-0.05,obj.LeftGutter,obj.ColGutter);
+            pos = zeros(nG,4); isLeft = false(1,nG);
             for g = 1:nG
                 c = mod(g-1,cols);              % fill across, then down
                 r = floor((g-1)/cols);
                 pos(g,:) = [x0 + c*(w+wGap), y1 - (r+1)*h - r*hGap, w, h];
+                isLeft(g) = (c == 0);
             end
         end
 
@@ -715,6 +1133,7 @@ classdef LivePlot < handle
             % at the level the user just moved away from.
             if ~isnan(obj.BandConfs(i)), obj.ConfidenceLevel = obj.BandConfs(i); end
             obj.ErrorBand = obj.BandModes{i};
+            obj.savePrefs();
         end
 
         function syncBandMenu(obj)
@@ -822,6 +1241,7 @@ classdef LivePlot < handle
         function onLayoutControl(obj)
             modes = {'overlay','separate','grid','stacked'};
             obj.Layout = modes{obj.Ctrl.layout.Value};
+            obj.savePrefs();
         end
 
         function onGroupControl(obj)
@@ -832,6 +1252,7 @@ classdef LivePlot < handle
                 case 2, obj.GroupBy = 'none';
                 otherwise, obj.GroupBy = items{v};
             end
+            obj.savePrefs();
         end
 
         function onAmpControl(obj)
@@ -845,6 +1266,7 @@ classdef LivePlot < handle
                 if isfinite(lim) && lim > 0, obj.ManualLimit = lim; end
             end
             obj.AmpMode = newMode;
+            obj.savePrefs();
         end
 
         function onTimeControl(obj)
@@ -853,6 +1275,7 @@ classdef LivePlot < handle
             v1 = str2double(obj.Ctrl.t1.String);
             if isfinite(v0) && isfinite(v1) && v1 > v0
                 obj.TimeBase = [v0 v1];
+                obj.savePrefs();
             else
                 obj.syncControls();   % reject: put the old values back
                 obj.TimeBase = t;
@@ -865,6 +1288,7 @@ classdef LivePlot < handle
             if isfinite(v) && v > 0
                 obj.ManualLimit = v / s.mult;   % typed in the displayed unit
                 obj.AmpMode     = 'manual';     % typing a limit means using it
+                obj.savePrefs();
             end
             obj.syncControls();
         end
@@ -926,10 +1350,32 @@ classdef LivePlot < handle
 
         % --- Rendering -------------------------------------------------------
         function render(obj)
+            % One pass, and never two at once -- see Rendering. The pending
+            % pass runs at most once: anything arriving during THAT one has a
+            % live tick behind it (nothing else can reach here while a render
+            % is running), and looping until the queue is quiet would let a
+            % 20 Hz tick keep a slow render from ever returning.
+            if ~obj.isvalidView(), return; end
+            if obj.Rendering, obj.RenderPending = true; return; end
+            obj.Rendering = true;
+            guard = onCleanup(@() obj.endRender()); %#ok<NASGU>
+            obj.renderOnce();
+            if obj.RenderPending
+                obj.RenderPending = false;
+                obj.renderOnce();
+            end
+        end
+
+        function endRender(obj)
+            if isvalid(obj), obj.Rendering = false; end
+        end
+
+        function renderOnce(obj)
             S = obj.Last;
             if isempty(S) || ~obj.isvalidView(), return; end
 
             G   = obj.resolveGrouping(S);
+            obj.LastGroup = G;
             key = mabr.ui.LivePlot.layoutKey(G);
             if ~strcmp(key,obj.LayoutKey)
                 obj.buildMeanAxes(G);
@@ -949,10 +1395,14 @@ classdef LivePlot < handle
             if S.latestBad, obj.latestLine.Color = obj.ArtifactColor;
             else,           obj.latestLine.Color = obj.RecentColor;
             end
-            % The latest sweep autoscales even under AmpMode 'manual': it is a
-            % single sweep, tens of times the size of a mean, and a limit
-            % chosen to frame the averages would clip it off the axes entirely.
-            obj.setLimits(obj.axLatest,S.t,max(abs(latest))*scale.mult);
+            % The latest sweep scales on its own even under AmpMode 'manual':
+            % it is a single sweep, tens of times the size of a mean, and a
+            % limit chosen to frame the averages would clip it off the axes
+            % entirely. It scales in RUNGS (latestLimit) rather than to the
+            % peak, and the rung already stands at or above that peak, so it
+            % is applied unpadded -- a pad would only push the ticks off it.
+            obj.setLimits(obj.axLatest,S.t, ...
+                obj.latestLimit(max(abs(latest)))*scale.mult,1);
             ylabel(obj.axLatest,sprintf('Amplitude (%s)',scale.unit));
             % Interpreter 'none' wherever a stimulus ID can appear: an ID like
             % 8kHz_30dB is not TeX, and the default interpreter renders the
@@ -967,10 +1417,18 @@ classdef LivePlot < handle
                 obj.renderPanels(S,G,D,scale);
             end
 
-            if ~isempty(S.R) && isscalar(S.R) && ~isnan(S.R)
+            % --- onset-contrast bar ------------------------------------------
+            showCorr = obj.corrVisible(S);
+            obj.applyCorrBar(showCorr);
+            if showCorr && ~isempty(S.R) && isscalar(S.R) && ~isnan(S.R)
                 obj.corrBar.YData = max(0,min(1,S.R));
             end
             drawnow limitrate
+            % Last, and after the drawnow: the labels this refresh wrote have
+            % to exist before the room they need can be measured, and a tile
+            % that moves as a result moves on the next refresh -- 50 ms away
+            % at the live tick rate, and never mid-draw.
+            obj.fitLabelGutters(G);
         end
 
         function renderPanels(obj,S,G,D,scale)
@@ -993,21 +1451,24 @@ classdef LivePlot < handle
                 % leave a column of traces with no way to tell how big they are.
                 showAll = strcmp(obj.AmpMode,'each');
                 for k = 1:numel(obj.axMean)
+                    ax = obj.axMean(k);
                     leftTile = k > numel(obj.TileIsLeft) || obj.TileIsLeft(k);
                     if showAll || leftTile
-                        obj.axMean(k).YTickLabelMode = 'auto';
-                    else
-                        obj.axMean(k).YTickLabel = [];
+                        if ~strcmp(ax.YTickLabelMode,'auto')
+                            ax.YTickLabelMode = 'auto';
+                        end
+                    elseif ~isempty(ax.YTickLabel)
+                        ax.YTickLabel = [];
                     end
                     nEff = D.counts(k) - D.rejected(k);
                     if strcmp(G.mode,'grid')
                         txt = sprintf('%s  (n=%d)',G.shortLabels{k},nEff);
                         gl  = G.groupLabels{G.group(k)};
                         if isTop(k) && ~isempty(gl), txt = {gl; txt}; end
-                        title(obj.axMean(k),txt,'FontSize',7, ...
+                        obj.setTitle(ax,txt,'FontSize',7, ...
                             'FontWeight','normal','Interpreter','none');
                     else
-                        title(obj.axMean(k),sprintf('%s  (n=%d)',G.labels{k},nEff), ...
+                        obj.setTitle(ax,sprintf('%s  (n=%d)',G.labels{k},nEff), ...
                             'FontSize',8,'FontWeight','normal','Interpreter','none');
                     end
                 end
@@ -1016,6 +1477,37 @@ classdef LivePlot < handle
                 ylabel(obj.axMean(1),obj.meanYLabel(scale));
                 title(obj.axMean(1),obj.overlayTitle(G,D.counts,D.rejected), ...
                     'Interpreter','none');
+            end
+        end
+
+        function setTitle(~,ax,txt,varargin)
+            % A title is rewritten on every refresh and hardly any refresh
+            % changes it. Writing the same string back is not free: a title is
+            % CENTRED, so it is re-laid out and moved whenever its width
+            % changes -- and at the live tick rate under `drawnow limitrate`
+            % a caption that keeps shifting is drawn again before the last one
+            % has been erased, which is what reads as doubled text.
+            h = get(ax,'Title');
+            same = isequal(h.String,txt);
+            for i = 1:2:numel(varargin)
+                if ~same, break; end
+                same = isequal(h.(varargin{i}),varargin{i+1});
+            end
+            if ~same, title(ax,txt,varargin{:}); end
+        end
+
+        function setYTicks(~,ax,ticks,lbl)
+            % The same reasoning as setTitle, for the tick labels that ARE the
+            % condition names in a stack: they carry a sweep count that
+            % changes far less often than the refresh does. YTick goes first
+            % because setting it puts the labels back on 'auto', so a tick
+            % that moved forces its label to be rewritten with it.
+            moved = ~isequal(ax.YTick,ticks);
+            if moved, ax.YTick = ticks; end
+            cur = ax.YTickLabel;
+            if ischar(cur), cur = cellstr(cur); end
+            if moved || ~isequal(cur(:).',lbl(:).')
+                ax.YTickLabel = lbl;
             end
         end
 
@@ -1088,17 +1580,17 @@ classdef LivePlot < handle
                 end
 
                 obj.setXLim(ax,S.t);
-                ax.YLim       = [offs(1)-0.75*step, offs(end)+0.75*step];
-                ax.YTick      = offs;
-                ax.YTickLabel = lbl;
-                ax.FontSize   = 8;
+                ax.YLim     = [offs(1)-0.75*step, offs(end)+0.75*step];
+                ax.FontSize = 8;
+                obj.setYTicks(ax,offs,lbl);
                 head = G.groupLabels{g};
                 if isempty(head), head = 'Means'; end
                 % No y label here -- the y axis carries the condition names --
                 % so the band is named in the same parenthetical as the step.
                 tail = obj.bandLabel();
                 if ~isempty(tail), tail = [', ' tail]; end
-                title(ax,sprintf('%s   (step %.3g %s%s)',head,step,scale.plain,tail), ...
+                obj.setTitle(ax,sprintf('%s   (step %.3g %s%s)', ...
+                    head,step,scale.plain,tail), ...
                     'FontSize',8,'FontWeight','normal','Interpreter','none');
             end
         end
@@ -1235,10 +1727,42 @@ classdef LivePlot < handle
             ax.XLim = xl;
         end
 
-        function setLimits(obj,ax,t,ylim_)
+        function setLimits(obj,ax,t,ylim_,pad)
+            % pad defaults to 1.1 -- headroom above a limit taken straight
+            % from the data, so a peak is not drawn on the axes edge. A caller
+            % passing a limit that already stands clear of its data
+            % (latestLimit) passes 1.
+            if nargin < 5, pad = 1.1; end
             obj.setXLim(ax,t);
             if ~isfinite(ylim_) || ylim_ == 0, ylim_ = 1; end
-            ax.YLim = [-1.1 1.1]*ylim_;
+            ax.YLim = [-pad pad]*ylim_;
+        end
+
+        function lim = latestLimit(obj,peak)
+            % The +/- limit for the latest-sweep axes, in VOLTS, quantized to
+            % the LatestLadder rungs and hysteretic on the way down. Called
+            % once per render and the only thing that moves that axis --
+            % nothing else writes LatestLim.
+            if ~isfinite(peak) || peak <= 0
+                % Nothing to scale to (an empty or all-NaN sweep). Leave the
+                % ruler where it is rather than collapsing it: the next real
+                % sweep is about to be measured against it.
+                lim = obj.LatestLim; return
+            end
+            want = mabr.ui.LivePlot.ladderStep(peak);
+            if want > obj.LatestLim
+                obj.LatestLim    = want;   % never clip: step up at once
+                obj.LatestShrink = 0;
+            elseif want < obj.LatestLim
+                obj.LatestShrink = obj.LatestShrink + 1;
+                if obj.LatestShrink >= obj.LatestShrinkHold
+                    obj.LatestLim    = want;
+                    obj.LatestShrink = 0;
+                end
+            else
+                obj.LatestShrink = 0;      % the rung still fits: start over
+            end
+            lim = obj.LatestLim;
         end
 
         function lim = dataLimit(obj)
@@ -1546,6 +2070,20 @@ classdef LivePlot < handle
                 'groupName','','colors',zeros(0,3),'paramChoices',{{}});
         end
 
+        function n = labelWidthChars(ax)
+            % How long an axes' longest y tick label is, in characters. The
+            % change detector behind gutterKey, and deliberately not a width
+            % in pixels: the point is to notice when a label could no longer
+            % fit the room it has, not to measure it -- measuring is what
+            % TightInset is for, and it costs a graphics query.
+            n = 0;
+            if isempty(ax) || ~isgraphics(ax), return; end
+            lab = ax.YTickLabel;
+            if isempty(lab), return; end
+            if ischar(lab), lab = cellstr(lab); end
+            n = max(cellfun(@numel,lab));
+        end
+
         function k = layoutKey(G)
             % Everything the built axes depend on -- the arrangement, the
             % conditions in it, and what they are called. Not the colours or
@@ -1588,16 +2126,34 @@ classdef LivePlot < handle
             end
         end
 
-        function [x0,y1,wGap,hGap,w,h] = tileGeometry(cols,rows,yTop)
+        function [x0,y1,wGap,hGap,w,h] = tileGeometry(cols,rows,yTop,lGut,cGut)
             % One tile grid, shared by every multi-axes layout: the left edge,
             % the top edge, the gaps, and a tile size. The GAPS shrink as the
             % grid deepens rather than the tiles vanishing -- a cramped grid is
             % still a grid, one whose tiles have gone to zero height is not.
-            x0 = 0.075; x1 = 0.985; y0 = 0.10; y1 = yTop;
+            %
+            % lGut is the room the labels of the FIRST column need and cGut
+            % what the labels of the ones after it need (nothing, wherever
+            % those tiles repeat their neighbour's scale and go unlabelled).
+            % Both are measured -- see fitLabelGutters -- and cGut is a FLOOR
+            % under the plain visual gap between tiles, never a replacement
+            % for it: labels that need no room must still not touch.
+            if nargin < 4 || isempty(lGut), lGut = 0.075; end
+            if nargin < 5 || isempty(cGut), cGut = 0;     end
+            x1 = 0.985; y0 = 0.10; y1 = yTop;
             cols = max(1,cols); rows = max(1,rows);
-            wGap = min(0.055,(x1-x0)/(3*cols));
+            x0   = min(max(lGut,mabr.ui.LivePlot.MinGutter), ...
+                       mabr.ui.LivePlot.MaxGutter);
+            wGap = max(min(0.055,(x1-x0)/(3*cols)),cGut);
+            % A tile keeps at least half of its own column whatever the labels
+            % ask for: a gutter that has eaten the plot has answered the wrong
+            % question.
+            wGap = min(wGap,0.5*(x1-x0)/cols);
             hGap = min(0.030,(y1-y0)/(2*rows));
-            w = (x1-x0)/cols - wGap;
+            % The columns tile the whole width, the gaps sitting BETWEEN them,
+            % so the last column still ends at x1 however wide a gutter the
+            % labels turned out to need.
+            w = (x1 - x0 - (cols-1)*wGap)/cols;
             h = (y1-y0)/rows - hGap;
         end
 
@@ -1627,9 +2183,29 @@ classdef LivePlot < handle
         end
 
         function opts = resolveOpts(info)
-            opts = struct('DetrendPoly',-1,'SmoothSpan',0);
+            % Intermixed is left EMPTY rather than false when the caller
+            % says nothing: 'not stated' and 'stated to be blocked' are
+            % different answers, and corrVisible falls back on the run's own
+            % stimulus count for the first.
+            opts = struct('DetrendPoly',-1,'SmoothSpan',0,'Intermixed',[]);
             if isfield(info,'DetrendPoly'), opts.DetrendPoly = info.DetrendPoly; end
             if isfield(info,'SmoothSpan'),  opts.SmoothSpan  = info.SmoothSpan;  end
+            if isfield(info,'Intermixed'),  opts.Intermixed  = info.Intermixed;  end
+        end
+
+        function v = ladderStep(x)
+            % The smallest 1-2-5-decade value at or above x -- the rungs the
+            % latest-sweep axes is allowed to stand on. x is assumed finite
+            % and positive; latestLimit is the only caller and checks.
+            rungs = mabr.ui.LivePlot.LatestLadder;
+            d = floor(log10(x));
+            m = x / 10^d;                     % in [1,10)
+            % The tolerance keeps a peak that IS a rung on that rung: the
+            % division above is not exact, and 2e-6 landing on 5e-6 would be
+            % a visible jump for a rounding error.
+            k = find(rungs >= m - 1e-9,1);
+            if isempty(k), k = numel(rungs); end
+            v = rungs(k) * 10^d;
         end
 
         function s = pickScale(maxAbs)

@@ -42,10 +42,20 @@ classdef Schedule < handle
 %                        repetition count, with no long runs of one stimulus.
 %     'shuffled'         ONE run: the whole multiset of presentations shuffled
 %                        uniformly.
+%     'custom'           the order YOUR function returns. StrategyFcn is
+%                        called once per build with a struct describing the
+%                        design (mabr.stim.strategy.context) and returns the
+%                        run(s) to present; see mabr.stim.strategy.
+%                        custom_template for the contract and a worked
+%                        example. Left unset, build() refuses rather than
+%                        falling back to a built-in order.
 %
-%   Every strategy is a permutation of a FIXED multiset, never probabilistic
-%   sampling: each entry is presented exactly its repetition count in all five.
-%   The names say "shuffled" rather than "random" for exactly that reason.
+%   The first five are permutations of a FIXED multiset, never probabilistic
+%   sampling: each entry is presented exactly its repetition count in all of
+%   them. The names say "shuffled" rather than "random" for exactly that
+%   reason. A 'custom' strategy is EXPECTED to hold to the same invariant and
+%   is warned when it does not (mabr.stim.strategy.normalize), but is not
+%   refused -- departing on purpose is a legitimate reason to write one.
 %
 %   Alternating polarity
 %   -------------------
@@ -57,8 +67,11 @@ classdef Schedule < handle
 %   inverted presentations land in shuffled positions too. renderSpec reports
 %   the sign used at each onset in the spec's Polarity field.
 %
-%   The last three INTERMIX different stimuli inside one continuous
-%   acquisition run (isIntermixed is true). MABR records which stimulus fired
+%   'interleaved', 'shuffled-cycles' and 'shuffled' INTERMIX different stimuli
+%   inside one continuous acquisition run (isIntermixed is true), and so may a
+%   'custom' one -- which is why isIntermixed asks a built custom plan whether
+%   any of its runs actually holds more than one stimulus, rather than
+%   answering from the strategy's name. MABR records which stimulus fired
 %   at each onset in the rendered spec's StimulusIndex, and the controller
 %   de-interleaves the recorded sweeps at save time so each stimulus ID still
 %   lands in its own .abr file. Because an intermixed run cannot be stopped
@@ -102,7 +115,7 @@ classdef Schedule < handle
 % Daniel Stolzberg (c) 2019-2026
 
     properties (Constant)
-        Strategies = {'blocked','shuffled-blocks','interleaved','shuffled-cycles','shuffled'};
+        Strategies = {'blocked','shuffled-blocks','interleaved','shuffled-cycles','shuffled','custom'};
         ISIModes   = {'fixed','random'};
     end
 
@@ -111,6 +124,21 @@ classdef Schedule < handle
         Config                          % mabr.Config
         Repetitions      (1,:) double = []      % per stimulus entry
         Strategy         (1,:) char   = 'blocked'
+
+        % The user's own ordering function, used when Strategy is 'custom'.
+        % Called ONCE per build with the canonical context struct
+        % (mabr.stim.strategy.context) and returning the run(s) to present;
+        % mabr.stim.strategy.normalize reads whatever shape it returned. Left
+        % empty under 'custom', build() refuses rather than quietly falling
+        % back to a built-in order -- a session presented in an order nobody
+        % chose is worse than one that will not start.
+        StrategyFcn                   = []
+
+        % Tuning knobs passed through into the context, the way AdvanceParams
+        % are passed to an advance criterion. Anything here reaches the
+        % strategy under its own field name.
+        StrategyParams   (1,1) struct = struct()
+
         ISI              (1,1) double = 1/21.1  % s, onset-to-onset ('fixed')
 
         % Which of ISI / ISIRange decides the spacing. Kept as a separate
@@ -214,7 +242,32 @@ classdef Schedule < handle
 
         function tf = isIntermixed(obj)
             % True when a single run mixes more than one stimulus.
+            %
+            % For the five built-in strategies the name settles it. For
+            % 'custom' it cannot -- whether a user's plan intermixes is a
+            % property of the runs it produced, not of the fact that a
+            % function produced them -- so the built plan is asked directly.
+            % That is the truthful answer and the one everything downstream
+            % needs: mabr.ui.AcqController gates early stop, the repeat
+            % button, and the live view's correlation bar on it, and a custom
+            % strategy that emits one stimulus per run should keep all three.
+            % With no plan built yet, the static's conservative `true` stands.
+            if strcmpi(obj.Strategy,'custom') && ~isempty(obj.Runs)
+                tf = any(cellfun(@(v) numel(unique(v)) > 1,obj.Runs));
+                return
+            end
             tf = mabr.stim.Schedule.strategyIntermixes(obj.Strategy);
+        end
+
+        function s = strategyLabel(obj)
+            % How the strategy should be NAMED in a record of the session --
+            % the .stimlog's Presentation.Strategy, a log line, a status line.
+            % 'custom' alone does not say which custom, and a file recording
+            % only that the order was "custom" cannot be reproduced from.
+            s = obj.Strategy;
+            if strcmpi(s,'custom') && ~isempty(obj.StrategyFcn)
+                s = ['custom: ' mabr.stim.Schedule.fcnName(obj.StrategyFcn)];
+            end
         end
 
         % --- Plan construction ----------------------------------------------
@@ -222,7 +275,7 @@ classdef Schedule < handle
             % (Re)build the run list from Repetitions + Strategy. Call after
             % changing either; reset() alone does not rebuild.
             n    = obj.Set.numStimuli;
-            reps = obj.normalizedReps();
+            reps = obj.normalizedRepetitions();
 
             obj.RunCounts  = zeros(1,n);
             obj.MakeupUsed = zeros(1,n);
@@ -257,6 +310,9 @@ classdef Schedule < handle
                     % shuffles which onsets are inverted.
                     p = randperm(rs,numel(seq));
                     obj.Runs = {seq(p)}; obj.Polarities = {pol(p)};
+
+                case 'custom'
+                    [obj.Runs,obj.Polarities] = obj.customRuns(rs);
 
                 otherwise
                     error('mabr:stim:Schedule:strategy', ...
@@ -350,7 +406,7 @@ classdef Schedule < handle
             if numel(counts) < numel(added), counts(end+1:numel(added)) = 0; end
             counts = counts(1:numel(added));
 
-            reps   = obj.normalizedReps();
+            reps   = obj.normalizedRepetitions();
             alt    = obj.Set.alternatesPolarity();
             budget = floor(obj.MakeupLimit.*reps) - obj.MakeupUsed;
 
@@ -427,7 +483,7 @@ classdef Schedule < handle
             assert(stimIndex >= 1 && stimIndex <= obj.Set.numStimuli, ...
                 'mabr:stim:Schedule:repeatRange', ...
                 'Stimulus index %d out of range (1..%d).',stimIndex,obj.Set.numStimuli);
-            reps = obj.normalizedReps();
+            reps = obj.normalizedRepetitions();
             n    = reps(stimIndex);
             assert(n > 0,'mabr:stim:Schedule:repeatZero', ...
                 'Stimulus %d has 0 scheduled repetitions -- nothing to repeat.',stimIndex);
@@ -535,7 +591,7 @@ classdef Schedule < handle
         % --- Reporting --------------------------------------------------------
         function s = summary(obj)
             % Plan overview for the GUI: counts and estimated wall-clock time.
-            reps = obj.normalizedReps();
+            reps = obj.normalizedRepetitions();
             s = struct();
             s.numStimuli   = obj.Set.numStimuli;
             s.numRuns      = obj.NumRuns;
@@ -563,6 +619,37 @@ classdef Schedule < handle
             % the range, not its mean: one short draw is enough to overlap.
             tf = obj.Set.numStimuli > 0 && obj.Set.maxDuration() > obj.MinISI;
         end
+
+        function reps = normalizedRepetitions(obj)
+            % Repetitions as the plan actually uses them: a scalar expanded
+            % over the bank, a short vector zero-filled, negatives clamped and
+            % everything rounded. Public because it is half of what a custom
+            % strategy is handed (mabr.stim.strategy.context) -- the count it
+            % is expected to permute -- and reading Repetitions raw would give
+            % it the un-normalized form.
+            n    = obj.Set.numStimuli;
+            reps = obj.Repetitions;
+            if isempty(reps)
+                reps = zeros(1,n);
+            elseif isscalar(reps)
+                reps = repmat(reps,1,n);
+            end
+            if numel(reps) < n, reps(end+1:n) = 0; end
+            reps = max(0,round(reps(1:n)));
+        end
+
+        function rs = stream(obj)
+            % The schedule's own RandStream, so building a plan never perturbs
+            % global rng (and an explicit Seed makes the plan exactly
+            % reproducible). A FRESH stream each call: build() takes one and
+            % passes that same one on, rather than letting a second caller
+            % re-seed and draw the identical numbers.
+            if isempty(obj.Seed)
+                rs = RandStream('twister','Seed','shuffle');
+            else
+                rs = RandStream('twister','Seed',obj.Seed);
+            end
+        end
     end
 
     methods (Access = private)
@@ -588,26 +675,38 @@ classdef Schedule < handle
             end
         end
 
-        function reps = normalizedReps(obj)
-            n    = obj.Set.numStimuli;
-            reps = obj.Repetitions;
-            if isempty(reps)
-                reps = zeros(1,n);
-            elseif isscalar(reps)
-                reps = repmat(reps,1,n);
-            end
-            if numel(reps) < n, reps(end+1:n) = 0; end
-            reps = max(0,round(reps(1:n)));
-        end
+        function [runs,pols] = customRuns(obj,rs)
+            % Call the user's ordering function and read what it returned.
+            %
+            % The refusal is deliberate and comes first: 'custom' with no
+            % function is not a strategy MABR can guess at, and falling back
+            % to blocked would present a whole session in an order nobody
+            % chose while the GUI still said "custom".
+            assert(isa(obj.StrategyFcn,'function_handle'), ...
+                'mabr:stim:Schedule:noStrategyFcn', ...
+                ['Strategy is "custom" but StrategyFcn is not set. Assign the ' ...
+                 'ordering function (see mabr.stim.strategy.custom_template), ' ...
+                 'or pick one of: %s.'], ...
+                strjoin(setdiff(mabr.stim.Schedule.Strategies,{'custom'},'stable'),', '));
 
-        function rs = stream(obj)
-            % A private RandStream so building a plan never perturbs global rng
-            % (and an explicit Seed makes the plan exactly reproducible).
-            if isempty(obj.Seed)
-                rs = RandStream('twister','Seed','shuffle');
-            else
-                rs = RandStream('twister','Seed',obj.Seed);
+            ctx = mabr.stim.strategy.context(obj,obj.StrategyParams,rs);
+            name = mabr.stim.Schedule.fcnName(obj.StrategyFcn);
+
+            % A user function's error is re-thrown named, and as a Schedule
+            % error rather than whatever it happened to throw: the plan simply
+            % does not exist, and the caller (refreshPlan's preview, onStart)
+            % needs to say WHICH function failed -- the stack alone does not,
+            % once the handle came from a file the GUI resolved.
+            try
+                out = obj.StrategyFcn(ctx);
+            catch me
+                error('mabr:stim:Schedule:strategyFcn', ...
+                    'Custom strategy "%s" errored: %s',name,me.message);
             end
+
+            [runs,pols] = mabr.stim.strategy.normalize(out,ctx);
+            mabr.log.vprintf(1,'Custom strategy "%s" planned %d run(s), %d presentations.', ...
+                name,numel(runs),sum(cellfun(@numel,runs)));
         end
 
         function [runs,pols] = blockRuns(~,order,reps,alt)
@@ -643,7 +742,26 @@ classdef Schedule < handle
 
     methods (Static)
         function tf = strategyIntermixes(strategy)
-            tf = ismember(lower(strategy),{'interleaved','shuffled-cycles','shuffled'});
+            % Answered from the NAME alone, which is all a caller holding no
+            % plan has -- the GUI deciding whether to offer early stop before
+            % anything is built. 'custom' is therefore true: whether a user's
+            % plan intermixes cannot be known from its name, and assuming it
+            % does not would offer an early stop that truncates whichever
+            % stimuli fell last. A built schedule knows better and says so --
+            % see the isIntermixed METHOD, which is the authority once a plan
+            % exists.
+            tf = ismember(lower(strategy), ...
+                {'interleaved','shuffled-cycles','shuffled','custom'});
+        end
+
+        function s = fcnName(fcn)
+            % A function handle's name for a log line or a saved record.
+            % func2str puts an @ on a simple handle and returns the whole body
+            % of an anonymous one; neither is what a record wants to read.
+            if ~isa(fcn,'function_handle'), s = ''; return, end
+            s = func2str(fcn);
+            if startsWith(s,'@('), s = 'anonymous'; return, end
+            s = strrep(s,'@','');
         end
 
         function p = polaritySeries(n,alternates)

@@ -12,7 +12,9 @@ function verify_live_plot()
 %       4. Overlaid / Separate puts the means on one axes or one each;
 %       5. the time base defaults to [-2 10] ms, follows TimeBase, and is
 %          clamped to what was actually recorded;
-%       6. amplitude scaling: each / shared / manual;
+%       6. amplitude scaling: each / shared / manual, plus the latest
+%          sweep's own limit -- quantized to 1-2-5 rungs, stepping up at
+%          once and down only after the smaller rung has held;
 %       7. the control strip drives exactly those properties;
 %       8. a call with no stimulus info still behaves as a single-mean view;
 %       9. stimulus PARAMETERS: conditions labelled by the parameters that
@@ -29,13 +31,38 @@ function verify_live_plot()
 %          each mean, the statistics behind them (mabr.metrics.error_band and
 %          mabr.metrics.t_quantile), and the axis limits growing to fit;
 %      13. the right-click menu that chooses one;
-%      14. the whole view embeds into a caller-supplied container.
+%      14. the whole view embeds into a caller-supplied container;
+%      15. the onset-contrast (rho_post - rho_pre) bar is drawn for a
+%          blocked run and dropped for an intermixed one, the trace taking
+%          back the width it leaves;
+%      16. every axes has at least as much room to its left as its own y
+%          labels take -- in every layout, at any window size -- so a
+%          condition name in a stack is never clipped off the panel or
+%          drawn over the tile beside it;
+%      17. the arrangement can be changed WHILE sweeps are arriving without
+%          leaving the old axes behind: render() is not re-entrant, and a
+%          rebuild sweeps up anything on the panel it is not holding.
 %
 %   Run:  >> verify_live_plot
 %
 % Daniel Stolzberg (c) 2026
 
 fprintf('== verify_live_plot ==\n');
+
+% The live view now opens on the display settings last CHOSEN in one
+% (mabr.ui.LivePlot.loadDefaults) and writes them back whenever the control
+% strip or the right-click menu is used -- both of which this script does. So
+% the pref is taken out of the way for the duration and put back exactly as it
+% was, or every assertion here would depend on how the user last left their
+% own window, and running the suite would rearrange it.
+hadLivePref = ispref('MABR','LivePlot');
+if hadLivePref
+    oldLivePref = getpref('MABR','LivePlot');
+    rmpref('MABR','LivePlot');
+else
+    oldLivePref = [];
+end
+restoreLivePref = onCleanup(@() restore_live_pref(hadLivePref,oldLivePref)); %#ok<NASGU>
 
 % Three stimuli with deliberately different response amplitudes, so a shared
 % scale and an individual one cannot be confused for each other.
@@ -152,6 +179,62 @@ lim2 = arrayfun(@(a) a.YLim(2),lp.axMean);
 assert(isequal(lim,lim2),'a manual limit moved when the data changed');
 lp.update(Y,t,0.42,numel(stimIdx),bad,info);
 fprintf('  PASS: amplitude each / shared / manual\n');
+
+% --- 6b. the latest sweep's limit moves in discrete steps ---------------
+% A single sweep is redrawn at the live tick rate, and a limit tracking its
+% peak makes the ruler grow with the thing being measured -- every sweep then
+% looks the same size, which is the one comparison a raw sweep is watched for.
+% The limit stands on a 1-2-5 ladder instead: up the instant a sweep would not
+% fit, held while the peak stays inside the rung, and down only after the
+% smaller rung has been enough for several refreshes running.
+lp.AmpMode = 'common';
+lp.reset();
+
+qInfo = struct('StimIndex',ones(1,4),'Stimuli',1,'Labels',{{'q'}});
+qBad  = false(1,4);
+qUpd  = @(pk) lp.update(flat_sweeps(t,pk,4),t,0,4,qBad,qInfo);
+
+qUpd(1.2e-6);
+assert(abs(lp.axLatest.YLim(2) - 2) < 1e-9, ...
+    'the latest axes did not snap to the 2 uV rung: %s',mat2str(lp.axLatest.YLim));
+assert(abs(lp.axLatest.YLim(1) + 2) < 1e-9, ...
+    'the latest axes is not symmetric about zero: %s',mat2str(lp.axLatest.YLim));
+qUpd(1.9e-6);                       % ... a bigger sweep, still inside the rung
+assert(abs(lp.axLatest.YLim(2) - 2) < 1e-9, ...
+    'the latest axes moved for a peak inside its own rung: %s', ...
+    mat2str(lp.axLatest.YLim));
+qUpd(3.0e-6);                       % ... one the rung cannot hold
+assert(abs(lp.axLatest.YLim(2) - 5) < 1e-9, ...
+    'the latest axes did not step UP at once: %s',mat2str(lp.axLatest.YLim));
+qUpd(0.3e-6);                       % ... and one far below it
+assert(abs(lp.axLatest.YLim(2) - 5) < 1e-9, ...
+    'the latest axes shrank on the first quiet sweep');
+nHold = 1;
+while abs(lp.axLatest.YLim(2) - 5) < 1e-9 && nHold < 60
+    qUpd(0.3e-6); nHold = nHold + 1;
+end
+assert(abs(lp.axLatest.YLim(2) - 0.5) < 1e-9, ...
+    'the latest axes never stepped down to the 0.5 uV rung: %s', ...
+    mat2str(lp.axLatest.YLim));
+assert(nHold > 2,'the step down was not held off at all');
+
+% A manual limit frames the MEANS; the latest sweep is tens of times one and
+% keeps its own rung, or it would be clipped off the axes entirely.
+lp.AmpMode     = 'manual';
+lp.ManualLimit = 2e-6;
+qUpd(3.0e-6);
+assert(abs(lp.axLatest.YLim(2) - 5) < 1e-9, ...
+    'a manual limit reached the latest sweep: %s',mat2str(lp.axLatest.YLim));
+
+lp.reset();                         % the next run scales on its own evidence
+qUpd(0.3e-6);
+assert(abs(lp.axLatest.YLim(2) - 0.5) < 1e-9, ...
+    'reset did not clear the rung the run before had reached: %s', ...
+    mat2str(lp.axLatest.YLim));
+
+lp.ManualLimit = 2e-6;              % leave section 7 the state section 6 left
+lp.update(Y,t,0.42,numel(stimIdx),bad,info);
+fprintf('  PASS: latest sweep scales in rungs, %d refreshes before shrinking\n',nHold);
 
 % --- 7. the control strip drives the same settings ----------------------
 c = live_controls(lp);
@@ -492,11 +575,149 @@ assert(~isempty(findobj(lp2.CtrlPanel,'Style','popupmenu')), ...
     'the embedded view has no control strip');
 fprintf('  PASS: embeds into a caller-supplied container\n');
 
+% --- 15. the onset-contrast bar only appears for a blocked run -----------
+% rho_post - rho_pre watches ONE condition's average converge. An intermixed
+% run pools several into that average, so the number means nothing and the
+% bar is not drawn -- the same reason AcqController evaluates no advance
+% criterion for those runs. The strategy is the authority (info.Intermixed);
+% with none stated, a run presenting more than one stimulus is intermixed.
+lp3 = mabr.ui.LivePlot();
+clean3 = onCleanup(@() delete(lp3));
+
+oneInfo = struct('StimIndex',ones(1,repsPer),'Stimuli',1,'Labels',{{'8kHz_30dB'}});
+oneY    = Y(stimIdx == 1,:);
+lp3.update(oneY,t,0.42,repsPer,false(1,repsPer),oneInfo);
+corrBar = findobj(lp3.axCorr,'Type','bar');
+assert(vis_on(lp3.axCorr), ...
+    'a blocked run should keep the onset-contrast bar');
+assert(isscalar(corrBar) && vis_on(corrBar), ...
+    'the bar itself stayed hidden on a blocked run');
+assert(abs(corrBar.YData - 0.42) < 1e-9, ...
+    'the bar does not carry the correlation it was given');
+% Its RIGHT edge is what the bar hands back and forth; the left one belongs
+% to the y labels and is measured from them (see 16).
+narrowRight = sum(lp3.axLatest.Position([1 3]));
+
+% Intermixed by strategy, even though every sweep so far is one stimulus.
+oneInfo.Intermixed = true;
+lp3.update(oneY,t,0.42,repsPer,false(1,repsPer),oneInfo);
+assert(~vis_on(lp3.axCorr), ...
+    'an intermixed run still shows the onset-contrast bar');
+assert(~vis_on(corrBar), ...
+    'the axes was hidden but the bar inside it was left drawn');
+assert(sum(lp3.axLatest.Position([1 3])) > narrowRight + 1e-6, ...
+    'the latest-sweep axes did not take back the width the bar left');
+
+% ... and inferred where the caller says nothing: three stimuli in one run.
+lp3.update(Y,t,0.42,numel(stimIdx),bad,info);
+assert(~vis_on(lp3.axCorr), ...
+    'a run presenting several stimuli should be taken as intermixed');
+
+% Back to blocked: the bar returns rather than having been destroyed.
+lp3.update(oneY,t,0.31,repsPer,false(1,repsPer),rmfield(oneInfo,'Intermixed'));
+assert(vis_on(lp3.axCorr) && vis_on(corrBar), ...
+    'the bar did not come back for the next blocked run');
+assert(abs(corrBar.YData - 0.31) < 1e-9,'the restored bar did not update');
+assert(abs(sum(lp3.axLatest.Position([1 3])) - narrowRight) < 1e-9, ...
+    'the latest-sweep axes did not give the width back');
+fprintf('  PASS: onset-contrast bar shown for blocked runs, dropped for intermixed\n');
+
+% --- 16. the y axis labels always have room ------------------------------
+% The widest thing on a y axis is a three-digit microvolt number in most
+% layouts and a whole condition name ("60 dB (136)") in Stacked, where EVERY
+% column of stacks is labelled rather than just the leftmost. A fixed margin
+% cannot be right for both, and getting it wrong does not merely crop a
+% label: it draws it over the tile to its left. So the view measures what
+% the labels take and re-tiles around them (LivePlot.fitLabelGutters), and
+% what that has to guarantee is exactly this.
+lp.AmpMode = 'common';
+lp.GroupBy = '';
+for layout = {'overlay','separate','grid','stacked'}
+    lp.Layout = layout{1};
+    lp.update(Yp,tp,0.4,numel(pIdx),pbad,pinfo);
+    assert_labels_fit(lp,layout{1});
+end
+
+% ... and under 'each', where every tile is on its own scale and therefore
+% carries its own numbers rather than repeating its neighbour's.
+lp.Layout  = 'separate';
+lp.AmpMode = 'each';
+lp.update(Yp,tp,0.4,numel(pIdx),pbad,pinfo);
+assert_labels_fit(lp,'separate/each');
+
+% A resized window is a new question: the gutters are FRACTIONS of the panel,
+% so the same labels take a different share of a narrower one.
+lp.Layout  = 'stacked';
+lp.AmpMode = 'common';
+lp.update(Yp,tp,0.4,numel(pIdx),pbad,pinfo);
+for w = [560 1400 700]
+    pos = lp.Figure.Position; pos(3) = w;
+    lp.Figure.Position = pos;
+    drawnow;
+    lp.update(Yp,tp,0.4,numel(pIdx),pbad,pinfo);
+    assert_labels_fit(lp,sprintf('stacked at %d px',w));
+end
+fprintf('  PASS: y axis labels have room in every layout, at any width\n');
+
+% --- 17. changing the arrangement mid-run leaves nothing behind ----------
+% legend() and drawnow both process the event queue, so a live tick can land
+% INSIDE a render started by the control strip. The inner call rebuilds the
+% mean axes the outer one is still holding handles to -- which leaves the
+% outer's axes orphaned on the panel, drawn over the new ones with a stale
+% run on them, and the outer call writing captions onto somebody else's
+% axes (or indexing past the end of an emptied list). render() is therefore
+% not re-entrant, and buildMeanAxes additionally sweeps up any axes on the
+% panel it is not holding, so an orphan from ANY cause cannot outlive the
+% next change of arrangement.
+lp.Layout = 'overlay';
+lp.update(Yp,tp,0.4,numel(pIdx),pbad,pinfo);
+planted = axes('Parent',lp.PlotPanel,'Units','normalized', ...
+    'Position',[0.1 0.15 0.8 0.3]);                 % an orphan, by hand
+lp.Layout = 'stacked';
+lp.update(Yp,tp,0.4,numel(pIdx),pbad,pinfo);
+assert(~isgraphics(planted), ...
+    'a rebuild left an untracked axes on the panel');
+assert(stray_axes(lp) == 0,'the panel still holds axes the view has lost');
+
+% ... and the same thing for real: sweeps arriving from a timer, as
+% acquisition delivers them, while the "user" changes the arrangement.
+% The timer's own UserData carries the verdict: an anonymous ErrorFcn has
+% nowhere else to put one, and a tick that throws is exactly the other face
+% of this bug (a render indexing past an axes list an inner call emptied).
+tk = timer('ExecutionMode','fixedSpacing','Period',0.05,'BusyMode','drop', ...
+    'UserData',false,'TimerFcn',@(~,~) live_tick(lp,Yp,tp,pbad,pinfo), ...
+    'ErrorFcn',@(src,~) set(src,'UserData',true));
+cleanTimer = onCleanup(@() stop_timer(tk));
+modes = {'overlay','stacked','grid','separate'};
+start(tk);
+t0 = tic; i = 0; worst = 0;
+while toc(t0) < 3
+    i = i + 1;
+    lp.Layout = modes{mod(i-1,numel(modes))+1};
+    drawnow; pause(0.005);
+    worst = max(worst,stray_axes(lp));
+end
+stop(tk); drawnow;
+assert(~tk.UserData,'a live tick errored while the arrangement was changing');
+assert(worst == 0 && stray_axes(lp) == 0, ...
+    'changing the arrangement under a live timer left %d axes behind',worst);
+fprintf('  PASS: %d arrangement changes under a live timer, nothing left behind\n',i);
+
 fprintf('== verify_live_plot PASSED ==\n');
 end
 
 
 % =====================================================================
+function restore_live_pref(had,value)
+% Put the user's live-view preference back exactly as it was -- including
+% "there wasn't one".
+if had
+    setpref('MABR','LivePlot',value);
+elseif ispref('MABR','LivePlot')
+    rmpref('MABR','LivePlot');
+end
+end
+
 function [Y,t,stimIdx] = make_sweeps(amps,repsPer)
 % Sweeps as the live path delivers them: baseline and response as one
 % contiguous segment, so the time base runs from before the onset.
@@ -513,6 +734,69 @@ for i = 1:numel(stimIdx)
     r = 1e-9*sin(2*pi*37*(1:numel(t))/Fs + i);   % deterministic "noise"
     Y(i,:) = r + [zeros(1,numel(tPre)) amps(stimIdx(i))*wave];
 end
+end
+
+function Y = flat_sweeps(t,pk,n)
+% n identical sweeps whose peak is EXACTLY pk, so the rung the view lands on
+% is arithmetic rather than an approximation.
+w = sin(2*pi*700*t).*exp(-t/0.004);
+w(t < 0) = 0;                       % the pre-onset baseline is silent
+Y = repmat(pk*w/max(abs(w)),n,1);
+end
+
+function assert_labels_fit(lp,what)
+% Every visible axes in the view has at least as much room to the left of it
+% as its own y labels take. TightInset(1) IS that width -- the tick labels
+% plus the y label where there is one -- and the room is the distance back to
+% whatever sits to its left on the same rows, or to the panel edge where
+% nothing does.
+drawnow;
+ax = [lp.axMean(:).' lp.axLatest lp.axCorr];
+ax = ax(arrayfun(@(h) isgraphics(h) && vis_on(h),ax));
+for i = 1:numel(ax)
+    pos  = ax(i).Position;
+    ti   = ax(i).TightInset;
+    room = pos(1);                          % ... back to the panel's edge
+    for j = 1:numel(ax)
+        if j == i, continue; end
+        bp = ax(j).Position;
+        if bp(2) >= pos(2)+pos(4)-1e-9 || pos(2) >= bp(2)+bp(4)-1e-9
+            continue                        % a different row: no obstacle
+        end
+        r = bp(1) + bp(3);
+        if r <= pos(1) + 1e-9, room = min(room,pos(1)-r); end
+    end
+    assert(room >= ti(1) - 1e-6, ...
+        ['%s: the y labels of axes %d take %.3f of the panel and have ' ...
+         '%.3f of room -- they are drawn over what is to their left'], ...
+        what,i,ti(1),room);
+end
+end
+
+function live_tick(lp,Y,t,bad,info)
+if isvalid(lp), lp.update(Y,t,0.4,size(Y,1),bad,info); end
+end
+
+function stop_timer(tk)
+try, stop(tk); catch, end
+try, delete(tk); catch, end
+end
+
+function k = stray_axes(lp)
+% Axes on the plot panel that the view is no longer holding a handle to.
+keep = [lp.axMean(:); lp.axLatest(:); lp.axCorr(:)];
+keep = keep(isgraphics(keep));
+ax = findobj(lp.PlotPanel,'-depth',1,'Type','axes');
+for j = numel(ax):-1:1
+    if any(ax(j) == keep), ax(j) = []; end
+end
+k = numel(ax);
+end
+
+function tf = vis_on(h)
+% Visible reads back as a char in some releases and an OnOffSwitchState in
+% others; string() flattens both.
+tf = strcmp(string(h.Visible),"on");
 end
 
 function M = mean_ydata(lp)

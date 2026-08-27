@@ -1026,6 +1026,17 @@ classdef AcqController < handle
             % fine there, but only a cell is expanded, so keeping the two
             % kinds apart is one less thing to get subtly wrong.
             info.Params = obj.CurParams;
+            % Whether this run pools several conditions. The live view drops
+            % its onset-contrast bar when it does, for the same reason the
+            % advance criterion below is not evaluated: the metric watches one
+            % condition's average converge, and an intermixed run has no such
+            % average. Answered from the strategy rather than left to the view
+            % to infer, so a blocked run that happens to have reached only one
+            % of its stimuli is still called blocked. Left out entirely with no schedule to ask, which is the view's
+            % cue to fall back on the run's own stimulus count.
+            if ~isempty(obj.Schedule)
+                info.Intermixed = obj.Schedule.isIntermixed();
+            end
         end
 
         function P = stimParams(obj,idx)
@@ -1267,7 +1278,10 @@ classdef AcqController < handle
                 info.StreamedSamples = stream.samples;
                 info.StopReason      = stream.reason;
             end
-            info.Strategy        = obj.Schedule.Strategy;
+            % strategyLabel, not Strategy: 'custom' alone does not say WHICH
+            % custom, and a record of what was presented that cannot name the
+            % function that ordered it cannot be reproduced from.
+            info.Strategy        = obj.Schedule.strategyLabel();
             info.ISIMode         = obj.Schedule.ISIMode;
             info.ISI             = obj.Schedule.ISI;
             info.ISIRange        = obj.Schedule.ISIRange;

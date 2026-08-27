@@ -1645,6 +1645,19 @@ classdef MetricPlot < handle
             catch %#ok<CTCH>
             end
         end
+
+        function saveDefaults(d)
+            % Write what loadDefaults reads, with no window in hand: what
+            % mabr.ui.App does when a configuration file restores an analysis
+            % look while no analysis window is open. Windows already up keep
+            % what they are wearing -- a window's look is its own once opened,
+            % and this is deliberately not a broadcast -- so the next one
+            % opened is where a restored look shows up.
+            try
+                setpref(mabr.ui.MetricPlot.PrefGroup,mabr.ui.MetricPlot.PrefKey,d);
+            catch %#ok<CTCH>
+            end
+        end
     end
 
     methods (Static, Access = private)
