@@ -80,9 +80,29 @@ if head > state.lastHead
     LB = max(1,state.lastHead+1);
     timingSlice = rb.readTiming(LB,head);
     rel = mabr.metrics.find_timing_onsets(timingSlice,shadowSamples,thr);
+
+    % A pulse that began in the PREVIOUS slice is not a new onset.
+    % find_timing_onsets reports sample 1 of a vector that starts above
+    % threshold, which is right for a vector read on its own and wrong here:
+    % what it found is the middle of a pulse whose start was counted last
+    % time. The shadow interval below cannot be relied on to remove it -- a
+    % timing pulse spans its whole presentation (5 ms for the demo bank),
+    % which is routinely LONGER than the shadow (2 ms), so a boundary landing
+    % more than shadowSamples into a pulse leaves the duplicate standing.
+    % That inflates the sweep count and, because the k-th onset is paired
+    % with the k-th planned presentation, shifts the attribution of every
+    % sweep after it.
+    %
+    % The sample immediately before this slice settles it. It is always still
+    % retained: it was inside the previous slice, and the ring holds minutes.
+    if ~isempty(rel) && rel(1) == 1 && LB > 1
+        prev = rb.readTiming(LB-1,LB-1);
+        if ~isempty(prev) && double(prev(1)) >= thr, rel(1) = []; end
+    end
+
     newOnsets = LB + rel - 1;                 % absolute indices
     state.onsets = [state.onsets; newOnsets(:)];
-    % de-duplicate across the slice boundary
+    % de-duplicate onsets genuinely closer together than the shadow
     if ~isempty(state.onsets)
         state.onsets = sort(state.onsets);
         keep = [true; diff(state.onsets) >= shadowSamples];

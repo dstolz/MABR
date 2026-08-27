@@ -31,10 +31,16 @@ if numel(above) < 2, idx = []; return; end
 idx = find(above(2:end) & ~above(1:end-1)) + 1;
 
 % A vector that already starts above threshold has its onset at sample 1;
-% without this the onset is dropped entirely. This matters at the incremental
-% slice boundaries in mabr.metrics.extract_sweeps, where a pulse can straddle
-% two slices. A duplicate raised here (pulse actually started in the previous
-% slice) is removed by that function's shadow-interval de-duplication.
+% without this the onset is dropped entirely, which is the right answer for a
+% vector read on its own.
+%
+% It is NOT the right answer at the incremental slice boundaries in
+% mabr.metrics.extract_sweeps, where a pulse can straddle two slices and this
+% reports the middle of a pulse already counted. Deciding that needs the
+% sample before the slice, which only the caller has -- so extract_sweeps
+% checks it and drops the duplicate. Do not assume the shadow interval covers
+% it: a timing pulse spans its whole presentation, which is routinely longer
+% than the shadow.
 if above(1), idx = [1; idx]; end
 
 % merge onsets closer than shadowSamples (keep the earliest of each cluster)

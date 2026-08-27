@@ -26,6 +26,21 @@ function run_all_verifications()
 %                                  progress and analysis windows open: the
 %                                  two timers, AuxPeriod, and the realized
 %                                  refresh rate during a real loopback run
+%       verify_compute_worker    - the compute workers: publish buffers, a
+%                                  run served by the DSP worker with no
+%                                  in-process DSP, bit-identical parity with
+%                                  the in-process pipeline, priorities, and
+%                                  the metrics worker (SKIPS the worker parts
+%                                  where the pool cannot hold three workers)
+%       verify_stimulus_alignment- the correspondence everything else rests
+%                                  on: the samples recorded at the onset the
+%                                  timing pulse marks ARE the stimulus the
+%                                  schedule placed there. Onset recovery,
+%                                  de-interleaving, per-condition metrics,
+%                                  the live statistics, polarity, and the
+%                                  same through the compute workers. Also a
+%                                  rig check -- see its help for the
+%                                  'Testing',false invocation
 %       verify_progress_monitor  - acquisition progress window: the tally,
 %                                  simple/bar/heat-map views, counts vs
 %                                  percent, and the mid-run attribution
@@ -78,6 +93,7 @@ tests = {@verify_isi_jitter, @verify_play_plan, ...
          @verify_custom_advance, ...
          @verify_artifact_rejection, @verify_filters, ...
          @verify_live_plot, @verify_live_refresh, ...
+         @verify_compute_worker, @verify_stimulus_alignment, ...
          @verify_progress_monitor, @verify_metric_plot, ...
          @verify_trace_organizer, @verify_trace_inspector, ...
          @verify_notes, @verify_audio_settings, ...

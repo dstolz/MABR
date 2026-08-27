@@ -128,6 +128,7 @@ classdef App < handle
         SettingsMenu
         AudioMenuItem
         CalMenuItem
+        ComputeMenuItem
         HelpMenu
         TestMenuItem
         Toolbar
@@ -322,6 +323,17 @@ classdef App < handle
                 'MenuSelectedFcn',@(~,~) app.onAudioSettings());
             app.CalMenuItem = uimenu(app.SettingsMenu,'Text','Calibration…', ...
                 'MenuSelectedFcn',@(~,~) app.onCalibration());
+            % A preference rather than a live switch: it decides how big the
+            % parallel pool is made, and a pool cannot be resized once the
+            % acquisition worker is on it (see mabr.pool), so it takes effect
+            % at the next Start -- and restarts the pool and the acquisition
+            % worker to do so.
+            app.ComputeMenuItem = uimenu(app.SettingsMenu,'Text','Background compute workers', ...
+                'Separator','on','Checked',onOff(app.computeEnabled()), ...
+                'Tooltip',['Run the live signal processing and the online analysis on two ' ...
+                           'extra parallel-pool workers instead of in this window. Takes ' ...
+                           'effect at the next Start, which restarts the parallel pool.'], ...
+                'MenuSelectedFcn',@(~,~) app.onComputeWorkers());
 
             app.HelpMenu = uimenu(app.UIFigure,'Text','&Help');
             uimenu(app.HelpMenu,'Text','MABR Wiki', ...
@@ -1246,8 +1258,9 @@ classdef App < handle
 
         % --- Controller lifecycle ------------------------------------------
         function ensureController(app)
-            testing  = app.Audio.Testing;
-            stimOnly = app.Audio.isStimulationOnly();
+            testing    = app.Audio.Testing;
+            stimOnly   = app.Audio.isStimulationOnly();
+            useCompute = app.computeEnabled();
             % The sample rate joins Testing as a reason to rebuild rather than
             % reuse. Unlike the stimulation-only flag it does NOT ride per
             % block: the controller captured a mabr.Config at construction and
@@ -1258,6 +1271,7 @@ classdef App < handle
             % describing a clock the data is not on.
             if ~isempty(app.Controller) && isvalid(app.Controller) ...
                     && app.Controller.Testing == testing ...
+                    && app.Controller.UsingCompute == useCompute ...
                     && app.Controller.Config.DACSampleRate == app.Config.DACSampleRate
                 % The mode rides per block, so a worker built for one is
                 % reused for the other -- but it is re-labelled for what it is
@@ -1277,10 +1291,23 @@ classdef App < handle
                 delete(app.Controller);
             end
 
+            % The pool has to be the right size BEFORE the first worker
+            % launches on it (see mabr.pool): one for acquisition, two more
+            % for the compute workers. A pool that cannot be resized -- busy,
+            % or the profile too small -- costs the compute workers for the
+            % session, never the acquisition.
+            [~,ok] = mabr.pool(1 + 2*useCompute,@(msg) app.setStatus(msg));
+            if useCompute && ~ok
+                app.setStatus(['The parallel pool could not be sized for the compute ' ...
+                    'workers; computing in this window for the session.']);
+                drawnow;
+                useCompute = false;
+            end
+
             % Startup is slow (parallel pool + worker handshake), so the
             % engine reports each milestone straight into the status line.
             app.Controller = mabr.ui.AcqController(app.Config,testing, ...
-                @(msg) app.setStatus(msg),stimOnly);
+                @(msg) app.setStatus(msg),stimOnly,useCompute);
             app.Listeners = [ ...
                 addlistener(app.Controller,'StateChanged',   @(~,e) app.onState(e)); ...
                 addlistener(app.Controller,'MetricsUpdated', @(~,e) app.onMetrics(e)); ...
@@ -1763,6 +1790,24 @@ classdef App < handle
                 set(findall(app.AcqPanel,'Type','uilabel'),'Enable','on');
                 app.AcqPanel.ForegroundColor = app.AcqPanelFG;
             end
+        end
+
+        % --- Compute workers --------------------------------------------------
+        function tf = computeEnabled(~)
+            % The preference behind Settings > Background compute workers.
+            % Default on: the workers are what keep the live trace at its
+            % frame rate with the progress and analysis windows open.
+            tf = getpref('MABR','ComputeWorker',true);
+            tf = islogical(tf) && isscalar(tf) && tf || isnumeric(tf) && isscalar(tf) && tf ~= 0;
+        end
+
+        function onComputeWorkers(app)
+            tf = ~app.computeEnabled();
+            setpref('MABR','ComputeWorker',tf);
+            app.ComputeMenuItem.Checked = onOff(tf);
+            if tf, word = 'on'; else, word = 'off'; end
+            app.setStatus(sprintf(['Background compute workers %s. Takes effect at the ' ...
+                'next Start (the parallel pool is restarted).'],word));
         end
 
         % --- ASIO device / channel mapping -----------------------------------
@@ -2633,7 +2678,8 @@ classdef App < handle
                  app.AdvanceDrop, app.CorrField, ...
                  app.ISIField, app.RateField, app.JitterCheck, ...
                  app.ISIMinField, app.ISIMaxField, app.AudioMenuItem, ...
-                 app.CalMenuItem, app.TestMenuItem, app.LoadConfigMenuItem, ...
+                 app.CalMenuItem, app.ComputeMenuItem, app.TestMenuItem, ...
+                 app.LoadConfigMenuItem, ...
                  app.RecentConfigsMenu};
         end
 

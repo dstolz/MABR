@@ -122,6 +122,11 @@ classdef Engine < handle
 
         function delete(obj)
             try, obj.kill(); end %#ok<TRYNC>
+            % Give the loop a moment to exit on its own (it polls its queue
+            % every 0.1 s), so the pool's slot is free the instant this
+            % returns -- mabr.pool will only resize a pool with nothing
+            % running on it -- and cancel only what did not.
+            try, wait(obj.Future,'finished',5); end %#ok<TRYNC>
             try, delete(obj.MsgListener); end %#ok<TRYNC>
             try, cancel(obj.Future); end %#ok<TRYNC>
         end
@@ -309,16 +314,25 @@ classdef Engine < handle
         end
 
         function set_priority(pid,level)
-            % Ported from abr.Tools.set_priority.
-            numLevels = 2.^([5:8 14 15]);
-            txtLevels = {'normal','idle','high priority','real time','below normal','above normal'};
-            ind = ismember(txtLevels,lower(level));
-            assert(any(ind),'mabr:acq:Engine:badPriority','Invalid priority level: %s',level);
-            [e,w] = dos(sprintf('wmic process where processid=''%d'' CALL setpriority %d', ...
-                pid,numLevels(ind)));
-            if e ~= 0
-                mabr.log.vprintf(0,1,'Failed to set priority of PID %d to "%s"',pid,level);
-                disp(w);
+            % Set a process's scheduling priority. Ported from
+            % abr.Tools.set_priority, which shelled out to wmic; wmic is a
+            % deprecated Feature-on-Demand that Windows 11 24H2 and later no
+            % longer install by default, and a priority that silently fails
+            % to apply is worse than none on a rig where the acquisition
+            % worker is supposed to run high and the compute workers low. So:
+            % .NET's Process class, which every Windows MATLAB has -- no
+            % shell, nothing to parse. The level names are the legacy ones.
+            names   = {'normal','idle','high priority','real time','below normal','above normal'};
+            classes = {'Normal','Idle','High','RealTime','BelowNormal','AboveNormal'};
+            ind = find(strcmpi(names,level),1);
+            assert(~isempty(ind),'mabr:acq:Engine:badPriority','Invalid priority level: %s',level);
+            if ~ispc, return; end
+            try
+                proc = System.Diagnostics.Process.GetProcessById(int32(pid));
+                proc.PriorityClass = System.Diagnostics.ProcessPriorityClass.(classes{ind});
+            catch me
+                mabr.log.vprintf(0,1,'Failed to set priority of PID %d to "%s": %s', ...
+                    pid,level,me.message);
             end
         end
     end

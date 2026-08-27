@@ -10,6 +10,7 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 |------|-------------|
 | [`MABR`](../MABR.m) | Launcher. Adds all subfolders to the path (except `.git`) and opens `mabr.ui.App`. Windows-only. |
 | [`mabr.Config`](../+mabr/Config.m) | Value object holding hardware constants, release metadata, required-toolbox list, and runtime paths. Not a superclass — nothing inherits from it. |
+| [`mabr.pool`](../+mabr/pool.m) | `[pool,ok] = mabr.pool(minWorkers)`: the parallel pool every worker runs on, made at least this big — recreating a smaller one only while nothing runs on it — because a pool cannot be resized once the acquisition loop is on it. Called by the App (from the compute-worker preference) before a controller is built. |
 
 **`mabr.Config` surface**
 
@@ -121,6 +122,25 @@ Pure predicates over a context struct; return `true` to end the run. Evaluated *
 | `readSignalAt(idx)`, `readTimingAt(idx)` | Arbitrary indices, shape preserved |
 | `WriteHead`, `BlockSeq`, `NumValid`, `MaxLength`, `Writable` | State |
 
+## Compute — `+mabr/+compute/`
+
+The signal processing between the ring buffer and everything that looks at it, and the two optional workers that run it so the GUI process does not have to. See [Compute Workers](Compute-Workers.md).
+
+| Item | Description |
+|------|-------------|
+| [`mabr.compute.Pipeline`](../+mabr/+compute/Pipeline.m) | **The one implementation** of everything computed from recorded samples: `configure` (window + both policies), `beginRun`/`endRun`, `step(ringBuffer)` → sufficient statistics (latest sweep, `R`, counts, per-condition mean/SD/counts; incremental and bit-exact), `sweeps()` (the filtered matrix), `finalize(ringBuffer,seq)` → plain parts. Stepped by a worker or by the controller itself. |
+| [`mabr.compute.ConditionStore`](../+mabr/+compute/ConditionStore.m) | Static helpers for the online-analysis condition table: `empty`, `fromBlock`, `fromLive`, `merge` (accumulates repeats of one stimulus), `conditions` (live overrides finalized), `metaParams`, `paramNames`, `paramValue`, `roster`. Shared by `MetricPlot` and the metrics worker. |
+| [`mabr.compute.evaluateJobs`](../+mabr/+compute/evaluateJobs.m) | `[vals,errs,done] = evaluateJobs(C,jobs,budget)`: every job's metric over every condition, `NaN` where there is nothing to report, time-boxed between conditions. |
+| [`mabr.compute.ComputeEngine`](../+mabr/+compute/ComputeEngine.m) | **Client-side facade** for both workers: launches them (the metrics worker lazily), owns their queues and the publish buffers, broadcasts `configure`/`runStart`/`runEnd`, asks for `finalize`, hands out job slots (`acquireSlot`/`setJob`/`setCustomMetric`), and serves `live()` and `values(slot)`. Per-role watchdog: cancel and relaunch once, then write the role off. Events `Finalized`, `RosterChanged`, `WorkerError`. |
+| [`mabr.compute.compute_loop`](../+mabr/+compute/compute_loop.m) | **Runs on a worker**, `role` `'dsp'` or `'metrics'`: handshake, command poll, and a cadence of pipeline steps published through a buffer. The metrics role is the process user-supplied metric functions run in. |
+| [`mabr.compute.PublishBuffer`](../+mabr/+compute/PublishBuffer.m) | Base class: a double-buffered, memory-mapped table with one writer and any number of readers (`publish`, `read`, `seq`, `zero`). The `Seq` re-check is the correctness guarantee; the halves are the fast path. |
+| [`mabr.compute.LiveBuffer`](../+mabr/+compute/LiveBuffer.m) | DSP worker → client: exactly `Pipeline.step`'s struct. |
+| [`mabr.compute.MetricBuffer`](../+mabr/+compute/MetricBuffer.m) | Metrics worker → client: one value per job slot per condition, plus each condition's sweep count and live flag. |
+| [`mabr.compute.RequestBuffer`](../+mabr/+compute/RequestBuffer.m) | Client → both workers: the two cadences and the per-slot job table (`Active MetricIdx WinLo WinHi`). |
+| [`mabr.compute.Cmd`](../+mabr/+compute/Cmd.m) | Enumeration, client → worker: `Configure`, `RunStart`, `RunEnd`, `Finalize`, `AddCondition`, `ClearConditions`, `SetCustomMetric`, `Kill`. |
+| [`mabr.compute.State`](../+mabr/+compute/State.m) | Enumeration, worker → client: `Idle`, `Ready`, `Working`, `Finalizing`, `Error`. |
+| [`mabr.compute.MessageEventData`](../+mabr/+compute/MessageEventData.m) | Event payload: `Role`, `Type`, `Data`. |
+
 ## Metrics — `+mabr/+metrics/`
 
 Pure, tested functions shared by the live and offline paths. Sweep matrices are `[nSamples x nSweeps]` unless noted.
@@ -134,7 +154,8 @@ Pure, tested functions shared by the live and offline paths. Sweep matrices are 
 | [`snr(D)`](../+mabr/+metrics/snr.m) | SNR in dB via plus/minus averaging: RMS of the mean sweep over RMS of the odd-minus-even difference. |
 | [`rms_metric(D)`](../+mabr/+metrics/rms_metric.m) | Mean per-sweep RMS amplitude. Named to avoid shadowing SPT's `rms`. |
 | [`find_peaks(meanTrace,npeaks,findNegative)`](../+mabr/+metrics/find_peaks.m) | Peak/trough finder for ABR wave marking. Returns `pks`/`locs`/`w`/`p`. Named to avoid shadowing SPT's `findpeaks`. |
-| [`error_band(Y,mode,conf)`](../+mabr/+metrics/error_band.m) | Half-width of a symmetric error band about `mean(Y,1)`, one value per column: `'std'` (spread of a single sweep), `'sem'` (`std/sqrt(n)`, the precision of the mean), `'ci'` (parametric interval at `conf`, default 0.95), `'none'`. Fewer than two sweeps → NaN, which draws as no band rather than a band of zero width. |
+| [`error_band(Y,mode,conf)`](../+mabr/+metrics/error_band.m) | Half-width of a symmetric error band about `mean(Y,1)`, one value per column: `'std'` (spread of a single sweep), `'sem'` (`std/sqrt(n)`, the precision of the mean), `'ci'` (parametric interval at `conf`, default 0.95), `'none'`. Fewer than two sweeps → NaN, which draws as no band rather than a band of zero width. Two lines over `band_from_stats`. |
+| [`band_from_stats(sd,n,mode,conf)`](../+mabr/+metrics/band_from_stats.m) | The same half-width from the standard deviation and the sweep count instead of the sweeps — term for term the same arithmetic, so a view holding only a condition's statistics draws the same band to the bit. `sd` may hold one row per condition, `n` one count per row. |
 | [`t_quantile(p,nu)`](../+mabr/+metrics/t_quantile.m) | Student's t inverse CDF, **toolbox-free** — `mabr.Config.RequiredToolboxes` does not include Statistics, so `tinv` cannot be assumed. Exact, via `nu/(nu+T²) ~ Beta(nu/2,1/2)` and core MATLAB's `betaincinv`. Degenerate inputs give NaN rather than erroring. |
 
 ### Online-analysis metrics — `+mabr/+metrics/+online/`
@@ -248,6 +269,9 @@ At finalization the run's sweeps are split by `Schedule.runSequence`, yielding *
 | [`verify_data_roundtrip`](../tests/verify_data_roundtrip.m) | Written `.abr` files satisfy the offline pipeline's field and filename contract. |
 | [`verify_legacy_import`](../tests/verify_legacy_import.m) | Legacy `.abr` import shim, including sigProp-style `SIG` unwrapping. |
 | [`verify_online_advance`](../tests/verify_online_advance.m) | Advance-criterion logic, plus an end-to-end early stop through the real controller. |
+| [`verify_compute_worker`](../tests/verify_compute_worker.m) | The compute workers: publish buffers, a run served by the DSP worker with no in-process DSP, bit-identical parity (statistics and finalization), priorities, the metrics worker and a contained hung metric, the advance criterion through the worker, and a DSP worker lost mid-run. The worker parts skip and pass where the pool cannot hold three workers. |
+| [`verify_stimulus_alignment`](../tests/verify_stimulus_alignment.m) | The correspondence everything else rests on: the samples recorded at the onset a timing pulse marks **are** the stimulus the schedule placed there. Onset recovery (sample-exact in loopback), the recorded waveform against the played one, de-interleaving, per-condition metrics, the live statistics both in one call and a slice at a time, polarity, and the same through the compute workers. Also a rig diagnostic — `verify_stimulus_alignment('Testing',false)`. |
+| [`mabrtest.GrowingRing`](../tests/+mabrtest/GrowingRing.m) | Test double for `mabr.acq.RingBuffer`: replays a completed recording a slice at a time as `Head` advances, so the incremental extraction path can be driven with the slice boundaries where the test wants them. |
 
 None require audio hardware; all require the Parallel Computing Toolbox. See [Testing](Testing.md).
 

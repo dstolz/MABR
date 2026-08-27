@@ -31,6 +31,19 @@ MABR does one job: play a pre-computed stimulus, record the response in lock-ste
 
 Two processes, two channels between them: **control and state travel as messages** over parallel queues; **bulk sample data travels through one memory-mapped ring buffer**. Nothing else is shared.
 
+Two more processes join them when the compute workers are on (the default — see [Compute Workers](Compute-Workers.md)): a **DSP worker** that reads the same ring buffer and publishes the live statistics the GUI draws, and a **metrics worker** that evaluates the online analysis. They use the same two kinds of channel — messages for control, memory-mapped files for what they publish — and the GUI process then does no signal processing at all:
+
+```
+   ┌──────────────────────┐   compute_live.dat    ┌────────────────────┐
+   │  +ui/AcqController   │ ◄──────────────────── │  DSP worker        │ ◄─┐
+   │  +ui/LivePlot        │   compute_requests    │  +compute/Pipeline │   │ ring buffer
+   │  +ui/MetricPlot      │ ────────────────────► │                    │   │ (read-only)
+   │  (GUI: draw, decide) │   compute_metrics.dat ┌────────────────────┐   │
+   │                      │ ◄──────────────────── │  metrics worker    │ ◄─┘
+   └──────────────────────┘                       │  +compute/Pipeline │
+                                                  └────────────────────┘
+```
+
 ## The packages
 
 Everything lives under the `+mabr` namespace. There is no other package.
@@ -38,13 +51,14 @@ Everything lives under the `+mabr` namespace. There is no other package.
 | Package | Responsibility |
 |---------|----------------|
 | [+acq](../+mabr/+acq/) | The acquisition engine: worker, ring buffer, command/state protocol |
+| [+compute](../+mabr/+compute/) | The signal processing between the ring buffer and everything that looks at it (`Pipeline`), and the two optional workers that run it |
 | [+data](../+mabr/+data/) | Data model and file IO: `Recording`, `Block`, `Session`, `io` |
 | [+stim](../+mabr/+stim/) | The stimulus boundary: source contract, block queue, advance criteria |
 | [+metrics](../+mabr/+metrics/) | Small, pure, tested functions: onset detection, sweep extraction, correlations, SNR |
 | [+ui](../+mabr/+ui/) | The GUI: app, controller, live plot, online analysis, trace organizer |
 | [+log](../+mabr/+log/) | Verbosity-gated logging |
 
-Plus [mabr.Config](../+mabr/Config.m) at the root: a plain **value** object holding hardware constants and runtime paths. It is not a superclass and nothing inherits from it — the app and engine each hold a copy.
+Plus [mabr.Config](../+mabr/Config.m) at the root: a plain **value** object holding hardware constants and runtime paths. It is not a superclass and nothing inherits from it — the app and engine each hold a copy. And [mabr.pool](../+mabr/pool.m), the parallel pool every worker runs on, sized *before* the first one launches: a pool cannot be resized once the acquisition loop is on it.
 
 ## What MABR does not do
 
@@ -71,6 +85,12 @@ Acquisition runs on a **1-process parallel pool worker**, launched once per sess
 
 That per-frame poll is what makes online early-stopping possible: a criterion evaluated in the GUI process can stop a block the moment a response is detected, mid-playback.
 
+## Computation: the pipeline, and two more workers
+
+Everything computed from recorded samples while a schedule runs — sweep extraction, the display filter chain, the artifact preview, the onset-contrast correlation, the per-condition running means, the finalization of a completed run — is one object, [mabr.compute.Pipeline](../+mabr/+compute/Pipeline.m). It is stepped by a **DSP worker** when the compute workers are on, and by the controller itself when they are not; the two are the same code over the same ring bytes, and [verify_compute_worker](../tests/verify_compute_worker.m) holds them bit-identical. A **metrics worker** steps its own pipeline for the online analysis, and is the process user-supplied metric functions run in, so a hung one costs its window and never the live trace. Details, including the double-buffered memory maps they publish through and how each degrades on its own, are in [Compute Workers](Compute-Workers.md).
+
+What the GUI process does is *poll* and *draw*: the live view is fed the run's statistics — the latest sweep, and per condition the mean, the SD and the counts, from which every error band it offers can be derived — rather than a sweep matrix, so with the workers on there is no sweep matrix in the foreground at all.
+
 ## Program flow
 
 A single explicit state object, [mabr.ui.ProgState](../+mabr/+ui/ProgState.m), drives the schedule:
@@ -81,7 +101,7 @@ Idle → PrepBlock → Acquire → BlockComplete → AdvanceBlock → (next bloc
                           any → Error
 ```
 
-Transitions are driven by engine events and user actions. There is no global state and no polling of shared memory. [AcqController](../+mabr/+ui/AcqController.m) runs exactly one timer, at ~20 Hz, and it exists only to refresh the live view and evaluate the advance criterion.
+Transitions are driven by engine events and user actions. There is no global state and no polling of shared memory. [AcqController](../+mabr/+ui/AcqController.m) runs two timers: a ~20 Hz one that refreshes the live view and evaluates the advance criterion — from the DSP worker's published statistics when there is one, from its own pipeline otherwise — and a slower one for the progress tally and the Run panel. With a DSP worker, `BlockComplete` is a genuine waiting state: the finalization DSP runs on the worker, and the tail (`AdvanceBlock` onward) runs when its reply lands — or when a timeout finalizes the run in the GUI process instead, from the ring buffer, which nothing overwrites until the next block starts.
 
 ## The data model
 
@@ -91,7 +111,7 @@ Three value/handle types, layered, with **no reference cycles**:
 - [mabr.data.Block](../+mabr/+data/Block.m) (value) — one condition: stimulus metadata + its `Recording` + computed metrics + start time.
 - [mabr.data.Session](../+mabr/+data/Session.m) (handle) — subject/device config, the block queue, and the array of completed `Block`s.
 
-Filtering is **explicit and opt-in**, and lives in a [`mabr.FilterPolicy`](../+mabr/FilterPolicy.m) held in `Recording.Filters` — three independent sections (high pass, low pass, notch), defaulting to 10 Hz / 3000 Hz / 60 Hz, applied zero-phase with `filtfilt`. `Recording` designs them only when you call `designFilters()`; afterwards the filtered trace is used consistently everywhere downstream (`ProcessedData` → `SweepData` → `SweepMean`). Before that call, the raw data is used.
+Filtering is **explicit and opt-in**, and lives in a [`mabr.FilterPolicy`](../+mabr/FilterPolicy.m) held in `Recording.Filters` — three independent sections (high pass, low pass, notch), defaulting to 10 Hz / 3000 Hz / 60 Hz, applied zero-phase with `filtfilt`. `Recording` designs them only when you call `designFilters()`; afterwards the filtered trace is used consistently everywhere downstream (`ProcessedData` → `SweepData` → `SweepMean`). Before that call, the raw data is used. The filtered trace is computed **once** and kept (`designFilters` fills it; `withProcessed` installs one filtered elsewhere; assigning `Data` or `Filters` clears it), so the accessors that start from it do not each run the chain over the whole trace again.
 
 The *same* policy object drives the live view (`AcqController.Filters`, redesigned at the live sweep rate whenever it is assigned) and the GUI's filter dialog, so what the operator watches and what a `Block` reports come off one set of corners. Nothing in that chain touches `Recording.Data`, which is what `io` writes — a `.abr` file is always the raw trace.
 
@@ -113,6 +133,7 @@ These are worth preserving in any change:
 4. **Metrics are pure functions**, shared between live and offline paths.
 5. **The stimulus boundary stays closed.** No signal generation or calibration inside MABR.
 6. **The `.abr` contract is tested, not assumed.** Change `io`, run [verify_data_roundtrip](../tests/verify_data_roundtrip.m).
+7. **The GUI process draws and decides; it does not compute.** Signal processing lives in `mabr.compute.Pipeline`, in one place, and runs in whichever process is available — never in two implementations that could drift.
 
 ## Historical note
 

@@ -6,16 +6,20 @@ MABR ships a verification suite that runs with **no audio hardware**. It require
 >> run_all_verifications
 ```
 
-```
+```text
+== verify_isi_jitter ==
+  PASS Part A: 'fixed' spacing unchanged (3840 samples, 20.00 ms)
+  ...
 == verify_engine_loopback ==
-== verify_data_roundtrip ==
-== verify_legacy_import ==
-== verify_online_advance ==
+  PASS test 1: full block (head 512000, 125 onsets, loopback err 4.9e-06)
+  ...
 
-==== 4 / 4 verifications passed ====
+==== 24 / 24 verifications passed ====
 ```
 
-Each script is independently runnable. The first run is slow — the parallel pool has to start.
+A script passes by returning without throwing, which is the whole contract — `run_all_verifications` needs nothing else from it, and neither does the GUI's **Help ▸ Verification Tests…** window, which discovers the scripts rather than listing them.
+
+Each script is independently runnable. The first run is slow — the parallel pool has to start. Two scripts size that pool to three workers for the compute-worker parts and **skip those parts** where the machine's cluster profile cannot provide them.
 
 ## What each one covers
 
@@ -44,6 +48,18 @@ This is the test that protects the core promise of the design: commands are hono
 [tests/verify_online_advance.m](../tests/verify_online_advance.m) — early stopping and intermixing, in three parts. Part A checks the advance predicates in isolation. Part B drives the real `AcqController` in loopback with a **blocked** schedule and the correlation criterion, and asserts the run completes with far fewer sweeps than were scheduled. Part C schedules two stimuli with `shuffled-cycles` and asserts that one continuous intermixed run is de-interleaved back into one `Block` per stimulus ID, each with its full repetition count — and that the armed criterion does *not* fire, since intermixed runs play to completion.
 
 Parts B and C are the only tests that exercise the full stack — controller, engine, worker, ring buffer, extraction, criterion, de-interleaving, finalization, save — in one pass.
+
+### verify_stimulus_alignment
+
+[tests/verify_stimulus_alignment.m](../tests/verify_stimulus_alignment.m) — the correspondence every other number rests on: **the samples recorded at the onset a timing pulse marks are the stimulus the schedule placed there.** Sweep extraction, de-interleaving, the live means, the per-condition metrics and every `.abr` file inherit it, and none of them can detect it going wrong on their own.
+
+The bank is what makes it testable. Each condition is identifiable *from its own samples* — one frequency per column of the design, one amplitude per row — so "is this attributed correctly?" becomes arithmetic: a mean sweep must peak at its own `Frequency`, and the 30 dB step between levels must come back as a 31.62× amplitude ratio. The frequencies are chosen to survive both the decimation to 12 kHz and the display low pass, so nothing the analysis path legitimately does can move the peak the test looks for. A control assertion covers the other direction: at one level the two frequencies must *not* differ in amplitude, which fails if the frequencies have been swapped between conditions.
+
+In loopback the DAC frame *is* the ADC frame, so it asserts the strongest form available — recovered onsets sample-exact against `ExpectedOnsets`, and the samples at each onset bit-identical to that stimulus's waveform times its polarity. Eight parts: the plan, the recording, de-interleaving into `Block`s, the metrics (through `evaluateJobs` *and* a real `MetricPlot`, keyed by condition), the live per-condition statistics, **the live path as it actually runs**, alternating polarity, and the same run again through the compute workers.
+
+That sixth part is the one that earned its keep. Extracting a finished block in one call and extracting it in forty slices are different code — `extract_sweeps` keeps a cursor — and only the second sees a timing pulse straddling a slice boundary. Driven through `mabrtest.GrowingRing` (which replays a completed recording a slice at a time, so the boundaries land where the test wants rather than wherever a 20 Hz timer fell), it found a real defect: a boundary more than the shadow interval into a pulse counted that pulse twice, giving **56 sweeps for 48 presentations**. The live count over-read, every sweep after a duplicate was attributed to the wrong presentation, and the advance criterion fired early. Saved files were never affected — finalization reads the whole block at once. Test the incremental path incrementally; a single-call check cannot see any of it.
+
+**Also a rig diagnostic.** `verify_stimulus_alignment('Testing',false)` streams through the real device with the channel map from your saved audio prefs. There it asserts a *constant* onset offset — reporting the loop-back latency in samples and ms — rather than zero, and skips the bit-exact waveform comparison, since what returns through a converter is not what went out. Everything else is asserted identically, which makes it the check to run after rewiring a rig or changing a sample rate.
 
 ### verify_progress_monitor
 
@@ -76,4 +92,11 @@ Prefer building deterministic stimuli inline (as `verify_engine_loopback` does w
 
 ## What is not covered
 
-The viewer windows are covered (`verify_live_plot`, `verify_progress_monitor`, `verify_trace_organizer`, `verify_trace_inspector`) by driving them the way a user does and reading back what they actually drew — but the main window itself is not, nor is real ASIO device behaviour, nor the offline analysis pipeline beyond the file-contract check in `verify_data_roundtrip`. Changes in those areas need manual verification on a rig.
+The viewer windows are covered (`verify_live_plot`, `verify_progress_monitor`, `verify_trace_organizer`, `verify_trace_inspector`) by driving them the way a user does and reading back what they actually drew — but the main window itself is not, nor is the offline analysis pipeline beyond the file-contract check in `verify_data_roundtrip`. Changes in those areas need manual verification on a rig.
+
+Real ASIO device behaviour is not covered by the suite either, by construction — every script runs hardware-free. Two of them double as **rig diagnostics** and are the way to cover it deliberately, on the machine that has the hardware:
+
+```matlab
+>> verify_timing_loopback('Testing',false)      % pulse recovery, jitter, drift, margin
+>> verify_stimulus_alignment('Testing',false)   % onset latency, attribution, metrics
+```

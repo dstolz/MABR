@@ -59,10 +59,18 @@ classdef MetricPlot < handle
 %   lives on the control strip instead: it changes the numbers, not the ink.
 %
 %   REFRESH RATE. Default 1 s, adjustable from 0.25 s to 60 s. There is no
-%   reason to go faster -- an average moves slowly, and every open window
-%   recomputes every metric for every condition on the GUI thread. The metric
-%   functions are pure (mabr.metrics.online.context is the contract), so a
-%   slow custom metric costs only its own window.
+%   reason to go faster -- an average moves slowly. The metric functions are
+%   pure (mabr.metrics.online.context is the contract), so a slow custom
+%   metric costs only its own window.
+%
+%   WHERE THE ARITHMETIC RUNS. With the compute workers on (Settings >
+%   Background compute workers) each window takes a slot on the metrics
+%   worker (mabr.compute.ComputeEngine) and its metric is evaluated in that
+%   process -- the one place user-supplied metric functions run, so a hung
+%   one costs its window and never this one or the live trace. Without a
+%   worker, or a free slot, the window evaluates in-process exactly as it
+%   always did; the two paths run the same code over the same table
+%   (mabr.compute.evaluateJobs, mabr.compute.ConditionStore) and agree.
 %
 %   Nothing here writes anything: it is a view over data the acquisition owns.
 %   The numbers can be taken away by hand -- right-click for the clipboard, a
@@ -113,6 +121,18 @@ classdef MetricPlot < handle
     properties (SetAccess = private)
         CustomFcn  = []                      % user metric, or []
         CustomName (1,:) char = ''
+        % The job slot this window holds on the metrics worker
+        % (mabr.compute.ComputeEngine), or [] -- no worker, or none free.
+        % With a slot the metric is evaluated off-process and read back;
+        % without one it is evaluated here, exactly as it always was.
+        Slot = []
+        % Whether the values on screen came from the worker (or are
+        % deliberately withheld because of it) rather than computed here.
+        ServedByWorker (1,1) logical = false
+    end
+
+    properties (Dependent)
+        Stalled                              % this window's metric hung the worker
     end
 
     properties (Access = private)
@@ -127,6 +147,16 @@ classdef MetricPlot < handle
         Built     (1,1) logical = false
         Suspend   (1,1) logical = false      % bulk load in progress
         Note      (1,:) char = ''            % one-line caveat for the subtitle
+        WorkerNote (1,:) char = ''           % ... and one about the worker
+        LastWorker = []                      % the last values the worker gave
+        % render() is not re-entrant: legend() and drawnow process pending
+        % events, and a timer tick landing inside one would cla() the axes
+        % out from under the lines the outer call is still dressing. A tick
+        % that finds a render in progress simply skips -- the next one
+        % draws the same data.
+        Rendering (1,1) logical = false
+        Drawn     (1,1) logical = false      % something has been drawn at all
+        DrawnNote (1,:) char = ''            % the WorkerNote it was drawn with
         WarnedMetric (1,:) char = ''         % last metric that threw, so it logs once
     end
 
@@ -169,9 +199,16 @@ classdef MetricPlot < handle
 
         function delete(obj)
             obj.stopTicker();
+            try, obj.releaseSlot();     end %#ok<TRYNC>
             try, delete(obj.Ticker);    end %#ok<TRYNC>
             try, delete(obj.Listeners); end %#ok<TRYNC>
             if ~isempty(obj.Figure) && isgraphics(obj.Figure), delete(obj.Figure); end
+        end
+
+        function tf = get.Stalled(obj)
+            tf = ~isempty(obj.Slot) && ~isempty(obj.Controller) && isvalid(obj.Controller) ...
+                && ~isempty(obj.Controller.Compute) && isvalid(obj.Controller.Compute) ...
+                && obj.Controller.Compute.isStalled(obj.Slot);
         end
 
         function tf = isvalidView(obj)
@@ -186,12 +223,21 @@ classdef MetricPlot < handle
             % exactly as mabr.ui.TraceOrganizer.listenTo does.
             try, delete(obj.Listeners); end %#ok<TRYNC>
             obj.Listeners  = [];
+            obj.releaseSlot();                  % on the OLD controller's engine
             obj.Controller = controller;
             if isempty(controller) || ~isvalid(controller), return; end
 
             obj.Listeners = [ ...
                 addlistener(controller,'BlockReady',@(~,e) obj.onBlockReady(e)); ...
                 addlistener(controller,'ScheduleComplete',@(~,~) obj.refresh())];
+
+            % A slot on the metrics worker, where there is one: the metric
+            % is then evaluated off-process. None free (or no worker) means
+            % this window evaluates in-process, and nothing else changes.
+            if ~isempty(controller.Compute) && isvalid(controller.Compute)
+                obj.Slot = controller.Compute.acquireSlot();
+                obj.pushJob();
+            end
 
             % Backfill what the session already holds -- one redraw at the end
             % of it, not one per block.
@@ -214,23 +260,12 @@ classdef MetricPlot < handle
         function addBlock(obj,block)
             % Fold one finalized mabr.data.Block into the store. Public so a
             % host -- or a test -- can drive the window with no engine at all.
-            if isempty(block), return; end
-            adc = block.ADC;
-            sw  = double(adc.CleanSweepData);      % [nSamples x nCleanSweeps]
-            if isempty(sw), return; end
-
-            c = mabr.ui.MetricPlot.newCondition();
-            c.Key          = mabr.ui.MetricPlot.blockKey(block);
-            c.Label        = c.Key;
-            c.Params       = mabr.ui.MetricPlot.blockParams(block);
-            c.Sweeps       = sw;
-            c.Time         = double(adc.TimeVector(:));   % s, starts at the onset
-            c.SampleRate   = adc.SampleRate;
-            c.NumTotal     = adc.NumSweeps;
-            c.NumArtifacts = adc.NumArtifacts;
-            c.Live         = false;
-
-            obj.Blocks = mabr.ui.MetricPlot.mergeCondition(obj.Blocks,c);
+            % The conversion and the merge rule are
+            % mabr.compute.ConditionStore's, shared with the metrics worker,
+            % so the two build the same table from the same blocks.
+            c = mabr.compute.ConditionStore.fromBlock(block);
+            if isempty(c), return; end
+            obj.Blocks = mabr.compute.ConditionStore.merge(obj.Blocks,c);
             obj.refresh();
         end
 
@@ -257,48 +292,15 @@ classdef MetricPlot < handle
             % The store half of updateLive: the snapshot always describes ONE
             % run, and only while it is streaming, so replacing wholesale is
             % what keeps this honest -- there is nothing to accumulate here;
-            % the finalized block is where accumulation happens.
-            obj.LiveConds = mabr.ui.MetricPlot.emptyStore();
-            if isempty(snap) || ~isstruct(snap) || ~isfield(snap,'Sweeps') ...
-                    || isempty(snap.Sweeps)
-                return
+            % the finalized block is where accumulation happens. The
+            % parameters come from the bank handed in, or failing that the
+            % controller's; a bank swapped under a running window costs the
+            % point its parameters, not the window.
+            if nargin < 3, stimuli = []; end
+            if isempty(stimuli) && ~isempty(obj.Controller) && isvalid(obj.Controller)
+                stimuli = obj.Controller.Stimuli;
             end
-
-            S   = double(snap.Sweeps).';           % [nSamples x nSweeps]
-            t   = double(snap.Time(:));            % s, may start negative
-            idx = double(snap.StimIndex(:)).';
-            bad = logical(snap.Bad(:)).';
-            n   = min([size(S,2) numel(idx) numel(bad)]);
-            if n < 1, return; end
-            S = S(:,1:n); idx = idx(1:n); bad = bad(1:n);
-
-            for k = 1:numel(snap.Stimuli)
-                u    = snap.Stimuli(k);
-                mine = idx == u;
-                if ~any(mine), continue; end
-                keep = mine & ~bad;
-
-                c = mabr.ui.MetricPlot.newCondition();
-                if k <= numel(snap.Labels)
-                    c.Key = char(snap.Labels{k});
-                else
-                    c.Key = sprintf('stimulus %d',u);
-                end
-                c.Label        = c.Key;
-                c.Params       = obj.liveParams(stimuli,u);
-                c.Sweeps       = S(:,keep);
-                c.Time         = t;
-                c.SampleRate   = snap.SampleRate;
-                c.NumTotal     = nnz(mine);
-                c.NumArtifacts = nnz(mine & bad);
-                c.Live         = true;
-
-                if isempty(obj.LiveConds)
-                    obj.LiveConds = c;
-                else
-                    obj.LiveConds(end+1) = c;
-                end
-            end
+            obj.LiveConds = mabr.compute.ConditionStore.fromLive(snap,stimuli);
         end
 
         % --- Metric selection -----------------------------------------------
@@ -327,22 +329,10 @@ classdef MetricPlot < handle
 
         function C = conditions(obj)
             % Every condition the window would plot, a live one overriding the
-            % finalized data of the same stimulus. The merge rule lives here
-            % alone, so the plot, the export and the tests agree.
-            C = obj.Blocks;
-            for i = 1:numel(obj.LiveConds)
-                j = [];
-                if ~isempty(C), j = find(strcmp({C.Key},obj.LiveConds(i).Key),1); end
-                if isempty(j)
-                    if isempty(C)
-                        C = obj.LiveConds(i);
-                    else
-                        C(end+1) = obj.LiveConds(i); %#ok<AGROW>
-                    end
-                else
-                    C(j) = obj.LiveConds(i);
-                end
-            end
+            % finalized data of the same stimulus. The merge rule lives in
+            % mabr.compute.ConditionStore alone, so the plot, the export, the
+            % metrics worker and the tests agree.
+            C = mabr.compute.ConditionStore.conditions(obj.Blocks,obj.LiveConds);
         end
 
         function V = values(obj)
@@ -350,6 +340,12 @@ classdef MetricPlot < handle
             % Value, NumSweeps, Live. What the axes shows, what the clipboard
             % and the CSV carry, and what a test reads back.
             V = obj.computeValues();
+        end
+
+        function V = localValues(obj)
+            % The same numbers evaluated in THIS process whatever the worker
+            % is doing -- what a test holds the worker's answer against.
+            V = obj.computeLocal();
         end
 
         function T = dataTable(obj)
@@ -652,7 +648,90 @@ classdef MetricPlot < handle
             obj.syncControls();
             obj.savePrefs();
             obj.syncMenus();
-            obj.render();
+            obj.pushJob();
+            obj.render(true);
+        end
+
+        % --- The metrics worker -------------------------------------------------
+        function pushJob(obj)
+            % Tell the worker what this window measures: the metric (a
+            % catalog index, or the custom function itself over the queue),
+            % the analysis window, and how often it is read. A change here
+            % is answered a cycle later; until then the old answer is not
+            % drawn under the new name (see workerValues).
+            if isempty(obj.Slot) || isempty(obj.Controller) || ~isvalid(obj.Controller) ...
+                    || isempty(obj.Controller.Compute) || ~isvalid(obj.Controller.Compute)
+                return
+            end
+            ce = obj.Controller.Compute;
+            if strcmp(obj.Metric,'custom') && ~isempty(obj.CustomFcn)
+                ce.setCustomMetric(obj.Slot,obj.CustomFcn);
+                idx = mabr.compute.RequestBuffer.Custom;
+            else
+                C   = mabr.metrics.online.catalog();
+                idx = find(strcmp({C.Key},obj.Metric),1);
+                if isempty(idx), idx = 1; end
+            end
+            obj.LastWorker = [];
+            ce.setJob(obj.Slot,idx,obj.Window);
+            ce.setSlotPeriod(obj.Slot,obj.UpdateInterval);
+        end
+
+        function releaseSlot(obj)
+            if isempty(obj.Slot), return; end
+            if ~isempty(obj.Controller) && isvalid(obj.Controller) ...
+                    && ~isempty(obj.Controller.Compute) && isvalid(obj.Controller.Compute)
+                obj.Controller.Compute.releaseSlot(obj.Slot);
+            end
+            obj.Slot       = [];
+            obj.LastWorker = [];
+        end
+
+        function [V,decided] = workerValues(obj)
+            % What the worker has for this window, and whether the worker
+            % path DECIDED the answer (even when that answer is "nothing
+            % yet"): false sends the caller to the in-process evaluation.
+            %
+            % Stale is not absent. No new publish means the last one stays
+            % on screen with a note; only a worker that is gone (never
+            % launched, or given up on) sends the metric back in-process.
+            % Two things never come back in-process: a metric that hung the
+            % worker (the slot is flagged, and evaluating it here would hang
+            % the window -- the one outcome the worker exists to prevent),
+            % and a custom metric while the worker is alive.
+            V = []; decided = false;
+            obj.WorkerNote = '';
+            if isempty(obj.Slot) || isempty(obj.Controller) || ~isvalid(obj.Controller) ...
+                    || isempty(obj.Controller.Compute) || ~isvalid(obj.Controller.Compute)
+                return
+            end
+            ce = obj.Controller.Compute;
+            if ce.isStalled(obj.Slot)
+                obj.WorkerNote = 'this metric hung the analysis worker — choose another';
+                V = obj.LastWorker;
+                if isempty(V), V = mabr.ui.MetricPlot.emptyValues(); end
+                decided = true;
+                return
+            end
+            W = ce.values(obj.Slot);
+            if isempty(W) || ~W.Current
+                if ~ce.hasMetrics(), return; end          % gone: in-process
+                if ~isempty(obj.LastWorker)
+                    V = obj.LastWorker;
+                    obj.WorkerNote = 'waiting for the analysis worker';
+                    decided = true;
+                elseif strcmp(obj.Metric,'custom')
+                    V = mabr.ui.MetricPlot.emptyValues();
+                    decided = true;
+                end
+                return
+            end
+            V = mabr.ui.MetricPlot.fromWorker(W);
+            if W.Age > 3*obj.UpdateInterval + 2
+                obj.WorkerNote = sprintf('analysis worker %.0f s behind',W.Age);
+            end
+            obj.LastWorker = V;
+            decided = true;
         end
 
         % --- Timer -------------------------------------------------------------
@@ -708,21 +787,6 @@ classdef MetricPlot < handle
             end
         end
 
-        function p = liveParams(obj,stimuli,u)
-            % The informative parameters of stimulus u, for a condition with no
-            % Block yet. Guarded: a bank swapped under a running window costs
-            % the point its parameters, not the window.
-            p = struct();
-            if isempty(stimuli)
-                if isempty(obj.Controller) || ~isvalid(obj.Controller), return; end
-                stimuli = obj.Controller.Stimuli;
-            end
-            try
-                p = mabr.ui.MetricPlot.metaParams(stimuli.meta(u));
-            catch %#ok<CTCH>
-            end
-        end
-
         % --- Metric evaluation --------------------------------------------------
         function e = metricEntry(obj)
             % The metric in force: a catalog entry, or the custom function
@@ -742,54 +806,63 @@ classdef MetricPlot < handle
         end
 
         function V = computeValues(obj)
+            % One number per condition: from the metrics worker where this
+            % window holds a slot on one, else computed here. The two agree
+            % by construction -- both run mabr.compute.evaluateJobs over a
+            % table built by mabr.compute.ConditionStore.
+            [V,decided] = obj.workerValues();
+            obj.ServedByWorker = decided;
+            if ~decided, V = obj.computeLocal(); end
+        end
+
+        function V = computeLocal(obj)
+            % The in-process evaluation (public as localValues, so a test can
+            % hold it against the worker's answer).
             C = obj.conditions();
             e = obj.metricEntry();
             V = struct('Key',{},'Label',{},'Params',{},'Value',{}, ...
                        'NumSweeps',{},'Live',{});
-            for i = 1:numel(C)
-                n = size(C(i).Sweeps,2);
-                if n < 1
-                    v = NaN;
-                else
-                    info = struct('Window',obj.Window,'Label',C(i).Label, ...
-                        'ID',C(i).Key,'Params',C(i).Params, ...
-                        'NumTotal',C(i).NumTotal,'NumArtifacts',C(i).NumArtifacts, ...
-                        'Live',C(i).Live);
-                    ctx = mabr.metrics.online.context(C(i).Sweeps,C(i).Time, ...
-                        C(i).SampleRate,info);
-                    v = obj.evaluate(e,ctx);
-                end
-                V(end+1) = struct('Key',C(i).Key,'Label',C(i).Label, ...
-                    'Params',C(i).Params,'Value',v,'NumSweeps',n, ...
-                    'Live',C(i).Live); %#ok<AGROW>
-            end
-        end
-
-        function v = evaluate(obj,e,ctx)
+            job = struct('Name',e.Name,'Fcn',e.Fcn,'Window',obj.Window);
+            [vals,errs] = mabr.compute.evaluateJobs(C,job);
             % A metric that throws costs its own point, not the window, and
             % says so ONCE per metric rather than on every refresh -- this runs
             % every second, and a log line per tick is a log nobody reads.
-            v = NaN;
-            try
-                out = e.Fcn(ctx);
-                if (isnumeric(out) || islogical(out)) && isscalar(out)
-                    v = double(out);
-                end
-            catch me
-                if ~strcmp(obj.WarnedMetric,e.Name)
-                    obj.WarnedMetric = e.Name;
-                    mabr.log.vprintf(0,1,'Metric "%s" errored (%s); showing gaps.', ...
-                        e.Name,me.message);
-                end
+            if ~isempty(errs{1}) && ~strcmp(obj.WarnedMetric,e.Name)
+                obj.WarnedMetric = e.Name;
+                mabr.log.vprintf(0,1,'Metric "%s" errored (%s); showing gaps.', ...
+                    e.Name,errs{1});
+            end
+            for i = 1:numel(C)
+                V(end+1) = struct('Key',C(i).Key,'Label',C(i).Label, ...
+                    'Params',C(i).Params,'Value',vals(1,i), ...
+                    'NumSweeps',size(C(i).Sweeps,2),'Live',C(i).Live); %#ok<AGROW>
             end
         end
 
         % --- Rendering ----------------------------------------------------------
-        function render(obj)
-            if ~obj.isvalidView(), return; end
+        function render(obj,force)
+            % Redraw from the current values. A refresh whose values are the
+            % ones already on screen draws nothing (the status line still
+            % ticks): between runs every open window would otherwise rebuild
+            % its axes, legend and all, once a second for no change -- and
+            % with several windows open that queue of pointless redraws can
+            % outrun the thread that has to drain it. A setting change
+            % forces the redraw, since the ink changed even if the numbers
+            % did not.
+            if nargin < 2, force = false; end
+            if ~obj.isvalidView() || obj.Rendering, return; end
+            obj.Rendering = true;
+            guard = onCleanup(@() obj.endRender()); %#ok<NASGU>
             ax = obj.Axes;
             V  = obj.computeValues();
+            if ~force && obj.Drawn && isequaln(V,obj.LastValues) ...
+                    && strcmp(obj.WorkerNote,obj.DrawnNote)
+                obj.setStatus(obj.statusText());
+                return
+            end
             obj.LastValues = V;
+            obj.DrawnNote  = obj.WorkerNote;
+            obj.Drawn      = true;
             obj.Note = '';
 
             cla(ax,'reset');
@@ -1164,13 +1237,18 @@ classdef MetricPlot < handle
             if nLive > 0
                 parts{end+1} = sprintf('%d acquiring (hollow)',nLive);
             end
-            if ~isempty(obj.Note), parts{end+1} = obj.Note; end
+            if ~isempty(obj.Note),       parts{end+1} = obj.Note;       end
+            if ~isempty(obj.WorkerNote), parts{end+1} = obj.WorkerNote; end
             txt = strjoin(parts,'  ·  ');
         end
 
         function txt = statusText(obj)
             txt = sprintf('updated %s · every %g s', ...
                 char(datetime('now','Format','HH:mm:ss')),obj.UpdateInterval);
+        end
+
+        function endRender(obj)
+            if isvalid(obj), obj.Rendering = false; end
         end
 
         function setStatus(obj,txt)
@@ -1570,88 +1648,39 @@ classdef MetricPlot < handle
     end
 
     methods (Static, Access = private)
+        % The condition table -- its shape, its merge rule, and how a Block
+        % or a live snapshot becomes a row of it -- is
+        % mabr.compute.ConditionStore's, shared with the metrics worker. The
+        % three helpers the drawing code leans on stay reachable under their
+        % old names so nothing below has to know where they went.
         function s = emptyStore()
-            s = struct('Key',{},'Label',{},'Params',{},'Sweeps',{},'Time',{}, ...
-                       'SampleRate',{},'NumTotal',{},'NumArtifacts',{},'Live',{});
+            s = mabr.compute.ConditionStore.empty();
         end
 
-        function c = newCondition()
-            c = struct('Key','','Label','','Params',struct(),'Sweeps',[], ...
-                       'Time',[],'SampleRate',1,'NumTotal',0,'NumArtifacts',0, ...
-                       'Live',false);
+        function V = emptyValues()
+            V = struct('Key',{},'Label',{},'Params',{},'Value',{}, ...
+                       'NumSweeps',{},'Live',{});
         end
 
-        function store = mergeCondition(store,c)
-            % Same stimulus, same sweep length -> the sweeps ACCUMULATE: a
-            % make-up or repeat run is more data for that condition, not a
-            % replacement. A different sweep length means the window or the
-            % rate changed under it, and the newest wins.
-            j = [];
-            if ~isempty(store), j = find(strcmp({store.Key},c.Key),1); end
-            if isempty(j)
-                if isempty(store), store = c; else, store(end+1) = c; end
-                return
-            end
-            if size(store(j).Sweeps,1) == size(c.Sweeps,1)
-                store(j).Sweeps       = [store(j).Sweeps c.Sweeps];
-                store(j).NumTotal     = store(j).NumTotal + c.NumTotal;
-                store(j).NumArtifacts = store(j).NumArtifacts + c.NumArtifacts;
-                store(j).Params       = c.Params;
-                store(j).Live         = false;
-            else
-                store(j) = c;
-            end
-        end
-
-        function k = blockKey(block)
-            k = '';
-            if isfield(block.Stim,'Meta') && isfield(block.Stim.Meta,'ID')
-                k = char(string(block.Stim.Meta.ID));
-            end
-            if isempty(k), k = 'stimulus'; end
-        end
-
-        function p = blockParams(block)
-            p = struct();
-            if isfield(block.Stim,'Meta')
-                p = mabr.ui.MetricPlot.metaParams(block.Stim.Meta);
-            end
-        end
-
-        function p = metaParams(m)
-            % The declared informative parameters, numeric scalars only -- they
-            % are what an axis can be made of. Everything else in the metadata
-            % is still on the Block; it just cannot be plotted against.
-            p = struct();
-            if ~isstruct(m) || ~isfield(m,'informativeParams'), return; end
-            names = cellstr(m.informativeParams);
-            for k = 1:numel(names)
-                f = names{k};
-                if isfield(m,f) && isnumeric(m.(f)) && isscalar(m.(f))
-                    p.(matlab.lang.makeValidName(f)) = double(m.(f));
-                end
+        function V = fromWorker(W)
+            % A ComputeEngine.values() answer as the struct array the drawing
+            % code takes -- the same shape localValues builds.
+            V = mabr.ui.MetricPlot.emptyValues();
+            for i = 1:numel(W.Keys)
+                p = struct();
+                if i <= numel(W.Params) && isstruct(W.Params{i}), p = W.Params{i}; end
+                V(end+1) = struct('Key',char(W.Keys{i}),'Label',char(W.Keys{i}), ...
+                    'Params',p,'Value',W.Values(i),'NumSweeps',W.NumSweeps(i), ...
+                    'Live',logical(W.Live(i))); %#ok<AGROW>
             end
         end
 
         function names = paramNames(C)
-            % Every parameter any condition carries, in first-seen order -- so
-            % Frequency stays ahead of Level if that is how the bank lists them.
-            names = {};
-            for i = 1:numel(C)
-                f = fieldnames(C(i).Params);
-                for k = 1:numel(f)
-                    if ~any(strcmp(f{k},names)), names{end+1} = f{k}; end %#ok<AGROW>
-                end
-            end
+            names = mabr.compute.ConditionStore.paramNames(C);
         end
 
         function v = paramValue(c,name)
-            if isfield(c.Params,name) && isnumeric(c.Params.(name)) ...
-                    && isscalar(c.Params.(name))
-                v = double(c.Params.(name));
-            else
-                v = NaN;
-            end
+            v = mabr.compute.ConditionStore.paramValue(c,name);
         end
 
         function [Z,xu,yu] = gridValues(x,y,v)

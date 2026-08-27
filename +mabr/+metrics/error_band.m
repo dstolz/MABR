@@ -26,7 +26,14 @@ function hw = error_band(Y,mode,conf)
 %   Nothing here is recorded: this is a display statistic over the sweeps the
 %   artifact policy kept, computed for the live view and for nothing else.
 %
-%   See also mabr.metrics.t_quantile, mabr.ui.LivePlot.
+%   The arithmetic itself lives in mabr.metrics.band_from_stats, which takes
+%   the standard deviation and the count rather than the sweeps: this is
+%   that, fed std(Y,0,1) and size(Y,1). Split so a view that holds only a
+%   condition's statistics -- the live view, once the DSP has run in another
+%   process -- draws the same band from them, and so the two cannot disagree.
+%
+%   See also mabr.metrics.band_from_stats, mabr.metrics.t_quantile,
+%   mabr.ui.LivePlot.
 %
 % Daniel Stolzberg (c) 2026
 
@@ -40,19 +47,5 @@ hw = nan(1,size(Y,2));
 mode = lower(char(mode));
 if strcmp(mode,'none') || n < 2 || isempty(Y), return; end
 
-s = std(Y,0,1);
-switch mode
-    case 'std'
-        hw = s;
-    case 'sem'
-        hw = s./sqrt(n);
-    case 'ci'
-        assert(isscalar(conf) && conf > 0 && conf < 1, ...
-            'mabr:metrics:error_band:conf', ...
-            'A confidence level must be a scalar strictly between 0 and 1.');
-        hw = mabr.metrics.t_quantile(1-(1-conf)/2,n-1).*s./sqrt(n);
-    otherwise
-        error('mabr:metrics:error_band:mode', ...
-            'Unknown error-band statistic "%s" (expected none/std/sem/ci).',mode);
-end
+hw = mabr.metrics.band_from_stats(std(Y,0,1),n,mode,conf);
 end

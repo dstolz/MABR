@@ -21,7 +21,14 @@ classdef LivePlot < handle
 %
 %       lp = mabr.ui.LivePlot();                    % own figure
 %       lp.update(sweeps,tvec,R,target,bad,info);   % sweeps [nSweeps x nSamples]
+%       lp.updateStats(stats,info);                 % or their statistics
 %       lp.reset();                                 % clear
+%
+%   updateStats takes what mabr.compute.Pipeline.step returns -- the latest
+%   sweep, the correlation, the counts, and per condition the mean, SD and
+%   counts -- so the view can be driven with no sweep matrix in the
+%   foreground at all, which is how it runs when a compute worker is doing
+%   the signal processing. Both entry points end in the same render.
 %
 %   `info` carries the per-sweep stimulus identity; without it every sweep is
 %   treated as one condition and the window degenerates to the old single-mean
@@ -293,6 +300,55 @@ classdef LivePlot < handle
             S.opts   = mabr.ui.LivePlot.resolveOpts(info);
             [S.stimIdx,S.stimList,S.labels] = mabr.ui.LivePlot.resolveStimuli(info,n);
             S.params = mabr.ui.LivePlot.resolveParams(info,numel(S.stimList));
+            % What render() actually reads of the sweeps, so it can be fed by
+            % updateStats -- which has no sweeps -- through the same fields.
+            S.stats      = [];
+            S.latest     = S.Y(end,:);
+            S.latestBad  = S.bad(end);
+            S.latestStim = S.stimIdx(end);
+            S.nTotal     = numel(S.bad);
+            S.nBad       = nnz(S.bad);
+
+            obj.Last = S;
+            obj.render();
+        end
+
+        function updateStats(obj,stats,info)
+            % The same view from STATISTICS rather than sweeps: what
+            % mabr.compute.Pipeline.step returns, whichever process ran it --
+            % the latest sweep, the correlation, the counts, and per condition
+            % the mean, the SD and the counts. Every band this window draws
+            % is a function of (mean, SD, n) (mabr.metrics.band_from_stats),
+            % so nothing a sweep matrix could add is missing, and the
+            % foreground never holds one. `info` is exactly update()'s, plus
+            % an optional .target (the run's presentation count).
+            %
+            % Rows of stats.Mean/SD/CondCounts are in stats.Stimuli order,
+            % which need not be the order the view lays the conditions out
+            % in; stimulusMeans maps by stimulus index.
+            if nargin < 3 || ~isstruct(info), info = struct(); end
+            if ~obj.isvalidView(), return; end
+            if isempty(stats) || ~isstruct(stats) || stats.NumSweeps < 1
+                obj.reset(); return
+            end
+
+            S         = struct();
+            S.stats   = stats;
+            S.Y       = [];
+            S.bad     = [];
+            S.stimIdx = [];
+            S.t       = double(stats.Time(:)')*1000;     % s -> ms
+            S.R       = stats.Corr;
+            S.target  = NaN;
+            if isfield(info,'target') && ~isempty(info.target), S.target = info.target; end
+            S.opts    = mabr.ui.LivePlot.resolveOpts(info);
+            [~,S.stimList,S.labels] = mabr.ui.LivePlot.resolveStimuli(info,stats.NumSweeps);
+            S.params     = mabr.ui.LivePlot.resolveParams(info,numel(S.stimList));
+            S.latest     = double(stats.Latest(:)');
+            S.latestBad  = logical(stats.LatestBad);
+            S.latestStim = stats.LatestStim;
+            S.nTotal     = stats.NumSweeps;
+            S.nBad       = stats.NumArtifacts;
 
             obj.Last = S;
             obj.render();
@@ -882,7 +938,7 @@ classdef LivePlot < handle
             obj.syncGroupControl(G.paramChoices);
 
             D      = obj.stimulusMeans(S,G);
-            latest = S.Y(end,:);
+            latest = S.latest;
             % D.A is what the mean axes have to fit -- the traces plus any
             % band that speaks for them -- so switching a SEM or CI band on
             % frames it instead of clipping it.
@@ -890,8 +946,8 @@ classdef LivePlot < handle
 
             % --- latest sweep ------------------------------------------------
             set(obj.latestLine,'XData',S.t,'YData',latest*scale.mult);
-            if S.bad(end), obj.latestLine.Color = obj.ArtifactColor;
-            else,          obj.latestLine.Color = obj.RecentColor;
+            if S.latestBad, obj.latestLine.Color = obj.ArtifactColor;
+            else,           obj.latestLine.Color = obj.RecentColor;
             end
             % The latest sweep autoscales even under AmpMode 'manual': it is a
             % single sweep, tens of times the size of a mean, and a limit
@@ -902,7 +958,7 @@ classdef LivePlot < handle
             % 8kHz_30dB is not TeX, and the default interpreter renders the
             % underscore as a subscript.
             title(obj.axLatest,obj.latestTitle(S,G,D.counts),'Interpreter','none');
-            obj.showArtifacts(nnz(S.bad),numel(S.bad));
+            obj.showArtifacts(S.nBad,S.nTotal);
 
             % --- per-stimulus means ------------------------------------------
             if strcmp(G.mode,'stacked')
@@ -1084,22 +1140,48 @@ classdef LivePlot < handle
             D = struct('M',nan(n,numel(S.t)),'E',nan(n,numel(S.t)), ...
                        'A',nan(n,numel(S.t)), ...
                        'counts',zeros(1,n),'rejected',zeros(1,n));
-            wantBand = ~strcmp(obj.ErrorBand,'none');
+            wantBand  = ~strcmp(obj.ErrorBand,'none');
+            fromStats = isfield(S,'stats') && ~isempty(S.stats);
             for k = 1:n
-                if k <= numel(G.stimList), sel = S.stimIdx == G.stimList(k);
-                else,                      sel = true(size(S.stimIdx));
+                % Each condition's mean, spread and counts -- from the sweeps
+                % when update() handed them over, from the published
+                % statistics when updateStats() did. The two branches are the
+                % same arithmetic (error_band IS band_from_stats over
+                % std(Y,0,1)), which is what lets the rest of this method not
+                % care which it got.
+                e = [];
+                if fromStats
+                    st = S.stats;
+                    r  = [];
+                    if k <= numel(G.stimList), r = find(st.Stimuli == G.stimList(k),1); end
+                    if isempty(r), continue; end
+                    D.counts(k)   = st.CondCounts(r,2);
+                    D.rejected(k) = st.CondCounts(r,3);
+                    nGood = st.CondCounts(r,1);
+                    if nGood < 1, continue; end
+                    m = st.Mean(r,:);
+                    if wantBand
+                        e = mabr.metrics.band_from_stats(st.SD(r,:),nGood, ...
+                            obj.ErrorBand,obj.ConfidenceLevel);
+                    end
+                else
+                    if k <= numel(G.stimList), sel = S.stimIdx == G.stimList(k);
+                    else,                      sel = true(size(S.stimIdx));
+                    end
+                    D.counts(k)   = nnz(sel);
+                    D.rejected(k) = nnz(sel & S.bad);
+                    good = sel & ~S.bad;
+                    % Every sweep of this condition rejected so far: there is
+                    % no mean to show, and a flat line at zero would be a lie.
+                    if ~any(good), continue; end
+                    m = mean(S.Y(good,:),1);
+                    if wantBand
+                        e = mabr.metrics.error_band(S.Y(good,:), ...
+                            obj.ErrorBand,obj.ConfidenceLevel);
+                    end
                 end
-                D.counts(k)   = nnz(sel);
-                D.rejected(k) = nnz(sel & S.bad);
-                good = sel & ~S.bad;
-                % Every sweep of this condition rejected so far: there is no
-                % mean to show, and a flat line at zero would be a lie.
-                if ~any(good), continue; end
-                D.M(k,:) = mabr.ui.LivePlot.postprocess( ...
-                    mean(S.Y(good,:),1),S.t,S.opts);
+                D.M(k,:) = mabr.ui.LivePlot.postprocess(m,S.t,S.opts);
                 if ~wantBand, continue; end
-                e = mabr.metrics.error_band(S.Y(good,:), ...
-                    obj.ErrorBand,obj.ConfidenceLevel);
                 % Smoothed with the mean it is drawn around, so the two follow
                 % the same curve. NOT detrended: a detrend moves a mean, it
                 % does not change a spread.
@@ -1187,7 +1269,7 @@ classdef LivePlot < handle
             % Name the condition the latest sweep belongs to only when the run
             % holds more than one -- otherwise it just repeats the axes below.
             if numel(G.stimList) > 1
-                k = find(G.stimList == S.stimIdx(end),1);
+                k = find(G.stimList == S.latestStim,1);
                 if ~isempty(k)
                     txt = sprintf('Latest — %s   (%s)',G.labels{k},sweeps);
                     return

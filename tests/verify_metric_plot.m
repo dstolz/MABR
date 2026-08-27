@@ -237,7 +237,9 @@ assert(~isempty(kid(1).ContextMenu), ...
 fire_menu(mp.Figure,'Marker','s');
 assert(strcmp(mp.Style.Marker,'s'),'the marker menu did not reach the style');
 hm = series_lines(ax);
-assert(strcmp(hm(1).Marker,'s'),'the marker menu did not reach the plot');
+% A line stores the long marker name ('square' for 's'), so compare against
+% what MATLAB will actually report rather than what the menu sent.
+assert(any(strcmp(hm(1).Marker,{'s','square'})),'the marker menu did not reach the plot');
 
 fire_menu(mp.Figure,'Grid','none');
 assert(strcmp(ax.XGrid,'off') && strcmp(ax.YGrid,'off'),'Grid > none left the grid on');

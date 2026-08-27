@@ -57,6 +57,21 @@ classdef Recording
         FFTOptions = struct('windowFcn',@flattop,'inDecibels',true);
     end
 
+    properties (Access = private)
+        % Filters.apply(Data), kept once it has been computed. ProcessedData
+        % is what every descriptive accessor starts from -- SweepData,
+        % CleanSweepData, NumSweeps, SweepMean, noisePower, SNR, RMS -- and
+        % without this each of them ran filtfilt over the whole trace again:
+        % one finalized block cost five or six passes between finalize_run,
+        % Block.computeMetrics and the viewers that took it. Filled by
+        % designFilters() (which is the moment the chain is decided) or by
+        % withProcessed() (when the filtering was done elsewhere), and
+        % emptied by set.Data / set.Filters so it can never describe a trace
+        % or a chain other than the ones held. Deliberately NOT part of
+        % to_struct: io writes Data, and a cache is a consequence, not data.
+        Processed (:,1) single = single([]);
+    end
+
     properties (Dependent)
         N
         SweepDuration
@@ -96,7 +111,34 @@ classdef Recording
             % noise. filtfilt() in mabr.FilterPolicy.apply makes the response
             % zero-phase, so the IIR phase distortion that motivates FIR here
             % does not apply.
-            obj.Filters = obj.Filters.design(obj.SampleRate);
+            %
+            % The one place the whole trace is filtered: the result is kept
+            % (see Processed) so the accessors below read it rather than
+            % redoing it. Assigning Filters clears the cache, so the order
+            % here -- design, then fill -- is the order that matters.
+            obj.Filters   = obj.Filters.design(obj.SampleRate);
+            obj.Processed = obj.Filters.apply(obj.Data);
+        end
+
+        function obj = withProcessed(obj,x,policy)
+            % Adopt a filtered trace computed elsewhere -- by
+            % mabr.compute.Pipeline.finalize, in whichever process ran it --
+            % in place of filtering Data here. `policy` is the chain that
+            % produced x; it has to ask for the same sections and corners
+            % this Recording's Filters do, or x describes a chain the
+            % Recording does not hold, and in that case the trace is simply
+            % filtered here after all (designFilters), which is slower and
+            % right rather than fast and wrong. The Filters are still
+            % designed, so a Recording that took this route is
+            % indistinguishable from one that called designFilters().
+            if nargin >= 3 && ~isempty(policy) && ~policy.sameSettings(obj.Filters)
+                obj = obj.designFilters();
+                return
+            end
+            assert(numel(x) == numel(obj.Data),'mabr:data:Recording:processedSize', ...
+                'The processed trace has %d samples; Data has %d.',numel(x),numel(obj.Data));
+            obj.Filters   = obj.Filters.design(obj.SampleRate);   % clears the cache
+            obj.Processed = single(x(:));
         end
 
         function y = applyFilter(obj,x)
@@ -104,8 +146,24 @@ classdef Recording
             y = single(obj.Filters.apply(double(x(:))));
         end
 
+        function obj = set.Data(obj,v)
+            obj.Data      = v;
+            obj.Processed = single([]);   %#ok<MCSUP> never deserialized; see Processed
+        end
+
+        function obj = set.Filters(obj,p)
+            obj.Filters   = p;
+            obj.Processed = single([]);   %#ok<MCSUP>
+        end
+
         function d = get.ProcessedData(obj)
-            d = obj.Filters.apply(obj.Data);    % raw until designFilters()
+            % Raw until designFilters() (or withProcessed) -- and then the
+            % kept copy, never a second pass over the trace.
+            if isempty(obj.Processed)
+                d = obj.Filters.apply(obj.Data);
+            else
+                d = obj.Processed;
+            end
         end
 
         % --- Basic sizes ---------------------------------------------------

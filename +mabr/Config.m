@@ -51,6 +51,14 @@ classdef Config
         SupportedSampleRates (1,:) double = [44100 48000 88200 96000 176400 192000 384000];
         frameLength          (1,1) double = 1024;     % samples per play/record frame
         maxInputBufferLength (1,1) double = 2^26;     % ring-buffer length (samples); ~5.8 min @ 192 kHz
+        % --- Compute-worker publish buffers (+mabr/+compute) --------------
+        % The largest sweep (baseline + response, at the ADC rate), the
+        % largest run or roster, and the number of analysis windows a
+        % metrics worker serves at once. A window or a run over these is
+        % refused with an error, never truncated.
+        MaxComputeSamples    (1,1) double = 2048;     % ~85 ms at 12 kHz
+        MaxComputeConditions (1,1) double = 256;
+        MaxComputeJobs       (1,1) double = 8;
 
         % --- Release metadata -----------------------------------------------
         SoftwareVersion = '23A';
@@ -98,6 +106,9 @@ classdef Config
         signalBufferFile            % memmap ring buffer: recorded signal channel
         timingBufferFile            % memmap ring buffer: recorded timing channel
         headerFile                  % memmap ring buffer: write-head header
+        computeLiveFile             % memmap: DSP worker -> client live statistics
+        computeMetricFile           % memmap: metrics worker -> client values
+        computeRequestFile          % memmap: client -> compute workers
     end
 
     methods
@@ -125,6 +136,9 @@ classdef Config
         function p = get.signalBufferFile(~), p = fullfile(mabr.Config.runtimeDir,'ring_signal.dat'); end
         function p = get.timingBufferFile(~), p = fullfile(mabr.Config.runtimeDir,'ring_timing.dat'); end
         function p = get.headerFile(~),       p = fullfile(mabr.Config.runtimeDir,'ring_header.dat'); end
+        function p = get.computeLiveFile(~),    p = fullfile(mabr.Config.runtimeDir,'compute_live.dat');     end
+        function p = get.computeMetricFile(~),  p = fullfile(mabr.Config.runtimeDir,'compute_metrics.dat');  end
+        function p = get.computeRequestFile(~), p = fullfile(mabr.Config.runtimeDir,'compute_requests.dat'); end
 
         function tf = verifyToolboxes(obj,doError)
             % Returns true when every required toolbox is installed at a

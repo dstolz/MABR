@@ -8,8 +8,10 @@ classdef AcqController < handle
 %   timers refresh the views from the ring buffer.
 %
 %   The two are split by PRIORITY. LiveTimer (~20 Hz) does the work the live
-%   trace and the advance criterion depend on: extract the new sweeps, filter
-%   them, preview the artifact verdict, correlate, draw. AuxTimer (~2 Hz, see
+%   trace and the advance criterion depend on: step the mabr.compute.Pipeline
+%   -- which extracts the new sweeps, filters them, previews the artifact
+%   verdict and correlates; the DSP lives there, not here -- then draw and
+%   decide. AuxTimer (~2 Hz, see
 %   AuxPeriod) does everything else drawn from a running block -- the snapshot
 %   the online analysis windows pull from, and the MetricsUpdated event the
 %   progress tally and the Run panel's readouts ride. Both timers are
@@ -91,8 +93,25 @@ classdef AcqController < handle
         Stimuli     mabr.stim.StimulusSet
         Schedule    mabr.stim.Schedule
         LivePlot    mabr.ui.LivePlot
+        % Every computation made from recorded samples -- sweep extraction,
+        % the display chain, the artifact preview, the correlation, the
+        % per-condition statistics, and the finalization DSP. Stepped from
+        % the live tick and asked to finalize at the end of a run; the
+        % controller itself does no signal processing (see
+        % mabr.compute.Pipeline).
+        Pipeline
         State (1,1) mabr.ui.ProgState = mabr.ui.ProgState.Idle
         Testing (1,1) logical = false
+        % Whether the compute workers were asked for at construction, and
+        % the mabr.compute.ComputeEngine that runs them -- [] when they were
+        % not asked for, the pool could not hold them, or they failed to
+        % start. Every path that could use one checks hasDSP()/hasMetrics()
+        % on it first and does the work here otherwise (see live_tick_body),
+        % so a controller built without one -- which is what every
+        % verification script builds -- is the in-process path by
+        % construction.
+        UsingCompute (1,1) logical = false
+        Compute = []
         % True once verifyTimingLoop has confirmed the timing loop-back is
         % wired FOR THE CURRENT Device/PlayerChannels/RecorderChannels (see
         % VerifiedAudioConfig below), so start() only pays for the check once
@@ -143,6 +162,12 @@ classdef AcqController < handle
         % therefore no longer binds -- that window now repaints once per event
         % rather than dropping three of every four.
         AuxPeriod     (1,1) double {mustBePositive} = 0.5;
+        % How long (s, plus a per-sample allowance) the DSP worker is given
+        % to finalize a run before this process does it instead (see
+        % on_finalize_timeout). Generous: finalization is a resample of the
+        % whole block, and a slow reply is worth waiting for where a dead
+        % worker is not -- the ring still holds the block either way.
+        FinalizeTimeout (1,1) double {mustBePositive} = 30;
     end
 
     properties (Access = private)
@@ -166,11 +191,6 @@ classdef AcqController < handle
         % already built, so the aux tick re-derives nothing. Assignment is
         % copy-on-write, so stashing these costs a reference, not an array.
         PendingLive = []
-        % Filters, designed once at the live sweeps' sample rate. designfilt
-        % costs milliseconds; the live tick runs 20 times a second, so the
-        % chain is built when the policy changes and never inside the tick.
-        LiveFilter (1,1) mabr.FilterPolicy = mabr.FilterPolicy;
-        SweepState (1,1) struct = struct();
         CurMetrics (1,1) struct = struct('numSweeps',0,'numArtifacts',0, ...
                                          'numClean',0,'corr',0);
         BlockStart (1,:) char = '';
@@ -178,6 +198,11 @@ classdef AcqController < handle
         % criterion can reason in wall-clock seconds (ctx.elapsedSeconds).
         % 0 until the first run of a session begins.
         RunStartTic (1,1) uint64 = uint64(0);
+        % Names each run to the compute workers: a counter unique for this
+        % controller's lifetime rather than the schedule index, which recurs
+        % from one Start to the next -- a publish left over from the last
+        % schedule's run 1 must not be taken for this one's.
+        RunSerial  (1,1) double = 0;
         CurRun     (1,1) double = 0;    % index of the run being acquired
         CurSeq     (1,:) double = [];   % stimulus index at each of its onsets
         CurPol     (1,:) double = [];   % polarity (+1/-1) at each of its onsets
@@ -218,6 +243,16 @@ classdef AcqController < handle
         % verifyTimingLoop, [] until the first pass. start() re-verifies
         % whenever obj.Schedule's current values no longer match this.
         VerifiedAudioConfig = []
+        % Finalization on the DSP worker is asynchronous: on_block_completed
+        % sends Finalize and returns, leaving ProgState in BlockComplete,
+        % and the schedule-advance tail runs when the reply arrives
+        % (on_finalized) -- or when this single-shot timer fires first and
+        % the run is finalized here from the ring, which nothing overwrites
+        % until the next Run. The flag and the run id make a late reply for
+        % a run already finalized here harmless.
+        FinalizeTimer   = []
+        FinalizePending (1,1) logical = false
+        FinalizeRunId   (1,1) double = 0
         % The most recent live tick's sweeps, kept so a window that refreshes
         % on its OWN clock can see the run in progress without re-reading the
         % ring buffer or forcing the 20 Hz tick to push at them (see
@@ -237,19 +272,27 @@ classdef AcqController < handle
     end
 
     methods
-        function obj = AcqController(cfg,testing,progressFcn,stimOnly)
+        function obj = AcqController(cfg,testing,progressFcn,stimOnly,useCompute)
             % progressFcn (optional) receives char status messages while the
             % engine starts up; forwarded straight to mabr.acq.Engine.
             % stimOnly (optional) only names the worker it launches -- the mode
             % itself is Schedule.StimulationOnly and rides per block, so this
             % is purely so the startup messages say "stimulus worker" from the
             % first one rather than after start() re-labels it.
+            % useCompute (optional, default false) asks for the compute
+            % workers (mabr.compute.ComputeEngine). The parallel pool must
+            % already be big enough -- mabr.ui.App sizes it with mabr.pool
+            % before building a controller -- and if it is not, or the
+            % workers fail to start, the controller simply computes
+            % in-process, which is what it does whenever this is false.
             if nargin < 1 || isempty(cfg), cfg = mabr.Config; end
             if nargin < 2 || isempty(testing), testing = false; end
             if nargin < 3, progressFcn = []; end
-            if nargin < 4, stimOnly = false; end
-            obj.Config  = cfg;
-            obj.Testing = logical(testing);
+            if nargin < 4 || isempty(stimOnly), stimOnly = false; end
+            if nargin < 5 || isempty(useCompute), useCompute = false; end
+            obj.Config       = cfg;
+            obj.Testing      = logical(testing);
+            obj.UsingCompute = logical(useCompute);
 
             obj.Session = mabr.data.Session(cfg);
             obj.Engine  = mabr.acq.Engine(cfg,obj.Testing,progressFcn, ...
@@ -258,6 +301,23 @@ classdef AcqController < handle
                 addlistener(obj.Engine,'StateChanged', @(~,e) obj.on_engine_state(e)); ...
                 addlistener(obj.Engine,'BlockCompleted',@(~,~) obj.on_block_completed()); ...
                 addlistener(obj.Engine,'WorkerError',  @(~,e) obj.on_engine_error(e))];
+
+            % The compute workers, if asked for. Never fatal: a rig whose
+            % pool cannot hold them, or on which they fail to start, still
+            % acquires -- the controller just does the DSP itself.
+            if obj.UsingCompute
+                try
+                    obj.Compute = mabr.compute.ComputeEngine(cfg,progressFcn);
+                    obj.Listeners(end+1) = addlistener(obj.Compute,'WorkerError', ...
+                        @(~,e) obj.on_compute_error(e));
+                    obj.Listeners(end+1) = addlistener(obj.Compute,'Finalized', ...
+                        @(~,e) obj.on_finalized(e));
+                catch me
+                    obj.Compute = [];
+                    mabr.log.vprintf(0,1,'Compute workers unavailable (%s); computing in-process.', ...
+                        me.message);
+                end
+            end
 
             obj.LiveTimer = timer('Tag','MABR_LiveView', ...
                 'ExecutionMode','fixedSpacing','BusyMode','drop', ...
@@ -275,23 +335,38 @@ classdef AcqController < handle
                 'Period',obj.AuxPeriod,'TasksToExecute',Inf, ...
                 'TimerFcn',@(~,~) obj.on_aux_tick());
 
-            % Property defaults bypass set.Filters, so the default chain has
-            % to be designed explicitly or the first ticks would run unfiltered.
-            obj.refresh_live_filter();
+            % Property defaults bypass the setters, so the pipeline is
+            % configured explicitly here or the first ticks would run with
+            % nothing designed.
+            obj.Pipeline = mabr.compute.Pipeline(cfg);
+            obj.configure_pipeline();
         end
 
         function delete(obj)
             obj.stop_timer();
+            try, obj.disarm_finalize_timeout(); end %#ok<TRYNC>
             try, delete(obj.LiveTimer); end %#ok<TRYNC>
             try, delete(obj.AuxTimer);  end %#ok<TRYNC>
             try, delete(obj.Listeners);  end %#ok<TRYNC>
             try, delete(obj.LivePlot);   end %#ok<TRYNC>
+            try, delete(obj.Compute);    end %#ok<TRYNC>
             try, delete(obj.Engine);     end %#ok<TRYNC>
         end
 
         function waitUntilReady(obj,timeout)
             if nargin < 2, timeout = 120; end
             obj.Engine.waitUntilReady(timeout);
+            % The DSP worker's handshake is waited for too, but bounded and
+            % never fatal: without it the session computes in-process.
+            if ~isempty(obj.Compute)
+                obj.Compute.waitUntilReady(min(timeout,60));
+                obj.configure_pipeline();     % the worker gets the policies
+            end
+        end
+
+        function tf = usingWorkerDSP(obj)
+            % Whether the live path is currently served by the DSP worker.
+            tf = ~isempty(obj.Compute) && obj.Compute.hasDSP();
         end
 
         % --- Configuration --------------------------------------------------
@@ -310,11 +385,19 @@ classdef AcqController < handle
 
         function set.Filters(obj,p)
             % The live path cannot afford to design the chain itself (see
-            % LiveFilter), so the one moment the settings can change is the
-            % one moment worth spending designfilt in. Same MCSUP caveat as
-            % set.Artifacts below: a controller is never deserialized.
+            % mabr.compute.Pipeline), so the one moment the settings can
+            % change is the one moment worth spending designfilt in. Same
+            % MCSUP caveat as set.Artifacts below: a controller is never
+            % deserialized.
             obj.Filters = p;
-            obj.refresh_live_filter();
+            obj.configure_pipeline();
+        end
+
+        function set.Window(obj,w)
+            % The window decides the sweep length, so the pipeline re-extracts
+            % under a new one -- from the ring, which still holds the block.
+            obj.Window = w;
+            obj.configure_pipeline();
         end
 
         function set.AuxPeriod(obj,v)
@@ -351,6 +434,7 @@ classdef AcqController < handle
             if wasRepeating && ~p.Repeat && ~isempty(obj.Schedule) %#ok<MCSUP>
                 obj.Schedule.dropPendingMakeup();                 %#ok<MCSUP>
             end
+            obj.configure_pipeline();
         end
 
         % --- User actions ---------------------------------------------------
@@ -359,6 +443,10 @@ classdef AcqController < handle
                 'No stimuli set. Call setStimuli() first.');
             assert(obj.Schedule.NumRuns > 0,'mabr:ui:AcqController:emptySchedule', ...
                 'The schedule is empty — every stimulus has 0 repetitions.');
+            % The ring buffer is what the DSP worker is finalizing from, and
+            % the next Run resets it.
+            assert(~obj.FinalizePending,'mabr:ui:AcqController:finalizing', ...
+                'The previous run is still being finalized; try again in a moment.');
             % One worker is reused across runs that may switch modes between
             % them, so what it is about to spend the session doing is decided
             % here, not at construction.
@@ -504,7 +592,6 @@ classdef AcqController < handle
             end
             obj.set_state(mabr.ui.ProgState.PrepBlock);
 
-            obj.SweepState = struct();
             obj.CurMetrics = struct('numSweeps',0,'numArtifacts',0, ...
                                     'numClean',0,'corr',0);
             obj.LiveSnap    = [];
@@ -536,6 +623,23 @@ classdef AcqController < handle
             obj.CurLabels = arrayfun(@(u) obj.Stimuli.id(u),obj.CurStim, ...
                 'UniformOutput',false);
             obj.CurParams = obj.stimParams(obj.CurStim);
+
+            % Tell the pipeline what this run's onsets belong to. Its cursor
+            % starts over here too, so nothing from the last run can be
+            % attributed to this one.
+            obj.RunSerial = obj.RunSerial + 1;
+            info = struct('RunId',obj.RunSerial, ...
+                'StimIndex',obj.CurSeq,'Stimuli',obj.CurStim, ...
+                'Labels',{obj.CurLabels});
+            obj.Pipeline.beginRun(info);
+            % The workers get the same, plus the bank's metadata -- they
+            % hold no StimulusSet, and the metrics worker names and places a
+            % condition from its meta exactly as mabr.ui.MetricPlot would.
+            if ~isempty(obj.Compute)
+                info.Meta = arrayfun(@(u) obj.Stimuli.meta(u), ...
+                    1:obj.Stimuli.numStimuli,'UniformOutput',false);
+                obj.Compute.runStart(info);
+            end
 
             % The live view's progress bar tracks this run's own presentation
             % count, which the schedule — not the advance criterion — fixes.
@@ -656,24 +760,54 @@ classdef AcqController < handle
                 catch me
                     mabr.log.vprintf(0,1,'Stimulation log failed: %s',me.message);
                 end
-            else
-                try
-                    [files,blocks] = obj.finalize_run();
-                    % Announce the blocks themselves first: a viewer should get the
-                    % data whether or not the session is writing files.
-                    for i = 1:numel(blocks)
-                        notify(obj,'BlockReady',mabr.ui.ProgStateEventData( ...
-                            obj.State,struct('block',blocks(i))));
-                    end
-                    for i = 1:numel(files)
-                        notify(obj,'BlockSaved',mabr.ui.ProgStateEventData( ...
-                            obj.State,struct('file',files{i})));
-                    end
-                catch me
-                    mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
-                end
+                obj.after_finalize();
+                return
             end
 
+            % A recorded run. The finalization DSP -- reading the ring,
+            % resampling the whole block, filtering, judging -- goes to the
+            % DSP worker when there is one, and this returns at once with
+            % ProgState left in BlockComplete: the tail runs when the reply
+            % lands (on_finalized) or the timeout fires (on_finalize_timeout).
+            % The GUI stays responsive across the block boundary either way.
+            % Without a worker the same work is done here, now.
+            if obj.usingWorkerDSP() && obj.Compute.finalize(obj.RunSerial,obj.CurSeq)
+                obj.FinalizePending = true;
+                obj.FinalizeRunId   = obj.RunSerial;
+                obj.arm_finalize_timeout();
+                return
+            end
+            obj.finalize_here();
+            obj.after_finalize();
+        end
+
+        function finalize_here(obj)
+            % Finalize the run in this process, from the ring buffer.
+            try
+                [files,blocks] = obj.finalize_run();
+                obj.emit_blocks(files,blocks);
+            catch me
+                mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
+            end
+        end
+
+        function emit_blocks(obj,files,blocks)
+            % Announce the blocks themselves first: a viewer should get the
+            % data whether or not the session is writing files.
+            for i = 1:numel(blocks)
+                notify(obj,'BlockReady',mabr.ui.ProgStateEventData( ...
+                    obj.State,struct('block',blocks(i))));
+            end
+            for i = 1:numel(files)
+                notify(obj,'BlockSaved',mabr.ui.ProgStateEventData( ...
+                    obj.State,struct('file',files{i})));
+            end
+        end
+
+        function after_finalize(obj)
+            % The schedule-advance tail, once a run's results are in:
+            % halt if asked, else move the plan on to the next run or to
+            % completion. Shared by every finalization path.
             if obj.HaltAfterBlock
                 obj.set_state(mabr.ui.ProgState.Idle);
                 return
@@ -687,6 +821,63 @@ classdef AcqController < handle
             else
                 obj.begin_current_run();
             end
+        end
+
+        function on_finalized(obj,e)
+            % The DSP worker's reply to Finalize. A reply nobody is waiting
+            % for -- the timeout already finalized the run here, or it
+            % answers a manual request -- is ignored.
+            msg = e.Data;
+            if ~obj.FinalizePending || msg.runId ~= obj.FinalizeRunId, return; end
+            obj.FinalizePending = false;
+            obj.disarm_finalize_timeout();
+            if ~isempty(msg.error) || isempty(msg.result)
+                mabr.log.vprintf(0,1,['The DSP worker could not finalize the run (%s); ' ...
+                    'finalizing here.'],msg.error);
+                obj.finalize_here();
+            else
+                try
+                    [files,blocks] = obj.assemble_blocks(msg.result);
+                    obj.emit_blocks(files,blocks);
+                catch me
+                    mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
+                end
+            end
+            obj.after_finalize();
+        end
+
+        function on_finalize_timeout(obj)
+            % No reply in time: the worker is suspect, the ring is intact,
+            % and the run is finalized here from it.
+            if ~obj.FinalizePending, return; end
+            obj.FinalizePending = false;
+            mabr.log.vprintf(0,1,['The DSP worker did not finalize the run in time; ' ...
+                'finalizing here.']);
+            if ~isempty(obj.Compute)
+                try, obj.Compute.reportStall('dsp','finalization timed out'); end %#ok<TRYNC>
+            end
+            obj.finalize_here();
+            obj.after_finalize();
+        end
+
+        function arm_finalize_timeout(obj)
+            obj.disarm_finalize_timeout();
+            % The allowance grows with the block: a five-minute run is a
+            % resample of ~60 M samples, not a 30 s job on a slow machine.
+            delay = obj.FinalizeTimeout + obj.Engine.head()/2e6;
+            delay = round(max(0.1,delay)*1000)/1000;     % timer wants whole ms
+            obj.FinalizeTimer = timer('Tag','MABR_Finalize', ...
+                'ExecutionMode','singleShot','StartDelay',delay, ...
+                'TimerFcn',@(~,~) obj.on_finalize_timeout());
+            start(obj.FinalizeTimer);
+        end
+
+        function disarm_finalize_timeout(obj)
+            t = obj.FinalizeTimer;
+            obj.FinalizeTimer = [];
+            if isempty(t) || ~isvalid(t), return; end
+            try, stop(t);   end %#ok<TRYNC>
+            try, delete(t); end %#ok<TRYNC>
         end
 
         function on_engine_error(obj,e)
@@ -706,63 +897,62 @@ classdef AcqController < handle
         end
 
         function live_tick_body(obj)
-            params = struct('SampleRate',obj.Config.DACSampleRate, ...
-                'window',obj.Window,'decimation',obj.Config.decimationFactor, ...
-                'threshold',0.1,'shadow',0.002);
-            [pre,post,onsets,obj.SweepState,tw] = ...
-                mabr.metrics.extract_sweeps(obj.Engine.RingBuffer,params,obj.SweepState);
+            % One step of the pipeline: extract whatever sweeps have completed,
+            % filter and judge the new ones, correlate. [] until a sweep exists.
+            % Everything below only reads what it produced -- the traces, the
+            % correlation and the artifact preview all come off the FILTERED
+            % sweeps, and only the display path sees the chain: the ring
+            % buffer keeps the raw samples, and it is the raw samples
+            % finalization reads and io writes. The artifact flags are a
+            % PREVIEW of the verdict finalization will record, under the same
+            % policy and the same detector (see mabr.compute.Pipeline).
+            %
+            % Where the numbers come from is decided every tick: the DSP
+            % worker while it is up, this controller's own pipeline
+            % otherwise. Both produce the same struct, so nothing below
+            % cares -- and a worker that dies mid-run is covered on the very
+            % next tick, since the pipeline here has been following the run
+            % too and re-extracts from the ring, which still holds it.
+            if obj.usingWorkerDSP()
+                [stats,changed] = obj.Compute.live();
+                % Nothing new since the last tick is nothing to do: the
+                % whole tick then costs one word read from the memory map.
+                if isempty(stats) || ~changed || stats.NumSweeps < 1, return; end
+                S = [];
+            else
+                stats = obj.Pipeline.step(obj.Engine.RingBuffer);
+                if isempty(stats), return; end
+                S = obj.Pipeline.sweeps();
+            end
+            R = stats.Corr;
 
-            if isempty(post), return; end
-
-            % Everything below this line sees FILTERED sweeps: the traces, the
-            % correlation, and the artifact preview. Only the display path is
-            % affected — the ring buffer keeps the raw samples, and it is the
-            % raw samples finalize_run reads and io writes.
-            [pre,post] = obj.filter_sweeps(pre,post);
-
-            % Preview the artifact verdict so the live view shows the average
-            % the block will actually hold, not one a single electrode pop has
-            % smeared. This is a PREVIEW: the authoritative call is made at
-            % finalization, on the filtered sweeps (see finalize_run). Both use
-            % the same policy and the same mabr.metrics.detect_artifacts, so
-            % they agree except where filtering changes a marginal sweep.
-            bad  = obj.live_artifacts(post);
-            keep = ~bad;
-
-            R = 0;
-            if nnz(keep) > 1, R = mabr.metrics.partition_corr(pre(keep,:),post(keep,:)); end
-
-            obj.CurMetrics.numSweeps    = numel(onsets);
-            obj.CurMetrics.numArtifacts = nnz(bad);
-            obj.CurMetrics.numClean     = nnz(keep);
+            obj.CurMetrics.numSweeps    = stats.NumSweeps;
+            obj.CurMetrics.numArtifacts = stats.NumArtifacts;
+            obj.CurMetrics.numClean     = stats.NumClean;
             obj.CurMetrics.corr         = R;
 
-            % ONE concatenation, used by both timers. [pre post] allocates a
-            % whole sweep matrix; it used to be built twice a tick -- once for
-            % the snapshot cache, once for the live view -- and the second
-            % copy was pure waste. Built here because the live view needs it
-            % now; the aux tick borrows it.
-            %
-            % Hand the baseline over as well as the response, as one unbroken
-            % segment: the view's time base starts BEFORE the onset (default
-            % -2 ms), and pre-onset samples are the only thing that can fill
-            % it. The two windows are contiguous by construction (see
-            % extract_sweeps), so [pre post] is a single trace and
-            % [tw.pre tw.post] its time base.
-            Yc = [pre post];
-            tc = [tw.pre tw.post];
-
+            % The view is fed statistics, not sweeps: the latest sweep, the
+            % per-condition means and spreads over the baseline and the
+            % response as one unbroken segment (the view's time base starts
+            % BEFORE the onset, and pre-onset samples are the only thing that
+            % can fill it), and the counts.
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot)
-                obj.LivePlot.update(Yc,tc,R, ...
-                    obj.AdvanceParams.targetSweeps,bad,obj.live_info(numel(onsets)));
+                info        = obj.live_info(stats.NumSweeps);
+                info.target = obj.AdvanceParams.targetSweeps;
+                obj.LivePlot.updateStats(stats,info);
             end
 
-            % Everything the low-priority views need, left where the aux tick
-            % can find it. Assignment shares the array rather than copying it
-            % (copy-on-write, and nothing here is written again), so the fast
-            % tick pays a reference and stops.
-            obj.PendingLive = struct('Y',Yc,'t',tc,'bad',bad, ...
-                'n',size(post,1),'metrics',obj.CurMetrics,'state',obj.State);
+            % The sweeps themselves, left where the aux tick can find them
+            % for liveSnapshot (copy-on-write: a reference, not a copy). With
+            % a worker doing the DSP there is no sweep matrix in this process
+            % to leave, and liveSnapshot stays empty -- the metrics worker
+            % serves the analysis windows then.
+            if isempty(S)
+                obj.PendingLive = [];
+            else
+                obj.PendingLive = struct('Y',S.Y,'t',S.t,'bad',S.bad, ...
+                    'n',S.n,'metrics',obj.CurMetrics,'state',obj.State);
+            end
 
             % Online advance: stop the run early if the criterion is met. Only
             % meaningful when the run holds a single stimulus — pooling an
@@ -793,18 +983,22 @@ classdef AcqController < handle
         end
 
         function aux_tick_body(obj)
+            % Cache what a slow puller needs (see liveSnapshot) -- only when
+            % the sweeps are in this process; a worker-served run leaves none.
             P = obj.PendingLive;
-            if isempty(P), return; end
+            if ~isempty(P)
+                obj.LiveSnap = struct('Run',obj.CurRun, ...
+                    'SampleRate',obj.Config.ADCSampleRate, ...
+                    'Time',P.t,'Sweeps',P.Y, ...
+                    'StimIndex',obj.CurSeq(1:min(P.n,numel(obj.CurSeq))), ...
+                    'Bad',P.bad(:)','Stimuli',obj.CurStim,'Labels',{obj.CurLabels});
+            end
 
-            % Cache what a slow puller needs (see liveSnapshot).
-            obj.LiveSnap = struct('Run',obj.CurRun, ...
-                'SampleRate',obj.Config.ADCSampleRate, ...
-                'Time',P.t,'Sweeps',P.Y, ...
-                'StimIndex',obj.CurSeq(1:min(P.n,numel(obj.CurSeq))), ...
-                'Bad',P.bad(:)','Stimuli',obj.CurStim,'Labels',{obj.CurLabels});
-
+            % The tally and the Run panel ride this whichever process did
+            % the DSP: nothing to say until the first sweep has been counted.
+            if obj.CurMetrics.numSweeps < 1, return; end
             notify(obj,'MetricsUpdated', ...
-                mabr.ui.ProgStateEventData(P.state,P.metrics));
+                mabr.ui.ProgStateEventData(obj.State,obj.CurMetrics));
         end
 
         function apply_aux_period(obj)
@@ -862,67 +1056,36 @@ classdef AcqController < handle
             end
         end
 
-        function [pre,post] = filter_sweeps(obj,pre,post)
-            % Run the display filter chain over the live sweeps, both given as
-            % [nSweeps x nSamples].
-            %
-            % The two windows are filtered TOGETHER because they are
-            % contiguous: extract_sweeps takes the baseline as the samples
-            % immediately preceding the onset at the same stride, so [pre post]
-            % is one unbroken segment. Filtering it whole doubles the length
-            % available to filtfilt and, more to the point, keeps the filter's
-            % edge transient in the baseline instead of dumping it on the first
-            % milliseconds of the response — exactly where the early waves are.
-            if isempty(post) || ~obj.LiveFilter.Designed, return; end
-            L = size(post,2);
-            x = obj.LiveFilter.apply([pre post].');   % columns = sweeps
-            pre  = x(1:end-L,:).';
-            post = x(end-L+1:end,:).';
-        end
-
-        function bad = live_artifacts(obj,post)
-            % Judge the live sweeps [nSweeps x nSamples] under the current
-            % policy. Nothing here is recorded -- finalize_run makes the call
-            % that reaches Recording.IsArtifact and the .abr file.
-            %
-            % detect_artifacts wants the FILTERED sweeps, and by here they are:
-            % filter_sweeps has run the same chain finalization will use, so
-            % the preview and the verdict differ only on a marginal sweep. With
-            % the high pass switched OFF there is nothing removing a baseline
-            % offset, and a sweep sitting on one would trip a voltage threshold
-            % on the offset alone -- so in that case, and only that case, each
-            % sweep's own mean stands in for it.
-            bad = false(1,size(post,1));
-            if ~obj.Artifacts.Enabled || isempty(post), return; end
-            D   = double(post).';                    % [nSamples x nSweeps]
-            if ~obj.LiveFilter.HighPass
-                D = D - mean(D,1,'omitnan');
-            end
-            bad = obj.Artifacts.detect(D);
-        end
-
-        function refresh_live_filter(obj)
-            % Design the chain at the rate the live sweeps actually arrive at.
-            % extract_sweeps windows DAC-rate samples with a decimationFactor
-            % stride, so a live sweep is at the ADC rate -- the same rate the
-            % Recording is filtered at in finalize_run, which is why the two
-            % views agree.
-            try
-                obj.LiveFilter = obj.Filters.design(obj.Config.ADCSampleRate);
-            catch me
-                % An unrealizable chain must not take acquisition down with it;
-                % fall back to showing the trace unfiltered.
-                obj.LiveFilter = mabr.FilterPolicy(false,false,false);
-                mabr.log.vprintf(0,1,'Filter design failed (%s); live view unfiltered.', ...
-                    me.message);
+        function configure_pipeline(obj)
+            % Hand the pipeline the window and the two policies. Called from
+            % every setter that changes one -- so the next tick, and the next
+            % finalization, run under it -- and at construction, since
+            % property defaults bypass the setters. The pipeline keeps what
+            % has not changed, so this costs nothing when nothing has.
+            if isempty(obj.Pipeline), return; end
+            obj.Pipeline.configure(obj.Window,obj.Filters,obj.Artifacts);
+            % And the workers', so every process agrees about what a sweep is.
+            if ~isempty(obj.Compute)
+                obj.Compute.configure(obj.Config.DACSampleRate,obj.Window, ...
+                    obj.Filters,obj.Artifacts);
             end
             obj.caption_live_plot();
         end
 
+        function on_compute_error(obj,e)
+            % A compute worker's error costs its acceleration, never the
+            % acquisition: log it and carry on in-process.
+            mabr.log.vprintf(0,1,'Compute worker (%s) error: %s',e.Role, ...
+                e.Data.message);
+        end
+
         function caption_live_plot(obj)
-            % Keep the live view's caption honest about what it is showing.
+            % Keep the live view's caption honest about what it is showing:
+            % the chain as the pipeline actually designed it, which is the
+            % unfiltered fallback if the requested one could not be realized.
             if isempty(obj.LivePlot) || ~isvalid(obj.LivePlot), return; end
-            obj.LivePlot.setFilterText(obj.LiveFilter.describe());
+            if isempty(obj.Pipeline), return; end
+            obj.LivePlot.setFilterText(obj.Pipeline.LiveFilter.describe());
         end
 
         function tf = advance_met(obj)
@@ -956,82 +1119,62 @@ classdef AcqController < handle
             % stimulus that appeared in it, and return the blocks built and the
             % files written. There is one block per stimulus present; files is
             % empty when the Session has no OutputPath.
+            %
+            % Two halves. The DSP -- reading the ring, recovering the onsets,
+            % decimating, splitting by stimulus, filtering, judging -- is
+            % mabr.compute.Pipeline.finalize, which can run in any process;
+            % assemble_blocks is the half only the GUI process can do, since
+            % it owns the Session, the schedule, and the files.
+            F = obj.Pipeline.finalize(obj.Engine.RingBuffer,obj.CurSeq);
+            [files,blocks] = obj.assemble_blocks(F);
+        end
+
+        function [files,blocks] = assemble_blocks(obj,F)
+            % Turn the pipeline's finalization output (see
+            % mabr.compute.Pipeline.finalize) into Recordings, Blocks, files
+            % and schedule bookkeeping. Nothing here filters a sample: the
+            % filtered trace arrives with each part and is adopted through
+            % mabr.data.Recording.withProcessed, so a Block's every accessor
+            % reads a kept copy rather than running the chain again.
             files  = {};
             blocks = mabr.data.Block.empty;
-            rb     = obj.Engine.RingBuffer;
-            [rawSignal,rawTiming] = rb.readBlock();   % chronological, wrap-safe
-            if numel(rawSignal) < 2, return; end
+            if isempty(F) || F.NumOnsets < 1, return; end
 
-            Fs = obj.Config.DACSampleRate;         % ring-buffer (DAC) rate
-            df = obj.Config.decimationFactor;
+            n     = F.NumOnsets;
+            seq   = F.Seq;
             adcFs = obj.Config.ADCSampleRate;      % analysis/storage rate
-
-            onsetsRaw = mabr.metrics.find_timing_onsets(rawTiming,round(0.002*Fs),0.1);
-            if isempty(onsetsRaw), return; end
-
-            % Pair each recorded onset with the stimulus the schedule placed
-            % there. A run can end early (Stop/Abort, or an advance criterion),
-            % so trust whichever of the two is shorter.
-            seq = obj.CurSeq;
+            % The chain the parts were filtered with, as settings (a struct
+            % crosses a process boundary; a designed policy need not).
+            made = F.Filters;
+            if isstruct(made), made = mabr.FilterPolicy.fromStruct(made); end
+            % Polarity is per presentation, so it truncates with the sequence
+            % -- a run can end early (Stop/Abort, or an advance criterion).
             pol = obj.CurPol;
-            n   = min(numel(onsetsRaw),numel(seq));
-            if n < 1, return; end
-            onsetsRaw = onsetsRaw(1:n);
-            seq       = seq(1:n);
-            % Polarity is per presentation, so it truncates with the sequence.
             if numel(pol) >= n, pol = pol(1:n); else, pol = ones(1,n); end
 
-            % Decimate to the analysis rate at finalization so the Recording
-            % (and its filter design) are self-consistent. io then saves it
-            % as-is (DecimationFactor = 1) yielding the same offline-format
-            % 12 kHz .abr the legacy save_abr_data produced.
-            adcData  = single(resample(double(rawSignal),1,df));
-            onsets   = max(1,round(onsetsRaw(:)./df));
-            sweepLen = max(1,round(adcFs*diff(obj.Window)));
+            counts = zeros(1,obj.Stimuli.numStimuli);
+            lost   = zeros(1,obj.Stimuli.numStimuli);   % sweeps rejected, per stimulus
 
-            present = unique(seq,'stable');
-            counts  = zeros(1,obj.Stimuli.numStimuli);
-            lost    = zeros(1,obj.Stimuli.numStimuli);   % sweeps rejected, per stimulus
-
-            for u = present
-                sel = onsets(seq == u);
-                counts(u) = numel(sel);
-
-                if isscalar(present)
-                    % Homogeneous run: save the continuous trace, exactly as
-                    % the one-block-per-condition path always has.
-                    data = adcData;
-                else
-                    % Intermixed run: keep only this stimulus's sweep windows,
-                    % so each .abr carries its own data instead of N copies of
-                    % one shared trace. Still plain Data + SweepOnsets, so the
-                    % offline pipeline reads it unchanged.
-                    [data,sel] = mabr.ui.AcqController.compact_sweeps(adcData,sel,sweepLen);
-                end
+            for i = 1:numel(F.Parts)
+                p = F.Parts(i);
+                u = p.Stimulus;
+                counts(u) = p.Count;
 
                 % The Recording carries the raw trace and the chain separately:
-                % designFilters only decides what SweepData/SweepMean look like,
+                % the chain only decides what SweepData/SweepMean look like,
                 % and io writes Data. So the .abr file below is unfiltered no
                 % matter what the operator has the filter dialog set to.
-                rec = mabr.data.Recording(adcFs,data,sel,sweepLen,1);
-                rec.Filters = obj.Filters;
-                rec = rec.designFilters();
-
-                % Judge each sweep AFTER filtering: baseline drift in a raw
-                % trace trips a voltage threshold on its own. Rejected sweeps
-                % are marked, never dropped — the samples still reach the .abr
-                % file so an offline reanalysis can make its own call.
-                %
-                % Map back through ValidSweeps so the flags stay aligned with
-                % SweepOnsets even when a truncated run left the last window
-                % short (those sweeps are absent from SweepData entirely).
-                flags = false(numel(sel),1);
-                flags(rec.ValidSweeps) = obj.Artifacts.detect(rec.SweepData);
-                rec.IsArtifact = flags;
+                % Rejected sweeps are marked, never dropped — the samples still
+                % reach the .abr file so an offline reanalysis can make its
+                % own call.
+                rec = mabr.data.Recording(adcFs,p.Data,p.Onsets,p.SweepLength,1);
+                rec.Filters    = obj.Filters;
+                rec            = rec.withProcessed(p.Processed,made);
+                rec.IsArtifact = p.Flags;
                 lost(u)        = rec.NumArtifacts;
                 if lost(u) > 0
                     mabr.log.vprintf(1,'Stimulus %d: %d of %d sweeps rejected (%s)', ...
-                        u,lost(u),numel(sel),obj.Artifacts.describe());
+                        u,lost(u),p.Count,obj.Artifacts.describe());
                 end
 
                 % keep only lightweight metadata on the Block (not the waveform)
@@ -1052,6 +1195,18 @@ classdef AcqController < handle
 
                 obj.Session.addBlock(blk);
                 blocks(end+1) = blk; %#ok<AGROW>
+                % The metrics worker keeps the same table of finalized
+                % conditions the analysis windows do; this is where it
+                % gets each row. Never fatal.
+                if ~isempty(obj.Compute)
+                    try
+                        c = mabr.compute.ConditionStore.fromBlock(blk);
+                        if ~isempty(c), obj.Compute.addCondition(c); end
+                    catch me
+                        mabr.log.vprintf(1,1,'Could not hand the block to the metrics worker: %s', ...
+                            me.message);
+                    end
+                end
 
                 if ~isempty(obj.Session.OutputPath)
                     files{end+1} = mabr.data.io.writeABR(blk, ...
@@ -1173,8 +1328,13 @@ classdef AcqController < handle
             catch %#ok<CTCH>
             end
             % The run is over: nothing should be able to pull a snapshot of it
-            % out of the aux tick after the fact.
+            % out of the aux tick after the fact, and the pipeline stops
+            % attributing sweeps to it.
             obj.PendingLive = [];
+            if ~isempty(obj.Pipeline), obj.Pipeline.endRun(); end
+            if ~isempty(obj.Compute) && obj.Compute.InRun
+                obj.Compute.runEnd(obj.RunSerial);
+            end
         end
     end
 
@@ -1189,21 +1349,4 @@ classdef AcqController < handle
         end
     end
 
-    methods (Static, Access = private)
-        function [data,newOnsets] = compact_sweeps(src,onsets,sweepLen)
-            % Concatenate just the sweep windows at `onsets` into a new trace,
-            % returning it with the onsets that index into it. Used to split an
-            % intermixed run so each stimulus's .abr holds only its own sweeps.
-            n         = numel(onsets);
-            data      = zeros(n*sweepLen,1,'single');
-            newOnsets = zeros(n,1);
-            for k = 1:n
-                i0 = onsets(k);
-                i1 = min(i0+sweepLen-1,numel(src));
-                d0 = (k-1)*sweepLen + 1;
-                data(d0:d0+(i1-i0)) = src(i0:i1);
-                newOnsets(k) = d0;
-            end
-        end
-    end
 end
