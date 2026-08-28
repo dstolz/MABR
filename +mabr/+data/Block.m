@@ -38,6 +38,14 @@ classdef Block
         % operator wrote during the session that produced it.
         Notes     struct = struct('Stamp',{},'Text',{},'Time',{},'Elapsed',{}, ...
                                   'Run',{},'NumRuns',{},'Sweep',{},'Source',{},'Edited',{});
+        % True when this block came out of TEST MODE: no device in the path,
+        % the stimulus copied straight into the acquisition buffer (see
+        % mabr.AudioSettings.Testing). It is recorded on the block, and from
+        % there written into the .abr, because a Test Mode block is otherwise
+        % indistinguishable from a real one -- same shape, same metrics, same
+        % filename -- and a file that cannot say it holds the stimulus rather
+        % than a subject is a file waiting to be analysed as data.
+        TestMode  (1,1) logical = false;
     end
 
     properties (Dependent)

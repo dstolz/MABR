@@ -270,6 +270,16 @@ classdef App < handle
         % setting can be changed once the schedule settles, and what the Run
         % panel is describing is the run.
         StimOnlyRun (1,1) logical = false
+        % True while the schedule now running is in TEST MODE -- the stimulus
+        % buffer copied straight into the acquisition buffer, no device in the
+        % path. Captured at Start for the same reason as StimOnlyRun: the
+        % setting can be changed once the schedule settles, and what the Run
+        % panel is describing is the run. It outranks both other banners
+        % because it is the strongest statement of the three -- a preview
+        % acquires real signal and merely declines to write it, and
+        % stimulation only records nothing at all, while this one writes
+        % ordinary-looking .abr files whose contents are the stimulus.
+        TestRun (1,1) logical = false
         % .stimlog files written by the schedule now running, so the completion
         % message can say what a stimulation-only session actually left behind.
         % Zeroed at Start alongside the artifact tallies.
@@ -536,6 +546,15 @@ classdef App < handle
             app.HelpMenu = uimenu(app.UIFigure,'Text','&Help');
             uimenu(app.HelpMenu,'Text','MABR Wiki', ...
                 'MenuSelectedFcn',@(~,~) app.openHelp());
+            % Test Mode gets its own item rather than only a link inside the
+            % audio dialog: someone reading a .abr file and wondering whether
+            % it came out of a loopback run is not going to look for the
+            % answer under a device setting.
+            uimenu(app.HelpMenu,'Text','About Test Mode…', ...
+                'Tooltip',['What Test Mode does, what it proves about ' ...
+                           'stimulus/acquisition alignment, and what its ' ...
+                           'files are and are not.'], ...
+                'MenuSelectedFcn',@(~,~) app.openHelp('Test-Mode'));
             app.TestMenuItem = uimenu(app.HelpMenu,'Text','Verification Tests…', ...
                 'Separator','on','MenuSelectedFcn',@(~,~) app.onTestRunner());
 
@@ -957,8 +976,12 @@ classdef App < handle
                 'ClickedCallback',@(~,~) fcn());
         end
 
-        function openHelp(~)
-            web('https://github.com/dstolz/MABR/wiki','-browser');
+        function openHelp(~,page)
+            % The wiki front page, or a named page on it. The address itself
+            % lives in mabr.ui.wikiURL, so the menu item, the toolbar button
+            % and the hyperlink in the audio dialog cannot drift apart.
+            if nargin < 2, page = ''; end
+            web(mabr.ui.wikiURL(page),'-browser');
         end
 
         function ctx = noteContext(app)
@@ -1637,6 +1660,7 @@ classdef App < handle
                 addlistener(app.Controller,'MetricsUpdated', @(~,e) app.onMetrics(e)); ...
                 addlistener(app.Controller,'BlockReady',     @(~,e) app.onBlockReady(e)); ...
                 addlistener(app.Controller,'BlockSaved',     @(~,e) app.onBlockSaved(e)); ...
+                addlistener(app.Controller,'AlignmentChecked',@(~,e) app.onAlignment(e)); ...
                 addlistener(app.Controller,'ScheduleComplete',@(~,~) app.onScheduleComplete())];
             % Before listenTo below: the organizer adopts the session's
             % notebook when it starts tracking a controller, and the session's
@@ -2476,8 +2500,8 @@ classdef App < handle
             if ~ok, app.setStatus(why); return; end
 
             if app.Audio.Testing
-                app.setStatus(['Calibration needs a real device — turn off Testing ' ...
-                               '(loopback) in Settings > Audio Device first.']);
+                app.setStatus(['Calibration needs a real device — turn off Test Mode ' ...
+                               'in Settings ▸ Audio Device first.']);
                 return
             end
 
@@ -2749,8 +2773,11 @@ classdef App < handle
             % reports each startup milestone into the status line as it goes.
             app.Previewing  = preview;
             app.StimOnlyRun = app.Audio.isStimulationOnly();
-            app.setRunTitle(preview || app.StimOnlyRun);
-            if preview
+            app.TestRun     = app.Audio.Testing;
+            app.setRunTitle(preview || app.StimOnlyRun || app.TestRun);
+            if app.TestRun
+                app.setBusy('Starting in Test Mode…');
+            elseif preview
                 app.setBusy('Starting preview…');
             elseif app.StimOnlyRun
                 app.setBusy('Starting stimulation…');
@@ -3271,7 +3298,7 @@ classdef App < handle
             % from a real one everywhere else, so the panel title carries the
             % warning for as long as one is in flight, and drops it once the
             % schedule settles.
-            app.setRunTitle((app.Previewing || app.StimOnlyRun) && ~isTerminal(e.State));
+            app.setRunTitle((app.Previewing || app.StimOnlyRun || app.TestRun) && ~isTerminal(e.State));
             % Stimulation only runs no live timer, so onMetrics never fires and
             % these two readouts would otherwise sit frozen on whatever the
             % previous run left in them. Run progress is the one thing that
@@ -3318,6 +3345,28 @@ classdef App < handle
             end
         end
 
+        function onAlignment(app,e)
+            % Every recorded run reports whether its sweeps landed where the
+            % plan put them (mabr.ui.AcqController.alignmentCheck). What
+            % reaches the status line depends on the answer, not the mode:
+            %
+            %   misaligned  always said, whatever mode produced it -- the
+            %               sweeps are not the presentations they are
+            %               labelled with, and that is not a detail to leave
+            %               in a log file (where it also goes, in red)
+            %   aligned     said in Test Mode only. That is the mode the user
+            %               entered in order to be told this, and on a rig the
+            %               same line every run would be noise the eye stops
+            %               reading -- which is exactly how a run that DOES
+            %               say something goes unnoticed.
+            R = e.Info.report;
+            if ~R.Aligned
+                app.setStatus(['Alignment: ' R.Summary]);
+            elseif app.TestRun
+                app.setStatus(['Test Mode — ' R.Summary]);
+            end
+        end
+
         function onScheduleComplete(app)
             if app.StimOnlyRun
                 % "Nothing was recorded" is the whole point of the mode, but it
@@ -3336,6 +3385,18 @@ classdef App < handle
                 else
                     app.setStatus(['Stimulation complete — nothing was recorded, and ' ...
                         'no stimulation log was written (no output folder set).']);
+                end
+            elseif app.TestRun
+                % The one thing worth saying at the end of a Test Mode
+                % schedule is what the files are, because nothing about them
+                % says it: they are ordinary .abr files holding the stimulus
+                % that was played, not a recording of anything.
+                if app.Previewing
+                    app.setStatus(['Test Mode complete — alignment verified; ' ...
+                        'no files were written.']);
+                else
+                    app.setStatus(['Test Mode complete — the .abr files hold the ' ...
+                        'stimulus, not a recording. See Help ▸ About Test Mode.']);
                 end
             elseif app.Previewing
                 app.setStatus('Preview complete — no files were written.');
@@ -3441,11 +3502,19 @@ classdef App < handle
 
         function setRunTitle(app,banner)
             % `banner` is true while a run that needs one is in flight. Which
-            % banner is decided here, not by the caller: stimulation only wins
-            % over preview, because it is the stronger statement -- a preview
-            % acquires everything and merely declines to write it, while
-            % stimulation only never records at all.
-            if banner && app.StimOnlyRun
+            % banner is decided here, not by the caller, in order of how
+            % strong a statement each makes about what the data are: Test Mode
+            % (they are the stimulus), then stimulation only (there are none),
+            % then preview (there are, but they are not being kept).
+            if banner && app.TestRun
+                % Outranks both: a preview acquires real signal and merely
+                % declines to write it, stimulation only records nothing at
+                % all, and both leave the operator with either real data or
+                % none. Test Mode leaves them with .abr files that look
+                % exactly like data and hold the stimulus, which is the one
+                % of the three that can be mistaken for an experiment.
+                app.RunPanel.Title = 'Run — TEST MODE (recording the stimulus, not a subject)';
+            elseif banner && app.StimOnlyRun
                 app.RunPanel.Title = 'Run — STIMULATION ONLY (no recording)';
             elseif banner
                 app.RunPanel.Title = 'Run — PREVIEW (nothing is saved)';

@@ -38,10 +38,22 @@ function worker_loop(rootPath,resultQueue,testing)
 %                 Device            (optional) ASIO device name
 %       worker -> client : struct('type',...) — see send_* helpers below.
 %
-%   testing (logical) selects a hardware-free loopback mode (the DAC frame is
-%   fed back as the ADC frame with a trace of noise), mirroring the legacy
-%   Universal.MODE == abr.Cmd.Test path so the whole engine is testable with
-%   no audio device present.
+%   testing (logical) selects TEST MODE, which the GUI names and documents as
+%   such (mabr.ui.AudioSettingsDialog, and the wiki page it links to): no audio
+%   device is opened, and each frame of the continuous stimulus is copied
+%   straight into the acquisition ring buffer instead -- the DAC frame IS the
+%   ADC frame, signal column and timing column alike.
+%
+%   That copy is the whole substance of the mode. Because the samples recorded
+%   at an onset are by construction the samples the plan put there, a run in
+%   Test Mode is a test of the correspondence everything else rests on: the
+%   plan, the render, the timing channel, the ring buffer, sweep extraction and
+%   the pairing of the k-th sweep with the k-th presentation all have to agree
+%   or the recorded sweeps do not match their own stimuli.
+%   mabr.ui.AcqController.alignmentCheck is what states the verdict.
+%
+%   It also mirrors the legacy Universal.MODE == abr.Cmd.Test path, so the
+%   whole engine remains testable with no audio device present.
 %
 % Daniel Stolzberg (c) 2019-2026
 
@@ -69,7 +81,12 @@ prepared = [];   % last Prep payload
 try
     rb = mabr.acq.RingBuffer(cfg,true);   % writable
     send_state(resultQueue,mabr.acq.State.Idle);
-    mabr.log.vprintf(1,'Worker loop started (testing = %d)',testing);
+    if testing
+        mabr.log.vprintf(1,['Worker loop started in TEST MODE -- no device will be ' ...
+            'opened, and the stimulus is copied into the acquisition buffer.']);
+    else
+        mabr.log.vprintf(1,'Worker loop started.');
+    end
 
     running = true;
     while running
@@ -168,7 +185,10 @@ stimOnly  = getdef(spec,'StimulationOnly',false) && ~testing;
 
 rb.reset();                    % new block: clear write head, bump BlockSeq
 send_state(resultQueue,mabr.acq.State.Acquire);
-if stimOnly, kind = 'stimulation-only block'; else, kind = 'block'; end
+if testing,       kind = 'Test Mode block (stimulus -> acquisition buffer)';
+elseif stimOnly,  kind = 'stimulation-only block';
+else,             kind = 'block';
+end
 mabr.log.vprintf(1,'Streaming %s: %d samples (%d frames)',kind,N,ceil(N/fl));
 
 reason = 'completed';
@@ -202,7 +222,18 @@ while i <= N
     frame = src.range(i,hi);   % [n x 2] single: signal, timing
 
     if testing
-        % Hardware-free loopback: DAC -> ADC with a trace of noise.
+        % TEST MODE: the stimulus frame IS the acquired frame. Both columns
+        % are copied -- the timing column too, so onset recovery runs over
+        % exactly the pulses the plan rendered rather than a synthesized
+        % substitute for them.
+        %
+        % The dither is ~1e-6 of full scale (below any converter's noise
+        % floor, and four orders under the tolerance alignmentCheck compares
+        % at) and is there so a loopback run is not perfectly degenerate: with
+        % a bit-exact copy every sweep of a condition is identical, its
+        % standard deviation is exactly zero and its correlation exactly one,
+        % which makes the live view's error bands and the correlation advance
+        % criterion untestable in the one mode built for testing them.
         audioADC = [frame(:,1) + randn(size(frame,1),1,'single')/1e6, frame(:,2)];
         rb.writeFrame(audioADC(:,1),audioADC(:,2));
     elseif stimOnly
@@ -258,7 +289,8 @@ function apr = prepare_device(apr,spec,testing)
 % Build/refresh the audio device for a prepared block. Three modes, in
 % precedence order:
 %
-%   testing          no device at all (stream_block loops the DAC frame back)
+%   testing          TEST MODE -- no device at all; stream_block copies the
+%                    stimulus frame into the acquisition ring buffer
 %   StimulationOnly  an OUTPUT-ONLY audioDeviceWriter -- playback and the
 %                    timing pulse, nothing recorded. A separate class rather
 %                    than an audioPlayerRecorder whose input is ignored, so

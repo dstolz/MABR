@@ -83,6 +83,15 @@ classdef AcqController < handle
 %                          recovered from a recorded run, or once per run for
 %                          the .stimlog of a stimulation-only one
 %       ScheduleComplete - the whole schedule finished
+%       AlignmentChecked - a finished run's recovered onsets were held
+%                          against the onsets the plan rendered
+%                          (.Info.report, a mabr.metrics.alignment_report).
+%                          Raised for EVERY recorded run, not only in Test
+%                          Mode: a drifting offset means the k-th sweep is
+%                          not the k-th presentation, which is as much a
+%                          fault on a rig as it is in loopback. What Test
+%                          Mode adds is the sample-exact waveform comparison
+%                          the report's MaxError carries -- see alignmentCheck.
 %
 % Daniel Stolzberg (c) 2019-2026
 
@@ -122,6 +131,12 @@ classdef AcqController < handle
         % clicks) -- so a stale cache here could silently skip re-verifying
         % after the user changes ASIO device or wiring mid-session.
         TimingVerified (1,1) logical = false
+        % What the last finished run's onsets came back as, held against what
+        % the plan rendered (see alignmentCheck). [] until a run finalizes.
+        % Kept rather than only announced because the question it answers --
+        % "is the sweep I am looking at the presentation the file says it is"
+        % -- is asked after the fact at least as often as during.
+        LastAlignment = []
     end
 
     properties
@@ -269,6 +284,7 @@ classdef AcqController < handle
         BlockReady
         BlockSaved
         ScheduleComplete
+        AlignmentChecked
     end
 
     methods
@@ -549,6 +565,88 @@ classdef AcqController < handle
             snap = obj.LiveSnap;
         end
 
+        function R = alignmentCheck(obj,F)
+            % Hold the run that just finished against the run that was
+            % planned, and say whether they are the same experiment.
+            %
+            % Two questions, and the second is only answerable in TEST MODE:
+            %
+            %   1. Are the recovered onsets where the plan put them? Pure
+            %      arithmetic on two index vectors (mabr.metrics.alignment_
+            %      report) -- meaningful on a rig too, where the offset is the
+            %      loop-back latency and the JITTER around it is what must be
+            %      zero. Asked after every recorded run.
+            %
+            %   2. Are the samples at each onset the stimulus the schedule
+            %      assigned to it, sign included? Only in Test Mode, where the
+            %      stimulus buffer is copied straight into the acquisition
+            %      ring buffer (mabr.acq.worker_loop) so there IS a right
+            %      answer to compare against -- what comes back through a real
+            %      converter is not the waveform that went out, so on a rig
+            %      this is skipped rather than failed.
+            %
+            % Together they are the whole of the correspondence every other
+            % number rests on: the k-th recovered sweep is paired with the
+            % k-th planned presentation everywhere downstream, so if these two
+            % agree then the stimulus metadata saved beside a sweep really is
+            % the stimulus that produced it.
+            %
+            % F is mabr.compute.Pipeline.finalize's output (from this process
+            % or from the DSP worker -- the answer must not depend on which).
+            recovered = zeros(1,0);
+            if isstruct(F) && isfield(F,'OnsetsAll'), recovered = F.OnsetsAll; end
+
+            % How much departure from a constant offset is allowed before the
+            % run is called misaligned, and it is not the same question in the
+            % two modes.
+            %
+            % In TEST MODE the answer is zero. Nothing is being measured: the
+            % onsets came off the very timing channel the plan rendered, with
+            % no converter in between, so one sample of drift is a defect in
+            % the plan, the render, the ring buffer or the extraction.
+            %
+            % On a RIG it is 50 us, deliberately the same line
+            % verify_timing_loopback draws (its MaxJitter default) so MABR and
+            % its own rig diagnostic cannot disagree about whether a rig is
+            % healthy. Zero would be wrong here and worse than no check at
+            % all: a red warning that fires on every ordinary run is one the
+            % operator learns to ignore, which is exactly how the run that
+            % genuinely is misaligned gets ignored with it.
+            if obj.Testing
+                tol = 0;
+            else
+                tol = max(1,round(50e-6*obj.Config.DACSampleRate));
+            end
+            R = mabr.metrics.alignment_report(obj.CurOnsets,recovered,tol);
+            R.Tolerance = tol;
+            % The waveform fields exist in EVERY report, Test Mode or not, so
+            % a consumer reads one shape of struct rather than testing for
+            % half of it: NaN/0/false is "not compared here", which is the
+            % honest answer on a rig and a different thing from "compared and
+            % failed".
+            R.Run            = obj.CurRun;
+            R.TestMode       = obj.Testing;
+            R.MaxError       = NaN;
+            R.NumWaveforms   = 0;
+            R.WaveformsMatch = false;
+            if obj.Testing
+                R = obj.compare_waveforms(R,recovered);
+            end
+
+            obj.LastAlignment = R;
+            if R.Aligned
+                mabr.log.vprintf(1,'Alignment: %s',R.Summary);
+            else
+                % Level 0 in red: a run whose sweeps are attributed to the
+                % wrong conditions is not a warning, it is data that must not
+                % be believed -- and the operator has to hear that whether or
+                % not they were watching the status line at the time.
+                mabr.log.vprintf(0,1,'Alignment: %s',R.Summary);
+            end
+            notify(obj,'AlignmentChecked',mabr.ui.ProgStateEventData( ...
+                obj.State,struct('report',R)));
+        end
+
         function tf = canRepeat(obj)
             % True once a blocked-strategy run has completed, so its stimulus
             % can be repeated with a fresh run appended to the plan (see
@@ -784,14 +882,14 @@ classdef AcqController < handle
         function finalize_here(obj)
             % Finalize the run in this process, from the ring buffer.
             try
-                [files,blocks] = obj.finalize_run();
-                obj.emit_blocks(files,blocks);
+                [files,blocks,F] = obj.finalize_run();
+                obj.emit_blocks(files,blocks,F);
             catch me
                 mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
             end
         end
 
-        function emit_blocks(obj,files,blocks)
+        function emit_blocks(obj,files,blocks,F)
             % Announce the blocks themselves first: a viewer should get the
             % data whether or not the session is writing files.
             for i = 1:numel(blocks)
@@ -801,6 +899,26 @@ classdef AcqController < handle
             for i = 1:numel(files)
                 notify(obj,'BlockSaved',mabr.ui.ProgStateEventData( ...
                     obj.State,struct('file',files{i})));
+            end
+            % The alignment verdict goes LAST, and that ordering is the whole
+            % reason it is announced from here rather than from inside
+            % assemble_blocks where it is computed. Both of the events above
+            % write the status line ("Saved ...abr"), so a verdict raised
+            % before them -- above all a MISALIGNED one -- would be on screen
+            % for a few milliseconds and then gone.
+            %
+            % Waiting costs nothing: the check reads the ring buffer, and
+            % nothing overwrites that until the next Run, which after_finalize
+            % has not reached yet. F is passed down from the caller rather
+            % than recomputed, so this describes the run those blocks were
+            % built from and no other.
+            if nargin >= 4
+                try
+                    obj.alignmentCheck(F);
+                catch me
+                    % A diagnostic must never be the reason a run's data is lost.
+                    mabr.log.vprintf(1,1,'Alignment check failed: %s',me.message);
+                end
             end
         end
 
@@ -838,7 +956,7 @@ classdef AcqController < handle
             else
                 try
                     [files,blocks] = obj.assemble_blocks(msg.result);
-                    obj.emit_blocks(files,blocks);
+                    obj.emit_blocks(files,blocks,msg.result);
                 catch me
                     mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
                 end
@@ -1125,7 +1243,69 @@ classdef AcqController < handle
         end
 
         % --- Finalization / save -------------------------------------------
-        function [files,blocks] = finalize_run(obj)
+        function R = compare_waveforms(obj,R,recovered)
+            % The half of alignmentCheck that only TEST MODE makes answerable:
+            % the samples sitting at each recovered onset must BE the stimulus
+            % the schedule assigned to that presentation, times the polarity
+            % it assigned. In Test Mode the stimulus buffer is copied straight
+            % into the acquisition ring buffer, so there is a right answer to
+            % hold them against; on a rig there is not, and this is skipped
+            % rather than failed (what returns through a converter is not the
+            % waveform that went out).
+            %
+            % This is the check that catches the failures the onset arithmetic
+            % cannot see: a plan whose waveforms are rendered in one order and
+            % labelled in another, or a polarity applied to the wrong
+            % presentation. Both leave every onset exactly where it belongs.
+            %
+            % The tolerance is deliberately loose. Loopback adds ~1e-6 of
+            % dither (mabr.acq.worker_loop) and single precision costs another
+            % ~1e-7 on a full-scale sample, while a presentation attributed to
+            % the wrong stimulus is wrong by order 1 -- so anything between
+            % those two settles it, and picking the loose end means this can
+            % never fail over arithmetic noise.
+            tol = 1e-3;
+
+            if R.NumCompared < 1 || isempty(obj.Stimuli) || isempty(obj.CurSeq)
+                return
+            end
+
+            rb   = obj.Engine.RingBuffer;
+            head = rb.WriteHead;
+            n    = min([R.NumCompared numel(obj.CurSeq) numel(obj.CurPol)]);
+            worst = 0; worstK = 0; checked = 0;
+            for k = 1:n
+                w  = double(obj.Stimuli.signal(obj.CurSeq(k)));
+                w  = w(:);
+                i0 = recovered(k);
+                % A run stopped mid-presentation leaves its last waveform
+                % half-written. Skipping it is right: the samples that ARE
+                % there are not evidence of a mismatch.
+                if i0 < 1 || i0 + numel(w) - 1 > head, continue; end
+                got = double(rb.readSignalAt(i0 + (0:numel(w)-1)'));
+                e   = max(abs(got - obj.CurPol(k)*w));
+                if e > worst, worst = e; worstK = k; end
+                checked = checked + 1;
+            end
+
+            R.NumWaveforms = checked;
+            if checked < 1, return; end
+            R.MaxError       = worst;
+            R.WaveformsMatch = worst <= tol;
+            if R.WaveformsMatch
+                R.Summary = sprintf('%s; every presentation matches its own waveform (max error %.1e)', ...
+                    R.Summary,worst);
+            else
+                % Whatever the onsets said, the sweeps are not the stimuli
+                % they are labelled with -- so the verdict is overruled here.
+                R.Aligned = false;
+                R.Summary = sprintf(['MISALIGNED: the samples at presentation %d are not ' ...
+                    'stimulus %d (max error %.2e over %d presentations checked)'], ...
+                    worstK,obj.CurSeq(max(1,worstK)),worst,checked);
+            end
+        end
+
+        function [files,blocks,F] = finalize_run(obj)
             % Split the run's recording into one Block (and one .abr) per
             % stimulus that appeared in it, and return the blocks built and the
             % files written. There is one block per stimulus present; files is
@@ -1138,6 +1318,8 @@ classdef AcqController < handle
             % it owns the Session, the schedule, and the files.
             F = obj.Pipeline.finalize(obj.Engine.RingBuffer,obj.CurSeq);
             [files,blocks] = obj.assemble_blocks(F);
+            % F is returned as well so the caller can hand it to emit_blocks,
+            % which is where the alignment check is announced (see there).
         end
 
         function [files,blocks] = assemble_blocks(obj,F)
@@ -1192,6 +1374,11 @@ classdef AcqController < handle
                 stimMeta = struct('Meta',obj.Stimuli.meta(u), ...
                                   'SampleRate',obj.Stimuli.SampleRate);
                 blk = mabr.data.Block(stimMeta,rec,obj.BlockStart);
+                % Test Mode blocks are marked at the source. Everything
+                % downstream -- the viewers, the .abr, an analysis six months
+                % from now -- reads it off the block rather than having to
+                % know what the audio settings were at the time.
+                blk.TestMode = obj.Testing;
                 % Per-sweep polarity, in the same order as the Recording's
                 % SweepOnsets, so the offline pipeline can average (or split)
                 % the two polarities of an alternating condition.

@@ -38,9 +38,9 @@ classdef CalibrationAdapter < stimgen.calibration.HwAdapter
 %   --------------------------
 %   Only one process can hold an ASIO device. The acquisition worker opens one
 %   for the duration of a schedule, so this errors instead of racing it (see
-%   assertUsable). It also refuses in Testing mode -- loopback synthesizes its
-%   own input, so a "calibration" measured there would be a number about
-%   nothing.
+%   assertUsable). It also refuses in Test Mode -- there the stimulus IS the
+%   recorded input, so a "calibration" measured under it would be a number
+%   about nothing.
 %
 %   See also mabr.AudioSettings, mabr.stim.fromStimgen, stimgen.calibration.Engine.
 %
@@ -157,9 +157,10 @@ classdef CalibrationAdapter < stimgen.calibration.HwAdapter
         function assertUsable(obj)
             % Everything that must be true before a device is opened.
             assert(~obj.Audio.Testing,'mabr:stim:CalibrationAdapter:testingMode', ...
-                ['Testing (loopback) mode is on, so no device would be opened and ' ...
-                 'the "measurement" would be the excitation signal fed back to ' ...
-                 'itself. Turn it off in Settings > Audio Device before calibrating.']);
+                ['Test Mode is on, so no device would be opened and the ' ...
+                 '"measurement" would be the excitation signal copied straight ' ...
+                 'back into the acquisition buffer. Turn it off in ' ...
+                 'Settings > Audio Device before calibrating.']);
 
             assert(~obj.engineHoldsDevice(),'mabr:stim:CalibrationAdapter:deviceBusy', ...
                 ['The acquisition engine currently holds the audio device. Stop the ' ...

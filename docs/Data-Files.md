@@ -55,6 +55,7 @@ The parts you are likely to want:
 | `ABR_Data.ADC.SweepLength` | Sweep length in samples |
 | `ABR_Data.StartTime` | When the condition started |
 | `ABR_Data.SIG` | Stimulus parameters — frequency, level, and a `Label` for display |
+| `ABR_Data.TestMode` | `true` if the file came out of [Test Mode](Test-Mode.md) — the samples are the stimulus, not a recording of a subject. Always present; `false` for an ordinary run |
 | `ABR_Data.SoftwareVersion` | The MABR version that wrote the file |
 
 The file stores the **whole continuous recording plus the onset indices**, not pre-cut sweeps. This means you can re-window, re-filter, or re-reject artifacts later without re-recording — the offline pipeline does exactly that.

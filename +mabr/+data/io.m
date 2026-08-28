@@ -29,6 +29,9 @@ classdef io
 %   recovered on its own still carries what the operator wrote while it was
 %   being acquired (see mabr.data.SessionNotes):
 %       ABR_Data.Notes                    (struct array; 1x0 when nothing noted)
+%       ABR_Data.TestMode                 (logical; true = Test Mode, i.e. the
+%                                          samples ARE the stimulus, not a
+%                                          recording of a subject)
 %
 %   Save-time ADC decimation (by Recording.DecimationFactor) is preserved
 %   exactly as the legacy save_abr_data did: resample(Data,1,df) and
@@ -275,6 +278,16 @@ classdef io
             % under SIG: a note describes the session, not the stimulus, and
             % anything under SIG risks being read as a parameter.
             ABR_Data.Notes = mabr.data.io.noteRecord(block.Notes);
+
+            % Whether this came out of Test Mode -- the stimulus copied into
+            % the acquisition buffer rather than anything recorded from a
+            % subject. Always written, false for an ordinary run, for the same
+            % reason ADC.IsArtifact always is: a field that appears only
+            % sometimes is one offline code has to guess about, and the guess
+            % that a missing field means "real data" is exactly the wrong way
+            % round. Top level, not under SIG, so it can never be read as a
+            % stimulus parameter or become a grouping dimension.
+            ABR_Data.TestMode = logical(block.TestMode);
 
             % Provenance / metadata (harmless extras; offline pipeline ignores)
             cfg = mabr.Config;

@@ -23,6 +23,12 @@ Each script is independently runnable. The first run is slow — the parallel po
 
 ## What each one covers
 
+### verify_test_mode
+
+[tests/verify_test_mode.m](../tests/verify_test_mode.m) — Test Mode, which copies the stimulus straight into the acquisition ring buffer. Asserts the copy itself (the ring against the rendered play matrix, timing channel bit-for-bit), the alignment report MABR draws from it after every run, the mark a Test Mode block and its `.abr` carry — and that the check can actually **fail**, by re-running it over deliberately corrupted onsets.
+
+See [Test Mode](Test-Mode.md) for what a clean result does and does not establish.
+
 ### verify_engine_loopback
 
 [tests/verify_engine_loopback.m](../tests/verify_engine_loopback.m) — the acquisition engine end to end in TESTING mode. Asserts that recorded frames land in the ring buffer, the write head advances during acquisition, and `Pause`/`Stop`/`Kill` sent over the queue take effect within about one frame.

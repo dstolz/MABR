@@ -35,17 +35,17 @@ assert(isequal(a.PlayerChannels,[1 2]) && isequal(a.RecorderChannels,[1 2]), ...
 assert(islogical(a.Testing) && a.Testing,'default Testing should be true (loopback)');
 assert(a.SampleRate == mabr.Config.DefaultDACSampleRate, ...
     'default SampleRate should be the Config default (%g Hz)',mabr.Config.DefaultDACSampleRate);
-assert(contains(a.describe(),'TESTING'),'describe should lead with TESTING while Testing is set');
+assert(contains(a.describe(),'TEST MODE'),'describe should lead with TEST MODE while Testing is set');
 % The rate is named in every branch, Testing included: it is the one setting
 % here that still governs something (stimulus rendering) with no device open.
 assert(contains(a.describe(),'192 kHz'), ...
     'describe should name the sample rate even while Testing is set');
 
 b = a; b.Device = 'Fireface UCX';
-assert(contains(b.describe(),'TESTING'), ...
-    'describe should still read TESTING regardless of Device while Testing is set');
+assert(contains(b.describe(),'TEST MODE'), ...
+    'describe should still read TEST MODE regardless of Device while Testing is set');
 b.Testing = false;
-assert(contains(b.describe(),'Fireface UCX'),'describe should name a selected device once Testing is off');
+assert(contains(b.describe(),'Fireface UCX'),'describe should name a selected device once Test Mode is off');
 assert(contains(b.describe(),'192 kHz'),'describe should name the sample rate with a device selected');
 fprintf('  PASS Part A: defaults and describe()\n');
 

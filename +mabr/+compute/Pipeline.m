@@ -242,7 +242,25 @@ classdef Pipeline < handle
             % rate, split by stimulus, filter, and judge each sweep. Returns
             %
             %   F.NumOnsets   onsets paired with a presentation (0 = nothing)
+            %   F.OnsetsAll   EVERY onset recovered, absolute, before the
+            %                 pairing below trimmed the list to the plan.
+            %                 More of these than there are presentations
+            %                 means spurious pulses, which is precisely the
+            %                 fault that shifts later sweeps onto the wrong
+            %                 condition -- so the extras have to survive to
+            %                 be reported even though nothing can be
+            %                 attributed to them
             %   F.Seq         [1 x NumOnsets] the stimulus behind each
+            %   F.OnsetsRaw   [1 x NumOnsets] where those onsets were
+            %                 recovered, as ABSOLUTE ring-buffer sample
+            %                 indices at the DAC rate -- the same numbering
+            %                 mabr.stim.Schedule's ExpectedOnsets uses, so
+            %                 the two can be held against each other
+            %                 (mabr.metrics.alignment_report). Kept raw and
+            %                 undecimated deliberately: the whole question is
+            %                 whether a recovered onset is where the plan put
+            %                 it, and dividing by the stride first would throw
+            %                 away the samples that answer it.
             %   F.Filters     the settings (FilterPolicy.toStruct) the
             %                 Processed traces were made with
             %   F.Parts       one per stimulus present, in first-seen order:
@@ -260,10 +278,17 @@ classdef Pipeline < handle
             % `seq` is the run's per-onset stimulus index (the schedule's).
             % A run can end early, so whichever of the recorded onsets and
             % the planned sequence is shorter is trusted.
-            F = struct('NumOnsets',0,'Seq',zeros(1,0),'Filters',obj.Filters.toStruct(), ...
+            F = struct('NumOnsets',0,'Seq',zeros(1,0),'OnsetsRaw',zeros(1,0), ...
+                       'OnsetsAll',zeros(1,0),'Filters',obj.Filters.toStruct(), ...
                        'Parts',mabr.compute.Pipeline.emptyParts());
             [rawSignal,rawTiming] = rb.readBlock();   % chronological, wrap-safe
             if numel(rawSignal) < 2, return; end
+            % readBlock starts at the oldest sample still retained, which is
+            % sample 1 of the block for any run the ring can hold (longer runs
+            % are refused at build -- mabr:stim:Schedule:tooLong). Recovering
+            % the base anyway is what keeps OnsetsRaw absolute rather than
+            % quietly relative to whatever survived.
+            base = rb.WriteHead - numel(rawSignal) + 1;
 
             cfg   = obj.Config;
             Fs    = cfg.DACSampleRate;         % ring-buffer (DAC) rate
@@ -271,6 +296,7 @@ classdef Pipeline < handle
             adcFs = cfg.ADCSampleRate;         % analysis/storage rate
 
             onsetsRaw = mabr.metrics.find_timing_onsets(rawTiming,round(0.002*Fs),0.1);
+            F.OnsetsAll = base + onsetsRaw(:)' - 1;   % before any trimming
             if isempty(onsetsRaw), return; end
 
             seq = double(seq(:)');
@@ -330,6 +356,7 @@ classdef Pipeline < handle
 
             F.NumOnsets = n;
             F.Seq       = seq;
+            F.OnsetsRaw = base + onsetsRaw(:)' - 1;
             F.Parts     = parts;
         end
     end

@@ -4,8 +4,8 @@ classdef AudioSettings
 %   Like mabr.Config, mabr.ArtifactPolicy, and mabr.FilterPolicy this is a
 %   plain value object and a superclass of nothing. It holds exactly the
 %   audioPlayerRecorder arguments mabr.acq.worker_loop's prepare_device does
-%   not hard-code, plus the TESTING (loopback) mode switch that determines
-%   whether a device is opened at all:
+%   not hard-code, plus the TEST MODE switch that determines whether a device
+%   is opened at all:
 %
 %       Device            ASIO device name ('' = whatever audioPlayerRecorder
 %                         opens by default)
@@ -17,14 +17,25 @@ classdef AudioSettings
 %                         separately.
 %       PlayerChannels    [DACsignal DACtiming] output channel mapping
 %       RecorderChannels  [ADCsignal ADCtiming] input channel mapping
-%       Testing           true = run the whole engine with no audio device
-%                         (worker_loop's prepare_device creates none); false =
-%                         open Device for real. Lives here, not on the main
-%                         window, because it is meaningless without an
-%                         opinion about which device would otherwise be
-%                         opened -- mabr.ui.AudioSettingsDialog is where both
-%                         are decided together, and greys the device/channel
-%                         controls out while it is set.
+%       Testing           TEST MODE, as the GUI names it: true = run the
+%                         whole engine with no audio device (worker_loop's
+%                         prepare_device creates none) and copy each frame of
+%                         the stimulus straight into the acquisition ring
+%                         buffer instead; false = open Device for real. The
+%                         copy is what makes it a check rather than merely a
+%                         way to run without hardware -- a recorded sweep is
+%                         the presentation the schedule placed at that onset,
+%                         so mabr.ui.AcqController.alignmentCheck can hold the
+%                         two against each other after every run. Lives here,
+%                         not on the main window, because it is meaningless
+%                         without an opinion about which device would
+%                         otherwise be opened -- mabr.ui.AudioSettingsDialog
+%                         is where both are decided together, and greys the
+%                         device/channel controls out while it is set. The
+%                         property keeps its old name: it is what prefs and
+%                         every .mabrcfg ever saved call it, and renaming a
+%                         stored field to improve a label would cost every
+%                         one of those files its setting.
 %       StimulationOnly   true = play the signal and the timing pulse but
 %                         record nothing (worker_loop's prepare_device builds
 %                         an output-only audioDeviceWriter), so MABR can drive
@@ -72,14 +83,14 @@ classdef AudioSettings
 
         PlayerChannels   (1,2) double = [1 2]   % [DACsignal DACtiming]
         RecorderChannels (1,2) double = [1 2]   % [ADCsignal ADCtiming]
-        Testing          (1,1) logical = true   % loopback, no hardware
+        Testing          (1,1) logical = true   % TEST MODE: stimulus -> acquisition buffer
 
         % Playback + timing pulse only: a real output device is opened, but
         % nothing is recorded and no loop-back is required (see
         % mabr.acq.worker_loop's prepare_device and mabr.ui.AcqController's
         % start, which skips the timing self-test). Mutually exclusive with
-        % Testing, which opens no device at all -- Testing wins wherever both
-        % are somehow set.
+        % Testing (Test Mode), which opens no device at all -- Test Mode wins
+        % wherever both are somehow set.
         StimulationOnly  (1,1) logical = false  % play only, record nothing
 
         % Input the calibration microphone is patched to. Separate from
@@ -117,14 +128,18 @@ classdef AudioSettings
             % One-line summary for the status line / menu, mirroring
             % FilterPolicy.describe / ArtifactPolicy.describe.
             %
-            % The rate is named in EVERY branch, Testing included: it is the
-            % rate stimuli are rendered at and the ring buffer is filled at,
-            % which a loopback run does just as much as a real one -- it is
-            % the only setting here that still means something with no device
-            % open.
+            % The rate is named in EVERY branch, Test Mode included: it is
+            % the rate stimuli are rendered at and the ring buffer is filled
+            % at, which a Test Mode run does just as much as a real one -- it
+            % is the only setting here that still means something with no
+            % device open.
             rate = sprintf('%s kHz',mabr.Config.rateText(obj.SampleRate));
             if obj.Testing
-                s = sprintf('TESTING (loopback, no hardware), %s',rate);
+                % Named for what it DOES, not for what it lacks: "no hardware"
+                % describes a limitation, while what an operator has to know
+                % from a one-line summary is that the samples being recorded
+                % are the stimulus.
+                s = sprintf('TEST MODE (stimulus copied to acquisition), %s',rate);
                 return
             end
             if isempty(obj.Device)

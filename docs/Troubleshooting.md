@@ -47,11 +47,15 @@ Confirm the software side is fine by ticking **Testing** and running: the check 
 
 **All files have the same name / files overwrite each other** — Filenames are built from subject ID, frequency, level, and timestamp. If your stimulus metadata lacks `Frequency` and `Level`, MABR falls back to a label-based name; if labels are also missing, names can collide. Supply `Meta.Frequency`, `Meta.Level`, and `Meta.informativeParams` — see [Extending MABR](Extending.md#supplying-stimuli).
 
+**My data look like a perfect stimulus** — The session ran in [Test Mode](Test-Mode.md), which copies the stimulus into the acquisition buffer instead of opening a device. Check `ABR_Data.TestMode` in the file, or look for the `Run — TEST MODE` banner during a session. Turn it off in **Settings ▸ Audio Device (ASIO)…**.
+
 **Offline analysis finds no files or wrong parameters** — Filenames are parsed to recover stimulus parameters. Renaming files breaks this. See [Data Files](Data-Files.md#filenames).
 
 **`batchABRAnalysis` errors on its arguments** — Known and intentionally unfixed. Call the pipeline functions individually with name-value syntax; see [Offline Analysis](Offline-Analysis.md).
 
 ## During a session
+
+**MABR says `MISALIGNED` after a run** — The timing pulses that came back do not line up with the presentations that were planned, so the sweeps in that run cannot be trusted to belong to the conditions they are labelled with. `Jitter` in the message is the size of the problem in samples; a large `Offset` with zero jitter is only latency and is *not* flagged. On a rig, suspect the loop-back wiring, a sample-rate mismatch between MATLAB and the ASIO panel, or dropped frames (check the log for underruns). Run `verify_timing_loopback('Testing',false)` to characterise the loop-back, and `verify_test_mode` to confirm MABR's own chain is sound with the rig taken out of the picture. See [Test Mode](Test-Mode.md).
 
 **A condition never ends** — Under the correlation criterion, the threshold may be unreachable for that condition. The repetition count still bounds the run; if it is very large, the run takes a long time. Press **Advance** to move on. For custom criteria, always include a hard cap.
 
