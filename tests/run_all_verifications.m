@@ -10,6 +10,13 @@ function run_all_verifications()
 %       verify_engine_loopback   - acquisition engine (ring buffer, Pause/Stop/Kill)
 %       verify_data_roundtrip    - .abr writer satisfies the offline pipeline
 %       verify_legacy_import     - legacy .abr import shim
+%       verify_analysis          - the offline analysis classes
+%                                  (+mabr/+analysis): a synthetic session on
+%                                  disk taken through parse, segment, reject,
+%                                  detect, threshold, grid, plot, save and
+%                                  reload, with the recovered thresholds
+%                                  checked against the level the response was
+%                                  built to appear at
 %       verify_online_advance    - online correlation-threshold early stop
 %       verify_custom_advance    - the custom advance-function contract:
 %                                  context, validator, template, and a
@@ -101,7 +108,7 @@ function run_all_verifications()
 %   parses the calls below rather than keeping a second copy of them.
 %
 %   Requires the Parallel Computing Toolbox (all but verify_isi_jitter,
-%   verify_filters, verify_live_plot, verify_progress_monitor,
+%   verify_analysis, verify_filters, verify_live_plot, verify_progress_monitor,
 %   verify_metric_plot, verify_trace_organizer, verify_trace_inspector,
 %   verify_audio_settings, and verify_view_prefs). None require audio
 %   hardware.
@@ -110,7 +117,8 @@ function run_all_verifications()
 
 tests = {@verify_isi_jitter, @verify_play_plan, ...
          @verify_engine_loopback, @verify_data_roundtrip, ...
-         @verify_legacy_import,  @verify_online_advance, ...
+         @verify_legacy_import,  @verify_analysis, ...
+         @verify_online_advance, ...
          @verify_custom_advance, @verify_custom_strategy, ...
          @verify_artifact_rejection, @verify_filters, ...
          @verify_live_plot, @verify_live_refresh, ...

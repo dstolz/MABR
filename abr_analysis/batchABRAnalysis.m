@@ -20,17 +20,19 @@ for k = 1:length(abrSessions)
     abrSessionName = extractSessionName(abrSessions{k});
     fprintf('%d/%d. Processing: %s\n', k, length(abrSessions), abrSessionName)
 
-    T = parseABRFiles(abrSessions{k}, options.filePattern);
+    T = parseABRFiles(abrSessions{k});%, filePattern = options.filePattern);
     if isempty(T)
         fprintf(2, '* No valid file names, skipping *\n')
         continue
     end
 
-    [S, U, Fs, winIdx] = extractABRResponses(T, abrSessions{k}, options.window);
-    S = rejectArtifacts(S, winIdx, Fs);
+    [S, U, Fs, winIdx] = extractABRResponses(T, options.window);
+
     S = filterABRData(S, Fs);
 
-    h = plotABRGrid(S, U, winIdx, Fs);
+    S = rejectArtifacts(S, respInd = winIdx);
+
+    h = plotABRGrid(S, U, Fs, winIdx);
     tl = h.Children;
     title(tl, abrSessionName)
     abrSessionDate = T.timestamp(1);

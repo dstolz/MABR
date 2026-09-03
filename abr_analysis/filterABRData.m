@@ -1,4 +1,4 @@
-function S = filterABRData(S, Fs)
+﻿function S = filterABRData(S, Fs)
 % FILTERABRDATA Applies bandpass filtering to ABR data.
 %
 % Inputs:
@@ -27,8 +27,7 @@ dens  = 20;              % Density Factor
 [N, Fo, Ao, W] = firpmord([Fpass, Fstop]/(Fs/2), [1 0], [Dpass, Dstop]);
 
 % Calculate the coefficients using the FIRPM function.
-b  = firpm(N, Fo, Ao, W, {dens});
-Hlp = dfilt.dffir(b);
+bLp  = firpm(N, Fo, Ao, W, {dens});
 
 
 
@@ -42,15 +41,28 @@ dens  = 20;              % Density Factor
 [N, Fo, Ao, W] = firpmord([Fstop, Fpass]/(Fs/2), [0 1], [Dstop, Dpass]);
 
 % Calculate the coefficients using the FIRPM function.
-b  = firpm(N, Fo, Ao, W, {dens});
-Hhp = dfilt.dffir(b);
+bHp  = firpm(N, Fo, Ao, W, {dens});
 
+
+minLen = 3 * max(numel(bHp)-1, numel(bLp)-1) + 1;
+nSkipped = 0;
 
 parfor_progress(numel(S));
 for i = 1:numel(S)
     if isempty(S{i}), continue; end
-    S{i} = filtfilt(Hhp,S{i});
-    S{i} = filtfilt(Hlp,S{i});
+    if size(S{i},1) < minLen
+        nSkipped = nSkipped + 1;
+        parfor_progress;
+        continue
+    end
+    S{i} = filtfilt(bHp, 1, S{i});
+    S{i} = filtfilt(bLp, 1, S{i});
     parfor_progress;
 end
 parfor_progress(0);
+
+if nSkipped > 0
+    warning('filterABRData:segmentTooShort', ...
+        '%d of %d segments were shorter than %d samples and were left unfiltered.', ...
+        nSkipped, numel(S), minLen);
+end

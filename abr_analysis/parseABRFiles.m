@@ -65,7 +65,11 @@ for i = 1:length(d)
 
 
         for j= 1:length(p)
-            T(i).(p{j}) = double(a.SIG.(p{j}));
+            x = double(a.SIG.(p{j}));
+            if isempty(x) % old format (?)
+                x = a.SIG.dataParams.(p{j});
+            end
+            T(i).(p{j}) = x;
         end
 
     end

@@ -1,5 +1,7 @@
 # Offline Analysis
 
+> There is now a second, object-oriented route to the same results: **[the `mabr.analysis` classes](Analysis-Classes.md)**, which do the same job with one class per step and batching left to a loop you write. This page documents the original function pipeline, which is unchanged.
+
 The `abr_analysis/` folder holds a batch pipeline that turns folders of saved `.abr` files into hearing thresholds. It is **separate from the acquisition app** — a plain set of MATLAB functions you call from the command window or a script. You can run it on a different machine, with no hardware, at any time after recording.
 
 ## What it does
