@@ -181,6 +181,11 @@ classdef Session < handle
             onsets = cell(n,1);
             keep   = true(n,1);
 
+            % A legacy .abr reconstructs a serialized audioPlayerRecorder as it
+            % loads, warning once per file that this machine has no such ASIO
+            % device -- straight through the progress bar below.
+            quiet = mabr.data.io.quietDeviceWarnings(); %#ok<NASGU>
+
             p = mabr.analysis.Progress(n,sprintf('Reading %d files',n),obj.Verbose);
             for i = 1:n
                 ffn = fullfile(d(i).folder,d(i).name);
@@ -1093,6 +1098,7 @@ classdef Session < handle
                 o      = obj.Onsets{i};
             else
                 ffn = fullfile(obj.Files.folder(i),obj.Files.fileName(i));
+                quiet = mabr.data.io.quietDeviceWarnings(); %#ok<NASGU>
                 try
                     a = load(ffn,'-mat','ABR_Data');
                 catch ME

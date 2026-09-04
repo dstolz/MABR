@@ -396,8 +396,25 @@ classdef io
         end
 
         % --- Loading / import ----------------------------------------------
+        function c = quietDeviceWarnings()
+            % Silence the "Unrecognized device" warning a legacy .abr load raises.
+            %
+            % Legacy files carry a serialized audioPlayerRecorder alongside
+            % the data, so LOAD reconstructs it and the object warns that the
+            % rig's ASIO device is not on this machine -- once per file, which
+            % over a session's worth of files is pure noise (and shreds any
+            % carriage-return progress bar reading them). Nothing that reads an
+            % .abr uses that object. abr_analysis/parseABRFiles silenced the
+            % same identifier; this is that, as a guard the caller cannot
+            % forget to lift -- hold the returned onCleanup for the scope of
+            % the load and the previous warning state comes back, error or not.
+            ws = warning('off','audio:audioPlayerRecorder:invalidDevice');
+            c  = onCleanup(@() warning(ws));
+        end
+
         function block = importLegacy(ffn)
             % Load a legacy (or new) ABR_Data .abr file into a mabr.data.Block.
+            quiet = mabr.data.io.quietDeviceWarnings(); %#ok<NASGU>
             a = load(ffn,'-mat','ABR_Data');
             assert(isfield(a,'ABR_Data'),'mabr:data:io:noABRData', ...
                 'File "%s" contains no ABR_Data.',ffn);
