@@ -33,6 +33,12 @@ classdef Progress < handle
 
     methods
         function obj = Progress(total,message,enabled)
+            % Progress(total,message,enabled) starts a new progress line.
+            %
+            %   total    number of steps expected (0 disables output)
+            %   message  text shown before the bar/summary (default "")
+            %   enabled  whether to print anything at all (default true)
+            %   obj      (returned) the Progress object
             arguments
                 total   (1,1) double {mustBeNonnegative} = 0
                 message (1,1) string = ""
@@ -47,6 +53,8 @@ classdef Progress < handle
 
         function step(obj,n)
             % Advance the counter by n steps (default 1) and redraw.
+            %
+            %   n  steps to advance (default 1); (no return value)
             arguments
                 obj
                 n (1,1) double = 1
@@ -96,6 +104,9 @@ classdef Progress < handle
     methods (Static)
         function s = duration(seconds)
             % Human-readable elapsed time.
+            %
+            %   seconds  elapsed time, scalar seconds
+            %   s        (returned) 1x1 char, e.g. "1.2 s", "3 m 04 s", "1 h 02 m"
             if seconds < 60
                 s = sprintf('%.1f s', seconds);
             elseif seconds < 3600

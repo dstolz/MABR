@@ -44,8 +44,16 @@ classdef PermTest
         function [pVal,result] = run(X,opts)
             % Permutation test on one [nSamples x nSweeps] matrix.
             %
-            %   pVal    global p-value for the chosen max-statistic
-            %   result  struct: .method .t .tThresh .statistic (observed max),
+            %   X    [nSamples x nSweeps] double
+            %   opts.Method            "clusterMass" (default), "tmax", or "tfce"
+            %   opts.NumPermutations   number of sign-flip permutations (default 1000)
+            %   opts.Alpha             two-sided per-sample alpha (default 0.05)
+            %   opts.MinClusterSize    minimum run length counted as a cluster (default 1)
+            %   opts.TFCE              struct('E',.,'H',.,'dh',.) TFCE parameters
+            %   opts.Seed              [] (default, uses global rng) or an integer seed
+            %   opts.BlockSize         permutations generated per batch (default 512)
+            %   pVal    (returned) global p-value for the chosen max-statistic
+            %   result  (returned) struct: .method .t .tThresh .statistic (observed max),
             %           .null (nPerm x 1), .pSample (FWER-corrected per sample,
             %           for every method), .sigMask, .nSweeps, .clusters
             arguments
@@ -152,6 +160,12 @@ classdef PermTest
             % Written this way because a sign flip changes sumX and leaves
             % sumSq alone -- which is what makes a whole block of permuted
             % t-maps one matrix product rather than a loop.
+            %
+            %   sumX, sumSq  same-shape arrays, sum(X,dim) and sum(X.^2,dim)
+            %                (columns are the permutations/rows are samples,
+            %                whichever orientation the caller used)
+            %   n            number of sweeps summed over (scalar)
+            %   t            (returned) t-statistic, same shape as sumX
             v  = (sumSq - (sumX.^2)/n) ./ (n-1);
             se = sqrt(v./n);
             t  = (sumX./n) ./ se;
@@ -163,6 +177,11 @@ classdef PermTest
             %
             % Vectorized over rows: run boundaries come from one DIFF, and each
             % run's mass from the difference of a running sum at its ends.
+            %
+            %   T      [nRows x nSamples] double (t-maps, one row per permutation)
+            %   thr    t threshold, scalar
+            %   minSz  minimum run length counted as a cluster (default 1)
+            %   m      (returned) [nRows x 1] double, largest |cluster mass| per row
             arguments
                 T double
                 thr (1,1) double
@@ -179,6 +198,11 @@ classdef PermTest
             % sample inside a supra-h run gains extent^E * h^H * dh. The
             % accumulation is done with a difference array so a run is two
             % writes rather than a loop over its samples.
+            %
+            %   T      [nRows x nSamples] double (t-maps)
+            %   par    struct('E',.,'H',.,'dh',.) TFCE parameters (defaults 0.5,2.0,0.1)
+            %   minSz  minimum run length counted (default 1)
+            %   A      (returned) [nRows x nSamples] double, TFCE-enhanced map
             arguments
                 T double
                 par struct = struct('E',0.5,'H',2.0,'dh',0.1)
@@ -195,6 +219,10 @@ classdef PermTest
 
         function p = fwerP(stat,null)
             % FWER-corrected p per sample against a max-statistic null.
+            %
+            %   stat  observed per-sample statistic, any shape
+            %   null  [nPerm x 1] max-statistic null distribution
+            %   p     (returned) FWER-corrected p-value, same shape as stat
             nPerm = numel(null);
             p = zeros(size(stat));
             chunk = 2000;
@@ -207,6 +235,10 @@ classdef PermTest
         function ax = plot(result,ax)
             % The two pictures worth seeing: the t map against its threshold,
             % and where the observed statistic falls in the permutation null.
+            %
+            %   result  struct returned by run()
+            %   ax      1x2 array of axes to draw into (default: a new figure)
+            %   ax      (returned) the same 1x2 array of axes
             arguments
                 result struct
                 ax = []
@@ -252,6 +284,11 @@ classdef PermTest
     methods (Static, Access = private)
         function m = maxPositiveMass(T,thr,minSz)
             % Largest positive supra-threshold run mass per row.
+            %
+            %   T      [nRows x nSamples] double
+            %   thr    threshold, scalar
+            %   minSz  minimum run length counted
+            %   m      (returned) [nRows x 1] double
             [nr,ns] = size(T);
             m = zeros(nr,1);
 
@@ -281,6 +318,12 @@ classdef PermTest
 
         function A = tfceOneSided(X,E,H,dh,minSz)
             % TFCE of a non-negative map, per row.
+            %
+            %   X      [nRows x nSamples] double, non-negative
+            %   E,H    TFCE extent/height exponents
+            %   dh     threshold step size
+            %   minSz  minimum run length counted
+            %   A      (returned) [nRows x nSamples] double
             [nr,ns] = size(X);
             A = zeros(nr,ns);
             mx = max(X(:));
@@ -316,6 +359,13 @@ classdef PermTest
         function C = clusterTable(t,thr,minSz,null)
             % Inventory of the observed supra-threshold clusters, each with a
             % p-value read off the same max-statistic null.
+            %
+            %   t      1 x nSamples observed t-map
+            %   thr    t threshold, scalar
+            %   minSz  minimum run length counted
+            %   null   [nPerm x 1] max-statistic null distribution
+            %   C      (returned) struct array, one per cluster: .sign,
+            %          .first, .last (sample indices), .mass, .p
             C = struct('sign',{},'first',{},'last',{},'mass',{},'p',{});
             for s = [1 -1]
                 x = s*t;
@@ -333,6 +383,8 @@ classdef PermTest
         end
 
         function v = getdef(s,f,d)
+            % s: struct or []; f: field name; d: default. v: (returned)
+            % s.(f) when present and non-empty, else d.
             if isstruct(s) && isfield(s,f) && ~isempty(s.(f)), v = s.(f); else, v = d; end
         end
     end

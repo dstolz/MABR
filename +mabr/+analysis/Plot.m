@@ -39,6 +39,22 @@ classdef Plot
             %   rowVals  row values, ascending (levels). Drawn top-down, loudest
             %            at the top, the way an ABR series is read.
             %   colVals  column values, ascending (frequencies)
+            %   opts.Window     [t0 t1] ms subset of t to draw (default all)
+            %   opts.Normalize  "column" (default), "global", "tile", or "none"
+            %                   -- what a tile's full-scale height means
+            %   opts.Colors     [nCol x 3] RGB, one row per column (default: palette)
+            %   opts.Palette    palette name when Colors is not given (default "linear")
+            %   opts.LineWidth  trace line width (default 1.5)
+            %   opts.RowLabel   y-axis label for the whole layout (default "Level (dB SPL)")
+            %   opts.ColLabel   x-axis label for the whole layout (default "Frequency (kHz)")
+            %   opts.RowFormat  sprintf format for row tick labels (default "%g")
+            %   opts.ColFormat  sprintf format for column tick labels (default "%g")
+            %   opts.Threshold  1 x nCol levels; draws a rule across that row per column
+            %   opts.Scale      multiplier applied to the data before drawing (default 1e6, V to uV)
+            %   opts.Unit       unit string for the scale bar (default "\muV")
+            %   opts.Parent     tiledlayout to draw into (default: a new figure)
+            %   ax  (returned) [nRow x nCol] array of axes handles
+            %   tl  (returned) the tiledlayout
             arguments
                 S cell
                 t (:,1) double
@@ -172,6 +188,21 @@ classdef Plot
             % The grid answers "where does the response disappear" across
             % frequencies; this answers it for one, with the amplitudes still
             % comparable because every trace shares a scale.
+            %
+            %   S               [n x 1] cell, one mean vector or [nSamples x
+            %                   nSweeps] matrix (averaged here) per level
+            %   t               time vector (ms), one entry per sample
+            %   rowVals         level values, ascending; drawn bottom-to-top
+            %   opts.Window     [t0 t1] ms subset of t to draw (default all)
+            %   opts.Spacing    display-unit offset between traces (default NaN = auto, 2.2x peak)
+            %   opts.Colors     [n x 3] RGB, one row per level (default: palette)
+            %   opts.Palette    palette name when Colors is not given (default "linear")
+            %   opts.Scale      multiplier applied to the data before drawing (default 1e6)
+            %   opts.Unit       unit string for the scale bar (default "\muV")
+            %   opts.RowFormat  sprintf format for the y tick labels (default "%g dB")
+            %   opts.Threshold  level at which to draw a dashed threshold line (default NaN = none)
+            %   opts.Parent     axes to draw into (default: a new figure's axes)
+            %   ax  (returned) the axes
             arguments
                 S cell
                 t (:,1) double
@@ -246,6 +277,20 @@ classdef Plot
             % open marker at the ceiling with an upward arrow rather than as a
             % number: "greater than the loudest level presented" is what was
             % measured, and plotting it as a value invites it into an average.
+            %
+            %   freqs            frequencies, 1 x nFreq
+            %   thresh           thresholds, 1 x nFreq (Inf = no response)
+            %   opts.CI          [2 x nFreq] lower/upper bound per frequency (default none)
+            %   opts.Ceiling     level to draw non-responses at (default: max(thresh)+5, or 90)
+            %   opts.Colors      [nFreq x 3] RGB per marker (default: opts.Color repeated)
+            %   opts.Palette     unused here; present for interface symmetry with other plots
+            %   opts.Color       [1x3] RGB for the line/markers when Colors is not given
+            %   opts.Label       draw numeric labels beside each marker (default true)
+            %   opts.DisplayName legend name for this series (default "" = no legend entry)
+            %   opts.MarkerSize  scatter marker size (default 60)
+            %   opts.Parent      axes to draw into (default: a new figure's axes)
+            %   opts.Hold        overlay onto Parent instead of clearing it first (default false)
+            %   ax  (returned) the axes
             arguments
                 freqs (1,:) double
                 thresh (1,:) double
@@ -326,6 +371,13 @@ classdef Plot
         function ax = detection(fitOut,opts)
             % The evidence behind one threshold: the points that were fitted,
             % the fitted curve, and where the criterion was met.
+            %
+            %   fitOut       struct returned by mabr.analysis.Threshold.fit
+            %   opts.Parent  axes to draw into (default: a new figure's axes)
+            %   opts.XLabel  x-axis label (default "Level (dB SPL)")
+            %   opts.YLabel  y-axis label (default "Detection", or "... (scaled)"
+            %                when fitOut.Y was rescaled before fitting)
+            %   ax  (returned) the axes
             arguments
                 fitOut struct
                 opts.Parent = []
@@ -384,6 +436,17 @@ classdef Plot
         function ax = waveform(X,t,opts)
             % One condition: the mean with an error band, optionally over the
             % individual sweeps.
+            %
+            %   X                [nSamples x nSweeps] double
+            %   t                time vector (ms), [nSamples x 1]
+            %   opts.Parent      axes to draw into (default: a new figure's axes)
+            %   opts.Sweeps      draw the individual sweeps too (default false)
+            %   opts.Band        "none", "std", "sem" (default), or "ci"
+            %   opts.Confidence  CI level when Band="ci" (default 0.95)
+            %   opts.Color       [1x3] RGB for the mean trace/band (default [0 0.35 0.7])
+            %   opts.Scale       multiplier applied to X before drawing (default 1e6)
+            %   opts.Unit        unit string for the y label (default "\muV")
+            %   ax  (returned) the axes
             arguments
                 X double
                 t (:,1) double
@@ -429,6 +492,10 @@ classdef Plot
             %
             % The ends are trimmed: the extremes of a perceptual map are very
             % dark and very light, and neither reads as a line on white.
+            %
+            %   n    number of colors to return
+            %   name palette name (default "linear"); see PaletteNames
+            %   cm   (returned) [n x 3] RGB in [0 1]
             arguments
                 n (1,1) double {mustBePositive,mustBeInteger}
                 name (1,1) string = "linear"
@@ -445,6 +512,11 @@ classdef Plot
 
         function hw = bandHalfWidth(Y,kind,conf)
             % Half-width of an error band over columns of Y.
+            %
+            %   Y     [nSamples x nSweeps] double
+            %   kind  "std", "sem", "ci", or anything else (-> zeros)
+            %   conf  CI level, used only when kind == "ci"
+            %   hw    (returned) [nSamples x 1] half-width per sample
             n = size(Y,2);
             s = std(Y,0,2);
             switch kind
@@ -461,6 +533,8 @@ classdef Plot
         function plainAxes(ax)
             % Switch off the interactive axes toolbar, which fights with
             % programmatic limits and adds nothing to a static figure.
+            %
+            %   ax  array of axes handles (no return value)
             for a = ax(:).'
                 try %#ok<TRYNC>
                     if isprop(a,'Toolbar'), a.Toolbar.Visible = 'off'; end
@@ -474,6 +548,11 @@ classdef Plot
             % One number per tile saying what its full scale is, whichever
             % normalization was asked for -- so the traces, the y limits and
             % the scale bar cannot disagree.
+            %
+            %   M          [nRow x nCol] cell of display-scaled vectors (or [])
+            %   opts       the grid() options struct (.Normalize, .Unit used)
+            %   lims       (returned) [nRow x nCol] double, full-scale value per tile
+            %   unitLabel  (returned) opts.Unit, passed through
             [nRow,nCol] = size(M);
             lims = ones(nRow,nCol);
 
@@ -498,12 +577,20 @@ classdef Plot
         end
 
         function p = peakOr0(v)
+            % v: a vector or []. p: (returned) max(abs(v)), or 0 when v is empty.
             if isempty(v), p = 0; else, p = max(abs(v(:))); end
         end
 
         function scaleBar(ax,fullScale,unit,normalize)
             % A bar of known size, drawn inside the axes, so a normalized grid
             % still says what its traces are worth.
+            %
+            %   ax         axes to draw into
+            %   fullScale  the data value a tile's full height represents
+            %   unit       unit string for the bar's label
+            %   normalize  "none" (bar length in data units) or any other
+            %              value (bar length as a fraction of fullScale)
+            %   (no return value)
             if ~isfinite(fullScale) || fullScale <= 0, return; end
             xl = xlim(ax); yl = ylim(ax);
 
@@ -524,6 +611,9 @@ classdef Plot
 
         function v = niceNumber(x)
             % Nearest 1-2-5 rung at or below x.
+            %
+            %   x  positive scalar
+            %   v  (returned) nearest 1/2/5 x 10^k value at or below x (1 if x <= 0)
             if ~isfinite(x) || x <= 0, v = 1; return; end
             e = floor(log10(x));
             m = x/10^e;
@@ -535,12 +625,17 @@ classdef Plot
         end
 
         function xt = niceTicks(tv)
+            % tv: ascending time vector. xt: (returned) tick positions spaced
+            % at a 1-2-5 step covering roughly 4 ticks across tv's span.
             span = tv(end)-tv(1);
             step = mabr.analysis.Plot.niceNumber(span/4);
             xt = ceil(tv(1)/step)*step : step : tv(end);
         end
 
         function A = anchors(name)
+            % name: palette name (one of PaletteNames, case-insensitive).
+            % A: (returned) [k x 3] RGB anchor colors interpolated by palette().
+            % Throws mabr:analysis:Plot:palette for an unknown name.
             switch lower(string(name))
                 case "linear"   % viridis
                     A = [0.2670 0.0049 0.3294

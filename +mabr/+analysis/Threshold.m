@@ -258,6 +258,14 @@ classdef Threshold
             % least squares. Replaces fitglm so that no Statistics toolbox is
             % needed; y may be fractional, which IRLS handles as a binomial
             % proportion the same way a GLM with weights does.
+            %
+            %   x          predictor (level), [n x 1]
+            %   y          response in [0 1] (binary or fractional), [n x 1]
+            %   w          per-observation weight, [n x 1]
+            %   ridge      ridge penalty added to the normal equations (default 1e-6)
+            %   b          (returned) [intercept; slope], [2 x 1]
+            %   covB       (returned) [2 x 2] covariance of b (NaN(2) if ill-conditioned)
+            %   converged  (returned) 1x1 logical
             arguments
                 x (:,1) double
                 y (:,1) double
@@ -318,6 +326,19 @@ classdef Threshold
             %
             % Several starts, because a single start on a short series lands in
             % a flat region often enough to matter.
+            %
+            %   x          predictor (level), [n x 1]
+            %   y          response, [n x 1]
+            %   w          per-observation weight (default all ones), [n x 1]
+            %   asymptotes "fixed" (default, A/B pinned to data range) or "fit"
+            %   p          (returned) [4 x 1]: [A;B;c;log(d)] regardless of
+            %              which branch ran (fixed A0/B0 are reported too)
+            %   resid      (returned) [n x 1] residuals y - model(p,x) (equal
+            %              to y itself if the fit did not converge)
+            %   J          (returned) [n x 4] finite-difference Jacobian at the
+            %              solution (columns of a pinned asymptote are zero);
+            %              [] if the fit did not converge
+            %   converged  (returned) 1x1 logical
             arguments
                 x (:,1) double
                 y (:,1) double
@@ -379,6 +400,13 @@ classdef Threshold
         function iso = isotonicPAV(x,y,w)
             % Isotonic (non-decreasing) regression by pooled adjacent
             % violators, weighted, with repeated x collapsed first.
+            %
+            %   x    predictor (level), [n x 1]
+            %   y    response, [n x 1]
+            %   w    per-observation weight (default all ones), [n x 1]
+            %   iso  (returned) struct: .x (unique levels), .y (weighted mean
+            %        per level), .w (summed weight per level), .yhat
+            %        (monotone-fitted value per level)
             arguments
                 x (:,1) double
                 y (:,1) double
@@ -419,6 +447,11 @@ classdef Threshold
 
     methods (Static, Access = private)
         function out = fitLogistic(out,x,y,w,opts,stream)
+            % GLM branch of fit(). out: the partially-filled result struct
+            % from fit() (in/out); x,y,w: as in fit()/logisticIRLS; opts: the
+            % fit() options struct; stream: RandStream for the CI draw, or [].
+            % Returns out with Type/Converged/Model/Predict/Threshold/CI set
+            % (falls back to fitIsotonic when the fitted slope is not positive).
             [b,covB,conv] = mabr.analysis.Threshold.logisticIRLS(x,y,w,opts.Ridge);
             slope = b(2);
 
@@ -443,6 +476,9 @@ classdef Threshold
         end
 
         function out = fitSigmoid(out,x,y,w,opts,stream)
+            % Sigmoid branch of fit(). Same in/out shape as fitLogistic;
+            % throws mabr:analysis:Threshold:sigmoidFailed on non-convergence
+            % (caught by fit(), which falls back to fitMinimum).
             [p,resid,J,conv] = mabr.analysis.Threshold.sigmoidFit(x,y,w,opts.Asymptotes);
             if ~conv || ~all(isfinite(p))
                 error('mabr:analysis:Threshold:sigmoidFailed','Sigmoid fit did not converge.');
@@ -472,6 +508,8 @@ classdef Threshold
         end
 
         function out = fitIsotonic(out,x,y,w,opts)
+            % Isotonic branch of fit(). Same in/out shape as fitLogistic;
+            % no CI is computed (out.CI stays [NaN NaN] from fit()'s default).
             iso = mabr.analysis.Threshold.isotonicPAV(x,y,w);
             out.Type      = "isotonic";
             out.Converged = true;
@@ -502,6 +540,9 @@ classdef Threshold
         end
 
         function out = fitMinimum(out,x,y,opts)
+            % Assumption-free fallback branch of fit(): the first level whose
+            % y reaches Criterion of the observed range. Same in/out shape as
+            % fitLogistic (no w, no CI).
             out.Type      = "minimum";
             out.Converged = true;
             out.Model     = struct('x',x,'y',y);
@@ -523,11 +564,16 @@ classdef Threshold
 
         % --- inverses -------------------------------------------------------
         function xc = logitInverse(b0,b1,pCrit)
+            % Level at which the logistic curve with intercept b0, slope b1
+            % reaches probability pCrit. xc: (returned) scalar level.
             pCrit = min(max(pCrit,eps),1-eps);
             xc = (log(pCrit/(1-pCrit)) - b0)/b1;
         end
 
         function xc = sigmoidInverse(A,B,c,d,yCrit)
+            % Level at which the sigmoid A + (B-A)/(1+exp(-(x-c)/d)) reaches
+            % yCrit. xc: (returned) scalar level, or NaN when yCrit is outside
+            % (A,B) or the curve is degenerate.
             if ~all(isfinite([A B c d])) || d == 0 || A == B, xc = NaN; return; end
             t = (B-A)/(yCrit-A) - 1;              % exp(-(x-c)/d)
             if ~isfinite(t) || t <= 0, xc = NaN; return; end
@@ -536,6 +582,11 @@ classdef Threshold
 
         % --- confidence intervals -------------------------------------------
         function ci = ciLogistic(b,covB,opts,stream)
+            % Monte Carlo CI on the GLM threshold: draws parameters from
+            % N(b,covB), inverts each draw, takes the percentile interval.
+            % b: [2x1], covB: [2x2], opts: fit() options (Criterion,
+            % CINumSamples, CIAlpha used), stream: RandStream or [].
+            % ci: (returned) [lower upper], [NaN NaN] if covB is singular.
             n = max(100,opts.CINumSamples);
             S = (covB+covB.')/2 + 1e-12*eye(2);
             [R,fail] = chol(S,'lower');
@@ -550,6 +601,11 @@ classdef Threshold
         end
 
         function ci = ciSigmoid(p,covP,opts,stream)
+            % Monte Carlo CI on the sigmoid threshold, same idea as
+            % ciLogistic. p: [4x1] = [A;B;c;log(d)], covP: [4x4] (singular in
+            % the pinned rows/columns of a fixed-asymptote fit), opts/stream
+            % as ciLogistic. ci: (returned) [lower upper], [NaN NaN] if no
+            % parameter is free or the free covariance block is singular.
             n = max(100,opts.CINumSamples);
             S = (covP+covP.')/2;
             % A pinned asymptote has zero variance, so this covariance is
@@ -571,6 +627,10 @@ classdef Threshold
         end
 
         function ci = percentileCI(th,alpha)
+            % th: 1 x n Monte Carlo threshold draws (may contain NaN/Inf,
+            % dropped before use); alpha: two-sided CI level. ci: (returned)
+            % [lower upper] percentile interval, [NaN NaN] if fewer than 10
+            % finite draws remain.
             th = th(isfinite(th));
             if numel(th) < 10, ci = [NaN NaN]; return; end
             ci = mabr.analysis.Threshold.percentile(th,[alpha/2 1-alpha/2]);
@@ -579,6 +639,11 @@ classdef Threshold
         function q = percentile(x,p)
             % Linear-interpolation percentile, so no Statistics toolbox is
             % needed for a confidence interval.
+            %
+            %   x  data vector, any shape
+            %   p  probabilities in [0 1], any shape
+            %   q  (returned) percentile values, same shape as p (NaN(size(p))
+            %      when x is empty)
             x = sort(x(:));
             n = numel(x);
             if n == 0, q = nan(size(p)); return; end
@@ -587,6 +652,8 @@ classdef Threshold
         end
 
         function z = randn2(m,n,stream)
+            % m,n: output size; stream: RandStream or [] (uses the global
+            % stream). z: (returned) [m x n] standard normal draws.
             if isempty(stream), z = randn(m,n); else, z = randn(stream,m,n); end
         end
     end

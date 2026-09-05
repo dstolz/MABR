@@ -43,8 +43,9 @@ classdef Artifacts
         function [isArt,info] = detect(X,opts)
             % Flag artifact sweeps in one [nSamples x nSweeps] matrix.
             %
-            %   isArt   1 x nSweeps logical
-            %   info    struct with .feature (the per-sweep value), .lower,
+            %   X       [nSamples x nSweeps] double
+            %   isArt   (returned) 1 x nSweeps logical
+            %   info    (returned) struct with .feature (the per-sweep value), .lower,
             %           .upper (the bounds applied), .method, .name, .count
             arguments
                 X double
@@ -101,6 +102,11 @@ classdef Artifacts
         function f = feature(X,name,rows)
             % Per-sweep feature within a response window. Pure: no state, no
             % thresholds, no decisions -- just a number per column of X.
+            %
+            %   X     [nSamples x nSweeps] double
+            %   name  feature name (default "absPeak"; see Features)
+            %   rows  row selector passed to windowRows ([] = all rows)
+            %   f     (returned) 1 x nSweeps double
             arguments
                 X double
                 name (1,1) string {mustBeMember(name, ...
@@ -126,6 +132,12 @@ classdef Artifacts
         function Y = windowRows(X,rows)
             % Restrict X to the rows a caller nominated. Empty means all rows,
             % which is the only reading that cannot silently drop data.
+            %
+            %   X     [nSamples x nSweeps] double
+            %   rows  [] (all rows), a logical mask of length nSamples, or
+            %         numeric row indices into X
+            %   Y     (returned) X(rows,:) -- [numel(rows) x nSweeps] (or
+            %         [nSamples x nSweeps] when rows is [])
             if isempty(rows)
                 Y = X;
                 return
@@ -149,6 +161,10 @@ classdef Artifacts
             % Logical row mask for a [t0 t1] window over a time vector, both
             % in the same units. The one place a window becomes a mask, so a
             % rejection window and a plot window cannot round differently.
+            %
+            %   t     time vector, [nSamples x 1]
+            %   win   [t0 t1], same units as t (order does not matter)
+            %   rows  (returned) [nSamples x 1] logical mask
             arguments
                 t (:,1) double
                 win (1,2) double
@@ -160,6 +176,14 @@ classdef Artifacts
             % Show what was rejected and why: the feature distribution with
             % the bounds that were applied, and the surviving mean with the
             % rejected sweeps drawn over it.
+            %
+            %   X          [nSamples x nSweeps] double
+            %   isArt      1 x nSweeps logical, from detect()
+            %   info       info struct returned by detect() (.feature, .lower,
+            %              .upper, .name, .method)
+            %   opts.Time  time vector for the x axis (default 1:nSamples)
+            %   opts.Parent  tiledlayout to draw into (default: a new figure)
+            %   ax         (returned) 1x2 array of axes handles
             arguments
                 X double
                 isArt (1,:) logical

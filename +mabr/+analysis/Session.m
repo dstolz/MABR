@@ -125,6 +125,17 @@ classdef Session < handle
         % =================================================================
         function obj = Session(sessionPath,opts)
             % Session(path,Name=Value) reads the file list and metadata.
+            %
+            %   sessionPath          folder of .abr files (default "" = build
+            %                        an empty, unparsed Session)
+            %   opts.FilePattern     regex a file name must match (default "\.abr$")
+            %   opts.Filter          a mabr.analysis.Filter (default: the class default)
+            %   opts.Window          [t0 t1] ms segmentation window (default [-12 12])
+            %   opts.ResponseWindow  [t0 t1] ms response window (default [0 10])
+            %   opts.KeepTraces      cache whole traces in memory (default true)
+            %   opts.Verbose         print progress (default true)
+            %   opts.Parse           call parse() at construction (default true)
+            %   obj  (returned) the constructed Session
             arguments
                 sessionPath (1,1) string = ""
                 opts.FilePattern (1,1) string = "\.abr$"
@@ -162,6 +173,9 @@ classdef Session < handle
             % The parameter columns are named by SIG.informativeParams, which
             % is what makes this work for a bank that varies something other
             % than frequency and level.
+            %
+            %   obj  (uses obj.Path, obj.FilePattern, obj.KeepTraces, obj.Verbose)
+            %   T    (returned) obj.Files, also stored on the object
             d = dir(fullfile(char(obj.Path),'*.abr'));
             if ~isempty(d)
                 keep = ~cellfun(@isempty,regexp({d.name},char(obj.FilePattern),'once'));
@@ -260,6 +274,14 @@ classdef Session < handle
             % Files sharing a stimulus condition are CONCATENATED into one
             % condition rather than overwriting each other, so a repeated or
             % topped-up measurement adds sweeps instead of replacing them.
+            %
+            %   opts.Window                   [t0 t1] ms; overrides and updates obj.Window
+            %   opts.Filter                   a mabr.analysis.Filter; overrides and updates obj.Filter
+            %   opts.HonorAcquisitionArtifacts seed rejection flags from the
+            %                                 rig's own ADC.IsArtifact (default true)
+            %   opts.Detrend                  polynomial order to detrend each
+            %                                 sweep by, NaN = no detrending (default NaN)
+            %   T  (returned) obj.Conditions, also stored on the object
             arguments
                 obj
                 opts.Window double = []
@@ -356,6 +378,16 @@ classdef Session < handle
             % Judges each condition on its own, which is the point: an
             % electrode drifts over a session, and a sweep that is an outlier
             % among its neighbours is the one worth doubting.
+            %
+            %   opts.Feature     feature passed to mabr.analysis.Artifacts.detect (default "absPeak")
+            %   opts.Method      criterion passed to mabr.analysis.Artifacts.detect (default "median")
+            %   opts.Threshold   threshold for Method="threshold" (default Inf)
+            %   opts.MethodArgs  extra isoutlier args, as a struct (default struct())
+            %   opts.Window      ms window the feature is computed over (default obj.ResponseWindow)
+            %   opts.Keep        OR new flags with existing ones rather than
+            %                    replacing them (default true)
+            %   opts.Plot        show mabr.analysis.Artifacts.plotDiagnostic per condition (default false)
+            %   T  (returned) obj.Conditions, also stored on the object
             arguments
                 obj
                 opts.Feature (1,1) string = "absPeak"
@@ -408,6 +440,7 @@ classdef Session < handle
 
         function clearRejected(obj)
             % Drop every artifact flag, including the acquisition rig's.
+            % (No inputs beyond obj, no return value; mutates obj.Conditions.)
             obj.requireConditions();
             obj.Conditions.Rejected = cellfun(@(x) false(size(x)), ...
                 obj.Conditions.Rejected,'UniformOutput',false);
@@ -419,6 +452,16 @@ classdef Session < handle
         % =================================================================
         function T = detect(obj,opts)
             % Permutation-test every condition and store p, isSig, strength.
+            %
+            %   opts.Method           "clusterMass", "tmax", or "tfce" (default "tfce")
+            %   opts.NumPermutations  permutations per condition (default 1000)
+            %   opts.Alpha            significance level (default 0.05)
+            %   opts.MinClusterSize   minimum run length counted as a cluster (default 1)
+            %   opts.Window           ms window tested (default obj.ResponseWindow)
+            %   opts.Seed             permutation seed (default 1)
+            %   opts.UseParallel      run conditions on a parfor (default false)
+            %   T  (returned) obj.Conditions, with p/isSig/strength/Detection
+            %      columns added, also stored on the object
             arguments
                 obj
                 opts.Method (1,1) string {mustBeMember(opts.Method,["clusterMass","tmax","tfce"])} = "tfce"
@@ -476,6 +519,20 @@ classdef Session < handle
             % usually frequency, but a bank varying frequency and rate gets a
             % threshold for each combination, which is the right answer and the
             % reason this is not hard-coded to two dimensions.
+            %
+            %   opts.LevelParam    parameter to treat as the level axis
+            %                      (default "" = auto via levelParam())
+            %   opts.GroupBy       parameters to fit a separate threshold per
+            %                      (default [] = every varying parameter except the level)
+            %   opts.Type          "glm" (default), "sigmoid", "isotonic", or "minimum"
+            %   opts.FitTarget     "auto" (default), "binary", "p", or "strength"
+            %   opts.Criterion     fraction/probability the threshold is read at (default 0.5)
+            %   opts.Extrapolate   allow a threshold beyond the levels tested (default true)
+            %   opts.NearestLevel  snap the threshold to the nearest level tested (default false)
+            %   opts.CIAlpha       two-sided CI level (default 0.05)
+            %   opts.Seed          Monte Carlo CI seed (default 1)
+            %   T  (returned) obj.Thresholds, one row per group, also stored
+            %      on the object
             arguments
                 obj
                 opts.LevelParam (1,1) string = ""
@@ -573,6 +630,10 @@ classdef Session < handle
             % because the two disagreeing is information -- and because a
             % curated session must still be able to say what the model said.
             % Pass Inf for "no response", the same convention the fit uses.
+            %
+            %   row    row index into obj.Thresholds
+            %   value  curated threshold value (Inf = no response)
+            %   (no return value; sets obj.Thresholds.Curated/IsCurated(row))
             arguments
                 obj
                 row (1,1) double {mustBeInteger,mustBePositive}
@@ -589,6 +650,10 @@ classdef Session < handle
 
         function row = thresholdRow(obj,param,value)
             % The threshold row for one group value, e.g. thresholdRow("Frequency",16).
+            %
+            %   param  grouping column name in obj.Thresholds
+            %   value  value to match in that column
+            %   row    (returned) row index, or [] when no row matches
             arguments
                 obj
                 param (1,1) string
@@ -609,6 +674,12 @@ classdef Session < handle
             % Sweeps for one condition: [nSamples x nSweeps].
             %
             % Flagged sweeps are excluded by default and are one argument away.
+            %
+            %   row                    row index into obj.Conditions
+            %   opts.IncludeRejected   include flagged sweeps (default false)
+            %   opts.Polarity          "all" (default), "positive", or "negative"
+            %   opts.Window            ms window to crop rows to (default: obj.Window, i.e. no crop)
+            %   X  (returned) [nSamples x nKept] double
             arguments
                 obj
                 row (1,1) double
@@ -645,6 +716,10 @@ classdef Session < handle
             % A condition with no surviving sweeps is a column of NaN, not a
             % column of zeros: there is no average to report, and zeros would
             % draw as a flat trace indistinguishable from a real null.
+            %
+            %   opts.IncludeRejected  include flagged sweeps (default false)
+            %   opts.Polarity         "all" (default), "positive", or "negative"
+            %   M  (returned) [nSamples x nConditions] double
             arguments
                 obj
                 opts.IncludeRejected (1,1) logical = false
@@ -668,6 +743,18 @@ classdef Session < handle
             % S{r,c} is a [nSamples x nSweeps] matrix (or the mean, with
             % Reduce="mean"), empty where the session holds no such condition.
             % U is the struct of unique values, one field per parameter.
+            %
+            %   rowParam               row parameter name (default "" = levelParam())
+            %   colParam               column parameter name (default "" = frequencyParam())
+            %   opts.IncludeRejected   include flagged sweeps (default false)
+            %   opts.Reduce            "none" (default) or "mean"
+            %   opts.Where             struct of param=values to restrict to (default none)
+            %   opts.Window            ms window to crop sweeps to (default: no crop)
+            %   S        (returned) [nRow x nCol] cell, see above
+            %   U        (returned) struct of unique parameter values, one field per parameter
+            %   rowVals  (returned) unique row values, ascending, [nRow x 1]
+            %   colVals  (returned) unique column values, ascending, [nCol x 1]
+            %            (or 1 when colParam is "")
             arguments
                 obj
                 rowParam (1,1) string = ""
@@ -720,6 +807,9 @@ classdef Session < handle
 
         function t = timeVector(obj,window)
             % Time in ms, optionally restricted to a window.
+            %
+            %   window  [t0 t1] ms (default [-Inf Inf] = all of obj.Time)
+            %   t       (returned) [n x 1] double subset of obj.Time
             arguments
                 obj
                 window (1,2) double = [-Inf Inf]
@@ -729,6 +819,8 @@ classdef Session < handle
 
         function names = varyingParams(obj)
             % Parameters that take more than one value in this session.
+            %
+            %   names  (returned) string row vector, subset of obj.ParamNames
             names = string.empty;
             if isempty(obj.Conditions) || height(obj.Conditions) == 0, return; end
             for pn = obj.ParamNames
@@ -738,6 +830,9 @@ classdef Session < handle
 
         function pn = levelParam(obj)
             % Which parameter is the level axis.
+            %
+            %   pn  (returned) 1x1 string, a name in obj.ParamNames; throws
+            %       mabr:analysis:Session:noLevelParam when it cannot be told
             pn = obj.matchParam(mabr.analysis.Session.LevelAliases);
             if pn == ""
                 v = obj.varyingParams();
@@ -753,6 +848,8 @@ classdef Session < handle
 
         function pn = frequencyParam(obj)
             % Which parameter is the frequency axis ("" when there is none).
+            %
+            %   pn  (returned) 1x1 string, a name in obj.ParamNames, or ""
             pn = obj.matchParam(mabr.analysis.Session.FrequencyAliases);
             if pn == ""
                 v = setdiff(obj.varyingParams(),obj.levelParam(),'stable');
@@ -765,6 +862,17 @@ classdef Session < handle
         % =================================================================
         function [ax,tl] = plotGrid(obj,opts)
             % The level x frequency grid of averaged responses.
+            %
+            %   opts.RowParam    row parameter (default "" = levelParam())
+            %   opts.ColParam    column parameter (default "" = frequencyParam())
+            %   opts.Window      ms window to draw (default [-2 10])
+            %   opts.Normalize   passed to mabr.analysis.Plot.grid (default "column")
+            %   opts.Palette     palette name (default "linear")
+            %   opts.Thresholds  draw the threshold row per column (default true)
+            %   opts.Curated     use Curated rather than fitted Threshold (default true)
+            %   opts.Parent      tiledlayout to draw into (default: a new figure)
+            %   ax  (returned) [nRow x nCol] array of axes handles
+            %   tl  (returned) the tiledlayout
             arguments
                 obj
                 opts.RowParam (1,1) string = ""
@@ -801,6 +909,12 @@ classdef Session < handle
 
         function ax = plotAudiogram(obj,opts)
             % Thresholds against frequency.
+            %
+            %   opts.Curated  use Curated rather than fitted Threshold (default true)
+            %   opts.CI       draw CI bars when available (default true)
+            %   opts.Parent   axes to draw into (default: a new figure's axes)
+            %   opts.Hold     overlay onto Parent instead of clearing it (default false)
+            %   ax  (returned) the axes
             arguments
                 obj
                 opts.Curated (1,1) logical = true
@@ -832,6 +946,12 @@ classdef Session < handle
 
         function ax = plotStack(obj,colValue,opts)
             % One frequency's level series as an offset waterfall.
+            %
+            %   colValue      the frequency-axis value to hold fixed
+            %   opts.Window   ms window to draw (default [-2 10])
+            %   opts.Palette  palette name (default "linear")
+            %   opts.Parent   axes to draw into (default: a new figure's axes)
+            %   ax  (returned) the axes
             arguments
                 obj
                 colValue (1,1) double
@@ -860,6 +980,11 @@ classdef Session < handle
         % =================================================================
         function ffn = saveResults(obj,ffn,opts)
             % Save everything this session knows to a .mat file.
+            %
+            %   ffn                 destination file path (created dirs as needed)
+            %   opts.IncludeSweeps  include raw sweeps in Conditions (default true)
+            %   opts.IncludeFits    include the Fit objects in Thresholds (default true)
+            %   ffn  (returned) the same file path, for chaining
             arguments
                 obj
                 ffn (1,1) string
@@ -878,6 +1003,13 @@ classdef Session < handle
             %
             % Deliberately plain: a results file that needs this class to load
             % is a results file that stops opening the day the class changes.
+            %
+            %   includeSweeps  include raw sweeps in Conditions (default true)
+            %   includeFits    include the Fit objects in Thresholds (default true)
+            %   R  (returned) plain struct with fields Version, Path, Name,
+            %      Subject, Date, SampleRate, Window, ResponseWindow, Time,
+            %      ParamNames, TestMode, Files, Conditions, Thresholds,
+            %      FilterDescription
             arguments
                 obj
                 includeSweeps (1,1) logical = true
@@ -914,6 +1046,7 @@ classdef Session < handle
         %  Display
         % =================================================================
         function s = describe(obj)
+            % One-line summary of the session. s: (returned) 1x1 string.
             s = sprintf('%s  (%s)  %d files, %d conditions, %g Hz', ...
                 obj.Name, obj.Subject, obj.NumFiles, obj.NumConditions, obj.SampleRate);
             if obj.TestMode, s = [s '  [TEST MODE]']; end
@@ -921,6 +1054,7 @@ classdef Session < handle
         end
 
         function disp(obj)
+            % Multi-line console summary. No inputs beyond obj, no return value.
             if ~isscalar(obj), builtin('disp',obj); return; end
             fprintf('  mabr.analysis.Session\n');
             fprintf('    %s\n',obj.describe());
@@ -942,6 +1076,8 @@ classdef Session < handle
         end
 
         % --- dependent ----------------------------------------------------
+        % NumFiles/NumConditions: row counts of Files/Conditions.
+        % ResponseRows: logical mask into Time selecting ResponseWindow.
         function n = get.NumFiles(obj),      n = height(obj.Files); end
         function n = get.NumConditions(obj), n = height(obj.Conditions); end
         function m = get.ResponseRows(obj)
@@ -956,6 +1092,11 @@ classdef Session < handle
     methods (Static)
         function paths = find(rootPath,opts)
             % Every folder under rootPath holding .abr files.
+            %
+            %   rootPath      folder to search recursively
+            %   opts.Pattern  dir() pattern to match (default "*.abr")
+            %   paths  (returned) [n x 1] string of unique folder paths
+            %          (empty string.empty(0,1) when none found)
             arguments
                 rootPath (1,1) string
                 opts.Pattern (1,1) string = "*.abr"
@@ -968,6 +1109,11 @@ classdef Session < handle
 
         function obj = fromResults(ffn)
             % Rebuild a Session from a file written by saveResults.
+            %
+            %   ffn  path to a .mat file written by saveResults/toStruct
+            %   obj  (returned) a Session populated from that file's fields
+            %        (fields the file lacks, e.g. an older ResponseWindow,
+            %        are simply left at their class defaults)
             arguments
                 ffn (1,1) string
             end
@@ -983,6 +1129,10 @@ classdef Session < handle
 
         function s = subjectFrom(pth)
             % Subject token out of a path, if one is there to be found.
+            %
+            %   pth  a file or folder path, char or string
+            %   s    (returned) 1x1 string, the matched "SUBJ_ID_###"-style
+            %        token, or "" when none is found
             s = "";
             m = regexp(char(pth),'SUBJ[_-]?ID[_-]?\d+','match','once','ignorecase');
             if ~isempty(m), s = string(m); end
@@ -993,6 +1143,12 @@ classdef Session < handle
         function d = detectOne(X,args)
             % One condition's permutation test, packaged so that the serial
             % and parfor branches call exactly the same thing.
+            %
+            %   X     [nSamples x nSweeps] clean sweeps for one condition
+            %   args  cell {rows,method,nPerm,alpha,minSz,seed}, the detect()
+            %         options in positional form (parfor cannot broadcast opts)
+            %   d     (returned) struct with fields p, isSig, strength,
+            %         nSweeps, result -- same shape as mabr.analysis.Threshold.detect
             [rows,method,nPerm,alpha,minSz,seed] = deal(args{:});
             if isempty(X) || size(X,2) < 2
                 d = struct('p',NaN,'isSig',false,'strength',NaN,'nSweeps',size(X,2),'result',struct());
@@ -1004,6 +1160,17 @@ classdef Session < handle
 
         function [row,trace,onsets] = readRecord(a,dirEntry)
             % One file's metadata (and, when asked for, its trace).
+            %
+            %   a         the loaded ABR_Data struct
+            %   dirEntry  a dir()-style struct with .name, .folder
+            %   row       (returned) struct: one field per informative
+            %             parameter, plus timestamp, fileName, folder,
+            %             nSweeps, SampleRate, TestMode; [] on a malformed file
+            %   trace     (returned) [nSamples x 1] raw ADC.Data (in its
+            %             stored precision), or [] on a malformed file
+            %   onsets    (returned) struct: .idx (sweep onset samples),
+            %             .art (per-sweep IsArtifact), .pol (per-sweep
+            %             SweepPolarity); [] on a malformed file
             row = []; trace = []; onsets = [];
             if ~isfield(a,'ADC') || ~isfield(a.ADC,'Data') || ~isfield(a.ADC,'SweepOnsets')
                 return
@@ -1057,6 +1224,11 @@ classdef Session < handle
         function T = rowsToTable(rows)
             % Struct rows to a table, tolerating a file that carries a
             % parameter the others do not.
+            %
+            %   rows  cell array of scalar structs, one per file, from readRecord
+            %   T     (returned) table, one row per element of rows, one
+            %         column per field seen across any of them (missing
+            %         fields filled with NaN/""/false as appropriate)
             names = string([]);
             for i = 1:numel(rows), names = union(names,string(fieldnames(rows{i})),'stable'); end
             S = struct();
@@ -1074,6 +1246,8 @@ classdef Session < handle
             T = struct2table(S,'AsArray',false);
 
             function m = missingLike(rows,k)
+                % rows,k as above. m: (returned) a type-matched "missing"
+                % placeholder (NaN, "", or false) for field k.
                 m = NaN;
                 for j = 1:numel(rows)
                     if isfield(rows{j},k)
@@ -1092,6 +1266,12 @@ classdef Session < handle
     methods (Access = private)
         function [trace,onsets,art,pol] = traceFor(obj,i)
             % One file's trace and onsets, from the cache or from disk.
+            %
+            %   i       row index into obj.Files
+            %   trace   (returned) [nSamples x 1] raw ADC trace, or [] if unreadable
+            %   onsets  (returned) [nOnsets x 1] sweep onset sample indices
+            %   art     (returned) 1 x nOnsets logical, the rig's own IsArtifact flags
+            %   pol     (returned) 1 x nOnsets double, per-sweep polarity (+-1)
             trace = []; onsets = []; art = []; pol = [];
             if obj.KeepTraces && numel(obj.Traces) >= i && ~isempty(obj.Traces{i})
                 trace  = obj.Traces{i};
@@ -1119,12 +1299,17 @@ classdef Session < handle
         function X = sweepCell(obj)
             % Clean sweeps for every condition, as a cell -- the form the
             % per-condition functions and a parfor both want.
+            %
+            %   X  (returned) [nConditions x 1] cell, X{i} = obj.sweeps(i)
             n = height(obj.Conditions);
             X = cell(n,1);
             for i = 1:n, X{i} = obj.sweeps(i); end
         end
 
         function pn = matchParam(obj,aliases)
+            % aliases: candidate names to match against obj.ParamNames
+            % (case-insensitive). pn: (returned) the first matching name in
+            % obj.ParamNames, or "" when none match.
             pn = "";
             for a = aliases
                 k = find(strcmpi(obj.ParamNames,a),1);
@@ -1135,6 +1320,10 @@ classdef Session < handle
         function s = axisLabel(~,pn)
             % A parameter's axis label, with the units the toolbox fixes by
             % name end to end (see mabr.stim.StimulusSet.paramTable).
+            %
+            %   pn  parameter name (matched case-insensitively against
+            %       LevelAliases/FrequencyAliases)
+            %   s   (returned) 1x1 string, e.g. "Level (dB SPL)", or "" when pn is ""
             if pn == "", s = ""; return; end
             if any(strcmpi(pn,mabr.analysis.Session.LevelAliases))
                 s = pn + " (dB SPL)";
@@ -1146,6 +1335,8 @@ classdef Session < handle
         end
 
         function requireConditions(obj)
+            % Throws mabr:analysis:Session:noConditions when segment() has
+            % not been run yet. No inputs beyond obj, no return value.
             if isempty(obj.Conditions) || height(obj.Conditions) == 0
                 error('mabr:analysis:Session:noConditions', ...
                     'No conditions. Call segment() first.');
@@ -1153,6 +1344,9 @@ classdef Session < handle
         end
 
         function requireThresholds(obj)
+            % Throws mabr:analysis:Session:noThresholds when
+            % estimateThresholds() has not been run yet. No inputs beyond
+            % obj, no return value.
             if height(obj.Thresholds) == 0
                 error('mabr:analysis:Session:noThresholds', ...
                     'No thresholds. Call estimateThresholds() first.');
@@ -1160,10 +1354,14 @@ classdef Session < handle
         end
 
         function note(obj,fmt,varargin)
+            % Print an sprintf-style line to stdout when obj.Verbose. No
+            % return value. fmt/varargin: as sprintf.
             if obj.Verbose, fprintf(['  ' fmt '\n'],varargin{:}); end
         end
 
         function warn(obj,fmt,varargin)
+            % Print an sprintf-style line to stderr when obj.Verbose. No
+            % return value. fmt/varargin: as sprintf.
             if obj.Verbose, fprintf(2,['  ' fmt '\n'],varargin{:}); end
         end
     end

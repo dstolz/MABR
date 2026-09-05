@@ -69,6 +69,11 @@ classdef Filter
     methods
         function obj = Filter(varargin)
             % Filter(Name,Value,...) sets any of the public properties.
+            %
+            %   varargin  Name,Value pairs, any public property above
+            %             (HighPass, LowPass, PassRipple, StopRipple,
+            %             Density, Method)
+            %   obj       (returned) undesigned Filter with those properties set
             for i = 1:2:numel(varargin)
                 obj.(varargin{i}) = varargin{i+1};
             end
@@ -77,6 +82,11 @@ classdef Filter
         % --- design -------------------------------------------------------
         function obj = design(obj,Fs)
             % Design (or redesign) the chain at Fs and cache the result.
+            %
+            %   Fs   sample rate, Hz, scalar > 0
+            %   obj  (returned) copy of this Filter with HighNum/LowNum
+            %        designed for Fs (or, for a Custom filter, unchanged
+            %        coefficients simply stamped with SampleRate = Fs)
             arguments
                 obj
                 Fs (1,1) double {mustBePositive,mustBeFinite}
@@ -116,6 +126,9 @@ classdef Filter
             % A signal too short for FILTFILT is returned UNFILTERED with a
             % warning rather than throwing: one truncated run must not stop a
             % whole session from being analysed.
+            %
+            %   x  [nSamples x nChannels] numeric, any class (cast to double)
+            %   y  (returned) [nSamples x nChannels] double, same size as x
             if ~obj.IsDesigned
                 error('mabr:analysis:Filter:notDesigned', ...
                     'Filter has not been designed. Call design(Fs) first.');
@@ -142,6 +155,9 @@ classdef Filter
 
         function tf = fits(obj,n)
             % True when a signal of n samples is long enough to be filtered.
+            %
+            %   n   number of samples, scalar
+            %   tf  (returned) 1x1 logical
             tf = ~obj.IsDesigned || n >= obj.MinLength;
         end
 
@@ -152,6 +168,10 @@ classdef Filter
             % Under "filtfilt" the realized response is |H|^2, so a -3 dB
             % design corner reads -6 dB here. That is the honest number: it is
             % what the data actually saw.
+            %
+            %   n    number of frequency points to evaluate (default 4096)
+            %   f    (returned) [n x 1] double, Hz, 0 to SampleRate/2
+            %   mag  (returned) [n x 1] double, dB magnitude at each f
             arguments
                 obj
                 n (1,1) double {mustBePositive} = 4096
@@ -174,6 +194,9 @@ classdef Filter
 
         function ax = plotResponse(obj,ax)
             % Draw the response of the chain as applied.
+            %
+            %   ax  axes to draw into (default: a new figure's axes)
+            %   ax  (returned) the same axes
             arguments
                 obj
                 ax = []
@@ -194,6 +217,8 @@ classdef Filter
 
         function s = describe(obj)
             % One-line summary, e.g. "300-3000 Hz FIR (filtfilt, order 214)".
+            %
+            %   s  (returned) 1x1 string
             if isempty(obj.HighNum) && isempty(obj.LowNum) && ~obj.Custom
                 s = "no filtering";
                 return
@@ -216,6 +241,9 @@ classdef Filter
         end
 
         % --- dependent -------------------------------------------------------
+        % IsDesigned: design(Fs) has been called and SampleRate is finite.
+        % Order: longest coefficient vector, in samples, minus 1.
+        % MinLength: shortest signal apply() will filter rather than pass through.
         function tf = get.IsDesigned(obj)
             tf = obj.Designed && isfinite(obj.SampleRate);
         end
@@ -247,6 +275,17 @@ classdef Filter
     methods (Static)
         function obj = fromCoefficients(hpNum,lpNum,opts)
             % Build from numerators (or [b,a] pairs) designed elsewhere.
+            %
+            %   hpNum            high pass numerator, [] to disable
+            %   lpNum            low pass numerator, [] to disable
+            %   opts.HighDen     high pass denominator (default 1, i.e. FIR)
+            %   opts.LowDen      low pass denominator (default 1, i.e. FIR)
+            %   opts.SampleRate  Hz the coefficients were designed at (default NaN)
+            %   opts.Method      "filtfilt" (default) or "filter"
+            %   obj              (returned) Custom Filter carrying these
+            %                    coefficients; call design(Fs) to mark it
+            %                    designed (a no-op for a Custom filter beyond
+            %                    recording the rate)
             arguments
                 hpNum = []
                 lpNum = []
@@ -273,6 +312,12 @@ classdef Filter
         function obj = fromObject(hp,lp,opts)
             % Build from dfilt.*/dsp.* filter objects, as extractABRResponses
             % accepted through HighpassHd/LowpassHd.
+            %
+            %   hp               high pass filter object, [] to disable
+            %   lp               low pass filter object, [] to disable
+            %   opts.SampleRate  Hz the objects were designed at (default NaN)
+            %   opts.Method      "filtfilt" (default) or "filter"
+            %   obj              (returned) Custom Filter (see fromCoefficients)
             arguments
                 hp = []
                 lp = []
@@ -287,6 +332,11 @@ classdef Filter
 
         function [b,a] = coefficientsOf(hd)
             % Pull [b,a] out of whatever filter representation was handed in.
+            %
+            %   hd  [], a numeric vector, or a filter object/struct exposing
+            %       Numerator/Denominator or convertible via tf()
+            %   b   (returned) numerator, row vector ([] when hd is [])
+            %   a   (returned) denominator, row vector (1 for an FIR/numeric hd)
             b = []; a = 1;
             if isempty(hd), return; end
             if isnumeric(hd), b = hd(:).'; return; end
@@ -305,6 +355,11 @@ classdef Filter
 
         function checkNyquist(edges,nyq,name)
             % A corner at or past Nyquist is a design that cannot exist.
+            %
+            %   edges  band-edge frequencies, Hz
+            %   nyq    Nyquist frequency, Hz
+            %   name   band name used in the thrown error message
+            %   (no return value; throws mabr:analysis:Filter:aboveNyquist)
             if any(edges >= nyq)
                 error('mabr:analysis:Filter:aboveNyquist', ...
                     '%s edge %g Hz is at or above Nyquist (%g Hz).', ...

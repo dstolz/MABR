@@ -18,10 +18,13 @@
 %
 % with no disk reads.
 
+%%
+addpath('c:\src\MABR\')
+
 %% ------------------------------------------------------------------ CONFIG
 DATAROOT = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_data/";                  % folder to search (recursively)
 RESULTS  = fullfile(DATAROOT,"analysis");       % where the .mat results go
-PLOT     = true;                                % draw grid + audiogram per session
+PLOT     = false;                                % draw grid + audiogram per session
 NPERM    = 1000;                                % permutation count (2000 for final)
 
 %% ------------------------------------------------------------------ SESSIONS
@@ -51,6 +54,7 @@ for k = 1:numel(paths)
         if PLOT
             s.plotGrid();
             s.plotAudiogram();
+            drawnow
         end
 
         T = s.Thresholds;
@@ -72,3 +76,28 @@ if ~isempty(ALL)
     writetable(ALL,fullfile(RESULTS,"thresholds.csv"));
     fprintf('\nWrote %s\n',fullfile(RESULTS,"thresholds.csv"));
 end
+
+
+%%
+
+s = "SUBJ-ID-959_2weeks";
+
+
+ind = ALL.Session == s;
+a = ALL(ind,:);
+
+plot(a.frequency,a.Threshold,'-o')
+
+
+%%
+
+pth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_data/analysis";
+
+sess = "SUBJ-ID-959_Baseline";
+
+ffn = fullfile(pth,sess+".mat");
+
+r = load(ffn);
+
+% s.plotGrid();
+% s.plotAudiogram();
