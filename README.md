@@ -6,12 +6,14 @@
 >> MABR        % launch the acquisition app
 ```
 
-Clone with submodules — MABR ships [stimgen](https://github.com/dstolz/stimgen) at `external/stimgen`:
+Clone with submodules — MABR ships [granary](https://github.com/dstolz/granary) at `external/granary` and [stimgen](https://github.com/dstolz/stimgen) at `external/stimgen`:
 
 ```bash
 git clone --recurse-submodules https://github.com/dstolz/MABR
 # already cloned? →  git submodule update --init
 ```
+
+granary is the logger: every message MABR prints to the command window and every line of the daily log in `.error_logs/` goes through it. stimgen is optional at runtime; granary is not, and a clone without it launches with a warning and writes no log file.
 
 ## What it does
 
@@ -69,12 +71,13 @@ MABR.m              launcher
   +stim/              stimulus contract, presentation schedule, advance criteria
   +metrics/           pure, tested signal metrics
   +ui/                acquisition app, live plot, trace organizer
-  +log/               verbosity-gated logging
+  +log/               front door to granary, MABR's logger
   Config.m            hardware constants and runtime paths
 abr_analysis/       offline batch pipeline (separate, function-based)
 tests/              no-hardware verification suite
 docs/               documentation
-helpers/, external/ utilities and third-party code
+helpers/            small standalone utilities
+external/           submodules: granary (logging), stimgen (stimuli, optional)
 ```
 
 The acquisition app was rewritten ground-up into the single `+mabr` namespace; the legacy `+abr` package was retired at cutover and is recoverable from git history or the `master` branch. Saved `.abr` files remain compatible with the unchanged offline pipeline, and a test enforces that. [MABR Complete Refactor — Ground-Up Rewrite.md](MABR%20Complete%20Refactor%20—%20Ground-Up%20Rewrite.md) records the design rationale; [CLAUDE.md](CLAUDE.md) is a condensed architecture map.
