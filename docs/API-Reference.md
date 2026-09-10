@@ -259,9 +259,16 @@ At finalization the run's sweeps are split by `Schedule.runSequence`, yielding *
 
 ## Logging — `+mabr/+log/`
 
+Logging is [granary](https://github.com/dstolz/granary), a submodule at `external/granary`. This package is the seam between it and MABR: one front door every call site uses, and the wiring that tells granary where this installation keeps its log.
+
 | Item | Description |
 |------|-------------|
-| [`mabr.log.vprintf(level,[red],fmt,...)`](../+mabr/+log/vprintf.m) | Verbosity-gated logger. Prints a timestamped message and mirrors it to a daily file in `.error_logs/`. Gated on global `GVerbosity` (-1…3). `vprintf(0,1,...)` prints critical text in red. Accepts an `MException` in place of a format string to log the full stack. |
+| [`mabr.log.vprintf(level,[red],msg,...)`](../+mabr/+log/vprintf.m) | MABR's logging front door, and the only one. Hands the call to `granary.printf`, whose calling convention is identical. Levels -1 (log only) … 4 (trace); `vprintf(0,1,...)` prints critical text in red; an `MException` in place of the message logs identifier, message and stack as one record. Two independent gates: `GVerbosity` for the command window (default 1), `GLogVerbosity` for the log file (default `Inf`, so quieting the console never discards the record). A message given **no** values is literal text, not a format string. |
+| [`mabr.log.configure([-reset])`](../+mabr/+log/configure.m) | Tells granary the four things a library cannot discover about its host: `LogRoot` = the repo root, `LogDirName` = `.error_logs`, `PrefGroup` = `MABR`, and the `FacadeFiles` that must never be reported as the origin of a message (`vprintf.m`, `StimgenLogSink.m`). Idempotent, never throws, and called once per process — the acquisition and compute workers included, since granary's settings are per-MATLAB-session. |
+| [`mabr.log.granaryAvailable()`](../+mabr/+log/granaryAvailable.m) | `[tf,msg]` — is the submodule on the path, and what to say if not. Unlike stimgen, granary is **not** optional; `vprintf` falls back to console-only printing rather than throwing, and says so once. |
+| [`mabr.log.logFile()`](../+mabr/+log/logFile.m) | `[path,dir]` of the log the next message will land in, flushed first. `''` when granary is absent. The filename shape, `error_log_<ddmmmyyyy>.txt`, is part of granary's contract. |
+| [`mabr.log.StimgenLogSink`](../+mabr/+log/StimgenLogSink.m) | `stimgen.LogSink` implementation installed by `mabr.ui.App` at startup, so stimgen's messages join MABR's stream instead of writing a second daily file under `tempdir`. |
+| `granary.setLogDir(p)` | Moves the daily log, persisted in the `MABR` pref group. For a rig whose toolbox sits on a read-only or synced share. |
 
 ## Verification — `tests/`
 
@@ -304,5 +311,5 @@ A **separate, function-based** pipeline, untouched by the acquisition rewrite. L
 
 | Folder | Contents |
 |--------|----------|
-| [`helpers/`](../helpers/) | Small standalone utilities predating the rewrite (`Fsp`, `octaves`, `log10space`, `figxy2axisxy`, `timeout`, `seppuku`, and a legacy copy of `vprintf` superseded by `mabr.log.vprintf`). Not part of the acquisition path. |
-| [`external/`](../external/) | Third-party code and platform files (`getjframe`, MinGW installer, `user32.h`). |
+| [`helpers/`](../helpers/) | Small standalone utilities predating the rewrite (`Fsp`, `octaves`, `log10space`, `figxy2axisxy`, `timeout`, `seppuku`). Not part of the acquisition path. |
+| [`external/`](../external/) | Submodules — [granary](https://github.com/dstolz/granary) (logging, required) and [stimgen](https://github.com/dstolz/stimgen) (stimuli and calibration, optional) — plus platform files (`getjframe`, MinGW installer, `user32.h`). |

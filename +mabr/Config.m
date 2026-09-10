@@ -182,6 +182,11 @@ classdef Config
         end
 
         function p = errorLogDir()
+            % The folder granary writes the daily log into -- mabr.log.configure
+            % points it here by setting LogRoot to root and LogDirName to
+            % '.error_logs', so the two cannot disagree about the path. granary
+            % creates it on the first message; touched here as well so the
+            % folder exists from the moment a Config does, as it always has.
             p = fullfile(mabr.Config.root,'.error_logs');
             if ~isfolder(p), mkdir(p); end
         end

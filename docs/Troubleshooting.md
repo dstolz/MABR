@@ -68,10 +68,30 @@ Confirm the software side is fine by ticking **Testing** and running: the check 
 Raise the log verbosity before reproducing a problem:
 
 ```matlab
->> global GVerbosity; GVerbosity = 2;    % 0 quiet … 3 very detailed
+>> global GVerbosity; GVerbosity = 2;    % 0 quiet … 4 per-iteration trace
 ```
 
-Level 3 prints a lot and can perturb acquisition timing — use it for diagnosis, not for real recordings. Everything printed is also written to a daily log in `.error_logs/`, which is the right thing to attach to a bug report.
+Level 3 and above print a lot and can perturb acquisition timing — use them for diagnosis, not for real recordings.
+
+The command window and the log file are gated **separately**, and the log keeps everything by default:
+
+```matlab
+>> global GVerbosity GLogVerbosity
+>> GVerbosity = 0;      % quiet command window
+>> GLogVerbosity = Inf; % …but the file still records every message (the default)
+```
+
+So turning the console down does not throw away the detail that explains a failure. The one time to lower `GLogVerbosity` is a rig where a level-3 or level-4 message sits in a per-frame loop and writing it would cost real time.
+
+The daily log is the right thing to attach to a bug report. Find it with:
+
+```matlab
+>> mabr.log.logFile
+```
+
+By default that is `.error_logs/error_log_<ddmmmyyyy>.txt` inside the MABR folder. If the toolbox sits on a read-only or synced share, move the logs with `granary.setLogDir('D:\rig_logs')` — the choice is remembered between sessions.
+
+**Nothing is being logged** — MABR prints `The granary logging package is not on the MATLAB path` at startup when the `external/granary` submodule was never fetched. MABR still runs and still prints to the command window, but writes no file. Run `git submodule update --init` in the MABR folder and restart.
 
 **Suspect a stale runtime buffer** — Close MABR and delete `.runtime_data/`. It is recreated on the next run and holds no recorded data. MABR already recreates buffer files whose size on disk does not match expectations, so this is rarely needed.
 

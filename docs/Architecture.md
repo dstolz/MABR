@@ -56,7 +56,7 @@ Everything lives under the `+mabr` namespace. There is no other package.
 | [+stim](../+mabr/+stim/) | The stimulus boundary: source contract, block queue, advance criteria |
 | [+metrics](../+mabr/+metrics/) | Small, pure, tested functions: onset detection, sweep extraction, correlations, SNR |
 | [+ui](../+mabr/+ui/) | The GUI: app, controller, live plot, online analysis, trace organizer |
-| [+log](../+mabr/+log/) | Verbosity-gated logging |
+| [+log](../+mabr/+log/) | The seam to [granary](https://github.com/dstolz/granary), MABR's logger (submodule at `external/granary`) |
 
 Plus [mabr.Config](../+mabr/Config.m) at the root: a plain **value** object holding hardware constants and runtime paths. It is not a superclass and nothing inherits from it — the app and engine each hold a copy. And [mabr.pool](../+mabr/pool.m), the parallel pool every worker runs on, sized *before* the first one launches: a pool cannot be resized once the acquisition loop is on it.
 

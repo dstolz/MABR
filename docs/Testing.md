@@ -23,6 +23,16 @@ Each script is independently runnable. The first run is slow — the parallel po
 
 ## What each one covers
 
+### verify_logging
+
+[tests/verify_logging.m](../tests/verify_logging.m) — MABR's printing and logging, which run through [granary](https://github.com/dstolz/granary) (`external/granary`). It is first in the suite because everything after it logs.
+
+Seven parts: the host wiring (`LogRoot`, `PrefGroup`, and the `FacadeFiles` that keep a log line credited to the code that raised it rather than to `mabr.log.vprintf`); every calling shape the toolbox's call sites use — literal, formatted, red, and log-only; caller attribution read back out of the file; the format policy that makes a message given **no** values literal text, so a Windows path or a stray `%` survives; the two independent verbosity gates, where a message too quiet for the command window is still on the record; an exception logged as one attributed record rather than a timestamped line per stack frame; and MABR still printing, without throwing, when the submodule is off the path.
+
+The probes go to a temporary log and the user's log directory and verbosity globals are put back on the way out, including on an error exit — so running it does not fill a rig's own daily file.
+
+Unlike `verify_stimgen_import` it does **not** skip when its submodule is absent: stimgen is optional at runtime and granary is not, so a clone that never fetched it has a real fault to hear about.
+
 ### verify_test_mode
 
 [tests/verify_test_mode.m](../tests/verify_test_mode.m) — Test Mode, which copies the stimulus straight into the acquisition ring buffer. Asserts the copy itself (the ring against the rendered play matrix, timing channel bit-for-bit), the alignment report MABR draws from it after every run, the mark a Test Mode block and its `.abr` carry — and that the check can actually **fail**, by re-running it over deliberately corrupted onsets.

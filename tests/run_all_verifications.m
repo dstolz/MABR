@@ -2,6 +2,15 @@ function run_all_verifications()
 % run_all_verifications  Run the MABR no-hardware verification suite.
 %
 %   Runs, in order:
+%       verify_logging           - MABR's printing and logging, which run
+%                                  through granary (external/granary): the
+%                                  host wiring, every calling shape, caller
+%                                  attribution, the literal-text format
+%                                  policy, the separate console and file
+%                                  verbosity gates, one record per exception,
+%                                  and that a clone missing the submodule
+%                                  still prints. FIRST because everything
+%                                  below it logs
 %       verify_isi_jitter        - presentation timing: fixed grid vs uniformly
 %                                  randomized ISI, and what still reads it back
 %       verify_play_plan         - mabr.stim.PlayPlan: frames synthesized on
@@ -107,15 +116,15 @@ function run_all_verifications()
 %   This file is also the ORDER mabr.ui.TestRunner lists the suite in -- it
 %   parses the calls below rather than keeping a second copy of them.
 %
-%   Requires the Parallel Computing Toolbox (all but verify_isi_jitter,
-%   verify_analysis, verify_filters, verify_live_plot, verify_progress_monitor,
-%   verify_metric_plot, verify_trace_organizer, verify_trace_inspector,
-%   verify_audio_settings, and verify_view_prefs). None require audio
-%   hardware.
+%   Requires the Parallel Computing Toolbox (all but verify_logging,
+%   verify_isi_jitter, verify_analysis, verify_filters, verify_live_plot,
+%   verify_progress_monitor, verify_metric_plot, verify_trace_organizer,
+%   verify_trace_inspector, verify_audio_settings, and verify_view_prefs).
+%   None require audio hardware.
 %
 % Daniel Stolzberg (c) 2026
 
-tests = {@verify_isi_jitter, @verify_play_plan, ...
+tests = {@verify_logging, @verify_isi_jitter, @verify_play_plan, ...
          @verify_engine_loopback, @verify_data_roundtrip, ...
          @verify_legacy_import,  @verify_analysis, ...
          @verify_online_advance, ...

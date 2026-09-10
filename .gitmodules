@@ -1,3 +1,6 @@
 [submodule "external/stimgen"]
 	path = external/stimgen
 	url = https://github.com/dstolz/stimgen
+[submodule "external/granary"]
+	path = external/granary
+	url = https://github.com/dstolz/granary
