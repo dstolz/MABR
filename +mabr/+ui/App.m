@@ -2837,6 +2837,9 @@ classdef App < handle
 
                 c.Artifacts = app.Artifacts;
                 c.Filters   = app.Filters;
+                % recordingGain(), not the raw setting: Test Mode has no
+                % amplifier in the path. A config control, so set at Start only.
+                c.AmplifierGain = app.Audio.recordingGain();
                 app.ArtifactCount = 0;        % readout counts this schedule only
                 app.LiveArtifacts = 0;
                 app.StimLogsWritten = 0;

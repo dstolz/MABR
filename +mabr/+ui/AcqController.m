@@ -163,6 +163,13 @@ classdef AcqController < handle
         % judged under. See set.Artifacts for the one consequence that cannot
         % simply wait for the next run.
         Artifacts     (1,1) mabr.ArtifactPolicy = mabr.ArtifactPolicy;
+        % External amplifier gain the recorded signal is divided by, so that
+        % everything computed from it -- live view, artifact thresholds,
+        % metrics, and the Data every .abr carries -- is in volts at the
+        % electrodes (mabr.AudioSettings.recordingGain; 1 = none). Applied by
+        % the pipeline, never to the ring, so the timing channel and the
+        % alignment check stay in converter units.
+        AmplifierGain (1,1) double {mustBePositive,mustBeFinite} = 1;
         % How often the LOW-priority views are served (s). The live trace is
         % fixed at 20 Hz and is not negotiable -- this is the other timer, the
         % one carrying the progress tally and the online analysis snapshot.
@@ -406,6 +413,12 @@ classdef AcqController < handle
             % MCSUP caveat as set.Artifacts below: a controller is never
             % deserialized.
             obj.Filters = p;
+            obj.configure_pipeline();
+        end
+
+        function set.AmplifierGain(obj,g)
+            % Same MCSUP caveat as set.Filters: never deserialized.
+            obj.AmplifierGain = g;
             obj.configure_pipeline();
         end
 
@@ -1192,11 +1205,12 @@ classdef AcqController < handle
             % property defaults bypass the setters. The pipeline keeps what
             % has not changed, so this costs nothing when nothing has.
             if isempty(obj.Pipeline), return; end
-            obj.Pipeline.configure(obj.Window,obj.Filters,obj.Artifacts);
+            obj.Pipeline.configure(obj.Window,obj.Filters,obj.Artifacts, ...
+                obj.AmplifierGain);
             % And the workers', so every process agrees about what a sweep is.
             if ~isempty(obj.Compute)
                 obj.Compute.configure(obj.Config.DACSampleRate,obj.Window, ...
-                    obj.Filters,obj.Artifacts);
+                    obj.Filters,obj.Artifacts,obj.AmplifierGain);
             end
             obj.caption_live_plot();
         end
@@ -1340,6 +1354,8 @@ classdef AcqController < handle
             % crosses a process boundary; a designed policy need not).
             made = F.Filters;
             if isstruct(made), made = mabr.FilterPolicy.fromStruct(made); end
+            gain = 1;
+            if isfield(F,'AmplifierGain'), gain = F.AmplifierGain; end
             % Polarity is per presentation, so it truncates with the sequence
             % -- a run can end early (Stop/Abort, or an advance criterion).
             pol = obj.CurPol;
@@ -1379,6 +1395,10 @@ classdef AcqController < handle
                 % from now -- reads it off the block rather than having to
                 % know what the audio settings were at the time.
                 blk.TestMode = obj.Testing;
+                % The gain Data was already divided by -- the one the parts
+                % were MADE with, like `made` above -- so the file can say
+                % what the raw converter samples were.
+                blk.AmplifierGain = gain;
                 % Per-sweep polarity, in the same order as the Recording's
                 % SweepOnsets, so the offline pipeline can average (or split)
                 % the two polarities of an alternating condition.

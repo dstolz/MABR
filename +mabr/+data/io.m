@@ -32,6 +32,8 @@ classdef io
 %       ABR_Data.TestMode                 (logical; true = Test Mode, i.e. the
 %                                          samples ARE the stimulus, not a
 %                                          recording of a subject)
+%       ABR_Data.ADC.AmplifierGain        (the external amplifier gain ADC.Data
+%                                          was divided by; 1 = none)
 %
 %   Save-time ADC decimation (by Recording.DecimationFactor) is preserved
 %   exactly as the legacy save_abr_data did: resample(Data,1,df) and
@@ -266,6 +268,11 @@ classdef io
             if numel(art) ~= numel(onsets), art = false(numel(onsets),1); end
             ABR_Data.ADC.IsArtifact = art;
 
+            % The external amplifier gain ADC.Data was already divided by, so
+            % Data is volts at the electrodes (Data*AmplifierGain recovers the
+            % converter samples). Always written, 1 when no gain was set.
+            ABR_Data.ADC.AmplifierGain = double(block.AmplifierGain);
+
             ABR_Data.StartTime = mabr.data.io.startTimeChar(block.StartTime);
 
             ABR_Data.SIG = mabr.data.io.buildSIG(block);
@@ -472,6 +479,11 @@ classdef io
                 block.SweepPolarity = double(D.ADC.SweepPolarity(:))';
             else
                 block.SweepPolarity = ones(1,numel(rec.SweepOnsets));
+            end
+
+            % Files written before the setting existed were never scaled.
+            if isfield(D.ADC,'AmplifierGain') && isscalar(D.ADC.AmplifierGain)
+                block.AmplifierGain = double(D.ADC.AmplifierGain);
             end
         end
     end

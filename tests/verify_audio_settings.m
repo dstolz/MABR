@@ -20,6 +20,10 @@ function verify_audio_settings()
 %   rendered spec -- while a bank left at another rate is refused by
 %   mabr.stim.Schedule rather than played at one clock and windowed at
 %   another.
+%   Part F (amplifier gain): the external amplifier gain persists like the
+%   rest, is ignored in Test Mode, divides the recorded signal in
+%   mabr.compute.Pipeline's live step and finalization without moving a
+%   single onset, and is written to (and read back from) ADC.AmplifierGain.
 %
 %   No hardware, no parallel pool. Run:  >> verify_audio_settings
 %
@@ -192,6 +196,82 @@ catch me
 end
 assert(threw,'a Schedule must refuse a bank rendered at a rate other than the Config''s');
 fprintf('  PASS Part E: sample rate persists, derives its storage rate, and reaches the spec\n');
+
+% ---- Part F: amplifier gain ------------------------------------------------
+% F1: the setting persists both ways, and a nonsense value falls back.
+f = mabr.AudioSettings;
+assert(f.AmplifierGain == 1,'default AmplifierGain should be 1 (no external amplifier)');
+f.AmplifierGain = 10000; f.Testing = false;
+mabr.AudioSettings.savePrefs(f);
+assert(mabr.AudioSettings.loadPrefs().AmplifierGain == 10000, ...
+    'AmplifierGain did not survive a setpref/getpref round-trip');
+setpref('MABR','AudioAmplifierGain',-3);
+assert(mabr.AudioSettings.loadPrefs().AmplifierGain == 1, ...
+    'a non-positive saved AmplifierGain should fall back to the default');
+t = f.toStruct();
+assert(mabr.AudioSettings.fromStruct(t).AmplifierGain == 10000, ...
+    'AmplifierGain did not survive a toStruct/fromStruct round-trip');
+assert(mabr.AudioSettings.fromStruct(rmfield(t,'AmplifierGain')).AmplifierGain == 1, ...
+    'a configuration saved before the setting existed should restore at gain 1');
+assert(contains(f.describe(),'gain 10000'),'describe should name a non-unity amplifier gain');
+
+% F2: Test Mode has no amplifier in the path, so the gain is not applied there.
+assert(f.recordingGain() == 10000,'recordingGain should be the setting off Test Mode');
+f.Testing = true;
+assert(f.recordingGain() == 1,'recordingGain must be 1 in Test Mode');
+
+% F3: the pipeline divides the recorded signal -- live AND finalized -- and
+% leaves the timing channel alone (the same onsets are recovered either way).
+fs  = cfg.DACSampleRate;
+N   = round(0.25*fs);
+tt  = (0:N-1)'/fs;
+sig = 0.02*sin(2*pi*1000*tt) + 0.002*randn(N,1);
+tim = zeros(N,1);
+on  = round((0.02:0.02:0.22)*fs);   % clear of both ends: a baseline precedes each
+for k = on, tim(k:k+round(0.001*fs)) = 1; end
+seq  = ones(1,numel(on));
+info = struct('RunId',1,'StimIndex',seq,'Stimuli',1);
+G    = 1000;
+
+p1 = mabr.compute.Pipeline(cfg); p1.configure([0 0.01],mabr.FilterPolicy,mabr.ArtifactPolicy);
+pG = mabr.compute.Pipeline(cfg); pG.configure([0 0.01],mabr.FilterPolicy,mabr.ArtifactPolicy,G);
+p1.beginRun(info); pG.beginRun(info);
+r1 = mabrtest.GrowingRing(sig,tim); r1.Head = N;
+rG = mabrtest.GrowingRing(sig,tim); rG.Head = N;
+s1 = p1.step(r1); sG = pG.step(rG);
+assert(~isempty(s1) && sG.NumSweeps == s1.NumSweeps && s1.NumSweeps == numel(on), ...
+    'the gain must not change which sweeps are found (%d vs %d of %d)', ...
+    sG.NumSweeps,s1.NumSweeps,numel(on));
+assert(max(abs(sG.Mean(:)*G - s1.Mean(:))) <= 1e-5*max(abs(s1.Mean(:))), ...
+    'the live mean was not divided by the amplifier gain');
+
+F1 = p1.finalize(r1,seq); FG = pG.finalize(rG,seq);
+assert(isequal(FG.OnsetsRaw,F1.OnsetsRaw),'the gain must not move the recovered onsets');
+assert(FG.AmplifierGain == G && F1.AmplifierGain == 1, ...
+    'finalization must report the gain its Data was divided by');
+d1 = double(F1.Parts(1).Data); dG = double(FG.Parts(1).Data);
+assert(max(abs(dG*G - d1)) <= 1e-5*max(abs(d1)), ...
+    'the finalized Data was not divided by the amplifier gain');
+
+% Changing the gain mid-run rescales what is already cached.
+pG.configure([],[],[],1);
+s1b = pG.step(rG);
+assert(isequal(s1b.Mean,s1.Mean),'reconfiguring the gain must refilter the cached sweeps');
+
+% F4: the .abr records it, and reading one back restores it.
+rec = mabr.data.Recording(cfg.ADCSampleRate,FG.Parts(1).Data,FG.Parts(1).Onsets, ...
+    FG.Parts(1).SweepLength,1);
+blk = mabr.data.Block(struct('Meta',struct('ID','gain')),rec);
+blk.AmplifierGain = G;
+ABR_Data = mabr.data.io.buildStruct(blk);
+assert(isfield(ABR_Data.ADC,'AmplifierGain') && ABR_Data.ADC.AmplifierGain == G, ...
+    'the .abr must carry ADC.AmplifierGain');
+tmp = [tempname '.abr'];
+cleanTmp = onCleanup(@() delete(tmp)); %#ok<NASGU>
+save(tmp,'ABR_Data','-mat');
+assert(mabr.data.io.importLegacy(tmp).AmplifierGain == G, ...
+    'importLegacy did not read ADC.AmplifierGain back');
+fprintf('  PASS Part F: amplifier gain persists, scales live and saved data, reaches the .abr\n');
 
 fprintf('== verify_audio_settings PASSED ==\n');
 end

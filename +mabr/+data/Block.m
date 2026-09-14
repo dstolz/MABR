@@ -46,6 +46,11 @@ classdef Block
         % filename -- and a file that cannot say it holds the stimulus rather
         % than a subject is a file waiting to be analysed as data.
         TestMode  (1,1) logical = false;
+        % External amplifier gain ADC.Data has already been divided by
+        % (mabr.AudioSettings.AmplifierGain), so the data are volts at the
+        % electrodes; multiply back by it for converter units. 1 = none.
+        % Written to the .abr as ADC.AmplifierGain.
+        AmplifierGain (1,1) double = 1;
     end
 
     properties (Dependent)
