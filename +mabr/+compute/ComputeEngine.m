@@ -199,12 +199,14 @@ classdef ComputeEngine < handle
         end
 
         % --- Configuration and run state ------------------------------------
-        function configure(obj,dacSampleRate,window,filters,artifacts)
-            % Broadcast the rate, window and policies. Re-sent on every
-            % policy change, so every process agrees about what a sweep is.
+        function configure(obj,dacSampleRate,window,filters,artifacts,gain)
+            % Broadcast the rate, window, policies and amplifier gain.
+            % Re-sent on every change, so every process agrees about what a
+            % sweep is.
+            if nargin < 6 || isempty(gain), gain = 1; end
             obj.LastConfigure = struct('DACSampleRate',dacSampleRate, ...
                 'Window',double(window(:)'),'Filters',filters.toStruct(), ...
-                'Artifacts',artifacts.toStruct());
+                'Artifacts',artifacts.toStruct(),'AmplifierGain',gain);
             obj.broadcast(mabr.compute.Cmd.Configure,obj.LastConfigure);
         end
 

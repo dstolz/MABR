@@ -43,6 +43,14 @@ classdef AudioSettings
 %                         and on hardware with no input channels at all. It
 %                         is a real device, so it sits beside Testing rather
 %                         than inside it, and the two are mutually exclusive.
+%       AmplifierGain     linear gain of the external amplifier between the
+%                         electrodes and RecorderChannels(1) (1 = none). The
+%                         recorded signal is divided by it, so every voltage
+%                         MABR shows, judges, or saves is referred to the
+%                         electrodes rather than to the converter input.
+%                         Ignored in Test Mode (recordingGain), where there is
+%                         no amplifier in the path -- the samples are the
+%                         stimulus.
 %
 %   mabr.ui.AudioSettingsDialog edits one; mabr.ui.App owns it (loaded via
 %   loadPrefs at startup) and hands Device/PlayerChannels/RecorderChannels to
@@ -100,6 +108,14 @@ classdef AudioSettings
         % mabr.stim.CalibrationAdapter -- the acquisition engine never reads
         % it, and nothing about it can reach a .abr file.
         MicChannel       (1,1) double = 1
+
+        % Linear (V/V, not dB) gain of the external amplifier ahead of the
+        % recorder's signal input. mabr.compute.Pipeline divides the recorded
+        % signal by it, so the live view, the artifact thresholds, the metrics
+        % and ADC.Data in every .abr are all in volts AT THE ELECTRODES. The
+        % ring buffer itself stays in converter units, so the timing channel,
+        % the loop-back self-test and the alignment check are untouched.
+        AmplifierGain    (1,1) double = 1
     end
 
     methods
@@ -112,6 +128,14 @@ classdef AudioSettings
             % putting the app in a half state (the dialog enforces the same
             % rule at the point of edit; this is the backstop).
             tf = obj.StimulationOnly && ~obj.Testing;
+        end
+
+        function g = recordingGain(obj)
+            % The gain to divide the recording by, as everything downstream
+            % should ask it. Test Mode wins here too: the "recording" is the
+            % stimulus copied into the buffer, with no amplifier in between,
+            % so dividing it by a rig's gain would only mis-scale it.
+            if obj.Testing, g = 1; else, g = obj.AmplifierGain; end
         end
 
         function cfg = config(obj)
@@ -156,6 +180,9 @@ classdef AudioSettings
             end
             s = sprintf('%s @ %s, player [%d %d], recorder [%d %d]', ...
                 dev,rate,obj.PlayerChannels,obj.RecorderChannels);
+            if obj.AmplifierGain ~= 1
+                s = sprintf('%s, amplifier gain %g',s,obj.AmplifierGain);
+            end
         end
 
         function [achievedHz,ok,msg] = probeSampleRate(obj)
@@ -221,7 +248,8 @@ classdef AudioSettings
                        'PlayerChannels',obj.PlayerChannels, ...
                        'RecorderChannels',obj.RecorderChannels,'Testing',obj.Testing, ...
                        'StimulationOnly',obj.StimulationOnly, ...
-                       'MicChannel',obj.MicChannel);
+                       'MicChannel',obj.MicChannel, ...
+                       'AmplifierGain',obj.AmplifierGain);
         end
     end
 
@@ -252,6 +280,8 @@ classdef AudioSettings
             obj.Testing          = mabr.AudioSettings.getLogical('AudioTesting',obj.Testing);
             obj.StimulationOnly  = mabr.AudioSettings.getLogical('AudioStimulationOnly',obj.StimulationOnly);
             obj.MicChannel       = mabr.AudioSettings.getChannel('AudioMicChannel',obj.MicChannel);
+            obj.AmplifierGain    = mabr.AudioSettings.coerceGain( ...
+                getpref('MABR','AudioAmplifierGain',obj.AmplifierGain),obj.AmplifierGain);
         end
 
         function savePrefs(obj)
@@ -262,6 +292,7 @@ classdef AudioSettings
             setpref('MABR','AudioTesting',          obj.Testing);
             setpref('MABR','AudioStimulationOnly',  obj.StimulationOnly);
             setpref('MABR','AudioMicChannel',       obj.MicChannel);
+            setpref('MABR','AudioAmplifierGain',    obj.AmplifierGain);
         end
 
         function obj = fromStruct(s)
@@ -290,6 +321,19 @@ classdef AudioSettings
             end
             if isfield(s,'MicChannel')
                 obj.MicChannel = mabr.AudioSettings.coerceChannel(s.MicChannel,obj.MicChannel);
+            end
+            if isfield(s,'AmplifierGain')
+                obj.AmplifierGain = mabr.AudioSettings.coerceGain(s.AmplifierGain,obj.AmplifierGain);
+            end
+        end
+
+        function v = coerceGain(v,default)
+            % A gain is a finite positive scalar. Public because the dialog
+            % and the controller hold a typed value to the same rule.
+            if ~isnumeric(v) || ~isscalar(v) || ~isfinite(v) || v <= 0
+                v = default;
+            else
+                v = double(v);
             end
         end
     end

@@ -47,6 +47,12 @@ function settings = AudioSettingsDialog(settings0,cfg,applyFcn)
 %   and Test Mode wins: it opens no device at all, which leaves nothing for
 %   stimulation only to be a mode of.
 %
+%   Amplifier gain is the external amplifier's linear gain ahead of the
+%   recorder's signal input. The recording is divided by it, so every voltage
+%   MABR shows, judges, or saves is referred to the electrodes. It greys out
+%   with the recorder mapping (Test Mode, stimulation only), since it
+%   describes the recorded input.
+%
 %   Sample rate is the setting with the longest reach, and the one control
 %   here that stays live under Test Mode: it is the rate the device is opened at
 %   AND the rate every stimulus is rendered at and the ring buffer filled at,
@@ -90,13 +96,13 @@ committed = [];                      % what the controls last agreed with
 devices   = mabr.AudioSettings.availableDevices();
 
 % ---- layout -------------------------------------------------------------
-fig = uifigure('Name','Audio Device (ASIO)','Position',[100 100 460 548], ...
+fig = uifigure('Name','Audio Device (ASIO)','Position',[100 100 460 588], ...
     'WindowStyle','modal','Resize','off', ...
     'CloseRequestFcn',@(~,~) onCancel());
 mabr.ui.WindowPos.restore(fig,'AudioSettingsDialog',fig.Position);
 
-g = uigridlayout(fig,[13 3]);
-g.RowHeight   = {28,48,28,28,32,32,32,32,48,24,32,18,32};
+g = uigridlayout(fig,[14 3]);
+g.RowHeight   = {28,48,28,28,32,32,32,32,32,48,24,32,18,32};
 g.ColumnWidth = {100,'1x','fit'};
 g.Padding     = [12 10 12 10];
 g.RowSpacing  = 8;
@@ -211,7 +217,29 @@ micNote = uilabel(micRow,'Text','input channel, calibration only', ...
     'FontColor',[0.4 0.4 0.4]);
 micNote.Layout.Row = 1; micNote.Layout.Column = 2;
 
-% Row 8: the rate the device is opened at -- and, because the play matrix is
+% Row 8: the external amplifier between the electrodes and the recorder's
+% signal input. The recording is divided by it (mabr.compute.Pipeline), so
+% every voltage shown, judged, or saved is referred to the electrodes.
+gainLabel = uilabel(g,'Text','Amplifier gain','HorizontalAlignment','right', ...
+    'Tooltip','Linear gain (V/V) of the external amplifier ahead of the recorder signal input.');
+gainLabel.Layout.Row = 8; gainLabel.Layout.Column = 1;
+gainRow = uigridlayout(g,[1 2]);
+gainRow.Layout.Row = 8; gainRow.Layout.Column = [2 3];
+gainRow.ColumnWidth  = {90,'1x'};
+gainRow.Padding      = [0 0 0 0];
+gainRow.ColumnSpacing = 6;
+gainField = uieditfield(gainRow,'numeric','Value',settings0.AmplifierGain, ...
+    'Limits',[0 Inf],'LowerLimitInclusive','off','ValueDisplayFormat','× %g', ...
+    'Tooltip',['Linear, not dB (e.g. 10000 for x10k). Recorded voltages are divided by ' ...
+        'this, so the live view, artifact thresholds, metrics and .abr data are volts ' ...
+        'at the electrodes. 1 = no external amplifier. Ignored in Test Mode.'], ...
+    'ValueChangedFcn',@(~,~) onChange());
+gainField.Layout.Row = 1; gainField.Layout.Column = 1;
+gainNote = uilabel(gainRow,'Text','V/V; recordings are divided by this', ...
+    'FontColor',[0.4 0.4 0.4]);
+gainNote.Layout.Row = 1; gainNote.Layout.Column = 2;
+
+% Row 9: the rate the device is opened at -- and, because the play matrix is
 % rendered against it, the rate the whole session runs at. Editable rather
 % than a fixed list: SupportedSampleRates is what is worth offering, not a
 % claim about what hardware exists. The last value that VALIDATED is kept
@@ -220,9 +248,9 @@ micNote.Layout.Row = 1; micNote.Layout.Column = 2;
 lastGoodRate = settings0.SampleRate;
 rateLabel = uilabel(g,'Text','Sample rate','HorizontalAlignment','right', ...
     'Tooltip','Hz the ASIO device is opened at, and the rate every stimulus is rendered at.');
-rateLabel.Layout.Row = 8; rateLabel.Layout.Column = 1;
+rateLabel.Layout.Row = 9; rateLabel.Layout.Column = 1;
 rateRow = uigridlayout(g,[1 3]);
-rateRow.Layout.Row = 8; rateRow.Layout.Column = [2 3];
+rateRow.Layout.Row = 9; rateRow.Layout.Column = [2 3];
 rateRow.ColumnWidth  = {90,'1x','fit'};
 rateRow.Padding      = [0 0 0 0];
 rateRow.ColumnSpacing = 8;
@@ -247,36 +275,36 @@ panelBtn = uibutton(rateRow,'Text','ASIO panel…', ...
     'ButtonPushedFcn',@(~,~) onAsioPanel());
 panelBtn.Layout.Row = 1; panelBtn.Layout.Column = 3;
 
-% Row 9: what the rate above costs and constrains -- informational only
+% Row 10: what the rate above costs and constrains -- informational only
 rateLbl = uilabel(g,'WordWrap','on','FontColor',[0.3 0.3 0.3],'Text', ...
     ['The storage rate is derived, not chosen: sweeps are windowed with a whole-' ...
      'sample stride, so it is always the rate above divided by an integer (the ' ...
      'one closest to 12 kHz). Committing a new rate re-renders the stimulus ' ...
      'bank at it and rebuilds the worker.']);
-rateLbl.Layout.Row = 9; rateLbl.Layout.Column = [1 3];
+rateLbl.Layout.Row = 10; rateLbl.Layout.Column = [1 3];
 
-% Row 10: determine the sample rate the selected device actually grants
+% Row 11: determine the sample rate the selected device actually grants
 probeBtn = uibutton(g,'Text','Test Device','ButtonPushedFcn',@(~,~) onProbe());
-probeBtn.Layout.Row = 10; probeBtn.Layout.Column = 1;
+probeBtn.Layout.Row = 11; probeBtn.Layout.Column = 1;
 probeLbl = uilabel(g,'Text','','WordWrap','on');
-probeLbl.Layout.Row = 10; probeLbl.Layout.Column = [2 3];
+probeLbl.Layout.Row = 11; probeLbl.Layout.Column = [2 3];
 
-% Row 11: what this does and does not touch
+% Row 12: what this does and does not touch
 noteLbl = uilabel(g,'WordWrap','on','FontColor',[0.3 0.3 0.3], ...
     'Text','Locked while a schedule is running -- switching devices mid-acquisition is not supported.');
-noteLbl.Layout.Row = 11; noteLbl.Layout.Column = [1 3];
+noteLbl.Layout.Row = 12; noteLbl.Layout.Column = [1 3];
 
-% Row 12: validation / status
+% Row 13: validation / status
 msgLbl = uilabel(g,'Text','','FontColor',[0.8 0.2 0]);
-msgLbl.Layout.Row = 12; msgLbl.Layout.Column = [1 3];
+msgLbl.Layout.Row = 13; msgLbl.Layout.Column = [1 3];
 
-% Row 13: transport. Commit applies without closing (see the header), so the
+% Row 14: transport. Commit applies without closing (see the header), so the
 % pair is Commit/Cancel rather than OK/Cancel.
 commitBtn = uibutton(g,'Text','Commit','BackgroundColor',[0.6 0.9 0.6], ...
     'FontWeight','bold','ButtonPushedFcn',@(~,~) onCommit());
-commitBtn.Layout.Row = 13; commitBtn.Layout.Column = 2;
+commitBtn.Layout.Row = 14; commitBtn.Layout.Column = 2;
 cancelBtn = uibutton(g,'Text','Cancel','ButtonPushedFcn',@(~,~) onCancel());
-cancelBtn.Layout.Row = 13; cancelBtn.Layout.Column = 3;
+cancelBtn.Layout.Row = 14; cancelBtn.Layout.Column = 3;
 
 if isempty(devices)
     msgLbl.Text = 'No ASIO devices found -- check the driver is installed and selected.';
@@ -385,6 +413,7 @@ uiwait(fig);
         p.PlayerChannels   = [plSig.Value plTim.Value];
         p.RecorderChannels = [rcSig.Value rcTim.Value];
         p.MicChannel       = micField.Value;
+        p.AmplifierGain    = gainField.Value;
     end
 
     function syncTestingEnable()
@@ -429,6 +458,10 @@ uiwait(fig);
         % exactly that reason -- and with it under stimulation only, where the
         % device being opened has no input side to measure through.
         micField.Enable = inputs;
+        % The amplifier sits on the recorded input, so it goes with the
+        % recorder mapping: nothing is recorded under stimulation only, and
+        % Test Mode has no amplifier in the path (AudioSettings.recordingGain).
+        gainField.Enable = inputs;
         probeBtn.Enable = onoff;
         if testing
             probeBtn.Tooltip = 'Not available in Test Mode -- there is no device to probe.';

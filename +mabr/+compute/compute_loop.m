@@ -29,7 +29,7 @@ function compute_loop(rootPath,resultQueue,role)
 %   Message shapes:
 %       client -> worker : struct('cmd',mabr.compute.Cmd,'data',payload)
 %           Configure       DACSampleRate, Window, Filters (struct),
-%                           Artifacts (struct)
+%                           Artifacts (struct), AmplifierGain
 %           RunStart        RunId, StimIndex, Stimuli, Labels, Meta
 %           RunEnd          RunId
 %           Finalize        RunId, StimIndex             (dsp)
@@ -111,9 +111,11 @@ try
                         pipe = mabr.compute.Pipeline(cfg);
                         if ~isempty(run), pipe.beginRun(run); end
                     end
+                    gain = 1;
+                    if isfield(d,'AmplifierGain'), gain = d.AmplifierGain; end
                     pipe.configure(d.Window, ...
                         mabr.FilterPolicy.fromStruct(d.Filters), ...
-                        mabr.ArtifactPolicy.fromStruct(d.Artifacts));
+                        mabr.ArtifactPolicy.fromStruct(d.Artifacts),gain);
                     mabr.log.vprintf(2,'Compute worker (%s) configured: %g Hz, window [%g %g] s', ...
                         role,d.DACSampleRate,d.Window(1),d.Window(2));
                     if isempty(run), send_state(resultQueue,mabr.compute.State.Ready);

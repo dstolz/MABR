@@ -77,6 +77,12 @@ classdef Pipeline < handle
         Filters    (1,1) mabr.FilterPolicy   = mabr.FilterPolicy;
         LiveFilter (1,1) mabr.FilterPolicy   = mabr.FilterPolicy;
         Artifacts  (1,1) mabr.ArtifactPolicy = mabr.ArtifactPolicy;
+        % External amplifier gain (mabr.AudioSettings.AmplifierGain). The
+        % ring holds converter units; every signal sample read from it is
+        % divided by this before anything else happens, so the sweeps, the
+        % artifact verdicts, and a finalized part's Data are in volts at the
+        % electrodes. The timing channel is never scaled.
+        Gain       (1,1) double = 1
         % What the onsets of the run in progress belong to (see beginRun);
         % [] between runs, and step() does nothing then.
         Run = []
@@ -106,17 +112,25 @@ classdef Pipeline < handle
         end
 
         % --- Configuration --------------------------------------------------
-        function configure(obj,window,filters,artifacts)
-            % Adopt the analysis window and the two policies. Safe to call
-            % with the values already in force -- nothing is thrown away
-            % unless it has actually changed -- and safe mid-run: a new chain
-            % refilters the cached sweeps on the next step, a new artifact
-            % policy re-judges them, and a new window re-extracts them from
-            % the ring, which still holds the block.
+        function configure(obj,window,filters,artifacts,gain)
+            % Adopt the analysis window, the two policies, and the amplifier
+            % gain. Safe to call with the values already in force -- nothing
+            % is thrown away unless it has actually changed -- and safe
+            % mid-run: a new chain or gain refilters the cached sweeps on the
+            % next step, a new artifact policy re-judges them, and a new
+            % window re-extracts them from the ring, which still holds the
+            % block.
             if nargin < 2 || isempty(window),    window    = obj.Window;    end
             if nargin < 3 || isempty(filters),   filters   = obj.Filters;   end
             if nargin < 4 || isempty(artifacts), artifacts = obj.Artifacts; end
+            if nargin < 5 || isempty(gain),      gain      = obj.Gain;      end
             window = double(window(:)');
+            gain   = mabr.AudioSettings.coerceGain(gain,1);
+
+            if gain ~= obj.Gain
+                obj.Gain = gain;
+                obj.invalidateFiltered();
+            end
 
             if ~obj.Configured || ~filters.sameSettings(obj.Filters)
                 obj.Filters = filters;
@@ -207,7 +221,7 @@ classdef Pipeline < handle
 
             if n > obj.NumFiltered
                 new = obj.NumFiltered+1:n;
-                Yn  = obj.filterRows(pre(new,:),post(new,:));
+                Yn  = obj.filterRows(pre(new,:)/obj.Gain,post(new,:)/obj.Gain);
                 obj.Filt(new,:) = Yn;
                 obj.Bad(new)    = obj.judge(Yn(:,L+1:end));
                 obj.NumFiltered = n;
@@ -263,6 +277,7 @@ classdef Pipeline < handle
             %                 away the samples that answer it.
             %   F.Filters     the settings (FilterPolicy.toStruct) the
             %                 Processed traces were made with
+            %   F.AmplifierGain  the gain Data was divided by (see Gain)
             %   F.Parts       one per stimulus present, in first-seen order:
             %       Stimulus, Data (single, decimated, raw), Processed (the
             %       same trace through the chain), Onsets (into Data),
@@ -280,6 +295,7 @@ classdef Pipeline < handle
             % the planned sequence is shorter is trusted.
             F = struct('NumOnsets',0,'Seq',zeros(1,0),'OnsetsRaw',zeros(1,0), ...
                        'OnsetsAll',zeros(1,0),'Filters',obj.Filters.toStruct(), ...
+                       'AmplifierGain',obj.Gain, ...
                        'Parts',mabr.compute.Pipeline.emptyParts());
             [rawSignal,rawTiming] = rb.readBlock();   % chronological, wrap-safe
             if numel(rawSignal) < 2, return; end
@@ -309,7 +325,9 @@ classdef Pipeline < handle
             % (and its filter design) are self-consistent. io then saves it
             % as-is (DecimationFactor = 1) yielding the same offline-format
             % 12 kHz .abr the legacy save_abr_data produced.
-            adcData  = single(resample(double(rawSignal),1,df));
+            % Referred to the electrodes here, once, so the .abr, the
+            % filtered trace, and the artifact verdicts below all agree.
+            adcData  = single(resample(double(rawSignal),1,df)/obj.Gain);
             onsets   = max(1,round(onsetsRaw(:)./df));
             sweepLen = max(1,round(adcFs*diff(obj.Window)));
 
