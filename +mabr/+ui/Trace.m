@@ -15,6 +15,15 @@ classdef Trace < handle
 %   coordinates, so they follow the trace through rescaling, restacking, and
 %   a save/load round-trip.
 %
+%   Sweeps holds the sweeps the mean was taken over, when the caller has
+%   them, and BandLo/BandHi the OFFSETS of an error band from Data (see
+%   mabr.metrics.band_edges). Offsets rather than edges because Data is a
+%   display trace -- possibly detrended and smoothed -- and the band is
+%   still the right width about it. They are set by the organizer rather
+%   than computed here, so switching statistic costs one pass over the
+%   sweeps instead of one per redraw; the sweeps travel with the trace so
+%   the statistic is still a question a loaded view can be asked.
+%
 %   toStruct/fromStruct round-trip the complete display state, which is what
 %   lets TraceOrganizer restore a saved view exactly as it was.
 %
@@ -35,6 +44,13 @@ classdef Trace < handle
         MarkerLocs (1,:) double = [];   % sample indices into Data
         MarkerText (1,:) cell   = {};
         ID         (1,1) double = 0;
+        Sweeps     (:,:) double = [];   % [nSamples x nSweeps] behind Data
+        BandLo     (:,1) double = [];   % error band, as offsets from Data
+        BandHi     (:,1) double = [];
+    end
+
+    properties (Constant, Access = private)
+        BandAlpha = 0.18;   % error-band patch opacity, as in mabr.ui.LivePlot
     end
 
     properties (Dependent)
@@ -44,6 +60,7 @@ classdef Trace < handle
     properties (SetAccess = private, Transient)
         LineHandle
         LabelHandle
+        BandHandle
         Markers (1,:) mabr.ui.Marker = mabr.ui.Marker.empty;
     end
 
@@ -92,6 +109,9 @@ classdef Trace < handle
             vis = mabr.ui.Trace.onoff(obj.Visible);
             lw  = obj.LineWidth + 2*obj.Selected;
 
+            % Band first, so the waveform is drawn over its own shading.
+            obj.drawBand(ax,yscale);
+
             if isempty(obj.LineHandle) || ~isgraphics(obj.LineHandle)
                 obj.LineHandle = line(ax,tms,y,'Color',obj.Color,'LineWidth',lw);
             else
@@ -119,6 +139,74 @@ classdef Trace < handle
                 'FontWeight',weight,'Visible',showLbl);
 
             obj.redrawMarkers(ax,yscale);
+        end
+
+        % --- Error band ------------------------------------------------------
+        function setBand(obj,lo,hi)
+            % Install an error band as offsets from Data, one per sample (see
+            % mabr.metrics.band_edges). Anything that is not one offset per
+            % sample clears the band rather than drawing a partial one.
+            if nargin < 3 || isempty(lo) || isempty(hi) || ...
+                    numel(lo) ~= numel(obj.Data) || numel(hi) ~= numel(obj.Data)
+                obj.clearBand();
+                return
+            end
+            obj.BandLo = double(lo(:));
+            obj.BandHi = double(hi(:));
+        end
+
+        function clearBand(obj)
+            obj.BandLo = [];
+            obj.BandHi = [];
+            if ~isempty(obj.BandHandle) && isgraphics(obj.BandHandle)
+                set(obj.BandHandle,'XData',nan(3,1),'YData',nan(3,1), ...
+                    'Visible','off');
+            end
+        end
+
+        function tf = hasBand(obj)
+            tf = numel(obj.BandLo) == numel(obj.Data) && ...
+                 numel(obj.BandHi) == numel(obj.Data) && ~isempty(obj.Data);
+        end
+
+        function drawBand(obj,ax,yscale)
+            % The band as one closed polygon -- lower edge left to right, upper
+            % edge back again -- scaled and offset exactly as displayY scales
+            % the trace, so the two cannot come apart.
+            %
+            % A band with any non-finite edge is blanked outright rather than
+            % drawn with a gap: a patch is one face, and a NaN vertex in the
+            % middle of it leaves the polygon undefined rather than open (the
+            % same rule mabr.ui.LivePlot.setBand follows). band_edges returns
+            % all-NaN exactly when there is no band, so this is all-or-nothing.
+            if ~obj.hasBand() || ~obj.Visible
+                if ~isempty(obj.BandHandle) && isgraphics(obj.BandHandle)
+                    set(obj.BandHandle,'Visible','off');
+                end
+                return
+            end
+            lo = (obj.Data + obj.BandLo)*yscale*obj.Gain + obj.YOffset;
+            hi = (obj.Data + obj.BandHi)*yscale*obj.Gain + obj.YOffset;
+            if ~all(isfinite(lo)) || ~all(isfinite(hi))
+                if ~isempty(obj.BandHandle) && isgraphics(obj.BandHandle)
+                    set(obj.BandHandle,'Visible','off');
+                end
+                return
+            end
+            tms = obj.Time*1000;
+            x   = [tms; flipud(tms)];
+            y   = [lo; flipud(hi)];
+            if isempty(obj.BandHandle) || ~isgraphics(obj.BandHandle)
+                obj.BandHandle = patch('Parent',ax,'XData',x,'YData',y, ...
+                    'FaceColor',obj.Color,'FaceAlpha',obj.BandAlpha, ...
+                    'EdgeColor','none','HitTest','off','PickableParts','none');
+                % Behind everything: a band switched on after the traces were
+                % drawn is a new child, and a new child is drawn on top.
+                try, uistack(obj.BandHandle,'bottom'); end %#ok<TRYNC>
+            else
+                set(obj.BandHandle,'XData',x,'YData',y,'FaceColor',obj.Color);
+            end
+            obj.BandHandle.Visible = 'on';
         end
 
         % --- Markers ---------------------------------------------------------
@@ -176,7 +264,10 @@ classdef Trace < handle
                 'ShowLabel',  obj.ShowLabel, ...
                 'MarkerLocs', obj.MarkerLocs, ...
                 'MarkerText', {obj.MarkerText}, ...
-                'ID',         obj.ID);
+                'ID',         obj.ID, ...
+                'Sweeps',     obj.Sweeps, ...
+                'BandLo',     obj.BandLo, ...
+                'BandHi',     obj.BandHi);
         end
     end
 
@@ -190,7 +281,8 @@ classdef Trace < handle
         function obj = fromStruct(s)
             obj = mabr.ui.Trace(s.Data,s.Time);
             f = {'Label','StimID','Color','YOffset','Gain','LineWidth', ...
-                 'Visible','ShowLabel','MarkerLocs','MarkerText','ID'};
+                 'Visible','ShowLabel','MarkerLocs','MarkerText','ID', ...
+                 'Sweeps','BandLo','BandHi'};
             for i = 1:numel(f)
                 if isfield(s,f{i}) && ~isempty(s.(f{i}))
                     obj.(f{i}) = s.(f{i});
@@ -204,6 +296,7 @@ classdef Trace < handle
             delete(obj.Markers);
             try, delete(obj.LineHandle);  end %#ok<TRYNC>
             try, delete(obj.LabelHandle); end %#ok<TRYNC>
+            try, delete(obj.BandHandle);  end %#ok<TRYNC>
         end
     end
 end

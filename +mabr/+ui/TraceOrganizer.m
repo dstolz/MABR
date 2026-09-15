@@ -32,6 +32,18 @@ classdef TraceOrganizer < handle
 %   the series stays legible -- so the peaks are picked in the inspector and
 %   transferred back to the trace when it is applied.
 %
+%   Every mean trace can carry a shaded ERROR BAND behind it, in its own
+%   colour, from the sweeps the mean was taken over -- the Band menu picks
+%   which statistic (none, +/-1 SD, +/-1 SEM, a t-based confidence interval,
+%   or a percentile bootstrap interval of the mean; see
+%   mabr.metrics.band_edges). The sweeps travel with each trace, so the
+%   statistic is a question a view loaded from a .torg can still be asked,
+%   and a trace added without them (addTrace, or a version-1 file) simply
+%   carries no band. The band is deliberately left OUT of the shared
+%   normalization: an SD band is many times the mean it describes, and
+%   folding it into the scale would flatten the series it was switched on to
+%   help read. Use the spacing controls if the bands crowd each other.
+%
 %     Up / Down            amplitude larger / smaller
 %     Shift+Up / Down      spacing wider / narrower
 %     Ctrl+Up / Down       move selected trace up / down the stack
@@ -41,6 +53,7 @@ classdef TraceOrganizer < handle
 %     a / Escape           select all / none
 %     l                    toggle stimulus ID labels
 %     p / c                mark peaks / clear markers
+%     b                    cycle the error band
 %     i                    inspect the selected trace (or double-click it)
 %     h / Delete           hide / remove selected traces
 %     Ctrl+N               session notes
@@ -64,6 +77,14 @@ classdef TraceOrganizer < handle
         Colors   (:,3) double = lines(7);
         NormalizeEach (1,1) logical = false;  % scale each trace to its own peak
         ShowLabels    (1,1) logical = true;
+
+        % Which error band the traces carry: 'none' | 'std' | 'sem' | 'ci' |
+        % 'boot' (mabr.metrics.band_edges). ConfidenceLevel is used by both
+        % interval statistics, so picking a level from the Band menu and then
+        % switching between 'ci' and 'boot' compares the two at one level.
+        ErrorBand       (1,:) char   = 'none';
+        ConfidenceLevel (1,1) double = 0.95;
+        BootReps        (1,1) double = 1000;  % resamples for 'boot'
     end
 
     properties (SetAccess = private)
@@ -83,10 +104,12 @@ classdef TraceOrganizer < handle
         GainStep    = 1.25;   % multiplicative step for larger/smaller
         SpacingStep = 1.25;
         FileFilter  = {'*.torg','MABR Trace Organizer view (*.torg)'};
-        % 3 adds View.Notes. Older files simply lack the field and load as
-        % before -- loadView reads every optional field with isfield for
-        % exactly this reason.
-        FileVersion = 3;
+        % 3 adds View.Notes; 4 adds the error-band settings (and each trace's
+        % Sweeps, so the statistic can be changed after a load). Older files
+        % simply lack the fields and load as before -- loadView reads every
+        % optional field with isfield for exactly this reason.
+        FileVersion = 4;
+        CILevels    = [0.90 0.95 0.99];   % the levels the Band menu offers
     end
 
     properties (SetAccess = private, Transient)
@@ -126,6 +149,56 @@ classdef TraceOrganizer < handle
 
         function tf = isvalidView(obj)
             tf = ~isempty(obj.Figure) && isgraphics(obj.Figure);
+        end
+
+        % --- Error band -----------------------------------------------------
+        function set.ErrorBand(obj,v)
+            obj.ErrorBand = validatestring(v,{'none','std','sem','ci','boot'}, ...
+                'mabr.ui.TraceOrganizer','ErrorBand');
+            obj.bandChanged();
+        end
+
+        function set.ConfidenceLevel(obj,v)
+            assert(isnumeric(v) && isscalar(v) && v > 0 && v < 1, ...
+                'mabr:ui:TraceOrganizer:conf', ...
+                'ConfidenceLevel must be a probability strictly between 0 and 1.');
+            obj.ConfidenceLevel = double(v);
+            obj.bandChanged();
+        end
+
+        function set.BootReps(obj,v)
+            assert(isnumeric(v) && isscalar(v) && v >= 2 && isfinite(v), ...
+                'mabr:ui:TraceOrganizer:bootReps', ...
+                'BootReps must be a finite count of at least 2.');
+            obj.BootReps = round(double(v));
+            obj.bandChanged();
+        end
+
+        function setErrorBand(obj,mode,conf)
+            % Pick the error band, and its level in the same call so the band
+            % is never briefly drawn at the level just moved away from.
+            if nargin >= 3 && ~isempty(conf), obj.ConfidenceLevel = conf; end
+            obj.ErrorBand = mode;
+
+            % A band that cannot be drawn says why: the sweeps only travel
+            % with a trace added from a finalized block (or restored from a
+            % version-4 .torg), so an older view has a mean and nothing to
+            % put a band around, which is not the same as a band of nothing.
+            n = numel(obj.Traces);
+            if strcmp(obj.ErrorBand,'none') || n == 0
+                obj.status(sprintf('Error band: %s.',obj.bandDescription()));
+                return
+            end
+            k = nnz(arrayfun(@(t) t.hasBand(),obj.Traces));
+            if k == 0
+                obj.status(sprintf(['Error band %s: no sweeps are stored with ' ...
+                    'these traces, so none can be drawn.'],obj.bandDescription()));
+            elseif k < n
+                obj.status(sprintf('Error band %s on %d of %d trace(s); the rest have no sweeps.', ...
+                    obj.bandDescription(),k,n));
+            else
+                obj.status(sprintf('Error band: %s.',obj.bandDescription()));
+            end
         end
 
         % --- Live updating --------------------------------------------------
@@ -193,6 +266,15 @@ classdef TraceOrganizer < handle
             catch
                 return
             end
+            % The sweeps behind that mean, for the error band. Clean rather
+            % than every sweep, so the band describes the same sweeps the
+            % trace does; a block that cannot supply them (a hand-built one)
+            % simply carries no band.
+            sweeps = [];
+            try
+                sweeps = double(block.ADC.CleanSweepData);
+            catch
+            end
             % Every sweep rejected leaves no mean to draw (SweepMean is all
             % NaN). Say so rather than stacking an invisible trace the user
             % would have to work out the absence of.
@@ -207,14 +289,20 @@ classdef TraceOrganizer < handle
                 % No stimulus metadata (e.g. a hand-built Block) -- fall back
                 % to the descriptive label in Trace.DisplayName.
             end
-            obj.addTrace(m,t,lbl,sid);
+            obj.addTrace(m,t,lbl,sid,sweeps);
         end
 
-        function tr = addTrace(obj,data,time,label,stimID)
+        function tr = addTrace(obj,data,time,label,stimID,sweeps)
             if nargin < 4, label  = ''; end
             if nargin < 5, stimID = ''; end
+            if nargin < 6, sweeps = []; end
             tr = mabr.ui.Trace(data,time,label,stimID);
             tr.ID = numel(obj.Traces)+1;
+            % [nSamples x nSweeps], one row per sample of Data -- anything else
+            % is not this trace's sweeps and is dropped rather than banded.
+            if ~isempty(sweeps) && size(sweeps,1) == numel(tr.Data)
+                tr.Sweeps = double(sweeps);
+            end
             if isempty(obj.Traces)
                 tr.YOffset = 0;
             else
@@ -223,6 +311,7 @@ classdef TraceOrganizer < handle
             tr.Color     = obj.Colors(mod(numel(obj.Traces),size(obj.Colors,1))+1,:);
             tr.ShowLabel = obj.ShowLabels;
             if isempty(obj.Traces), obj.Traces = tr; else, obj.Traces(end+1) = tr; end
+            obj.computeBands(numel(obj.Traces));
             if obj.isvalidView(), obj.plotAll(true); end
         end
 
@@ -410,6 +499,9 @@ classdef TraceOrganizer < handle
             View.NormalizeEach = obj.NormalizeEach;
             View.ShowLabels    = obj.ShowLabels;
             View.Colors        = obj.Colors;
+            View.ErrorBand       = obj.ErrorBand;
+            View.ConfidenceLevel = obj.ConfidenceLevel;
+            View.BootReps        = obj.BootReps;
             View.XLim          = [];
             View.YLim          = [];
             % The rig notebook travels with the view, on the same terms as it
@@ -451,10 +543,23 @@ classdef TraceOrganizer < handle
                 obj.NormalizeEach = V.NormalizeEach;
                 obj.ShowLabels    = V.ShowLabels;
                 obj.Colors        = V.Colors;
+                % Version 4 and later. Restored defensively field by field --
+                % a file written by another version, or edited by hand, must
+                % not stop a view loading over a display setting; a file that
+                % names no band leaves the current one alone, as its traces
+                % carry no sweeps to draw one from anyway.
+                try
+                    if isfield(V,'BootReps'),        obj.BootReps        = V.BootReps;        end
+                    if isfield(V,'ConfidenceLevel'), obj.ConfidenceLevel = V.ConfidenceLevel; end
+                    if isfield(V,'ErrorBand'),       obj.ErrorBand       = V.ErrorBand;       end
+                catch me
+                    mabr.log.vprintf(2,1,'Trace organizer: error-band settings not restored: %s',me.message);
+                end
                 for k = 1:numel(V.Traces)
                     tr = mabr.ui.Trace.fromStruct(V.Traces(k));
                     if isempty(obj.Traces), obj.Traces = tr; else, obj.Traces(end+1) = tr; end
                 end
+                obj.computeBands();
                 obj.ensureFigure();
                 obj.plotAll(true);
                 if ~isempty(V.XLim), obj.Axes.XLim = V.XLim; end
@@ -673,6 +778,21 @@ classdef TraceOrganizer < handle
                 it('Remove selected'             ,@() obj.removeTraces(),'sep',true) , ...
                 it('Clear all'                   ,@() obj.clear()) };
 
+            % A flat radio list, as mabr.ui.LivePlot's band menu is: one click
+            % reaches any answer, where a Statistic > Level nesting would cost
+            % two for the intervals and buy nothing. The confidence level is
+            % shared by the two interval statistics, so picking a level and
+            % then switching between t and bootstrap compares them at it.
+            spec(end+1).name = 'Band';
+            spec(end).items  = { ...
+                it('None'                        ,@() obj.setErrorBand('none'),'tag','band_none') , ...
+                it('± 1 SD'                      ,@() obj.setErrorBand('std'),'sep',true,'tag','band_std') , ...
+                it('± 1 SEM'                     ,@() obj.setErrorBand('sem'),'tag','band_sem') , ...
+                it('90% confidence'              ,@() obj.setErrorBand('ci',0.90),'sep',true,'tag','band_ci90') , ...
+                it('95% confidence'              ,@() obj.setErrorBand('ci',0.95),'tag','band_ci95') , ...
+                it('99% confidence'              ,@() obj.setErrorBand('ci',0.99),'tag','band_ci99') , ...
+                it('Bootstrap interval'          ,@() obj.setErrorBand('boot'),'sep',true,'tag','band_boot') };
+
             spec(end+1).name = 'Peaks';
             spec(end).items  = { ...
                 it('Inspect trace... (double-click)',@() obj.inspectTrace()) , ...
@@ -707,6 +827,21 @@ classdef TraceOrganizer < handle
             if ~obj.isvalidView(), return; end
             obj.setChecks('normalize',obj.NormalizeEach);
             obj.setChecks('labels',obj.ShowLabels);
+
+            % Tick the band the view is actually showing. A ConfidenceLevel
+            % only a script could have set (0.9973, say) matches no entry and
+            % leaves the interval items unticked -- the status line still
+            % names it.
+            isCI  = strcmp(obj.ErrorBand,'ci');
+            lvl   = obj.ConfidenceLevel;
+            obj.setChecks('band_none',strcmp(obj.ErrorBand,'none'));
+            obj.setChecks('band_std' ,strcmp(obj.ErrorBand,'std'));
+            obj.setChecks('band_sem' ,strcmp(obj.ErrorBand,'sem'));
+            obj.setChecks('band_boot',strcmp(obj.ErrorBand,'boot'));
+            tags = {'band_ci90','band_ci95','band_ci99'};
+            for i = 1:numel(obj.CILevels)
+                obj.setChecks(tags{i},isCI && abs(lvl-obj.CILevels(i)) < 1e-9);
+            end
         end
 
         function setChecks(obj,tag,tf)
@@ -714,6 +849,64 @@ classdef TraceOrganizer < handle
             for k = 1:numel(h)
                 h(k).Checked = matlab.lang.OnOffSwitchState(tf);
             end
+        end
+
+        % --- Error band -------------------------------------------------------
+        function bandChanged(obj)
+            % Recompute every band, then redraw. Called from the property
+            % setters so that setting ErrorBand at the command line does the
+            % same thing as picking it off the menu.
+            obj.computeBands();
+            obj.syncMenuChecks();
+            if obj.isvalidView(), obj.plotAll(false); end
+        end
+
+        function computeBands(obj,idx)
+            % One pass over the sweeps per change of statistic, not per redraw:
+            % the offsets are cached on each Trace (see mabr.ui.Trace.setBand),
+            % which is what keeps a bootstrap band affordable in a view that
+            % gains a trace every block.
+            if nargin < 2 || isempty(idx), idx = 1:numel(obj.Traces); end
+            none = strcmp(obj.ErrorBand,'none');
+            for k = idx(:)'
+                tr = obj.Traces(k);
+                if none || isempty(tr.Sweeps) || size(tr.Sweeps,1) ~= numel(tr.Data)
+                    tr.clearBand();
+                    continue
+                end
+                try
+                    % band_edges takes [nSweeps x nSamples]; Sweeps is stored
+                    % the way a Recording hands it over, [nSamples x nSweeps].
+                    [lo,hi] = mabr.metrics.band_edges(tr.Sweeps.', ...
+                        obj.ErrorBand,obj.ConfidenceLevel,obj.BootReps);
+                    tr.setBand(lo,hi);
+                catch me
+                    % A band is a display statistic: losing one must not cost
+                    % the trace, least of all on the acquisition path.
+                    tr.clearBand();
+                    mabr.log.vprintf(2,1,'Trace organizer: error band failed on "%s": %s', ...
+                        tr.DisplayName,me.message);
+                end
+            end
+        end
+
+        function s = bandDescription(obj)
+            switch obj.ErrorBand
+                case 'std',  s = '± 1 SD';
+                case 'sem',  s = '± 1 SEM';
+                case 'ci',   s = sprintf('± %g%% CI',100*obj.ConfidenceLevel);
+                case 'boot', s = sprintf('± %g%% bootstrap CI',100*obj.ConfidenceLevel);
+                otherwise,   s = 'none';
+            end
+        end
+
+        function cycleBand(obj)
+            % The keyboard route: step through the statistics at the current
+            % confidence level, so one key reaches all of them.
+            modes = {'none','std','sem','ci','boot'};
+            i = find(strcmp(obj.ErrorBand,modes),1);
+            if isempty(i), i = 1; end
+            obj.setErrorBand(modes{mod(i,numel(modes))+1});
         end
 
         % --- Drawing ----------------------------------------------------------
@@ -883,6 +1076,8 @@ classdef TraceOrganizer < handle
                     obj.markPeaks();
                 case 'c'
                     obj.clearMarkers();
+                case 'b'
+                    obj.cycleBand();
                 case 'i'
                     obj.inspectTrace();
                 case 'h'
@@ -976,6 +1171,7 @@ classdef TraceOrganizer < handle
                 'a / Escape           select all / none'
                 'l                    toggle stimulus ID labels'
                 'p / c                mark peaks / clear markers'
+                'b                    cycle the error band'
                 'i                    inspect the selected trace'
                 'h                    hide / show selected'
                 'Delete               remove selected'
@@ -991,8 +1187,12 @@ classdef TraceOrganizer < handle
             n = numel(obj.Traces);
             s = obj.selectedIndices();
             if obj.NormalizeEach, mode = 'per-trace'; else, mode = 'common'; end
-            obj.status(sprintf('%d trace(s), %d selected  |  spacing %.3g  |  %s scale', ...
-                n,numel(s),obj.YSpacing,mode));
+            band = '';
+            if ~strcmp(obj.ErrorBand,'none')
+                band = sprintf('  |  %s',obj.bandDescription());
+            end
+            obj.status(sprintf('%d trace(s), %d selected  |  spacing %.3g  |  %s scale%s', ...
+                n,numel(s),obj.YSpacing,mode,band));
         end
 
         function status(obj,txt)
