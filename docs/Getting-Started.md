@@ -112,7 +112,7 @@ c.waitUntilReady(120);                       % one-time worker handshake
 c.setStimuli(mabr.stim.demoStimuli(cfg));
 
 % presentation is MABR's to choose, not the stimulus package's
-c.Schedule.Strategy    = 'shuffled-cycles'; % intermix the conditions
+c.Schedule.Strategy    = 'interleaved-random'; % intermix the conditions
 c.Schedule.Repetitions = 512;               % scalar, or one value per stimulus
 c.Schedule.ISI         = 1/21.1;            % seconds, onset-to-onset
 c.Schedule.build();                          % required after either change
@@ -132,7 +132,7 @@ That produces one `.abr` per stimulus even though every condition was played in 
 For a blocked schedule you can additionally arm an early-stop criterion, which ends each run as soon as the response is good enough:
 
 ```matlab
-c.Schedule.Strategy = 'blocked';  c.Schedule.build();
+c.Schedule.Strategy = 'conventional';  c.Schedule.build();
 c.AdvanceFcn    = @mabr.stim.advance.corr_threshold;
 c.AdvanceParams = struct('targetSweeps',512,'corrThreshold',0.5, ...
                          'minSweeps',32,'maxSweeps',Inf);

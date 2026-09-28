@@ -76,7 +76,7 @@ fprintf('  bank: %d conditions, %g/%g kHz x %g/%g dB, ADC rate %g kHz\n', ...
 
 %% ---- Part A: the plan agrees with itself ------------------------------
 sch = mabr.stim.Schedule(bank,cfg);
-sch.Strategy    = 'interleaved';
+sch.Strategy    = 'interleaved-ramp';
 sch.Repetitions = 12;
 sch.ISI         = 0.02;
 sch.build();
@@ -121,7 +121,7 @@ ctrl.waitUntilReady();
 % muddy the counts below.
 ctrl.Artifacts = mabr.ArtifactPolicy('none');
 
-R = run_bank(ctrl,bank,sch.Repetitions,sch.ISI,'interleaved',opt);
+R = run_bank(ctrl,bank,sch.Repetitions,sch.ISI,'interleaved-ramp',opt);
 fprintf('  run: %d presentations, %d recovered onsets, %d blocks\n', ...
     numel(R.seq),numel(R.onsets),numel(R.blocks));
 
@@ -327,7 +327,7 @@ fprintf('  PASS Part F: %d slices reach the same %d sweeps, counts and means as 
 
 %% ---- Part G: polarity ---------------------------------------------------
 alt = tone_bank(cfg,freqs(1),levels(2),0.008,true);
-A = run_bank(ctrl,alt,8,0.02,'blocked',opt);
+A = run_bank(ctrl,alt,8,0.02,'conventional',opt);
 assert(numel(A.blocks) == 1,'the alternating run produced %d blocks, not 1',numel(A.blocks));
 sp = A.blocks(1).SweepPolarity(:)';
 assert(numel(sp) == numel(A.seq), ...
@@ -363,7 +363,7 @@ wc.waitUntilReady();
 wc.Artifacts = mabr.ArtifactPolicy('none');
 assert(wc.usingWorkerDSP(),'the DSP worker did not come up; Part H would prove nothing');
 
-W = run_bank(wc,bank,sch.Repetitions,sch.ISI,'interleaved',opt);
+W = run_bank(wc,bank,sch.Repetitions,sch.ISI,'interleaved-ramp',opt);
 assert(numel(W.blocks) == bank.numStimuli, ...
     'the worker-served run produced %d blocks, not %d',numel(W.blocks),bank.numStimuli);
 for i = 1:numel(W.blocks)

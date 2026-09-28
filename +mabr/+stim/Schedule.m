@@ -31,31 +31,59 @@ classdef Schedule < handle
 %
 %   Strategies
 %   ----------
-%     'blocked'          one run per stimulus, each the full repetition train.
-%                        Entries play in array order. Equivalent to the old
-%                        one-block-per-condition behaviour.
-%     'shuffled-blocks'  as 'blocked', but the order of the runs is shuffled.
-%     'interleaved'      ONE run cycling A B C A B C ...; an entry drops out of
-%                        later cycles once it has hit its repetition count.
-%     'shuffled-cycles'  as 'interleaved', but each cycle's order is shuffled
-%                        independently -- every entry still gets exactly its
-%                        repetition count, with no long runs of one stimulus.
-%     'shuffled'         ONE run: the whole multiset of presentations shuffled
-%                        uniformly.
-%     'custom'           the order YOUR function returns. StrategyFcn is
-%                        called once per build with a struct describing the
-%                        design (mabr.stim.strategy.context) and returns the
-%                        run(s) to present; see mabr.stim.strategy.
-%                        custom_template for the contract and a worked
-%                        example. Left unset, build() refuses rather than
-%                        falling back to a built-in order.
+%   Named for the four acquisition designs they implement -- conventional,
+%   and the three interleaved ones (ramp, plateau, random) -- plus two
+%   variants and the user's own:
 %
-%   The first five are permutations of a FIXED multiset, never probabilistic
+%     'conventional'          one run per stimulus, each the full repetition
+%                             train. Entries play in bank order.
+%     'conventional-shuffled' as 'conventional', but the order of the runs is
+%                             shuffled.
+%     'interleaved-ramp'      ONE run of repeated cycles through the bank. Each
+%                             cycle walks one frequency at a time, its levels
+%                             ascending, before moving to the next -- level is
+%                             the INNER loop, so every cycle is a series of
+%                             level ramps.
+%     'interleaved-plateau'   as the ramp, with the loops swapped: every
+%                             frequency at the lowest level, then every
+%                             frequency at the next, so every cycle climbs
+%                             through a series of level plateaus.
+%     'interleaved-random'    ONE run of repeated cycles, each cycle's order
+%                             shuffled independently -- every entry still gets
+%                             exactly its repetition count, with no long runs
+%                             of one stimulus.
+%     'shuffled'              ONE run: the whole multiset of presentations
+%                             shuffled uniformly, with no cycle structure.
+%     'custom'                the order YOUR function returns. StrategyFcn is
+%                             called once per build with a struct describing
+%                             the design (mabr.stim.strategy.context) and
+%                             returns the run(s) to present; see mabr.stim.
+%                             strategy.custom_template for the contract and a
+%                             worked example. Left unset, build() refuses
+%                             rather than falling back to a built-in order.
+%
+%   In every cycled strategy an entry drops out of later cycles once it has
+%   hit its repetition count. Ramp and plateau need to know which parameter is
+%   the level: they read the one named Level (see cycleOrder), keep every
+%   other parameter in the order the bank first lists it, and fall back to
+%   plain bank order when the bank does not vary a Level.
+%
+%   The first six are permutations of a FIXED multiset, never probabilistic
 %   sampling: each entry is presented exactly its repetition count in all of
-%   them. The names say "shuffled" rather than "random" for exactly that
-%   reason. A 'custom' strategy is EXPECTED to hold to the same invariant and
-%   is warned when it does not (mabr.stim.strategy.normalize), but is not
-%   refused -- departing on purpose is a legitimate reason to write one.
+%   them -- 'interleaved-random' included, whose "random" is the order within
+%   a cycle, not what gets presented. A 'custom' strategy is EXPECTED to hold
+%   to the same invariant and is warned when it does not (mabr.stim.strategy.
+%   normalize), but is not refused -- departing on purpose is a legitimate
+%   reason to write one.
+%
+%   The names before this scheme -- 'blocked', 'shuffled-blocks',
+%   'interleaved', 'shuffled-cycles' -- are still accepted and translated on
+%   assignment (see canonicalStrategy), because configuration files and
+%   last-session prefs saved before the rename carry them. 'interleaved'
+%   translates to 'interleaved-ramp', which is the same order it always gave
+%   for a bank listed frequency by frequency with levels ascending (the demo
+%   bank, for one); a bank listed any other way is now cycled in ramp order
+%   rather than in its own.
 %
 %   Alternating polarity
 %   -------------------
@@ -67,7 +95,7 @@ classdef Schedule < handle
 %   inverted presentations land in shuffled positions too. renderSpec reports
 %   the sign used at each onset in the spec's Polarity field.
 %
-%   'interleaved', 'shuffled-cycles' and 'shuffled' INTERMIX different stimuli
+%   The three 'interleaved-*' strategies and 'shuffled' INTERMIX different stimuli
 %   inside one continuous acquisition run (isIntermixed is true), and so may a
 %   'custom' one -- which is why isIntermixed asks a built custom plan whether
 %   any of its runs actually holds more than one stimulus, rather than
@@ -102,7 +130,7 @@ classdef Schedule < handle
 %
 %   Typical walk (driven by mabr.ui.AcqController):
 %       sch = mabr.stim.Schedule(stimulusSet,cfg);
-%       sch.ISI = 0.0474; sch.Strategy = 'shuffled-cycles';
+%       sch.ISI = 0.0474; sch.Strategy = 'interleaved-random';
 %       sch.Repetitions(:) = 512;
 %       sch.build();
 %       r    = sch.current();
@@ -115,15 +143,25 @@ classdef Schedule < handle
 % Daniel Stolzberg (c) 2019-2026
 
     properties (Constant)
-        Strategies = {'blocked','shuffled-blocks','interleaved','shuffled-cycles','shuffled','custom'};
+        Strategies = {'conventional','conventional-shuffled','interleaved-ramp', ...
+                      'interleaved-plateau','interleaved-random','shuffled','custom'};
         ISIModes   = {'fixed','random'};
+
+        % Names from before the strategies were named for the designs they
+        % implement, [old new] per row. Still accepted (canonicalStrategy)
+        % because .mabrcfg files and last-session prefs carry them.
+        LegacyStrategies = { ...
+            'blocked',         'conventional'; ...
+            'shuffled-blocks', 'conventional-shuffled'; ...
+            'interleaved',     'interleaved-ramp'; ...
+            'shuffled-cycles', 'interleaved-random'};
     end
 
     properties
         Set                             % mabr.stim.StimulusSet
         Config                          % mabr.Config
         Repetitions      (1,:) double = []      % per stimulus entry
-        Strategy         (1,:) char   = 'blocked'
+        Strategy         (1,:) char   = 'conventional'
 
         % The user's own ordering function, used when Strategy is 'custom'.
         % Called ONCE per build with the canonical context struct
@@ -226,6 +264,13 @@ classdef Schedule < handle
             if obj.isRandomISI(), v = obj.ISIRange(1); else, v = obj.ISI; end
         end
 
+        function set.Strategy(obj,v)
+            % Translated on the way in, so a plan built from an old name and
+            % one built from its new name are the same plan with the same
+            % label -- nothing downstream has to know there were two names.
+            obj.Strategy = mabr.stim.Schedule.canonicalStrategy(v);
+        end
+
         function set.ISIRange(obj,v)
             % Ascending, and never silently sorted: [50 20] is a mistake about
             % which bound is which, and quietly swapping it would hide that.
@@ -243,7 +288,7 @@ classdef Schedule < handle
         function tf = isIntermixed(obj)
             % True when a single run mixes more than one stimulus.
             %
-            % For the five built-in strategies the name settles it. For
+            % For the six built-in strategies the name settles it. For
             % 'custom' it cannot -- whether a user's plan intermixes is a
             % property of the runs it produced, not of the fact that a
             % function produced them -- so the built plan is asked directly.
@@ -289,22 +334,26 @@ classdef Schedule < handle
             alt = obj.Set.alternatesPolarity();
 
             switch lower(obj.Strategy)
-                case 'blocked'
+                case 'conventional'
                     [obj.Runs,obj.Polarities] = obj.blockRuns(1:n,reps,alt);
 
-                case 'shuffled-blocks'
+                case 'conventional-shuffled'
                     [obj.Runs,obj.Polarities] = obj.blockRuns(randperm(rs,n),reps,alt);
 
-                case 'interleaved'
-                    [seq,pol] = obj.cycleSequence(reps,alt,false,rs);
+                case 'interleaved-ramp'
+                    [seq,pol] = obj.cycleSequence(reps,alt,obj.cycleOrder('ramp'),false,rs);
                     obj.Runs = {seq}; obj.Polarities = {pol};
 
-                case 'shuffled-cycles'
-                    [seq,pol] = obj.cycleSequence(reps,alt,true,rs);
+                case 'interleaved-plateau'
+                    [seq,pol] = obj.cycleSequence(reps,alt,obj.cycleOrder('plateau'),false,rs);
+                    obj.Runs = {seq}; obj.Polarities = {pol};
+
+                case 'interleaved-random'
+                    [seq,pol] = obj.cycleSequence(reps,alt,1:n,true,rs);
                     obj.Runs = {seq}; obj.Polarities = {pol};
 
                 case 'shuffled'
-                    [seq,pol] = obj.cycleSequence(reps,alt,false,rs);
+                    [seq,pol] = obj.cycleSequence(reps,alt,1:n,false,rs);
                     % One permutation applied to both, so each presentation
                     % keeps the polarity it was assigned: shuffling the order
                     % shuffles which onsets are inverted.
@@ -476,7 +525,7 @@ classdef Schedule < handle
             % an artifact took. Independent of MakeupLimit, which bounds
             % appendMakeup only.
             %
-            % Only sensible when a run holds a single stimulus, i.e. a blocked
+            % Only sensible when a run holds a single stimulus, i.e. a conventional
             % strategy: mabr.ui.AcqController.canRepeat gates the GUI button on
             % isIntermixed() and never records a stimulus to repeat for an
             % intermixed run.
@@ -542,7 +591,7 @@ classdef Schedule < handle
             assert(total <= cap,'mabr:stim:Schedule:tooLong', ...
                 ['Run %d needs %d samples (%.1f s) but the ring buffer holds %d ' ...
                  '(%.1f s). Reduce repetitions, shorten the ISI, or use a ' ...
-                 'blocked strategy so each run covers one stimulus.'], ...
+                 'conventional strategy so each run covers one stimulus.'], ...
                 r,total,total/Fs,cap,cap/Fs);
 
             % The shortest interval is what collides, so a randomized run is
@@ -680,7 +729,7 @@ classdef Schedule < handle
             %
             % The refusal is deliberate and comes first: 'custom' with no
             % function is not a strategy MABR can guess at, and falling back
-            % to blocked would present a whole session in an order nobody
+            % to conventional would present a whole session in an order nobody
             % chose while the GUI still said "custom".
             assert(isa(obj.StrategyFcn,'function_handle'), ...
                 'mabr:stim:Schedule:noStrategyFcn', ...
@@ -718,17 +767,64 @@ classdef Schedule < handle
             end
         end
 
-        function [seq,pol] = cycleSequence(~,reps,alt,shuffleWithin,rs)
-            % Walk cycles of the still-owed stimuli. An entry leaves the cycle
-            % once it has been scheduled its full repetition count, so unequal
-            % repetition counts stay spread out instead of clumping at the end.
+        function order = cycleOrder(obj,kind)
+            % The order one cycle of 'interleaved-ramp' / '-plateau' walks the
+            % bank in, as a permutation of 1:n.
+            %
+            %   'ramp'     grouped by the rest of the condition (frequency, in
+            %              the ordinary grid), level ascending inside each group
+            %   'plateau'  level ascending, the rest of the condition inside
+            %              each level
+            %
+            % Only the LEVEL is sorted. Groups, and the entries sharing a level,
+            % keep the order the bank first lists them in: that order is the
+            % bank author's, and it is often deliberate -- frequencies are
+            % commonly listed non-adjacently (32, 16, 8, 22.6, 11.3 kHz) so that
+            % successive presentations excite different places on the cochlea.
+            % Sorting them ascending would undo exactly that.
+            %
+            % The level is the parameter named Level -- the name the toolbox
+            % already fixes end to end (fromStimgen maps stimgen's SoundLevel
+            % onto it, and io.buildFilename reads it). A bank that does not
+            % VARY one has no ramp or plateau to form, and is cycled in bank
+            % order under either name rather than regrouped by guesswork.
+            n     = obj.Set.numStimuli;
+            order = 1:n;
+            P     = obj.Set.paramTable();
+            j     = find(strcmpi(P.Names,'Level') & P.Varying,1);
+            if isempty(j), return; end
+
+            L   = P.Values(:,j);
+            idx = (1:n)';                          % tiebreak: bank order
+            switch kind
+                case 'ramp'
+                    rest = P.Varying; rest(j) = false;
+                    if any(rest)
+                        % Groups numbered by first appearance, so sorting on
+                        % the number keeps the bank's order of the groups.
+                        [~,~,g] = unique(P.Values(:,rest),'rows','stable');
+                    else
+                        g = ones(n,1);
+                    end
+                    [~,order] = sortrows([g L idx]);
+                case 'plateau'
+                    [~,order] = sortrows([L idx]);
+            end
+            order = order(:)';
+        end
+
+        function [seq,pol] = cycleSequence(~,reps,alt,order,shuffleWithin,rs)
+            % Walk cycles of the still-owed stimuli, each cycle in `order`. An
+            % entry leaves the cycle once it has been scheduled its full
+            % repetition count, so unequal repetition counts stay spread out
+            % instead of clumping at the end.
             %
             % Cycle c is, by construction, the c-th presentation of every entry
             % still due, so the alternating polarity of an entry is just the
             % sign of the cycle it appears in.
             seq = []; pol = [];
             for c = 1:max(reps)
-                due = find(reps >= c);
+                due = order(reps(order) >= c);
                 p   = ones(1,numel(due));
                 if mod(c,2) == 0, p(alt(due)) = -1; end
                 if shuffleWithin
@@ -750,8 +846,20 @@ classdef Schedule < handle
             % stimuli fell last. A built schedule knows better and says so --
             % see the isIntermixed METHOD, which is the authority once a plan
             % exists.
-            tf = ismember(lower(strategy), ...
-                {'interleaved','shuffled-cycles','shuffled','custom'});
+            tf = ismember(mabr.stim.Schedule.canonicalStrategy(strategy), ...
+                {'interleaved-ramp','interleaved-plateau','interleaved-random', ...
+                 'shuffled','custom'});
+        end
+
+        function s = canonicalStrategy(s)
+            % A strategy name as the plan uses it: lower case, and a name from
+            % before the rename (LegacyStrategies) translated to its successor.
+            % Anything else passes through unchanged, so an unknown name still
+            % reaches build()'s refusal naming the valid ones.
+            s = lower(char(s));
+            map = mabr.stim.Schedule.LegacyStrategies;
+            k = find(strcmp(s,map(:,1)),1);
+            if ~isempty(k), s = map{k,2}; end
         end
 
         function s = fcnName(fcn)

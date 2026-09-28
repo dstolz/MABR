@@ -13,6 +13,9 @@ function run_all_verifications()
 %                                  below it logs
 %       verify_isi_jitter        - presentation timing: fixed grid vs uniformly
 %                                  randomized ISI, and what still reads it back
+%       verify_strategies        - the built-in strategies present the designs
+%                                  they are named for (conventional, ramp,
+%                                  plateau, random), and old names still load
 %       verify_play_plan         - mabr.stim.PlayPlan: frames synthesized on
 %                                  demand are bit-identical to a whole-matrix
 %                                  render, and the worker streams from one
@@ -123,7 +126,7 @@ function run_all_verifications()
 %   parses the calls below rather than keeping a second copy of them.
 %
 %   Requires the Parallel Computing Toolbox (all but verify_logging,
-%   verify_isi_jitter, verify_analysis, verify_filters, verify_live_plot,
+%   verify_isi_jitter, verify_strategies, verify_analysis, verify_filters, verify_live_plot,
 %   verify_progress_monitor, verify_metric_plot, verify_trace_organizer,
 %   verify_trace_inspector, verify_audio_settings, verify_view_prefs, and
 %   verify_calibration_latency).
@@ -131,7 +134,7 @@ function run_all_verifications()
 %
 % Daniel Stolzberg (c) 2026
 
-tests = {@verify_logging, @verify_isi_jitter, @verify_play_plan, ...
+tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_plan, ...
          @verify_engine_loopback, @verify_data_roundtrip, ...
          @verify_legacy_import,  @verify_analysis, ...
          @verify_online_advance, ...

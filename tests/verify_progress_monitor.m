@@ -46,7 +46,7 @@ bank = mabr.stim.demoStimuli(cfg,'Frequencies',[8 16 32],'Levels',[30 60], ...
 reps = [10 20 30 40 50 60];
 
 sch = mabr.stim.Schedule(bank,cfg);
-sch.Strategy    = 'blocked';
+sch.Strategy    = 'conventional';
 sch.Repetitions = reps;
 sch.ISI         = 0.02;
 sch.build();

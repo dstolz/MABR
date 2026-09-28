@@ -56,7 +56,7 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 
 | Member | Description |
 |--------|-------------|
-| `Strategies` | Constant. `blocked`, `shuffled-blocks`, `interleaved`, `shuffled-cycles`, `shuffled`, `custom`. The five built-ins are permutations of a fixed multiset — never probabilistic sampling |
+| `Strategies` | Constant. `conventional`, `conventional-shuffled`, `interleaved-ramp`, `interleaved-plateau`, `interleaved-random`, `shuffled`, `custom`. Pre-rename names (`blocked`, `shuffled-blocks`, `interleaved`, `shuffled-cycles`) are translated on assignment — see `LegacyStrategies`/`canonicalStrategy`. The six built-ins are permutations of a fixed multiset — never probabilistic sampling |
 | `ISI` | Inter-stimulus interval (s, onset-to-onset). Default `1/21.1` |
 | `Repetitions` | Per-entry repetition counts; a scalar is broadcast to every entry |
 | `Strategy`, `Seed` | How entries combine, and the shuffle seed (`[]` = fresh shuffle, via a private `RandStream`) |

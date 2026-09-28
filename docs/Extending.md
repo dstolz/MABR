@@ -94,16 +94,21 @@ The strategies:
 
 | Strategy | Runs | Shape |
 |----------|------|-------|
-| `blocked` | one per stimulus | `A A A … / B B B … / C C C …`, in array order |
-| `shuffled-blocks` | one per stimulus | same, but the order of the runs is shuffled |
-| `interleaved` | one | `A B C A B C …` |
-| `shuffled-cycles` | one | as interleaved, each cycle shuffled independently |
-| `shuffled` | one | the whole multiset shuffled uniformly |
+| `conventional` | one per stimulus | `A A A … / B B B … / C C C …`, in array order |
+| `conventional-shuffled` | one per stimulus | same, but the order of the runs is shuffled |
+| `interleaved-ramp` | one | repeated cycles; each walks one frequency at a time with its levels **ascending** — `8k·10 8k·20 8k·30 16k·10 16k·20 …` |
+| `interleaved-plateau` | one | repeated cycles; each climbs the levels with every frequency at each — `8k·10 16k·10 32k·10 8k·20 16k·20 …` |
+| `interleaved-random` | one | repeated cycles, each cycle's order shuffled independently |
+| `shuffled` | one | the whole multiset shuffled uniformly, no cycle structure |
 | `custom` | as many as you return | whatever your own function decides — see [Ordering presentations yourself](#ordering-presentations-yourself) |
 
-The five built-ins are permutations of a **fixed multiset**, never probabilistic sampling — every entry is presented exactly its repetition count under any of them. The names say "shuffled" rather than "random" for precisely that reason. A `custom` strategy is expected to hold to the same invariant and is warned when it does not, but is not refused.
+The names are those of the acquisition designs they implement: conventional, and the three interleaved designs (ramp, plateau, random). Ramp and plateau only sort the **level** — the parameter named `Level` — and keep every other parameter in the order the bank first lists it, since frequencies are often listed non-adjacently on purpose; a bank that does not vary a `Level` is cycled in bank order under either name.
 
-The last three **intermix** different stimuli inside one continuous acquisition run. MABR records which stimulus fired at each onset (`spec.StimulusIndex`) and de-interleaves the recorded sweeps at save time, so **each stimulus ID still gets its own `.abr` file** regardless of presentation order. An entry that has met its repetition count drops out of later cycles, so unequal counts stay spread out instead of clumping at the end.
+The six built-ins are permutations of a **fixed multiset**, never probabilistic sampling — every entry is presented exactly its repetition count under any of them. `interleaved-random` included: its randomness is the order within each cycle, not what gets presented.
+
+The names used before the rename (`blocked`, `shuffled-blocks`, `interleaved`, `shuffled-cycles`) are still accepted and translated on assignment, so configuration files saved with them keep loading. `interleaved` becomes `interleaved-ramp`, which is the order it always gave for a bank listed frequency by frequency with ascending levels. A `custom` strategy is expected to hold to the same invariant and is warned when it does not, but is not refused.
+
+The last four **intermix** different stimuli inside one continuous acquisition run. MABR records which stimulus fired at each onset (`spec.StimulusIndex`) and de-interleaves the recorded sweeps at save time, so **each stimulus ID still gets its own `.abr` file** regardless of presentation order. An entry that has met its repetition count drops out of later cycles, so unequal counts stay spread out instead of clumping at the end.
 
 Set `Seed` for a reproducible order — and, under `ISIMode = 'random'`, reproducible timing with it; leave it empty for a fresh shuffle each time. A private `RandStream` is used either way, so neither building a plan nor rendering one perturbs global `rng`.
 
@@ -175,7 +180,7 @@ Structural mistakes are errors rather than warnings, because no design intends t
 
 [custom_template.m](../+mabr/+stim/+strategy/custom_template.m) is a copy-me stereotype and a real strategy: **one run per condition, grouped by frequency, loudest first within each group.**
 
-No built-in can express it — `blocked` presents in array order and the shuffled ones scramble it — and it is what an ABR threshold series usually wants. The loud conditions respond visibly, so a dead electrode or a slipped ear plug shows up in the first minute rather than after twenty spent collecting noise near threshold.
+No built-in can express it — `conventional` presents in array order, the interleaved ones mix conditions inside one run, and the shuffled ones scramble it — and it is what an ABR threshold series usually wants. The loud conditions respond visibly, so a dead electrode or a slipped ear plug shows up in the first minute rather than after twenty spent collecting noise near threshold.
 
 ```matlab
 function runs = descending_levels(ctx)
@@ -352,7 +357,7 @@ Public surface: `setStimuli`, `setLivePlot`, `waitUntilReady`, `start`, `pauseAc
 
 ```matlab
 c.setStimuli(stim);                      % struct array or StimulusSet
-c.Schedule.Strategy    = 'shuffled-cycles';
+c.Schedule.Strategy    = 'interleaved-random';
 c.Schedule.Repetitions = 512;            % scalar, or one value per stimulus
 c.Schedule.ISI         = 1/21.1;
 c.Schedule.build();                      % required after changing either

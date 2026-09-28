@@ -66,11 +66,12 @@ classdef App < handle
         % named after whichever function the user resolved -- see
         % ensureCustomStrategyItem.
         StrategyItems = { ...
-            'Blocked — one stimulus per run', ...
-            'Blocked, shuffled run order', ...
-            'Interleaved — A B C A B C …', ...
-            'Interleaved, shuffled each cycle', ...
-            'Fully shuffled'};
+            'Conventional — one stimulus per run', ...
+            'Conventional, shuffled run order', ...
+            'Interleaved ramp — levels within each frequency', ...
+            'Interleaved plateau — frequencies within each level', ...
+            'Interleaved random — each cycle shuffled', ...
+            'Fully shuffled — no cycles'};
 
         % ItemsData for the dropdown's "Custom function…" item. A sentinel
         % rather than 'custom', so picking it is distinguishable from having
@@ -215,7 +216,7 @@ classdef App < handle
         CustomStrategyFcn  = []
         CustomStrategyName (1,:) char = ''
         CustomStrategyFile (1,:) char = ''
-        LastStrategyValue  (1,:) char = 'blocked'
+        LastStrategyValue  (1,:) char = 'conventional'
         % Whether the last plan that actually BUILT intermixes its runs. Only
         % consulted for 'custom', where the strategy's name cannot answer it
         % -- see currentStrategyIntermixes. True until a plan says otherwise,
@@ -1296,11 +1297,16 @@ classdef App < handle
             % rather than selecting a 'custom' with no function behind it --
             % which build() would refuse at Start.
             warn = app.applyConfigCustomStrategy(cfg,warn);
-            if isfield(cfg,'Strategy') ...
-                    && ~strcmp(cfg.Strategy,mabr.ui.App.StrategyPickSentinel) ...
-                    && any(strcmp(cfg.Strategy,app.StrategyDrop.ItemsData))
-                app.StrategyDrop.Value = cfg.Strategy;
-                app.LastStrategyValue  = cfg.Strategy;
+            if isfield(cfg,'Strategy') && (ischar(cfg.Strategy) || isstring(cfg.Strategy))
+                % A file saved before the strategies were renamed carries the
+                % old name ('blocked', 'shuffled-cycles', ...); translate it
+                % before asking whether the dropdown offers it.
+                strat = mabr.stim.Schedule.canonicalStrategy(cfg.Strategy);
+                if ~strcmp(strat,mabr.ui.App.StrategyPickSentinel) ...
+                        && any(strcmp(strat,app.StrategyDrop.ItemsData))
+                    app.StrategyDrop.Value = strat;
+                    app.LastStrategyValue  = strat;
+                end
             end
             % The plan decides whether a restored custom strategy intermixes,
             % and syncAdvanceEnables below is about to ask. Building it here
@@ -2004,8 +2010,8 @@ classdef App < handle
             app.syncAdvanceEnables();
             % Remember the last real selection so a cancelled or rejected
             % Custom function... pick has somewhere to fall back to. Without
-            % this a user who had chosen 'interleaved', then opened the
-            % picker and cancelled, would land back on 'blocked' -- their
+            % this a user who had chosen 'interleaved-ramp', then opened the
+            % picker and cancelled, would land back on 'conventional' -- their
             % strategy silently changed by a dialog they dismissed.
             if ~strcmp(app.StrategyDrop.Value,mabr.ui.App.StrategyPickSentinel)
                 app.LastStrategyValue = app.StrategyDrop.Value;
@@ -2082,9 +2088,9 @@ classdef App < handle
         function revertStrategySelection(app)
             % Back to the last non-sentinel selection. If that was itself a
             % custom item that no longer exists (never resolved), the base
-            % list has no such entry, so fall back to 'blocked'.
+            % list has no such entry, so fall back to 'conventional'.
             v = app.LastStrategyValue;
-            if ~any(strcmp(v,app.StrategyDrop.ItemsData)), v = 'blocked'; end
+            if ~any(strcmp(v,app.StrategyDrop.ItemsData)), v = 'conventional'; end
             app.StrategyDrop.Value = v;
         end
 
@@ -2102,7 +2108,7 @@ classdef App < handle
             v = app.StrategyDrop.Value;
             if ~strcmp(v,mabr.ui.App.StrategyPickSentinel), return, end
             v = app.LastStrategyValue;
-            if strcmp(v,mabr.ui.App.StrategyPickSentinel), v = 'blocked'; end
+            if strcmp(v,mabr.ui.App.StrategyPickSentinel), v = 'conventional'; end
         end
 
         function fcn = currentStrategyFcn(app)

@@ -150,7 +150,7 @@ reps   = [7 6 5 4];
 
 % Replaying a built-in's own sequence through a custom strategy must give
 % back that built-in's own polarity, to the bit.
-for strat = {'blocked','interleaved','shuffled-cycles'}
+for strat = {'conventional','interleaved-ramp','interleaved-plateau','interleaved-random'}
     [Rb,Pb] = planWith(altSet,cfg,reps,strat{1},[]);
     [Rc,Pc] = planWith(altSet,cfg,reps,'custom',@(cc) Rb);
     assert(isequal(Rb,Rc),'%s: sequence changed under normalize',strat{1});
@@ -253,7 +253,7 @@ assert(strcmp(tsch.strategyLabel(),'custom: mabr.stim.strategy.custom_template')
 bsch = mabr.stim.Schedule(tset,cfg);
 bsch.Repetitions = 4;
 bsch.build();
-assert(strcmp(bsch.strategyLabel(),'blocked'),'a built-in label must be its plain name');
+assert(strcmp(bsch.strategyLabel(),'conventional'),'a built-in label must be its plain name');
 
 % isIntermixed is answered from the RUNS, not from the strategy's name.
 assert(~tsch.isIntermixed(), ...

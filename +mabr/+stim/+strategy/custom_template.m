@@ -57,8 +57,9 @@ function runs = custom_template(ctx)
 %   (so each still saves to its own .abr and early stop stays available), the
 %   conditions grouped by Frequency and ordered LOUDEST FIRST within each.
 %
-%   None of the five built-in strategies can express it -- 'blocked' presents
-%   in bank order and the shuffled ones scramble it -- and it is what an ABR
+%   None of the six built-in strategies can express it -- 'conventional'
+%   presents in bank order, the interleaved ones mix conditions inside one
+%   run, and the shuffled ones scramble it -- and it is what an ABR
 %   threshold series usually wants: the loud conditions respond visibly, so a
 %   dead electrode or a slipped ear plug shows up in the first minute rather
 %   than after twenty spent collecting noise near threshold.

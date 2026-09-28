@@ -129,7 +129,7 @@ assert(strcmp(ctrl.Engine.WorkerName,'acquisition worker'), ...
 
 ctrl.setStimuli(set);
 ctrl.Session.Subject.ID = 'SUBJ_ID_777';
-ctrl.Schedule.Strategy       = 'blocked';
+ctrl.Schedule.Strategy       = 'conventional';
 ctrl.Schedule.Repetitions    = 8;
 ctrl.Schedule.ISI            = 0.02;
 ctrl.Schedule.StimulationOnly = true;

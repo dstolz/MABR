@@ -106,7 +106,7 @@ fprintf('  PASS Part D: fromMatrix / fromSpec\n');
 % A non-overlapping plan this time, so every timing pulse has a rising edge
 % of its own to be recovered from the loopback.
 sch2 = mabr.stim.Schedule(set,cfg);
-sch2.Strategy    = 'interleaved';
+sch2.Strategy    = 'interleaved-ramp';
 sch2.Repetitions = [8 8 8];
 sch2.ISI         = 0.012;
 sch2.SilencePad  = 0.02;

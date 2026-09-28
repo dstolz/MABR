@@ -18,7 +18,7 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
  │  Bank 8 stimuli · stimgen [Design…][Load bank…][Demo] │
  └───────────────────────────────────────────────────┘
  ┌ Presentation ────────────────────────────────────┐
- │    Strategy  [ Blocked — one stimulus per run  v ] │
+ │    Strategy  [ Conventional — one stimulus v ]    │
  │ Repetitions  [   512 ] [ Per stimulus…          ] │
  │  ISI / Rate  [ 47.39 ms ] [        21.10 Hz     ] │
  │              overlap! 60.0 ms stim                │
@@ -67,16 +67,19 @@ The **Bank** field shows `(none loaded)` in red until stimuli are loaded, then t
 
 | Setting | Behavior |
 |---------|----------|
-| Blocked — one stimulus per run | All repetitions of the first stimulus, then all of the second, and so on |
-| Blocked, shuffled run order | The same, but which stimulus goes first is shuffled |
-| Interleaved — A B C A B C … | One continuous run cycling through every stimulus |
-| Interleaved, shuffled each cycle | The same, with each cycle's order shuffled independently |
-| Fully shuffled | One continuous run, every presentation shuffled |
+| Conventional — one stimulus per run | All repetitions of the first stimulus, then all of the second, and so on |
+| Conventional, shuffled run order | The same, but which stimulus goes first is shuffled |
+| Interleaved ramp — levels within each frequency | One continuous run of repeated cycles through the bank. Each cycle takes one frequency at a time and steps through its levels from lowest to highest |
+| Interleaved plateau — frequencies within each level | The same cycles with the loops swapped: every frequency at the lowest level, then every frequency at the next level, and so on |
+| Interleaved random — each cycle shuffled | Repeated cycles through the bank, each cycle in its own random order |
+| Fully shuffled — no cycles | One continuous run, every presentation shuffled with no cycle structure |
 | Custom function… | The order your own function returns — see below |
 
-The last three **intermix** stimuli within a single continuous run, which removes drift and order effects from the comparison between conditions. You still get one `.abr` file per stimulus: MABR knows which stimulus it played at every onset and separates the sweeps when it saves.
+Ramp and plateau sort by the stimulus parameter named **Level** and leave frequencies (and anything else) in the order the bank lists them, since frequencies are often listed non-adjacently on purpose. A bank with only one level has no ramp or plateau to form, and is cycled in bank order.
 
-Shuffling only reorders — it never resamples. Every stimulus is presented exactly the number of times you asked for under any of the five built-in strategies, so the counts are identical whichever you pick; only the order changes.
+The interleaved and fully shuffled strategies **intermix** stimuli within a single continuous run, which removes drift and order effects from the comparison between conditions. You still get one `.abr` file per stimulus: MABR knows which stimulus it played at every onset and separates the sweeps when it saves.
+
+Shuffling only reorders — it never resamples. Every stimulus is presented exactly the number of times you asked for under any of the six built-in strategies, so the counts are identical whichever you pick; only the order changes.
 
 **Custom strategies.** Picking **Custom function…** opens a file browser; choose a function that takes one context struct describing the design — the bank, the repetition counts, and the stimulus parameters as a table — and returns the stimulus indices to present, a vector for one run or a cell of vectors for several. MABR puts its folder on the path and checks it against the contract before accepting it, running it on a representative design with unequal repetition counts, so a malformed one is refused at selection rather than at Start. Once chosen it appears as `Custom: <name>` and is remembered by file in a saved configuration. Polarity is assigned for you, balanced across the whole plan exactly as the built-ins balance it. Copy [`+mabr/+stim/+strategy/custom_template.m`](../+mabr/+stim/+strategy/custom_template.m) — which is itself a useful strategy, one run per condition ordered loudest-first within each frequency — and see [Extending](Extending.md#ordering-presentations-yourself) for the full contract and more worked examples.
 

@@ -49,7 +49,7 @@ cleaner = onCleanup(@() delete(ctrl));
 ctrl.waitUntilReady();
 
 ctrl.setStimuli(mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',60));
-ctrl.Schedule.Strategy    = 'blocked';
+ctrl.Schedule.Strategy    = 'conventional';
 ctrl.Schedule.Repetitions = reps;
 ctrl.Schedule.ISI         = 1/21.1;
 ctrl.Schedule.build();
@@ -82,14 +82,14 @@ repsC = 20;
 n0    = ctrl.Session.NumBlocks;    % Part B's block stays in the session
 
 ctrl.setStimuli(mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',[30 60]));
-ctrl.Schedule.Strategy    = 'shuffled-cycles';
+ctrl.Schedule.Strategy    = 'interleaved-random';
 ctrl.Schedule.Repetitions = repsC;
 ctrl.Schedule.ISI         = 0.02;
 ctrl.Schedule.Seed        = 42;             % reproducible order
 ctrl.Schedule.build();
 ctrl.Schedule.TestingFrameDelay = 0.002;
 
-assert(ctrl.Schedule.isIntermixed(),'shuffled-cycles should intermix');
+assert(ctrl.Schedule.isIntermixed(),'interleaved-random should intermix');
 assert(ctrl.Schedule.NumRuns == 1,'Intermixed strategies produce a single run');
 
 seq = ctrl.Schedule.runSequence(1);

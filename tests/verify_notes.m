@@ -266,7 +266,7 @@ ctrl.Session.Subject.ID = 'SUBJ_ID_5';
 ctrl.Session.OutputPath = runDir;
 
 ctrl.setStimuli(mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',60));
-ctrl.Schedule.Strategy    = 'blocked';
+ctrl.Schedule.Strategy    = 'conventional';
 ctrl.Schedule.Repetitions = 24;
 ctrl.Schedule.ISI         = 0.02;
 ctrl.Schedule.build();

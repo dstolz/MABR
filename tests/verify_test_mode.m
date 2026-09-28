@@ -111,7 +111,7 @@ assert(isempty(ctrl.LastAlignment), ...
 ctrl.setStimuli(bank);
 ctrl.Session.Subject.ID = 'SUBJ_ID_TM';
 ctrl.Session.OutputPath = outDir;
-ctrl.Schedule.Strategy    = 'blocked';
+ctrl.Schedule.Strategy    = 'conventional';
 ctrl.Schedule.Repetitions = 6;
 ctrl.Schedule.ISI         = 0.02;
 ctrl.Schedule.build();

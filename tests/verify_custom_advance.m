@@ -99,7 +99,7 @@ cleaner = onCleanup(@() delete(ctrl)); %#ok<NASGU>
 ctrl.waitUntilReady();
 
 ctrl.setStimuli(mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',60));
-ctrl.Schedule.Strategy    = 'blocked';
+ctrl.Schedule.Strategy    = 'conventional';
 ctrl.Schedule.Repetitions = reps;
 ctrl.Schedule.ISI         = 1/21.1;
 ctrl.Schedule.build();

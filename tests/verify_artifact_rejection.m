@@ -153,7 +153,7 @@ fprintf('  PASS Part C: flags align, persist, and exclude from metrics and the m
 % ---- Part D: make-up scheduling and its cap -----------------------------
 stim = mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',[30 60]);
 sch  = mabr.stim.Schedule(stim,cfg);
-sch.Strategy    = 'blocked';
+sch.Strategy    = 'conventional';
 sch.Repetitions = 10;
 sch.build();
 assert(sch.NumRuns == 2 && ~any(sch.IsMakeup),'expected two plain blocked runs');
@@ -205,7 +205,7 @@ cleaner = onCleanup(@() delete(ctrl));
 ctrl.waitUntilReady();
 
 ctrl.setStimuli(mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',60));
-ctrl.Schedule.Strategy    = 'blocked';
+ctrl.Schedule.Strategy    = 'conventional';
 ctrl.Schedule.Repetitions = reps;
 ctrl.Schedule.ISI         = 0.02;
 ctrl.Schedule.build();
@@ -255,7 +255,7 @@ fprintf('  PASS Part E: counting-only counts %d artifacts and schedules no make-
 % checked: later blocks are judged by the new rule, and the make-up runs the
 % old rule had already queued are withdrawn.
 ctrl.setStimuli(mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',[30 60]));
-ctrl.Schedule.Strategy    = 'blocked';
+ctrl.Schedule.Strategy    = 'conventional';
 ctrl.Schedule.Repetitions = 4;
 ctrl.Schedule.ISI         = 0.02;
 ctrl.Schedule.build();

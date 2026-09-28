@@ -48,7 +48,7 @@ assert(threw,'an unknown ISIMode must be rejected on assignment');
 fprintf('  PASS Part A: defaults, and both ISI settings validate\n');
 
 % ---- Part B: fixed spacing is exactly as before ---------------------------
-s.Strategy    = 'blocked';
+s.Strategy    = 'conventional';
 s.Repetitions = [8 8];
 s.ISI         = 0.02;
 s.build();
@@ -62,7 +62,7 @@ fprintf('  PASS Part B: ''fixed'' spacing unchanged (%d samples, %.2f ms)\n', ..
 % ---- Part C: random spacing lies in the range and varies ------------------
 lo = 0.015; hi = 0.030;
 r  = mabr.stim.Schedule(set,cfg);
-r.Strategy    = 'blocked';
+r.Strategy    = 'conventional';
 r.Repetitions = [200 200];
 r.ISIRange    = [lo hi];
 r.ISIMode     = 'random';

@@ -25,7 +25,7 @@ cleaner = onCleanup(@() delete(ctrl));
 ctrl.waitUntilReady();
 
 ctrl.setStimuli(mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',60));
-ctrl.Schedule.Strategy    = 'blocked';
+ctrl.Schedule.Strategy    = 'conventional';
 ctrl.Schedule.Repetitions = 4;
 ctrl.Schedule.ISI         = 0.02;
 ctrl.Schedule.build();
@@ -49,7 +49,7 @@ fprintf('  PASS: first Start ran the self-test, verified timing, and completed n
 
 % ---- Second Start must not repeat the check -----------------------------
 ctrl.setStimuli(mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',60));
-ctrl.Schedule.Strategy    = 'blocked';
+ctrl.Schedule.Strategy    = 'conventional';
 ctrl.Schedule.Repetitions = 4;
 ctrl.Schedule.ISI         = 0.02;
 ctrl.Schedule.build();
