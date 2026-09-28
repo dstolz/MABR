@@ -224,6 +224,8 @@ classdef LivePlot < handle
         BandConfs  = [];              % ... and the ConfidenceLevel, or NaN
         latestLine
         artifactText
+        ArtifactSeen = 0;     % artifact count at the last refresh
+        ArtifactFlashT = [];  % tic of the most recent new artifact
         legendHandle
         Ctrl = struct();      % the control-strip uicontrols
         StimList   = [];      % stimulus indices the current axes were built for
@@ -311,7 +313,9 @@ classdef LivePlot < handle
             if isgraphics(obj.latestLine)
                 set(obj.latestLine,'XData',nan,'YData',nan,'Color',obj.RecentColor);
             end
-            if isgraphics(obj.artifactText), obj.artifactText.String = ''; end
+            obj.ArtifactSeen   = 0;
+            obj.ArtifactFlashT = [];
+            obj.showArtifacts(0,0);
             title(obj.axLatest,'');
             for k = 1:numel(obj.axMean)
                 if isgraphics(obj.axMean(k)), title(obj.axMean(k),''); end
@@ -1752,15 +1756,32 @@ classdef LivePlot < handle
         end
 
         function showArtifacts(obj,nBad,nTotal)
-            % Silent when nothing has been rejected: an always-present "0
-            % rejected" is noise the eye learns to skip, and the point of the
-            % readout is that it appears the moment it matters.
+            % The counter is always present (0 is information: the electrode
+            % is quiet). A NEW artifact -- the count rising, which catches one
+            % that arrived between two refreshes as well as the latest sweep
+            % being bad -- flashes the axes tint and an ARTIFACT tag for
+            % ArtifactFlash seconds.
             if ~isgraphics(obj.artifactText), return; end
+            if nBad > obj.ArtifactSeen
+                obj.ArtifactFlashT = tic;
+            end
+            obj.ArtifactSeen = nBad;
+            flash = ~isempty(obj.ArtifactFlashT) && toc(obj.ArtifactFlashT) < 1;
             if nBad < 1
-                obj.artifactText.String = '';
+                obj.artifactText.String = 'Artifacts: 0';
+                obj.artifactText.Color  = [0.4 0.4 0.4];
+                obj.artifactText.FontWeight = 'normal';
             else
-                obj.artifactText.String = sprintf('%d rejected (%.0f%%)', ...
+                obj.artifactText.String = sprintf('Artifacts: %d (%.0f%%)', ...
                     nBad,100*nBad/max(1,nTotal));
+                obj.artifactText.Color  = obj.ArtifactColor;
+                obj.artifactText.FontWeight = 'bold';
+            end
+            if flash
+                obj.artifactText.String = ['ARTIFACT  ' obj.artifactText.String];
+                obj.axLatest.Color = [1 0.9 0.88];
+            else
+                obj.axLatest.Color = [1 1 1];
             end
         end
 
