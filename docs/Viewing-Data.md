@@ -157,7 +157,7 @@ Reading a level series: as level decreases, the response amplitude shrinks and i
 
 ### LivePlot
 
-[mabr.ui.LivePlot](../+mabr/+ui/LivePlot.m) owns its figure, split into a **latest-sweep** axes across the top (with the correlation bar beside it) and, below, **one running mean per stimulus the current run is presenting**. It is passive — it draws whatever it is handed and holds no acquisition state:
+[mabr.ui.LivePlot](../+mabr/+ui/LivePlot.m) owns its figure, split into a **latest-sweep** axes across the top and, below, **one running mean per stimulus the current run is presenting**. It is passive — it draws whatever it is handed and holds no acquisition state:
 
 ```matlab
 lp = mabr.ui.LivePlot();              % or LivePlot(parentContainer) to embed

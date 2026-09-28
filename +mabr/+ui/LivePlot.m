@@ -9,10 +9,6 @@ classdef LivePlot < handle
 %       sweep on its own -- it is a different quantity from an average (one
 %       sweep, tens of times larger) and sharing an axis with the means would
 %       flatten them, so it keeps its own,
-%     * a narrow correlation bar beside it (the online onset-contrast metric)
-%       -- present only while the run holds ONE condition, since that metric
-%       is an average converging on itself and an intermixed run's average is
-%       several conditions at once (see corrVisible),
 %     * and below, the RUNNING MEAN of every stimulus the current run is
 %       presenting -- overlaid, one axes each, or arranged by parameter.
 %
@@ -158,15 +154,11 @@ classdef LivePlot < handle
         % means below it. Fractions of the plot panel.
         TopFrac       = 0.34;
         % Horizontal split of that top region: the RIGHT EDGE of the latest
-        % sweep's axes with the correlation bar beside it, and once the bar is
-        % gone (see corrVisible) -- the trace takes the room back rather than
-        % leaving a gap where a hidden axes used to be. Right edges rather
-        % than widths because the LEFT edge is measured from the labels that
-        % have to fit beside it (see fitLabelGutters), and only one of the two
-        % can be the fixed one.
-        LatestRightNarrow = 0.81;   % with the correlation bar beside it
-        LatestRightWide   = 0.97;   % without
-        OverlayRight      = 0.81;   % ... and the overlaid means' right edge
+        % sweep's axes. A right edge rather than a width because the LEFT
+        % edge is measured from the labels that have to fit beside it (see
+        % fitLabelGutters), and only one of the two can be the fixed one.
+        LatestRightWide   = 0.97;
+        OverlayRight      = 0.81;   % the overlaid means' right edge
         % Bounds on a measured label gutter. The floor is there for an axes
         % that answers with nothing; the ceiling is the point past which a
         % margin wide enough for the labels has swallowed the plot they were
@@ -206,7 +198,6 @@ classdef LivePlot < handle
         PlotPanel
         CtrlPanel
         axLatest
-        axCorr
         axMean = gobjects(1,0);   % one (overlay), one per stimulus, or one per group
     end
 
@@ -232,7 +223,6 @@ classdef LivePlot < handle
         BandModes  = {};              % the ErrorBand each one selects
         BandConfs  = [];              % ... and the ConfidenceLevel, or NaN
         latestLine
-        corrBar
         artifactText
         legendHandle
         Ctrl = struct();      % the control-strip uicontrols
@@ -275,7 +265,6 @@ classdef LivePlot < handle
         Rendering     (1,1) logical = false
         RenderPending (1,1) logical = false
         PanelPx      (1,1) double = 0      % plot panel width, px (see relayout)
-        CorrShown    (1,1) logical = true  % is the correlation bar in place?
         LastGroup    = []      % last resolved grouping, for a re-fit on resize
     end
 
@@ -323,7 +312,6 @@ classdef LivePlot < handle
                 set(obj.latestLine,'XData',nan,'YData',nan,'Color',obj.RecentColor);
             end
             if isgraphics(obj.artifactText), obj.artifactText.String = ''; end
-            if isgraphics(obj.corrBar), obj.corrBar.YData = 0; end
             title(obj.axLatest,'');
             for k = 1:numel(obj.axMean)
                 if isgraphics(obj.axMean(k)), title(obj.axMean(k),''); end
@@ -641,7 +629,7 @@ classdef LivePlot < handle
             y = 1 - obj.TopFrac;
             obj.axLatest = axes('Parent',p,'Units','normalized', ...
                 'Position',[obj.LatestGutter y+0.06, ...
-                    obj.LatestRightNarrow-obj.LatestGutter obj.TopFrac-0.13], ...
+                    obj.LatestRightWide-obj.LatestGutter obj.TopFrac-0.13], ...
                 'Box','on','NextPlot','add');
             grid(obj.axLatest,'on');
             yline(obj.axLatest,0,'Color',obj.ZeroColor,'LineWidth',1);
@@ -656,56 +644,7 @@ classdef LivePlot < handle
                 'FontWeight','bold','VerticalAlignment','top', ...
                 'HorizontalAlignment','left','Clipping','off');
 
-            obj.axCorr = axes('Parent',p,'Units','normalized', ...
-                'Position',[0.88 y+0.06 0.09 obj.TopFrac-0.13],'Box','on');
-            mabr.ui.hideAxesToolbar([obj.axLatest obj.axCorr]);
-            obj.corrBar = bar(obj.axCorr,1,0,'FaceColor',[0.2 0.2 0.2]);
-            obj.axCorr.YLim  = [0 1];
-            obj.axCorr.XTick = [];
-            title(obj.axCorr,'\rho_{post}-\rho_{pre}','FontSize',8);
-        end
-
-        function tf = corrVisible(~,S)
-            % Whether the rho_post-rho_pre bar means anything for this run.
-            %
-            % It is the online onset-contrast metric over the run's POOLED
-            % sweeps -- the correlation between the running average and the
-            % sweeps still arriving, post-onset against the pre-onset
-            % baseline. That is a statement about ONE condition: the response
-            % has stopped changing as sweeps accumulate. An INTERMIXED run
-            % (interleaved / shuffled-cycles / shuffled) pools several
-            % conditions into that average, so the number compares one
-            % condition's mean against another condition's sweeps and is a
-            % convergence measure of nothing. It is the same reason
-            % mabr.ui.AcqController evaluates no advance criterion for those
-            % runs -- and the bar goes with it, rather than sitting there
-            % being read.
-            %
-            % The caller's answer wins (info.Intermixed, which AcqController
-            % takes from mabr.stim.Schedule.isIntermixed, so the view follows
-            % the strategy rather than guessing at it); absent one, a run
-            % presenting more than one stimulus is intermixed by definition.
-            if isfield(S.opts,'Intermixed') && ~isempty(S.opts.Intermixed)
-                tf = ~logical(S.opts.Intermixed);
-            else
-                tf = numel(S.stimList) <= 1;
-            end
-        end
-
-        function applyCorrBar(obj,tf)
-            % Show or hide the bar, handing its width to the latest-sweep axes
-            % when it goes -- an empty strip where an axes used to be reads as
-            % a plot that failed to draw. The axes is hidden, never destroyed:
-            % the next run may well be blocked, and rebuilding the top region
-            % would take the trace on screen with it.
-            if ~isgraphics(obj.axCorr) || ~isgraphics(obj.axLatest), return; end
-            obj.CorrShown = tf;
-            obj.applyLatestPosition();
-            % An invisible axes still draws its children, so the bar itself
-            % has to be told; the title follows the axes.
-            obj.axCorr.Visible = onOff(tf);
-            kids = obj.axCorr.Children;
-            if ~isempty(kids), set(kids,'Visible',onOff(tf)); end
+            mabr.ui.hideAxesToolbar(obj.axLatest);
         end
 
         function buildMeanAxes(obj,G)
@@ -795,7 +734,7 @@ classdef LivePlot < handle
             % just been given up and are about to be rebuilt, so the only
             % things left to keep are the two at the top.
             if ~obj.isvalidView(), return; end
-            keep = [obj.axMean(:); obj.axLatest(:); obj.axCorr(:)];
+            keep = [obj.axMean(:); obj.axLatest(:)];
             keep = keep(isgraphics(keep));
             stray = findobj(obj.PlotPanel,'-depth',1,'Type','axes');
             for k = numel(stray):-1:1
@@ -918,10 +857,9 @@ classdef LivePlot < handle
 
         function applyLatestPosition(obj)
             % The latest-sweep axes between its measured left gutter and
-            % whichever right edge the correlation bar has left it.
+            % its fixed right edge.
             if ~isgraphics(obj.axLatest), return; end
             r = obj.LatestRightWide;
-            if obj.CorrShown, r = obj.LatestRightNarrow; end
             x   = min(max(obj.LatestGutter,obj.MinGutter),obj.MaxGutter);
             pos = obj.axLatest.Position;
             new = [x pos(2) max(0.1,r-x) pos(4)];
@@ -1417,12 +1355,6 @@ classdef LivePlot < handle
                 obj.renderPanels(S,G,D,scale);
             end
 
-            % --- onset-contrast bar ------------------------------------------
-            showCorr = obj.corrVisible(S);
-            obj.applyCorrBar(showCorr);
-            if showCorr && ~isempty(S.R) && isscalar(S.R) && ~isnan(S.R)
-                obj.corrBar.YData = max(0,min(1,S.R));
-            end
             drawnow limitrate
             % Last, and after the drawnow: the labels this refresh wrote have
             % to exist before the room they need can be measured, and a tile
@@ -2185,8 +2117,8 @@ classdef LivePlot < handle
         function opts = resolveOpts(info)
             % Intermixed is left EMPTY rather than false when the caller
             % says nothing: 'not stated' and 'stated to be blocked' are
-            % different answers, and corrVisible falls back on the run's own
-            % stimulus count for the first.
+            % different answers, and the run's own stimulus count
+            % stands in for the first.
             opts = struct('DetrendPoly',-1,'SmoothSpan',0,'Intermixed',[]);
             if isfield(info,'DetrendPoly'), opts.DetrendPoly = info.DetrendPoly; end
             if isfield(info,'SmoothSpan'),  opts.SmoothSpan  = info.SmoothSpan;  end

@@ -32,9 +32,7 @@ function verify_live_plot()
 %          mabr.metrics.t_quantile), and the axis limits growing to fit;
 %      13. the right-click menu that chooses one;
 %      14. the whole view embeds into a caller-supplied container;
-%      15. the onset-contrast (rho_post - rho_pre) bar is drawn for a
-%          blocked run and dropped for an intermixed one, the trace taking
-%          back the width it leaves;
+%      15. the latest-sweep axes spans the full top row;
 %      16. every axes has at least as much room to its left as its own y
 %          labels take -- in every layout, at any window size -- so a
 %          condition name in a stack is never clipped off the panel or
@@ -575,52 +573,16 @@ assert(~isempty(findobj(lp2.CtrlPanel,'Style','popupmenu')), ...
     'the embedded view has no control strip');
 fprintf('  PASS: embeds into a caller-supplied container\n');
 
-% --- 15. the onset-contrast bar only appears for a blocked run -----------
-% rho_post - rho_pre watches ONE condition's average converge. An intermixed
-% run pools several into that average, so the number means nothing and the
-% bar is not drawn -- the same reason AcqController evaluates no advance
-% criterion for those runs. The strategy is the authority (info.Intermixed);
-% with none stated, a run presenting more than one stimulus is intermixed.
+% --- 15. the latest-sweep axes spans the full top row ---------------------
+% The onset-contrast bar was removed; nothing sits beside the latest sweep.
 lp3 = mabr.ui.LivePlot();
 clean3 = onCleanup(@() delete(lp3));
-
 oneInfo = struct('StimIndex',ones(1,repsPer),'Stimuli',1,'Labels',{{'8kHz_30dB'}});
-oneY    = Y(stimIdx == 1,:);
-lp3.update(oneY,t,0.42,repsPer,false(1,repsPer),oneInfo);
-corrBar = findobj(lp3.axCorr,'Type','bar');
-assert(vis_on(lp3.axCorr), ...
-    'a blocked run should keep the onset-contrast bar');
-assert(isscalar(corrBar) && vis_on(corrBar), ...
-    'the bar itself stayed hidden on a blocked run');
-assert(abs(corrBar.YData - 0.42) < 1e-9, ...
-    'the bar does not carry the correlation it was given');
-% Its RIGHT edge is what the bar hands back and forth; the left one belongs
-% to the y labels and is measured from them (see 16).
-narrowRight = sum(lp3.axLatest.Position([1 3]));
-
-% Intermixed by strategy, even though every sweep so far is one stimulus.
-oneInfo.Intermixed = true;
-lp3.update(oneY,t,0.42,repsPer,false(1,repsPer),oneInfo);
-assert(~vis_on(lp3.axCorr), ...
-    'an intermixed run still shows the onset-contrast bar');
-assert(~vis_on(corrBar), ...
-    'the axes was hidden but the bar inside it was left drawn');
-assert(sum(lp3.axLatest.Position([1 3])) > narrowRight + 1e-6, ...
-    'the latest-sweep axes did not take back the width the bar left');
-
-% ... and inferred where the caller says nothing: three stimuli in one run.
-lp3.update(Y,t,0.42,numel(stimIdx),bad,info);
-assert(~vis_on(lp3.axCorr), ...
-    'a run presenting several stimuli should be taken as intermixed');
-
-% Back to blocked: the bar returns rather than having been destroyed.
-lp3.update(oneY,t,0.31,repsPer,false(1,repsPer),rmfield(oneInfo,'Intermixed'));
-assert(vis_on(lp3.axCorr) && vis_on(corrBar), ...
-    'the bar did not come back for the next blocked run');
-assert(abs(corrBar.YData - 0.31) < 1e-9,'the restored bar did not update');
-assert(abs(sum(lp3.axLatest.Position([1 3])) - narrowRight) < 1e-9, ...
-    'the latest-sweep axes did not give the width back');
-fprintf('  PASS: onset-contrast bar shown for blocked runs, dropped for intermixed\n');
+lp3.update(Y(stimIdx == 1,:),t,0.42,repsPer,false(1,repsPer),oneInfo);
+assert(abs(sum(lp3.axLatest.Position([1 3])) - lp3.LatestRightWide) < 1e-9, ...
+    'the latest-sweep axes does not fill the top row');
+fprintf('  PASS: latest-sweep axes fills the top row
+');
 
 % --- 16. the y axis labels always have room ------------------------------
 % The widest thing on a y axis is a three-digit microvolt number in most
@@ -751,7 +713,7 @@ function assert_labels_fit(lp,what)
 % whatever sits to its left on the same rows, or to the panel edge where
 % nothing does.
 drawnow;
-ax = [lp.axMean(:).' lp.axLatest lp.axCorr];
+ax = [lp.axMean(:).' lp.axLatest];
 ax = ax(arrayfun(@(h) isgraphics(h) && vis_on(h),ax));
 for i = 1:numel(ax)
     pos  = ax(i).Position;
@@ -784,7 +746,7 @@ end
 
 function k = stray_axes(lp)
 % Axes on the plot panel that the view is no longer holding a handle to.
-keep = [lp.axMean(:); lp.axLatest(:); lp.axCorr(:)];
+keep = [lp.axMean(:); lp.axLatest(:)];
 keep = keep(isgraphics(keep));
 ax = findobj(lp.PlotPanel,'-depth',1,'Type','axes');
 for j = numel(ax):-1:1
