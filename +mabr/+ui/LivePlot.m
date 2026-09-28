@@ -199,6 +199,15 @@ classdef LivePlot < handle
         CtrlPanel
         axLatest
         axMean = gobjects(1,0);   % one (overlay), one per stimulus, or one per group
+        % Where the last render() spent its time, in seconds, for the
+        % per-run live-view timing report (mabr.ui.LiveTiming, fed by
+        % mabr.ui.AcqController): Prep (layout, means, writing the graphics
+        % objects), Drawnow (the graphics update plus any callbacks MATLAB
+        % runs inside it), Gutters (the label-room fit after it), the number
+        % of Passes (2 when a pending render ran), how often the mean axes
+        % were Rebuilt and the gutters re-Measured, and NumAxes. Started
+        % afresh by every render() that actually runs.
+        RenderTiming = []
     end
 
     % --- Display settings ------------------------------------------------
@@ -892,6 +901,7 @@ classdef LivePlot < handle
             key = obj.gutterKey(G);
             if strcmp(key,obj.GutterKey), return; end
             obj.GutterKey = key;
+            obj.addRenderTiming('Measures',1);
 
             [l,c,lat] = obj.measureGutters();
             l   = obj.pickGutter(obj.LeftGutter,l);
@@ -1300,6 +1310,8 @@ classdef LivePlot < handle
             if ~obj.isvalidView(), return; end
             if obj.Rendering, obj.RenderPending = true; return; end
             obj.Rendering = true;
+            obj.RenderTiming = struct('Passes',0,'Prep',0,'Drawnow',0, ...
+                'Gutters',0,'Rebuilds',0,'Measures',0,'NumAxes',0);
             guard = onCleanup(@() obj.endRender()); %#ok<NASGU>
             obj.renderOnce();
             if obj.RenderPending
@@ -1315,6 +1327,8 @@ classdef LivePlot < handle
         function renderOnce(obj)
             S = obj.Last;
             if isempty(S) || ~obj.isvalidView(), return; end
+            tPrep = tic;
+            obj.addRenderTiming('Passes',1);
 
             G   = obj.resolveGrouping(S);
             obj.LastGroup = G;
@@ -1322,6 +1336,7 @@ classdef LivePlot < handle
             if ~strcmp(key,obj.LayoutKey)
                 obj.buildMeanAxes(G);
                 obj.applyFilterText();
+                obj.addRenderTiming('Rebuilds',1);
             end
             obj.syncGroupControl(G.paramChoices);
 
@@ -1358,13 +1373,30 @@ classdef LivePlot < handle
             else
                 obj.renderPanels(S,G,D,scale);
             end
+            obj.addRenderTiming('Prep',toc(tPrep));
 
+            tDraw = tic;
             drawnow limitrate
+            obj.addRenderTiming('Drawnow',toc(tDraw));
             % Last, and after the drawnow: the labels this refresh wrote have
             % to exist before the room they need can be measured, and a tile
             % that moves as a result moves on the next refresh -- 50 ms away
             % at the live tick rate, and never mid-draw.
+            tFit = tic;
             obj.fitLabelGutters(G);
+            obj.addRenderTiming('Gutters',toc(tFit));
+            if isstruct(obj.RenderTiming)
+                obj.RenderTiming.NumAxes = numel(obj.axMean) + 1;
+            end
+        end
+
+        function addRenderTiming(obj,field,v)
+            % Accumulate into RenderTiming -- only inside a render(), so a
+            % gutter fit run from a window resize is not billed to the last
+            % frame drawn.
+            if obj.Rendering && isstruct(obj.RenderTiming)
+                obj.RenderTiming.(field) = obj.RenderTiming.(field) + v;
+            end
         end
 
         function renderPanels(obj,S,G,D,scale)

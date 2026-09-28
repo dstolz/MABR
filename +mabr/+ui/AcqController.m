@@ -137,6 +137,11 @@ classdef AcqController < handle
         % "is the sweep I am looking at the presentation the file says it is"
         % -- is asked after the fact at least as often as during.
         LastAlignment = []
+        % Where the last finished run's live-view ticks spent their time: a
+        % mabr.ui.LiveTiming summary (rates, per-phase percentiles in ms, a
+        % one-line verdict, and .Text, the report as logged). [] until a
+        % recorded run completes. See report_live_timing.
+        LastLiveTiming = []
     end
 
     properties
@@ -283,6 +288,10 @@ classdef AcqController < handle
         % double-count the sweeps a finished run is about to be finalized
         % into. Costs a copy of arrays the tick has already computed.
         LiveSnap = []
+        % Per-tick timing of the run in progress (mabr.ui.LiveTiming): reset
+        % at begin_current_run, fed by on_live_tick/on_aux_tick, summarized
+        % into LastLiveTiming when the run completes.
+        Timing
     end
 
     events
@@ -357,6 +366,7 @@ classdef AcqController < handle
                 'ExecutionMode','fixedSpacing','BusyMode','drop', ...
                 'Period',obj.AuxPeriod,'TasksToExecute',Inf, ...
                 'TimerFcn',@(~,~) obj.on_aux_tick());
+            obj.Timing = mabr.ui.LiveTiming();
 
             % Property defaults bypass the setters, so the pipeline is
             % configured explicitly here or the first ticks would run with
@@ -739,6 +749,7 @@ classdef AcqController < handle
             % starts over here too, so nothing from the last run can be
             % attributed to this one.
             obj.RunSerial = obj.RunSerial + 1;
+            obj.Timing.reset(obj.CurRun,obj.LiveTimer.Period);
             info = struct('RunId',obj.RunSerial, ...
                 'StimIndex',obj.CurSeq,'Stimuli',obj.CurStim, ...
                 'Labels',{obj.CurLabels});
@@ -840,6 +851,7 @@ classdef AcqController < handle
         function on_block_completed(obj)
             if obj.SelfTestActive, return; end   % see verifyTimingLoop
             obj.stop_timer();
+            obj.report_live_timing();
             % Drop the live snapshot BEFORE anything is finalized: from here
             % the run's sweeps arrive as a Block, and a puller that still saw
             % the partial copy would count them twice.
@@ -1020,11 +1032,15 @@ classdef AcqController < handle
         % --- Live view ------------------------------------------------------
         function on_live_tick(obj)
             % Wrapped so a transient error never kills the live-view timer.
+            % The timing brackets the whole tick, errors included, so every
+            % tick is counted and the gaps between them are real.
+            obj.Timing.beginTick();
             try
                 obj.live_tick_body();
             catch me
                 mabr.log.vprintf(2,1,'Live tick error: %s',me.message);
             end
+            obj.Timing.endTick(obj.CurMetrics.numSweeps);
         end
 
         function live_tick_body(obj)
@@ -1044,14 +1060,17 @@ classdef AcqController < handle
             % cares -- and a worker that dies mid-run is covered on the very
             % next tick, since the pipeline here has been following the run
             % too and re-extracts from the ring, which still holds it.
+            tStats = tic;
             if obj.usingWorkerDSP()
                 [stats,changed] = obj.Compute.live();
+                obj.Timing.stats(toc(tStats),'worker');
                 % Nothing new since the last tick is nothing to do: the
                 % whole tick then costs one word read from the memory map.
                 if isempty(stats) || ~changed || stats.NumSweeps < 1, return; end
                 S = [];
             else
                 stats = obj.Pipeline.step(obj.Engine.RingBuffer);
+                obj.Timing.stats(toc(tStats),'local');
                 if isempty(stats), return; end
                 S = obj.Pipeline.sweeps();
             end
@@ -1070,7 +1089,9 @@ classdef AcqController < handle
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot)
                 info        = obj.live_info(stats.NumSweeps);
                 info.target = obj.AdvanceParams.targetSweeps;
+                tRender = tic;
                 obj.LivePlot.updateStats(stats,info);
+                obj.Timing.render(toc(tRender),obj.LivePlot.RenderTiming);
             end
 
             % The sweeps themselves, left where the aux tick can find them
@@ -1104,12 +1125,43 @@ classdef AcqController < handle
             % moved. Nothing here is recomputed -- the fast tick already did
             % the sweep extraction, filtering and artifact preview, and left
             % the result in PendingLive.
+            tAux = tic;
             try
                 obj.aux_tick_body();
             catch me
                 % A failing progress bar must not take the acquisition with
                 % it, exactly as on_live_tick treats the live view.
                 mabr.log.vprintf(1,'Aux view tick failed: %s',me.message);
+            end
+            % Includes every MetricsUpdated listener (the Run panel, the
+            % progress monitor), and says whether it ran from INSIDE a live
+            % tick -- i.e. from the live render's drawnow.
+            obj.Timing.aux(toc(tAux));
+        end
+
+        function report_live_timing(obj)
+            % Summarize the run's live-view timing (mabr.ui.LiveTiming) into
+            % LastLiveTiming and the log. The full breakdown goes out at
+            % level 2 (always in the daily file, whose gate defaults to Inf);
+            % a run whose view fell well short of the timer's rate also gets
+            % one level-1 line, so the operator sees it without turning the
+            % console up. Not red: it is a performance note, not a fault in
+            % the data.
+            try
+                if isempty(obj.Timing) || obj.Timing.RunId == 0 ...
+                        || isempty(obj.Timing.Start)
+                    return
+                end
+                S = obj.Timing.summary();
+                obj.LastLiveTiming = S;
+                mabr.log.vprintf(2,'%s',S.Text);
+                if S.Drawn > 2 && S.RealizedHz < 0.5*S.TargetHz
+                    mabr.log.vprintf(1, ...
+                        'Live view drew at %.1f Hz (target %.0f Hz) in run %d: %s. See LastLiveTiming.Text.', ...
+                        S.RealizedHz,S.TargetHz,S.RunId,S.Verdict);
+                end
+            catch me
+                mabr.log.vprintf(2,'Live timing report failed: %s',me.message);
             end
         end
 
