@@ -35,7 +35,7 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 | [`mabr.stim.demoStimuli`](../+mabr/+stim/demoStimuli.m) | Built-in tone-pip bank over a Frequency × Level grid. **Testing and demos only — uncalibrated.** Also the clearest worked example of the contract. |
 | [`mabr.stim.fromStimgen`](../+mabr/+stim/fromStimgen.m) | **The stimgen bridge.** Converts a `.spl` bank, a live `StimPlayer`, a `StimPlay`, or a bare `StimType` into a `StimulusSet` — one stimgen *variant* per entry, regenerated at the DAC rate. |
 | [`mabr.stim.stimgenAvailable`](../+mabr/+stim/stimgenAvailable.m) | `[tf,msg]` — is the `external/stimgen` submodule on the path? `msg` is actionable text for a disabled control's tooltip. |
-| [`mabr.stim.CalibrationAdapter`](../+mabr/+stim/CalibrationAdapter.m) | Implements stimgen's `calibration.HwAdapter` against MABR's ASIO device, output channel, and `MicChannel`, so a calibration describes *this* rig. |
+| [`mabr.stim.CalibrationAdapter`](../+mabr/+stim/CalibrationAdapter.m) | Implements stimgen's `calibration.HwAdapter` against MABR's ASIO device, output channel, and `MicChannel`, so a calibration describes *this* rig. Removes the device round-trip latency from every record using the timing loop-back (`CompensateLatency`, `LastLatency`, `alignToLoopback`). |
 
 **`StimulusSet` surface**
 

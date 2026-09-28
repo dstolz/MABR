@@ -94,6 +94,12 @@ function run_all_verifications()
 %                                  entry, regenerated at the DAC rate, and the
 %                                  waveform matching its own label. SKIPS when
 %                                  the external/stimgen submodule is absent.
+%       verify_calibration_latency- the calibration adapter removes the
+%                                  device round trip, read off the timing
+%                                  loop-back, from every record, so a
+%                                  conduction delay is the acoustic path.
+%                                  Its stimgen part SKIPS without the
+%                                  submodule.
 %       verify_stimulation_only  - playback + timing pulse with no recording:
 %                                  the setting, the flag on the render spec,
 %                                  and a schedule that runs to completion with
@@ -119,7 +125,8 @@ function run_all_verifications()
 %   Requires the Parallel Computing Toolbox (all but verify_logging,
 %   verify_isi_jitter, verify_analysis, verify_filters, verify_live_plot,
 %   verify_progress_monitor, verify_metric_plot, verify_trace_organizer,
-%   verify_trace_inspector, verify_audio_settings, and verify_view_prefs).
+%   verify_trace_inspector, verify_audio_settings, verify_view_prefs, and
+%   verify_calibration_latency).
 %   None require audio hardware.
 %
 % Daniel Stolzberg (c) 2026
@@ -136,7 +143,8 @@ tests = {@verify_logging, @verify_isi_jitter, @verify_play_plan, ...
          @verify_progress_monitor, @verify_metric_plot, ...
          @verify_trace_organizer, @verify_trace_inspector, ...
          @verify_notes, @verify_audio_settings, @verify_view_prefs, ...
-         @verify_stimgen_import, @verify_stimulation_only, ...
+         @verify_stimgen_import, @verify_calibration_latency, ...
+         @verify_stimulation_only, ...
          @verify_timing_selftest, @verify_timing_loopback, @verify_test_runner, ...
          @verify_shutdown_pool};
 
