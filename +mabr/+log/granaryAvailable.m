@@ -26,7 +26,11 @@ function [tf,msg] = granaryAvailable()
 %
 % Daniel Stolzberg (c) 2026
 
-tf = exist('granary.Logger','class') == 8;
+% exist(...,'class') does not reliably see a classdef that lives in an @Logger
+% class folder inside a package, which is how granary ships it; the metaclass
+% lookup resolves it through the path.
+tf = exist('granary.Logger','class') == 8 ...
+    || ~isempty(meta.class.fromName('granary.Logger'));
 
 if tf
     msg = '';
