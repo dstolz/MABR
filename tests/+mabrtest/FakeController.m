@@ -10,12 +10,18 @@ classdef FakeController < handle
 %   viewer computes from it is computed from the same plan an acquisition
 %   would walk.
 %
+%   Engine is a mabrtest.FakeEngine, standing where AcqController's
+%   mabr.acq.Engine does: pauseAcq/resumeAcq change ITS state, exactly as the
+%   real ones do, and leave the controller's own State alone -- which is the
+%   whole of why a viewer that wants to show a pause has to look there.
+%
 % Daniel Stolzberg (c) 2026
 
     properties
         Schedule
         Stimuli
         State (1,1) mabr.ui.ProgState = mabr.ui.ProgState.Idle
+        Engine
     end
 
     events
@@ -34,12 +40,18 @@ classdef FakeController < handle
             elseif nargin >= 1 && ~isempty(schedule)
                 obj.Stimuli = schedule.Set;
             end
+            obj.Engine = mabrtest.FakeEngine();
         end
 
         function setState(obj,state)
             obj.State = state;
             notify(obj,'StateChanged',mabr.ui.ProgStateEventData(state));
         end
+
+        % As mabr.ui.AcqController's: the worker reports Paused, then Acquire
+        % again on resume, and the program state does not move at all.
+        function pauseAcq(obj),  obj.Engine.setState(mabr.acq.State.Paused);  end
+        function resumeAcq(obj), obj.Engine.setState(mabr.acq.State.Acquire); end
 
         function metrics(obj,numSweeps,numArtifacts)
             % The live tick's payload, exactly as AcqController.live_tick_body

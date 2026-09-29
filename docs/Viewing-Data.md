@@ -105,17 +105,29 @@ Nothing in this window writes to your data. It is a view over what the acquisiti
 
 Opens from the three-bars toolbar button. Small, cheap to leave open, and pinnable — **Always on top** keeps it above every other window, which is the point of it on a second monitor or in the corner of a busy screen. The setting is remembered per rig, along with where you leave the window.
 
-Across the top: how far along the whole schedule is, the state lamp and the run number, and elapsed time with an estimate of what is left. The estimate is measured from the rate the session is actually going at once there is enough of one to measure, and from the plan's own timing before that — either way it is an estimate, since a randomized ISI makes a duration an expectation and an advance criterion can end any run early.
+Across the top, beside the state lamp, is how far along the whole schedule is — the big number, green once it is done — and three lines:
+
+- **What the rig is doing** — the state, which run of how many (marked *make-up* or *repeat* when it is one of those), and *stimulation only* when nothing is being recorded. It says **Paused** while the rig is paused.
+- **This run** — the condition being presented, named by the parameters your bank varies (`8 kHz, 30 dB`) or, for an interleaved run, how many conditions it mixes; how far through the run it is; and how many sweeps the artifact check has rejected so far. Between runs the same line says how many conditions are complete and how big the plan is.
+- **When** — elapsed time, the time left, and the clock time that comes to (`done ≈ 14:32`). Once the schedule finishes, how long it took and when it finished.
+
+The time left starts from the plan's own timing and, once ten seconds of acquisition have been seen, is corrected by how long the plan's work has actually been taking — which is what picks up the preparation and saving between runs that the plan cannot know about. A pause pushes the finish back by exactly its own length and nothing more. It is still an estimate: a randomized ISI makes a duration an expectation, and an advance criterion can end any run early. If you open the window part-way through a session it shows no elapsed time (it does not know when the session began) and measures the pace from what it sees next.
+
+The percentage is also in the window's title, so a minimized monitor still reports from the taskbar.
 
 **View** picks what fills the rest of the window:
 
-- **Simple** — two bars: the whole session, and the run streaming right now. What to leave up when the question is "how long until I can go home".
-- **Bars** — one bar per stimulus, or, with **Group** set to a stimulus parameter, one bar per value of it. A 4-frequency × 5-level bank is 20 bars by stimulus, 4 by Frequency, 5 by Level — the same progress, asked three ways. A bar being presented right now is amber; a finished one turns green.
-- **Heat map** — the classic grid: one parameter across (frequency), one up (level), each cell shaded by how complete that condition is. This is the one view that shows a **hole** — a condition the bank does not contain, drawn empty rather than as a small number — which is how a design mistake becomes visible before the session ends rather than during analysis.
+- **Simple** — nothing more: the header above is the whole report, and the window shrinks to fit it. What to leave up when the question is "how long until I can go home".
+- **Bars** — one bar per stimulus, or, with **Group** set to a stimulus parameter, one bar per value of it. A 4-frequency × 5-level bank is 20 bars by stimulus, 4 by Frequency, 5 by Level — the same progress, asked three ways. A bar being presented right now is amber; a finished one turns green. The title counts how many are done.
+- **Heat map** — the classic grid: one parameter across (frequency), one up (level), each cell shaded by how complete that condition is, and the conditions being presented right now outlined in amber. This is the one view that shows a **hole** — a condition the bank does not contain, hatched rather than drawn as a small number — which is how a design mistake becomes visible before the session ends rather than during analysis.
+
+Only parameters that actually differ between your stimuli are offered for **Group** and the heat map's axes; one that is the same everywhere would give a single bar or a single column.
 
 **Show** decides what the numbers read as: **Counts** (`128/512`), **Percent**, or **None** — the shading alone, which is the right setting for a window read from across the rig.
 
-**What is being counted** is presentations, not files: a condition is complete when every sweep the plan asked for has been presented. Two consequences are worth knowing. Sweeps arriving during a run are counted as they arrive, so a bar moves continuously rather than jumping once per condition. And when artifact **Repeat** appends make-up runs, the plan gets *larger* — so overall progress steps back slightly at that moment. That is the truth: the work grew. In a stimulation-only run nothing is recorded, so the counts are presentations *played* (the header says so) and the bars step once per run.
+**What is being counted** is presentations, not files: a condition is complete when every sweep the plan asked for has been presented. Two consequences are worth knowing. Sweeps arriving during a run are counted as they arrive, so a bar moves continuously rather than jumping once per condition — and holds its place while the run is being saved, rather than dropping back until the save completes. And when artifact **Repeat** appends make-up runs, the plan gets *larger* — so overall progress steps back slightly at that moment. That is the truth: the work grew.
+
+In a **stimulation-only** run nothing is recorded, so there are no sweeps to count. The window estimates the run's presentations from the clock instead — the rig plays them at a fixed pace, so this is close — and marks every estimated number with `~`. When the run ends, the count of what was actually played replaces the estimate.
 
 ## Trace Organizer
 
@@ -220,7 +232,7 @@ pm.attach(schedule,stimulusSet);    % or a plan with no controller behind it
 pm.View = 'heatmap';                % 'simple' | 'bars' | 'heatmap'
 ```
 
-`listenTo` re-points rather than stacking listeners, so re-opening the window (or rebuilding the controller) cannot double-count anything. The controller's `Schedule` is read on every refresh rather than held, because `setStimuli` *replaces* it.
+`listenTo` re-points rather than stacking listeners, so re-opening the window (or rebuilding the controller) cannot double-count anything. The controller's `Schedule` is read on every refresh rather than held, because `setStimuli` *replaces* it. It also listens to the controller's `Engine` for `StateChanged`, because a pause is an engine state (`mabr.acq.State.Paused`) that `ProgState` does not have — a paused run is still `Acquire`. Closing the monitor's own window deletes it, listeners and clock included.
 
 The tally is deliberately computed from the plan rather than accumulated:
 
@@ -228,13 +240,17 @@ The tally is deliberately computed from the plan rather than accumulated:
 | --- | --- |
 | planned | every presentation in `Schedule.Runs`, summed per stimulus — so make-up and repeat runs enlarge it |
 | recorded | `Schedule.RunCounts`, written by the controller at finalization |
-| in flight | the current run's sweep count paired against `Schedule.runSequence`, the same pairing `finalize_run` de-interleaves by |
+| in flight | the current run's sweep count paired against `Schedule.runSequence`, the same pairing `finalize_run` de-interleaves by — kept from `PrepBlock` until the run is *credited* (`RunCounts` moves), not dropped at `BlockComplete`, because with the DSP worker finalization is asynchronous. Under `StimulationOnly` it is estimated from the clock (onset *k* at `SilencePad + (k-1)*MeanISI` of streaming, pauses excluded) and `Estimated` is true |
 
 Nothing is accumulated across events, so no missed or duplicated event can put the window out of step with the schedule — the worst a dropped repaint costs is a number that is briefly stale.
 
-**Cost.** The window runs no timer. It rides the controller's existing ~20 Hz `MetricsUpdated` tick, repaints at most every `MinInterval` seconds (0.2 by default), and then only when the tallies actually changed; state changes and finished blocks force a repaint regardless. Nothing is created per refresh — the bars are two patches whose vertices are rewritten, the heat map one image whose `CData` is, the labels a fixed array of text objects. Layout is rebuilt only when the view, the grouping, or the plan itself changes.
+`headerText()` returns `[pct,state,time,detail]` — what the header is showing, for a script or a test. The time left is the plan's remaining work (presentations × `MeanISI`, plus each remaining run's `2*SilencePad + maxDuration`) scaled by *measured time ÷ plan time* for the work done since a baseline, once 10 s have been watched; paused time is excluded from that ratio, and a window that joins mid-session takes its baseline when it first knows the current run's count rather than at the moment it opened.
 
-The grouping dimensions come from `StimulusSet.meta` — the same `informativeParams` the offline pipeline groups by, so what the progress window calls a condition and what `batchABRAnalysis` calls one are the same thing.
+**Cost.** Nearly every refresh runs inside one of the controller's callbacks, so the window keeps its share small. It rides the controller's ~2 Hz **aux** tick (`MetricsUpdated`), repaints at most every `MinInterval` seconds (0.2 by default) and only when the tallies changed or a second has passed for the clock. State changes force a repaint; a burst of `BlockReady` (one per stimulus of an intermixed run) does not, since the state change after finalization repaints once. It never calls `drawnow` — from a timer callback that flushes every open figure, the live view included, and services the event queue — and writes a property only when its value changes, diffing the per-bar and per-cell numbers. The current run's stimulus set and label are computed once per run and its in-flight counts incrementally, so a refresh does not get dearer as an intermixed run gets longer. Nothing is created per refresh — the bars are two patches whose vertices are rewritten, the heat map one image whose `CData` is, the outline and hatching one line each, the labels a fixed array of text objects. Layout is rebuilt only when the view, the grouping, or the plan itself changes.
+
+It has one timer of its own: a 1 Hz header clock that runs only while a followed schedule is in flight (`clockRunning()`) and repaints only when nothing else has in the last second. The aux tick fires only while sweeps are being counted, so without it the elapsed time froze between runs and for the whole of a stimulation-only session.
+
+The grouping dimensions come from `StimulusSet.paramTable` — the same `informativeParams` the offline pipeline groups by, less any that are constant across the bank — so what the progress window calls a condition and what `batchABRAnalysis` calls one are the same thing.
 
 ### TraceOrganizer
 

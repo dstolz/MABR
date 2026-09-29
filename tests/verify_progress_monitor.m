@@ -18,7 +18,19 @@ function verify_progress_monitor()
 %       8. artifact make-up enlarging the denominator;
 %       9. the refresh rate limit, and force overriding it;
 %      10. the control strip driving exactly the public properties;
-%      11. always-on-top, and the embedded form.
+%      11. always-on-top, and the embedded form;
+%      12. stimulation only: the header clock runs with no live metrics to
+%          drive it, the run's presentations are estimated from it, a pause
+%          (read off the engine, not the program state) holds both, and the
+%          recorded count replaces the estimate once the run is credited;
+%      13. a window opened mid-session does not claim the session began when
+%          it opened.
+%
+%   Along the way: the header's run and plan lines, the percentage in the
+%   window title, the heat map outlining the conditions being presented and
+%   hatching the ones the plan lacks, and a run's sweeps staying in the tally
+%   between the end of the run and its credit (the finalization gap the DSP
+%   worker leaves).
 %
 %   Run:  >> verify_progress_monitor
 %
@@ -65,6 +77,9 @@ sch.advance();
 pm.refresh(true);
 assert(isequal(pm.Counts,[10 0 0 0 0 0]), ...
     'a recorded run did not reach the tally: %s',mat2str(pm.Counts));
+[~,~,~,det] = pm.headerText();
+assert(contains(det,'1 of 6 conditions complete') && contains(det,'210 presentations in 6 runs'), ...
+    'between runs the header should describe the plan; it reads "%s"',det);
 fprintf('  PASS: planned and recorded presentations tallied per stimulus\n');
 
 % --- 2/3. simple view: no plot, a small window, and the header numbers ---
@@ -161,6 +176,9 @@ assert(abs(CD(1,1) - 1) < 1e-9,'the finished condition is not full in the heat m
 assert(all(CD(2:end) == 0),'unstarted conditions are not empty in the heat map');
 assert(all(pm.HeatImage.AlphaData(:) == 1), ...
     'a full factorial bank should have no empty heat-map cells');
+assert(n_marks(pm.HoleHatch,9) == 0,'a full factorial bank has hatched cells');
+assert(strcmp(pm.Axes.XLabel.String,'Frequency (kHz)'), ...
+    'the heat map''s axis should carry the parameter''s unit, not "%s"',pm.Axes.XLabel.String);
 assert(strcmp(pm.HeatText(1,1).String,'10/10'), ...
     'the counts overlay reads "%s"',pm.HeatText(1,1).String);
 pm.Labels = 'percent';
@@ -182,6 +200,9 @@ assert(nnz(A == 0) == 1,'a bank missing one condition should leave one empty cel
     nnz(A == 0));
 assert(isempty(pm.HeatText(A == 0).String), ...
     'an empty heat-map cell should carry no number');
+% ...and has to LOOK empty without the numbers: a pale cell could be 0%.
+assert(n_marks(pm.HoleHatch,9) == 1,'the missing condition should be the one hatched cell (got %g)', ...
+    n_marks(pm.HoleHatch,9));
 fprintf('  PASS: heat map, its overlay, and a hole where a condition is absent\n');
 
 % --- 7. following a controller ------------------------------------------
@@ -205,10 +226,29 @@ want = accumarray(seq(1:5)',1,[6 1])';
 assert(isequal(pm.Counts,want), ...
     'mid-run sweeps were attributed as %s, expected %s', ...
     mat2str(pm.Counts),mat2str(want));
+[~,st,~,det] = pm.headerText();
+assert(contains(st,'run 1 of 1'),'mid-run the header should name the run; it reads "%s"',st);
+assert(contains(det,'6 conditions intermixed') && contains(det,'5 / 12 this run'), ...
+    'mid-run the header should describe the run; it reads "%s"',det);
+assert(contains(pm.Figure.Name,'%'), ...
+    'the window title should carry the percentage mid-run ("%s")',pm.Figure.Name);
+% Still the heat map from part 6: every condition of an intermixed run is
+% being presented, and each is outlined.
+assert(strcmp(pm.View,'heatmap'),'part 7 expects the heat map left on by part 6');
+assert(n_marks(pm.ActiveOutline,6) == 6, ...
+    'expected all 6 conditions outlined as being presented, got %g',n_marks(pm.ActiveOutline,6));
+
+% The run stops streaming. Until it is CREDITED -- which, with the DSP worker,
+% is a finalization reply some time later -- its sweeps are still in the
+% tally: dropping them here made every bar fall back by a whole run.
+fc.setState(mabr.ui.ProgState.BlockComplete);
+pm.refresh(true);
+assert(isequal(pm.Counts,want), ...
+    'the run''s sweeps left the tally before the run was credited: %s',mat2str(pm.Counts));
+assert(n_marks(pm.ActiveOutline,6) == 0,'conditions stayed outlined after the run stopped');
 
 % Finalization: the run is credited to RunCounts and the live counter must be
 % given up, or every sweep would be counted twice.
-fc.setState(mabr.ui.ProgState.BlockComplete);
 sch2.recordRun(1,[2 2 2 2 2 2]);
 fc.emit([]);
 pm.refresh(true);
@@ -285,6 +325,113 @@ assert(numel(pm2.ValueText) == 6,'the embedded view did not draw the bars');
 assert(isempty(pm2.Figure),'an embedded view should own no figure of its own');
 fprintf('  PASS: always-on-top toggles, and the view embeds in a container\n');
 
+% --- 12. stimulation only: the clock, the estimate, and a pause ----------
+% Nothing is recorded, so no live metrics ever arrive: the header's clock has
+% to run on its own, and the run's presentations come from it.
+sch3 = mabr.stim.Schedule(bank,cfg);
+sch3.Strategy        = 'conventional';
+sch3.Repetitions     = 400;
+sch3.ISI             = 0.01;
+sch3.SilencePad      = 0.05;
+sch3.StimulationOnly = true;
+sch3.build();
+first = sch3.runSequence(1);
+s1    = first(1);                     % the one stimulus run 1 presents
+
+fc3 = mabrtest.FakeController(sch3,bank);
+pm.View    = 'bars';
+pm.GroupBy = 'Stimulus';
+pm.listenTo(fc3);
+assert(~pm.clockRunning(),'the header clock is running with nothing in flight');
+fc3.setState(mabr.ui.ProgState.PrepBlock);
+fc3.setState(mabr.ui.ProgState.Acquire);
+assert(pm.clockRunning(),'the header clock did not start with the schedule');
+
+pause(0.5);
+pm.refresh(true);
+k1 = pm.Counts(s1);
+assert(pm.Estimated && k1 > 0 && k1 <= 400, ...
+    'half a second into a stimulation-only run the estimate is %d (Estimated = %d)',k1,pm.Estimated);
+[pct,st,tm,det] = pm.headerText();
+assert(startsWith(pct,'~'),'an estimated count should be marked as one: "%s"',pct);
+assert(contains(det,'~') && contains(det,'this run'),'the run line should carry the estimate: "%s"',det);
+assert(contains(st,'stimulation only'),'the state line should say stimulation only: "%s"',st);
+assert(contains(tm,'elapsed') && contains(tm,'left'),'the time line reads "%s"',tm);
+
+% A pause is the ENGINE's state; the program state stays Acquire. Both the
+% header and the estimate have to notice.
+fc3.pauseAcq();
+assert(pm.Paused,'the monitor did not see the engine pause');
+[~,st,tm] = pm.headerText();
+assert(startsWith(st,'Paused'),'a paused run should say so: "%s"',st);
+assert(contains(tm,'paused'),'the time line should show the pause: "%s"',tm);
+assert(contains(pm.Figure.Name,'paused'),'the window title should show the pause: "%s"',pm.Figure.Name);
+k2 = pm.Counts(s1);
+pause(0.3);
+pm.refresh(true);
+assert(pm.Counts(s1) == k2, ...
+    'the estimate kept counting through a pause (%d -> %d)',k2,pm.Counts(s1));
+fc3.resumeAcq();
+assert(~pm.Paused,'the monitor did not see the engine resume');
+pause(0.2);
+pm.refresh(true);
+assert(pm.Counts(s1) > k2,'the estimate did not pick up again after the resume');
+
+% The run ends. Its estimate holds -- frozen, not growing -- until the run is
+% credited, and then the count the controller recorded replaces it.
+fc3.setState(mabr.ui.ProgState.BlockComplete);
+pm.refresh(true);
+k3 = pm.Counts(s1);
+assert(k3 > k2,'the run''s estimate dropped out when it stopped streaming (%d)',k3);
+pause(0.2);
+pm.refresh(true);
+assert(pm.Counts(s1) == k3,'a stopped run''s estimate kept growing (%d -> %d)',k3,pm.Counts(s1));
+played = zeros(1,bank.numStimuli);
+played(s1) = 400;
+sch3.recordRun(1,played);
+pm.refresh(true);
+assert(pm.Counts(s1) == 400 && ~pm.Estimated, ...
+    'the recorded count did not replace the estimate (%d, Estimated = %d)',pm.Counts(s1),pm.Estimated);
+
+fc3.complete();
+assert(~pm.clockRunning(),'the header clock kept running after the schedule completed');
+[~,~,tm] = pm.headerText();
+assert(startsWith(tm,'took'),'a completed schedule should say how long it took: "%s"',tm);
+fprintf('  PASS: stimulation only -- the clock runs, the estimate counts, a pause holds both\n');
+
+% --- 13. a window opened mid-session ------------------------------------
+% It cannot know when the session began, so it must not say "elapsed" from
+% the moment it opened -- and must not estimate the time left from that
+% either, which is what made the old estimate wildly short.
+sch4 = mabr.stim.Schedule(bank,cfg);
+sch4.Strategy    = 'conventional';
+sch4.Repetitions = 10;
+sch4.ISI         = 0.02;
+sch4.build();
+done1 = zeros(1,bank.numStimuli);
+r1    = sch4.runSequence(1);
+done1(r1(1)) = 10;
+sch4.recordRun(1,done1);
+sch4.advance();
+
+fc4 = mabrtest.FakeController(sch4,bank);
+fc4.State = mabr.ui.ProgState.Acquire;     % already running when the window opens
+pm.listenTo(fc4);
+assert(pm.clockRunning(),'a window opened mid-run should start its clock');
+[~,st,tm,det] = pm.headerText();
+assert(~contains(tm,'elapsed'), ...
+    'a window opened mid-session claimed to know how long it had been running: "%s"',tm);
+assert(contains(tm,'left'),'no time left was estimated: "%s"',tm);
+assert(contains(st,'run 2 of 6'),'the state line reads "%s"',st);
+assert(contains(det,'10 presentations this run'), ...
+    'before its first update the run''s count is unknown, and should not read as 0: "%s"',det);
+fc4.metrics(3);
+pm.refresh(true);
+[~,~,~,det] = pm.headerText();
+assert(contains(det,'3 / 10 this run'),'the first update did not reach the run line: "%s"',det);
+fc4.complete();
+fprintf('  PASS: a window opened mid-session measures from what it has seen\n');
+
 fprintf('== verify_progress_monitor: all checks passed ==\n');
 end
 
@@ -294,6 +441,13 @@ function f = bar_fracs(pm)
 % renders -- not off the numbers it was handed.
 span = max(pm.TrackPatch.Vertices(:,1));
 f    = (pm.FillPatch.Vertices(2:4:end,1)./span).';
+end
+
+function n = n_marks(h,per)
+% How many heat-map cells a NaN-separated overlay line marks: PER entries a
+% cell (9 for the hatching, 6 for an outline), NaN alone for none.
+x = h.XData;
+if numel(x) <= 1, n = 0; else, n = numel(x)/per; end
 end
 
 function d = find_drop(pm,row,col)
