@@ -153,6 +153,34 @@ classdef RingBuffer < handle
             tim = obj.read_range(obj.mapTiming,lo,head);
         end
 
+        function n = prefault(obj,lo,hi)
+            % Touch every 4 KiB page of both channels over the monotonic
+            % range [lo hi] (default: the whole ring), so that writing there
+            % later does not first have to fault the page in. Returns the
+            % number of pages touched per channel.
+            %
+            % The ring is a FILE-backed map, and writeFrame covers one page
+            % per channel per frame. A page that is not resident has to be
+            % brought in before the write completes -- from disk if it has
+            % gone cold -- and that happens synchronously inside the
+            % acquisition worker's frame loop, where a few milliseconds is an
+            % underrun. mabr.acq.worker_loop calls this over the whole ring at
+            % start-up and over each run's range at Prep, between runs, where
+            % the time is free. Reading is enough: it only brings pages in,
+            % and changes nothing in them.
+            if nargin < 2 || isempty(lo), lo = 1; end
+            if nargin < 3 || isempty(hi), hi = lo + obj.MaxLength - 1; end
+            hi = min(hi,lo + obj.MaxLength - 1);    % one lap is every page there is
+            n  = 0;
+            if hi < lo, return; end
+            perPage = 1024;                         % 4 KiB of single
+            idx = unique([lo:perPage:hi, hi]);      % one sample per page, and the last
+            p   = obj.wrap_index(idx);
+            touched = obj.mapSignal.Data(p); %#ok<NASGU>
+            touched = obj.mapTiming.Data(p); %#ok<NASGU>
+            n = numel(idx);
+        end
+
         function y = readSignalAt(obj,idx)
             % Read signal samples at arbitrary (possibly matrix) monotonic
             % absolute indices, preserving the shape of idx.

@@ -71,6 +71,31 @@ assert(gotOnsets == expectedOnsets, ...
 fprintf('  PASS test 1: full block (head %d, %d onsets, loopback err %.1e)\n', ...
     eng.head(),gotOnsets,err);
 
+% ---- Test 1b: the frame loop reports where its time went ---------------
+% Every frame is accounted for, the order statistics are ordered, and the
+% slowest frames name ring positions inside the block -- the numbers a rig
+% run needs to tell a slow ring page from a slow render.
+T = eng.LastStream.timing;
+assert(isstruct(T) && T.frames == nFrames, ...
+    'the stream report should time every one of the %d frames',nFrames);
+assert(all(T.p50 <= T.p99 & T.p99 <= T.max),'frame-timing percentiles out of order');
+assert(abs(T.frameMs - 1e3*fl/Fs) < 1e-9,'frameMs should be one frame at the DAC rate');
+assert(size(T.slowest,1) == min(8,nFrames) && size(T.slowest,2) == 7, ...
+    'expected the 8 slowest frames, 7 columns each');
+assert(all(mod(T.slowest(:,2),fl) == 0 & T.slowest(:,2) >= 0 & T.slowest(:,2) < N), ...
+    'a slow frame''s ring position should be a frame boundary inside the block');
+assert(issorted(T.slowest(:,7),'descend'),'the slowest frames should come worst first');
+
+% Prefault reads and never writes: the block is intact afterwards, across
+% the wrap too.
+before = eng.RingBuffer.readSignal(1,N);
+np = eng.RingBuffer.prefault(1,N);
+assert(np >= ceil(N/1024),'prefault should touch every page of the range (%d)',np);
+eng.RingBuffer.prefault(eng.RingBuffer.MaxLength - 2048,eng.RingBuffer.MaxLength + 2048);
+assert(isequal(eng.RingBuffer.readSignal(1,N),before),'prefault changed the ring');
+fprintf('  PASS test 1b: %d frames timed (work p99 %.3f ms of %.2f); prefault leaves the ring intact\n', ...
+    T.frames,T.p99(5),T.frameMs);
+
 % ---- Test 2: Pause freezes the head, Resume continues ----------------------
 eng.prep(spec);
 wait_until(@() eng.State == mabr.acq.State.Ready, 10);
@@ -92,6 +117,9 @@ eng.stop();
 wait_until(@() eng.State == Completed, 5);
 assert(eng.State == Completed,'Stop did not complete the block');
 assert(eng.head() < N,'Stop did not end the block early (head %d, N %d)',eng.head(),N);
+% The 0.3 s spent paused in test 2 is nobody's frame work.
+T = eng.LastStream.timing;
+assert(T.max(5) < 250,'paused time was counted as frame work (max %.0f ms)',T.max(5));
 fprintf('  PASS test 3: Stop ended block early at head %d (< %d)\n',eng.head(),N);
 
 % ---- Test 4: Kill tears the worker down ------------------------------------

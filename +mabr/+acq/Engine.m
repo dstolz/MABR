@@ -60,6 +60,10 @@ classdef Engine < handle
         %   .overruns    samples of input the device had nowhere to put
         %   .underrunAt  [1 x k] play-matrix sample each was reported at
         %   .overrunAt   [1 x k]
+        %   .timing      where the frame loop's time went: per-stage
+        %                percentiles and the slowest frames with their ring
+        %                positions (mabr.acq.worker_loop's summarize_frames);
+        %                [] until a block has streamed
         % Cleared at each prep. In stimulation-only mode nothing comes back
         % through the ring buffer, so this is the only record of how far
         % through a run that was stopped early the presentation actually got
@@ -67,7 +71,8 @@ classdef Engine < handle
         % the device counts are what a MISALIGNED verdict names as its likely
         % cause (mabr.ui.AcqController.alignmentCheck).
         LastStream (1,1) struct = struct('samples',0,'reason','', ...
-            'underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0))
+            'underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0), ...
+            'timing',[])
     end
 
     properties (Dependent)
@@ -199,7 +204,8 @@ classdef Engine < handle
             % clear it here so nothing downstream can mistake a stale count for
             % this block's.
             obj.LastStream = struct('samples',0,'reason','', ...
-                'underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0));
+                'underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0), ...
+                'timing',[]);
             obj.send_cmd(mabr.acq.Cmd.Prep,blockSpec);
         end
 
@@ -258,12 +264,15 @@ classdef Engine < handle
                 case 'streamed'
                     % Always arrives before the Completed state that raises
                     % BlockCompleted, so a listener on that event can read it.
+                    timing = [];
+                    if isfield(msg,'timing'), timing = msg.timing; end
                     obj.LastStream = struct('samples',double(msg.samples), ...
                                             'reason',char(msg.reason), ...
                                             'underruns',double(msg.underruns), ...
                                             'overruns',double(msg.overruns), ...
                                             'underrunAt',double(msg.underrunAt(:)'), ...
-                                            'overrunAt',double(msg.overrunAt(:)'));
+                                            'overrunAt',double(msg.overrunAt(:)'), ...
+                                            'timing',timing);
 
                 case 'state'
                     prev = obj.State;

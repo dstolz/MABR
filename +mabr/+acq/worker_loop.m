@@ -44,6 +44,9 @@ function worker_loop(rootPath,resultQueue,testing)
 %                 overruns     samples of input the device dropped
 %                 underrunAt   [1 x k] play-matrix sample each was reported at
 %                 overrunAt    [1 x k]
+%                 timing       where the frame loop's time went -- percentiles
+%                              per stage and the slowest frames with their
+%                              ring positions (see summarize_frames)
 %                 (mabr.acq.Engine.LastStream holds it client-side)
 %
 %   testing (logical) selects TEST MODE, which the GUI names and documents as
@@ -88,6 +91,17 @@ prepared = [];   % last Prep payload
 
 try
     rb = mabr.acq.RingBuffer(cfg,true);   % writable
+    % Bring the whole ring into memory now, while nothing is streaming. The
+    % ring is a file-backed map written one 4 KiB page per channel per frame,
+    % and a page not yet resident has to be faulted in -- from disk, when it
+    % is cold -- by the streaming loop itself, synchronously. Long runs on
+    % the rig showed one-frame underruns spaced at whole MiB of ring written
+    % (a run that fits in the first few MiB, which every run rewrites, never
+    % did). Prep repeats this over the run's own range.
+    t0 = tic;
+    rb.prefault();
+    mabr.log.vprintf(2,'Ring buffer prefaulted (%.0f MiB) in %.2f s', ...
+        2*rb.MaxLength*4/2^20,toc(t0));
     send_state(resultQueue,mabr.acq.State.Idle);
     if testing
         mabr.log.vprintf(1,['Worker loop started in TEST MODE -- no device will be ' ...
@@ -106,6 +120,11 @@ try
             case mabr.acq.Cmd.Prep
                 prepared = msg.data;
                 apr = prepare_device(apr,prepared,testing);
+                % Every run writes the ring from its start, so these are
+                % the pages it is about to write: touch them here, between
+                % runs, rather than one at a time inside the frame loop
+                % (resident pages cost microseconds; see the start-up call).
+                rb.prefault(1,mabr.stim.PlayPlan.fromSpec(prepared).N);
                 send_state(resultQueue,mabr.acq.State.Ready);
 
             case mabr.acq.Cmd.Run
@@ -114,7 +133,7 @@ try
                         'Received Run before Prep.');
                     continue
                 end
-                [reason,nStreamed,xr] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
+                [reason,nStreamed,xr,timing] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
                 % How much of the play matrix actually went out, why the
                 % block ended, and what the device said about it (underruns
                 % and overruns, with where in the block each was reported).
@@ -124,10 +143,13 @@ try
                 % through the planned sequence a stopped run got, and for a
                 % recorded run it is what lets a misaligned verdict name its
                 % likeliest cause (mabr.ui.AcqController.alignmentCheck).
+                % `timing` is where the frame loop's own time went (see
+                % summarize_frames).
                 send(resultQueue,struct('type','streamed', ...
                     'samples',nStreamed,'reason',reason, ...
                     'underruns',xr.underruns,'overruns',xr.overruns, ...
-                    'underrunAt',xr.underrunAt,'overrunAt',xr.overrunAt));
+                    'underrunAt',xr.underrunAt,'overrunAt',xr.overrunAt, ...
+                    'timing',timing));
                 if strcmp(reason,'killed')
                     running = false;
                 else
@@ -177,7 +199,7 @@ end
 
 
 % =====================================================================
-function [reason,nStreamed,xr] = stream_block(cmdQueue,resultQueue,rb,apr,spec,cfg,testing)
+function [reason,nStreamed,xr,timing] = stream_block(cmdQueue,resultQueue,rb,apr,spec,cfg,testing)
 % Stream one prepared block frame-by-frame. Returns 'completed', 'stopped',
 % or 'killed', plus the number of play-matrix samples actually emitted --
 % which is the whole matrix unless a Stop/Kill cut it short. Analogue of the
@@ -189,7 +211,13 @@ function [reason,nStreamed,xr] = stream_block(cmdQueue,resultQueue,rb,apr,spec,c
 % had nowhere to put -- recorded samples dropped), each with the play-matrix
 % sample at which every event was reported (the start of the frame being
 % handed over, so approximate to about a device buffer). Empty in Test Mode,
-% where there is no device to say anything.
+% where there is no device to say anything. Nothing is LOGGED from inside
+% the loop: a logged line costs a stack walk and a file write, and an
+% underrun is exactly the moment the loop has no time to spare. One summary
+% goes out after the block (log_block_report).
+%
+% timing is where each frame's time went, measured with a few tic/tocs a
+% frame (microseconds against a 5.3 ms frame): see summarize_frames.
 
 fl  = cfg.frameLength;
 src = mabr.stim.PlayPlan.fromSpec(spec);   % frames on demand -- never a whole matrix
@@ -216,14 +244,20 @@ mabr.log.vprintf(1,'Streaming %s: %d samples (%d frames)',kind,N,ceil(N/fl));
 reason = 'completed';
 xr = struct('underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0));
 i = 1;
+% Per frame, in ms: command poll, frame render, device call, ring write, and
+% the whole iteration. Preallocated -- nothing in the loop may grow.
+ft = zeros(ceil(N/fl),5,'single');
+nf = 0;
 % Pace against a running deadline rather than pause()-per-frame: pause has
 % millisecond-scale granularity on Windows and the frame work itself takes
 % time, so a naive pause(testDelay) accumulates drift and runs slow.
 paceOrigin = tic;
 paceFrames = 0;
 while i <= N
+    tIter = tic;
     % --- honor any pending command (non-blocking) -------------------------
     [msg,ok] = poll(cmdQueue,0);
+    dPoll = toc(tIter);
     if ok
         switch msg.cmd
             case mabr.acq.Cmd.Stop, reason = 'stopped'; break
@@ -237,12 +271,18 @@ while i <= N
                 % the loop does not sprint to "catch up" after a resume.
                 paceOrigin = tic;
                 paceFrames = 0;
+                % ...nor is it this frame's work.
+                tIter = tic;
+                dPoll = 0;
         end
     end
 
     % --- one frame --------------------------------------------------------
     hi    = min(i+fl-1,N);
+    t     = tic;
     frame = src.range(i,hi);   % [n x 2] single: signal, timing
+    dRender = toc(t);
+    dDev    = 0;
 
     if testing
         % TEST MODE: the stimulus frame IS the acquired frame. Both columns
@@ -258,19 +298,30 @@ while i <= N
         % which makes the live view's error bands and the correlation advance
         % criterion untestable in the one mode built for testing them.
         audioADC = [frame(:,1) + randn(size(frame,1),1,'single')/1e6, frame(:,2)];
+        t = tic;
         rb.writeFrame(audioADC(:,1),audioADC(:,2));
+        dRing = toc(t);
     elseif stimOnly
         % Output only: both columns (signal AND timing pulse) go out, the
         % device clock paces the loop, and nothing comes back to record.
+        t = tic;
         nUnder = apr(frame);
-        xr = note_xruns(xr,nUnder,0,i,spec.SampleRate);
+        dDev = toc(t);
+        xr = note_xruns(xr,nUnder,0,i);
+        dRing = 0;
     else
+        t = tic;
         [audioADC,nUnder,nOver] = apr(frame);
-        xr = note_xruns(xr,nUnder,nOver,i,spec.SampleRate);
+        dDev = toc(t);
+        xr = note_xruns(xr,nUnder,nOver,i);
+        t = tic;
         rb.writeFrame(audioADC(:,1),audioADC(:,2));
+        dRing = toc(t);
     end
 
-    i = hi + 1;
+    i  = hi + 1;
+    nf = nf + 1;
+    ft(nf,:) = 1e3*[dPoll dRender dDev dRing toc(tIter)];
 
     if testing && testDelay > 0
         paceFrames = paceFrames + 1;
@@ -286,26 +337,99 @@ nStreamed = min(i-1,N);
 
 mabr.log.vprintf(1,'Block %s (%d of %d samples, head = %d)', ...
     reason,nStreamed,N,rb.WriteHead);
+
+timing = summarize_frames(ft(1:nf,:),fl,spec.SampleRate);
+log_block_report(xr,timing,spec.SampleRate);
 end
 
 
 % =====================================================================
-function xr = note_xruns(xr,nUnder,nOver,at,fs)
-% Log and keep what the device reported for the frame starting at play-matrix
-% sample `at`. Both counts are in samples, and an event is kept with WHERE it
-% was reported so a misaligned verdict can say whether the jump it found is
-% the one the device owned up to (mabr.metrics.alignment_report).
+function xr = note_xruns(xr,nUnder,nOver,at)
+% Keep what the device reported for the frame starting at play-matrix sample
+% `at`. Both counts are in samples, and an event is kept with WHERE it was
+% reported so a misaligned verdict can say whether the jump it found is the
+% one the device owned up to (mabr.metrics.alignment_report). Called inside
+% the frame loop, so it only accumulates: log_block_report says it all once
+% the block is over.
 if nUnder
     xr.underruns = xr.underruns + double(nUnder);
     xr.underrunAt(end+1) = at;
-    mabr.log.vprintf(0,'# Underruns = %d (at %.2f s into the block)', ...
-        nUnder,(at-1)/fs);
 end
 if nOver
     xr.overruns = xr.overruns + double(nOver);
     xr.overrunAt(end+1) = at;
-    mabr.log.vprintf(0,'# Overruns = %d (at %.2f s into the block)', ...
-        nOver,(at-1)/fs);
+end
+end
+
+
+% =====================================================================
+function T = summarize_frames(ft,fl,fs)
+% Where the frame loop's time went. ft is [nFrames x 5] ms per frame: command
+% poll, frame render, device call, ring write, whole iteration. The device
+% call is where the loop WAITS -- the device paces it -- so what can make an
+% underrun is everything else, `work` below: if one frame's work outlasts the
+% device's buffered slack, the output runs dry.
+%
+%   T.frames     frames streamed           T.frameMs  one frame's duration
+%   T.columns    {'poll','render','device','ring','work'}
+%   T.p50 T.p99 T.max   [1 x 5] ms, in the order of columns
+%   T.slowest    [k x 7], the (up to) 8 frames with the most work, worst
+%                first: frame, ring sample it started at (0-based, which is
+%                also its play-matrix offset -- every block writes the ring
+%                from its start), then the five columns in ms
+T = struct('frames',0,'frameMs',1e3*fl/fs, ...
+    'columns',{{'poll','render','device','ring','work'}}, ...
+    'p50',zeros(1,5),'p99',zeros(1,5),'max',zeros(1,5),'slowest',zeros(0,7));
+n = size(ft,1);
+T.frames = n;
+if n == 0, return; end
+X = double([ft(:,1:4), ft(:,5) - ft(:,3)]);
+S = sort(X,1);
+T.p50 = S(max(1,ceil(0.50*n)),:);
+T.p99 = S(max(1,ceil(0.99*n)),:);
+T.max = S(n,:);
+[~,ord] = sort(X(:,5),'descend');
+k = ord(1:min(8,n));
+T.slowest = [k(:), (k(:)-1)*fl, X(k,:)];
+end
+
+
+% =====================================================================
+function log_block_report(xr,T,fs)
+% What the device reported and where the loop's time went, once per block.
+%
+% Every block writes the ring from its start, so a play-matrix sample is also
+% a ring position, and each event is reported with its offset into the MiB of
+% ring (2^18 single-precision samples) it fell in. Underruns on long rig runs
+% came at whole-MiB spacings; an offset that is always a frame or two says the
+% ring's pages are the cause, one scattered at random says something else is.
+perMiB = 2^18;
+where  = @(at) strjoin(arrayfun(@(a) sprintf('%.2f s (+%d)',(a-1)/fs, ...
+    mod(a-1,perMiB)),at(1:min(end,10)),'UniformOutput',false),', ');
+if xr.underruns > 0
+    mabr.log.vprintf(0,'# Underruns: %d samples in %d event(s), at %s -- s into the block (samples into its MiB of ring)', ...
+        xr.underruns,numel(xr.underrunAt),where(xr.underrunAt));
+end
+if xr.overruns > 0
+    mabr.log.vprintf(0,'# Overruns: %d samples in %d event(s), at %s -- s into the block (samples into its MiB of ring)', ...
+        xr.overruns,numel(xr.overrunAt),where(xr.overrunAt));
+end
+if T.frames == 0, return; end
+% Loud when a frame's work came within half a frame of the budget, or the
+% device complained; otherwise a detail line.
+worst = T.max(5);
+level = 2;
+if worst > 0.5*T.frameMs || xr.underruns > 0 || xr.overruns > 0, level = 1; end
+mabr.log.vprintf(level, ['Frame timing, %d frames of %.2f ms: work (all but the device call) ' ...
+    'p50 %.2f / p99 %.2f / max %.2f ms; device call p50 %.2f / max %.2f; ring write max %.2f ' ...
+    '(render %.2f, poll %.2f)'],T.frames,T.frameMs,T.p50(5),T.p99(5),worst, ...
+    T.p50(3),T.max(3),T.max(4),T.max(2),T.max(1));
+if level == 1
+    s = T.slowest(1:min(3,end),:);
+    mabr.log.vprintf(1,'  slowest frames: %s', strjoin(arrayfun(@(r) sprintf( ...
+        '%.2f s (+%d into its MiB): ring %.2f, render %.2f, poll %.2f ms', ...
+        s(r,2)/fs,mod(s(r,2),perMiB),s(r,6),s(r,4),s(r,3)),1:size(s,1), ...
+        'UniformOutput',false),'; '));
 end
 end
 
