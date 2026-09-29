@@ -48,6 +48,14 @@ classdef App < handle
 %   named place a user returns to deliberately (one per protocol on a shared
 %   rig), the pref is the one they land in by doing nothing at all.
 %
+%   The Stimulus panel's Bank dropdown lists the stimulus bank files used
+%   before (mabr.stim.BankHistory), shows which bank is loaded, and loads
+%   whichever listed file is picked; + lists files without loading them and
+%   − takes the selected one off. Open… and + start in the folder a bank was
+%   last picked from. The list and that folder are history of this machine
+%   rather than settings, so they have their own prefs and are in neither a
+%   configuration nor the last-session snapshot.
+%
 %   The layout code lives in createComponents (treated as generated); the
 %   wiring/logic lives in the callbacks and event handlers below.
 %
@@ -79,6 +87,19 @@ classdef App < handle
         % is the resolved selection.
         StrategyPickSentinel = '__mabr_choose_strategy__';
 
+        % ItemsData of the bank dropdown's leading item whenever the loaded
+        % bank is not one of the listed files -- nothing loaded, the demo, a
+        % bank adopted from the designer, a restored bank since taken off the
+        % list -- so the dropdown always shows what is loaded and picking a
+        % listed file is always a change of value. Not a path anything could
+        % be saved under.
+        NoBankSentinel = '__mabr_no_recent_bank__';
+        NoBankText = '(no bank loaded)';
+        NothingLoadedText = 'No bank loaded';
+        % Width of the Stimulus panel's text buttons: fixed rather than 'fit'
+        % so Design… becoming Adopt bank does not move anything.
+        BankButtonWidth = 80;
+
         % Stamped on the UIFigure so a second launch can find the first
         % instance's window rather than opening a duplicate onto the same
         % rig/audio device -- see the constructor's single-instance guard.
@@ -98,6 +119,19 @@ classdef App < handle
         % the same MABR pref group as everything else here (key
         % 'RecentConfigFiles') so the list survives a restart.
         RecentConfigs (1,:) cell = {}
+        % Stimulus bank files most recently loaded, most-recent-first -- the
+        % Stimulus panel's Bank dropdown, which is also where entries are
+        % added and removed by hand -- plus the folder the bank dialogs open
+        % in. History rather than a setting, so it lives in its own prefs
+        % (mabr.stim.BankHistory.PrefName/FolderPrefName) and, like
+        % RecentConfigs, is not part of a configuration.
+        RecentBanks (1,1) mabr.stim.BankHistory = mabr.stim.BankHistory
+        % The file the loaded bank was read from, when it was read from one
+        % ('' for the demo, a designer bank, or nothing). What the Bank
+        % dropdown shows as selected. Tracked here rather than read off
+        % Stimuli.Source.File, which for a saved StimulusSet is wherever it
+        % was saved from, not the file it was just loaded out of.
+        BankFile (1,:) char = ''
         % Artifact criterion, and what to do about a sweep that fails it. The
         % GUI owns this; it is remembered across sessions in MATLAB prefs
         % (mabr.ArtifactPolicy.loadPrefs) so a rig keeps whatever suits its
@@ -161,6 +195,11 @@ classdef App < handle
         SaveConfigMenuItem
         LoadConfigMenuItem
         RecentConfigsMenu
+        % True only while restoreLastSession is applying the previous
+        % session's bank: a bank the app reopens by itself is not one the
+        % operator just used, and re-listing it would undo a Remove or a
+        % Clear List the moment MABR restarted.
+        RestoringSession (1,1) logical = false
         SettingsMenu
         AudioMenuItem
         StimgenMenuItem
@@ -188,6 +227,12 @@ classdef App < handle
         DesignButton
         LoadButton
         TestButton
+        % The Bank dropdown: the loaded bank, and every bank used before --
+        % picking one loads it. + lists files without loading them, − takes
+        % the selected one off the list.
+        RecentBankDrop
+        RecentAddButton
+        RecentRemoveButton
         % The stimgen bank editor, while one is open. Held so the Design button
         % can turn into "Adopt bank" and pull the current bank back out; see
         % onDesignStimuli.
@@ -335,6 +380,7 @@ classdef App < handle
             end
             rc = getpref('MABR','RecentConfigFiles',{});
             if iscell(rc), app.RecentConfigs = rc; end
+            app.RecentBanks = mabr.stim.BankHistory.loadPrefs();
             % The notebook opens with the app, not with the schedule: the first
             % things worth writing down (impedances, what was changed since
             % yesterday) happen before Start. Its stamps ask the controller
@@ -457,10 +503,13 @@ classdef App < handle
     % ===================================================================
     methods (Access = private)
         function createComponents(app)
-            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 700], ...
+            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 736], ...
                 'Tag',mabr.ui.App.InstanceTag, ...
                 'CloseRequestFcn',@(~,~) app.onClose());
-            mabr.ui.WindowPos.restore(app.UIFigure,'MABR',app.UIFigure.Position);
+            % The panels' fixed heights add up to 720 px; a window remembered
+            % from before the Stimulus panel gained its second row would
+            % reopen with the Run panel's bottom edge below the window.
+            mabr.ui.WindowPos.restore(app.UIFigure,'MABR',app.UIFigure.Position,[0 736]);
             if getpref('MABR','AlwaysOnTop',false)
                 app.UIFigure.WindowStyle = 'alwaysontop';
             end
@@ -586,7 +635,7 @@ classdef App < handle
             % not see through a panel to its nested grid.
             app.Grid = uigridlayout(app.UIFigure,[7 1]);
             app.Grid.ColumnWidth = {'1x'};
-            app.Grid.RowHeight   = {96,60,196,150,'1x',96,22};
+            app.Grid.RowHeight   = {96,96,196,150,'1x',96,22};
             app.Grid.RowSpacing  = 8;
             app.Grid.Padding     = [10 10 10 6];
 
@@ -643,33 +692,69 @@ classdef App < handle
         end
 
         function buildStimulusPanel(app,row)
-            g = app.panelGrid('Stimulus',row,{24},{app.LabelWidth,'1x','fit','fit','fit'});
+            % Row 1 is the list: one dropdown that both SAYS which bank is
+            % loaded and CHOOSES one (picking a listed file loads it), the +/−
+            % pair that curate the list, and Open… for a file not on it yet --
+            % only as many buttons as leave the dropdown room for a bank's
+            % name. Row 2 is the verdict on what is loaded -- count,
+            % provenance, calibration, rate -- under the dropdown it describes,
+            % with the two banks that come from no file beside it: Demo under
+            % the +/− pair, Design… under Open…. The button column is a fixed
+            % width, so Design… turning into Adopt bank moves nothing.
+            bw = mabr.ui.App.BankButtonWidth;
+            g = app.panelGrid('Stimulus',row,{24,24}, ...
+                {app.LabelWidth,'1x',26,26,bw});
+
+            app.addLabel(g,'Bank',1,1);
+            app.RecentBankDrop = uidropdown(g, ...
+                'Items',{mabr.ui.App.NoBankText}, ...
+                'ItemsData',{mabr.ui.App.NoBankSentinel}, ...
+                'ValueChangedFcn',@(~,~) app.onRecentBankSelected());
+            app.RecentBankDrop.Layout.Row = 1; app.RecentBankDrop.Layout.Column = 2;
+
+            app.RecentAddButton = uibutton(g,'Text','+', ...
+                'FontWeight','bold', ...
+                'Tooltip',['Add bank files to this list without loading them ' ...
+                           '(several can be picked at once).'], ...
+                'ButtonPushedFcn',@(~,~) app.onAddBanks());
+            app.RecentAddButton.Layout.Row = 1; app.RecentAddButton.Layout.Column = 3;
+
+            app.RecentRemoveButton = uibutton(g,'Text',char(8722), ...   % minus sign
+                'FontWeight','bold', ...
+                'Tooltip',['Choose banks to take off this list. The files themselves ' ...
+                           'are not touched, and a loaded bank stays loaded.'], ...
+                'ButtonPushedFcn',@(~,~) app.onRemoveBank());
+            app.RecentRemoveButton.Layout.Row = 1; app.RecentRemoveButton.Layout.Column = 4;
+
+            app.LoadButton = uibutton(g,'Text','Open…', ...
+                'Tooltip',['Load a stimulus bank from a file: a stimgen .spl, or a .mat ' ...
+                           'holding the struct array. It joins the list on the left.'], ...
+                'ButtonPushedFcn',@(~,~) app.onLoadSource());
+            app.LoadButton.Layout.Row = 1; app.LoadButton.Layout.Column = 5;
 
             % The count doubles as the loaded/not-loaded indicator, so it sits
-            % where a value would: in the field column, not tucked by a button.
-            app.addLabel(g,'Bank',1,1);
-            app.SourceLabel = uilabel(g,'Text','(none loaded)','FontColor',[0.6 0 0]);
-            app.SourceLabel.Layout.Row = 1; app.SourceLabel.Layout.Column = 2;
-
-            % Leftmost of the three, and the suggested route: stimgen is where
-            % a calibrated bank comes from. The other two remain because the
-            % contract is the struct array, not the package -- a bank built any
-            % other way is still a first-class bank.
-            app.DesignButton = uibutton(g,'Text','Design…', ...
-                'ButtonPushedFcn',@(~,~) app.onDesignStimuli());
-            app.DesignButton.Layout.Row = 1; app.DesignButton.Layout.Column = 3;
-
-            app.LoadButton = uibutton(g,'Text','Load bank…', ...
-                'Tooltip','Load a stimulus bank: a stimgen .spl, or a .mat holding the struct array.', ...
-                'ButtonPushedFcn',@(~,~) app.onLoadSource());
-            app.LoadButton.Layout.Row = 1; app.LoadButton.Layout.Column = 4;
+            % where a value would: in the field column, under the bank it
+            % describes. setSourceLabel repeats it as the tooltip, since a rate
+            % mismatch can run past the column's width.
+            app.SourceLabel = uilabel(g,'Text',mabr.ui.App.NothingLoadedText, ...
+                'FontColor',[0.6 0 0],'Tooltip',mabr.ui.App.NothingLoadedText);
+            app.SourceLabel.Layout.Row = 2; app.SourceLabel.Layout.Column = 2;
 
             app.TestButton = uibutton(g,'Text','Demo', ...
                 'Tooltip','Load the built-in tone-pip bank (testing only -- not calibrated).', ...
                 'ButtonPushedFcn',@(~,~) app.onTestSource());
-            app.TestButton.Layout.Row = 1; app.TestButton.Layout.Column = 5;
+            app.TestButton.Layout.Row = 2; app.TestButton.Layout.Column = [3 4];
+
+            % The suggested route: stimgen is where a calibrated bank comes
+            % from. The others remain because the contract is the struct
+            % array, not the package -- a bank built any other way is still a
+            % first-class bank.
+            app.DesignButton = uibutton(g,'Text','Design…', ...
+                'ButtonPushedFcn',@(~,~) app.onDesignStimuli());
+            app.DesignButton.Layout.Row = 2; app.DesignButton.Layout.Column = 5;
 
             app.syncDesignButton();
+            app.syncRecentBanks();
         end
 
         function buildPresentationPanel(app,row)
@@ -1199,6 +1284,220 @@ classdef App < handle
             end
         end
 
+        % --- Recent banks ----------------------------------------------------
+        % The Stimulus panel's Bank dropdown: the same idea as Recent
+        % Configurations, for the other file an operator reloads every day,
+        % with the one difference that the list can be curated. Picking a
+        % listed bank loads it; Open…, a picked bank, and a loaded
+        % configuration all put their bank at the top by themselves; + lists
+        % files without loading them (a protocol's banks, laid out ahead of
+        % time) and − takes entries off. The files themselves are never
+        % touched. The dropdown is a configControls entry, so a stray pick
+        % cannot replace the bank under a running schedule.
+        function file = selectedRecentBank(app)
+            % The listed path the dropdown is on, or '' when it is on the
+            % leading "what is loaded" item.
+            file = app.RecentBankDrop.Value;
+            if strcmp(file,mabr.ui.App.NoBankSentinel), file = ''; end
+        end
+
+        function onRecentBankSelected(app)
+            % Picking a bank loads it. A file can vanish between sessions
+            % (moved, deleted, a network drive unmounted); drop it and say so
+            % rather than erroring, the rule onLoadRecentConfiguration
+            % follows. A file that is there but will not load stays listed --
+            % it is the user's to remove. Either way the dropdown is put back
+            % on whatever is actually loaded, never left on a bank that is not.
+            file = app.selectedRecentBank();
+            if isempty(file)
+                app.syncRecentBanks();
+                return
+            end
+            if ~isfile(file)
+                app.setStatus(['Bank "' file '" no longer exists; taken off the list.']);
+                app.removeRecentBank(file);
+                return
+            end
+            app.loadBankFile(file);
+            app.syncRecentBanks();
+        end
+
+        function setRecentTooltip(app)
+            % The dropdown shows the file name alone; the path is here.
+            file = app.selectedRecentBank();
+            if isempty(file), file = app.BankFile; end
+            if isempty(file)
+                app.RecentBankDrop.Tooltip = ['Stimulus banks used before, newest first — ' ...
+                    'pick one to load it. + adds files to the list without loading them.'];
+            else
+                app.RecentBankDrop.Tooltip = file;
+            end
+        end
+
+        function loadBankFile(app,file)
+            % Shared by Open… and the dropdown, so both end up on one list
+            % and one status message. Loading can mean regenerating a whole
+            % stimgen bank, so the pointer says the window is busy meanwhile.
+            [~,fn,ext] = fileparts(file);
+            app.setStatus(['Loading ' fn ext '…']);
+            app.UIFigure.Pointer = 'watch';
+            restorePointer = onCleanup(@() set(app.UIFigure,'Pointer','arrow'));
+            try
+                app.adoptStimuli(mabr.stim.StimulusSet.fromFile(file,app.Config),true,file);
+                app.rememberBank(file);
+                app.setStatus(sprintf('Loaded %d stimuli from %s', ...
+                    app.Stimuli.numStimuli,[fn ext]));
+            catch me
+                app.setStatus(['Load failed: ' me.message]);
+            end
+            clear restorePointer
+        end
+
+        function rememberBank(app,file)
+            % A bank was USED: put it at the top. Not while the last session
+            % is being restored -- see RestoringSession.
+            if app.RestoringSession || isempty(file), return; end
+            app.addRecentBank(file);
+        end
+
+        function dropped = addRecentBank(app,files)
+            [app.RecentBanks,dropped] = app.RecentBanks.add(files);
+            app.persistRecentBanks();
+            app.syncRecentBanks();
+        end
+
+        function removeRecentBank(app,files)
+            files = cellstr(files);
+            for k = 1:numel(files)
+                app.RecentBanks = app.RecentBanks.remove(files{k});
+            end
+            app.persistRecentBanks();
+            app.syncRecentBanks();
+        end
+
+        function persistRecentBanks(app)
+            % Guarded as saveLastSession is: prefs that cannot be written
+            % cost the list its memory, never the load that prompted it.
+            try
+                mabr.stim.BankHistory.savePrefs(app.RecentBanks);
+            catch me
+                mabr.log.vprintf(2,'App: recent banks not saved (%s).',me.message);
+            end
+        end
+
+        function [file,pn] = pickBankFiles(app,title,multi)
+            % uigetfile over bank files, opened in the folder a bank was last
+            % picked from (BankHistory.startFolder) and remembering the one
+            % this pick came from. file is 0 on cancel, as uigetfile's is.
+            args = {bankFilter(),title};
+            start = app.RecentBanks.startFolder();
+            % The trailing separator is what makes uigetfile read it as a
+            % folder to open in rather than a file name to suggest.
+            if ~isempty(start)
+                if ~any(start(end) == '\/'), start = [start filesep]; end
+                args{end+1} = start;
+            end
+            if multi, args = [args {'MultiSelect','on'}]; end
+            [file,pn] = uigetfile(args{:});
+            figure(app.UIFigure);
+            if isequal(file,0), return; end
+            app.RecentBanks = app.RecentBanks.pickedFrom(pn);
+            app.persistRecentBanks();
+        end
+
+        function onAddBanks(app)
+            [fn,pn] = app.pickBankFiles('Add banks to the list',true);
+            if isequal(fn,0), return; end
+            files = fullfile(pn,cellstr(fn));
+            dropped = app.addRecentBank(files);
+            n = numel(files);
+            msg = sprintf('Added %d bank%s to the list; pick one to load it.',n,plural(n));
+            if dropped > 0
+                msg = sprintf('%s The list holds %d, so the %d oldest fell off the end.', ...
+                    msg,app.RecentBanks.Max,dropped);
+            end
+            app.setStatus(msg);
+        end
+
+        function onRemoveBank(app)
+            % Which entries to take off, chosen from the whole list: with the
+            % dropdown loading whatever is picked, choosing an entry there to
+            % remove it would first load it. The selected bank is preselected.
+            files = app.RecentBanks.Files;
+            if isempty(files), return; end
+            args = {'ListString',app.RecentBanks.labels(), ...
+                'SelectionMode','multiple', ...
+                'Name','Remove banks','PromptString', ...
+                {'Take these banks off the list.','The files themselves are not touched.'}, ...
+                'OKString','Remove','ListSize',[360 200]};
+            k0 = find(strcmpi(files,app.selectedRecentBank()),1);
+            if ~isempty(k0), args = [args {'InitialValue',k0}]; end
+            [idx,ok] = listdlg(args{:});
+            figure(app.UIFigure);
+            if ~ok || isempty(idx), return; end
+            app.removeRecentBank(files(idx));
+            n = numel(idx);
+            msg = sprintf('Removed %d bank%s from the list. The files are untouched.',n,plural(n));
+            if any(strcmpi(files(idx),app.BankFile))
+                msg = [msg ' The loaded bank stays loaded.'];
+            end
+            app.setStatus(msg);
+        end
+
+        function txt = loadedBankText(app)
+            % The dropdown's leading item, for a bank that is not one of the
+            % listed files: what it is, in the words the source label uses.
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0
+                txt = mabr.ui.App.NoBankText;
+            elseif ~isempty(app.BankFile)
+                [~,fn,ext] = fileparts(app.BankFile);
+                txt = [fn ext];
+            else
+                switch lower(app.Stimuli.Source.Kind)
+                    case 'demo',    txt = 'Built-in demo bank';
+                    case 'stimgen', txt = 'Bank adopted from the designer';
+                    otherwise,      txt = 'Loaded bank (no file)';
+                end
+            end
+        end
+
+        function syncRecentBanks(app)
+            % Refill the Bank dropdown from the list and put it on the bank
+            % that is loaded: its entry when it came from a listed file, else
+            % a leading item describing it. The names are BankHistory.labels
+            % (unique, so they can stand as items) and the paths ride as
+            % ItemsData -- the path is the value, never a name that has to be
+            % matched back to one. Items and ItemsData go in ONE set() for the
+            % reason ensureCustomStrategyItem gives.
+            files = app.RecentBanks.Files;
+            drop  = app.RecentBankDrop;
+            k = [];
+            if ~isempty(app.BankFile), k = find(strcmpi(files,app.BankFile),1); end
+            if isempty(k)
+                set(drop,'Items',[{app.loadedBankText()} app.RecentBanks.labels()], ...
+                         'ItemsData',[{mabr.ui.App.NoBankSentinel} files]);
+                drop.Value = mabr.ui.App.NoBankSentinel;
+            else
+                set(drop,'Items',app.RecentBanks.labels(),'ItemsData',files);
+                drop.Value = files{k};
+            end
+            app.setRecentTooltip();
+            % Never while a schedule is running: the controls are locked
+            % then (configControls), and transport re-derives them after.
+            if ~app.isRunning(), app.syncRecentEnables(); end
+        end
+
+        function syncRecentEnables(app)
+            % An empty list has nothing to pick from and nothing to remove.
+            % + always has something to do: it is how a list starts.
+            % Re-called from transport, since configControls switches all
+            % three on wholesale.
+            has = ~isempty(app.RecentBanks.Files);
+            app.RecentBankDrop.Enable      = onOff(has);
+            app.RecentRemoveButton.Enable  = onOff(has);
+            app.RecentAddButton.Enable     = 'on';
+        end
+
         function cfg = captureConfiguration(app)
             % Everything a configuration restores, as plain structs -- never
             % classdef objects -- so a file saved by this version still loads
@@ -1492,7 +1791,8 @@ classdef App < handle
                 return
             end
 
-            app.adoptStimuli(set,false);   % resets Reps to the bank's own defaults
+            % Same source, so the same file behind it.
+            app.adoptStimuli(set,false,app.BankFile);   % resets Reps to the bank's own defaults
             app.applyRepsById(ids,reps);
         end
 
@@ -1547,7 +1847,13 @@ classdef App < handle
             end
             if isempty(set), return; end
 
-            app.adoptStimuli(set);   % resets Reps to the bank's own defaults
+            % A demo bank has no file, and a file bank is the one the
+            % configuration named -- src.File, not set.Source.File, which for
+            % a saved StimulusSet is whatever path it was saved from.
+            file = '';
+            if isfield(src,'File'), file = char(src.File); end
+            app.adoptStimuli(set,true,file);   % resets Reps to the bank's own defaults
+            app.rememberBank(file);
 
             if isfield(cfg,'Reps') && ~isempty(cfg.Reps)
                 % Matched by ID, not position: a bank regenerated from the
@@ -1664,10 +1970,26 @@ classdef App < handle
                     app.Controller.Engine.WorkerName '.']);
                 return
             end
-            % (Re)build for the selected mode.
+            % (Re)build for the selected mode. Startup is slow (parallel pool
+            % + worker handshakes, up to a minute on a cold MATLAB), so it
+            % runs under a dialog that says what is starting and how far it
+            % has got; every milestone still reaches the status line too.
+            % The onCleanup closes it on the error path as well; the engines
+            % keep the progress sink afterwards, which a closed dialog passes
+            % straight through to the status line.
+            acqName = [mabr.ui.AcqController.workerRole(stimOnly) ' worker'];
+            dlg = mabr.ui.StartupDialog(app.UIFigure, ...
+                {'Parallel pool', ...
+                 mabr.ui.App.launchStepLabel(acqName,useCompute), ...
+                 'Waiting for the workers to report in'}, ...
+                mabr.ui.App.startupIntro(acqName,useCompute), ...
+                @(msg) app.setStatus(msg));
+            closeDlg = onCleanup(@() dlg.close()); %#ok<NASGU>
+            progress = @(msg) dlg.report(msg);
+
             delete(app.Listeners);
             if ~isempty(app.Controller) && isvalid(app.Controller)
-                app.setStatus('Shutting down the previous worker…'); drawnow;
+                progress('Shutting down the previous worker…');
                 delete(app.Controller);
             end
 
@@ -1676,18 +1998,19 @@ classdef App < handle
             % for the compute workers. A pool that cannot be resized -- busy,
             % or the profile too small -- costs the compute workers for the
             % session, never the acquisition.
-            [~,ok] = mabr.pool(1 + 2*useCompute,@(msg) app.setStatus(msg));
+            dlg.step(1);
+            [~,ok] = mabr.pool(1 + 2*useCompute,progress);
             if useCompute && ~ok
-                app.setStatus(['The parallel pool could not be sized for the compute ' ...
-                    'workers; computing in this window for the session.']);
-                drawnow;
                 useCompute = false;
+                dlg.step(2,mabr.ui.App.launchStepLabel(acqName,false));
+                progress(['The parallel pool could not be sized for the compute ' ...
+                    'workers; computing in this window for the session.']);
+            else
+                dlg.step(2);
             end
 
-            % Startup is slow (parallel pool + worker handshake), so the
-            % engine reports each milestone straight into the status line.
             app.Controller = mabr.ui.AcqController(app.Config,testing, ...
-                @(msg) app.setStatus(msg),stimOnly,useCompute);
+                progress,stimOnly,useCompute);
             app.Listeners = [ ...
                 addlistener(app.Controller,'StateChanged',   @(~,e) app.onState(e)); ...
                 addlistener(app.Controller,'MetricsUpdated', @(~,e) app.onMetrics(e)); ...
@@ -1713,6 +2036,7 @@ classdef App < handle
             for i = 1:numel(app.MetricPlots)
                 app.MetricPlots(i).attach(app.Controller);
             end
+            dlg.step(3);
             app.Controller.waitUntilReady(120);
             app.setStatus([mabr.acq.Engine.capitalize( ...
                 app.Controller.Engine.WorkerName) ' ready.']);
@@ -1726,18 +2050,9 @@ classdef App < handle
         end
 
         function onLoadSource(app)
-            filt = {'*.spl;*.mat','Stimulus bank (*.spl, *.mat)'; ...
-                    '*.spl','stimgen bank (*.spl)'; ...
-                    '*.mat','MATLAB struct array (*.mat)'};
-            [fn,pn] = uigetfile(filt,'Load stimuli');
-            figure(app.UIFigure);
+            [fn,pn] = app.pickBankFiles('Open a stimulus bank',false);
             if isequal(fn,0), return; end
-            try
-                app.adoptStimuli(mabr.stim.StimulusSet.fromFile(fullfile(pn,fn),app.Config));
-                app.setStatus(sprintf('Loaded %d stimuli from %s',app.Stimuli.numStimuli,fn));
-            catch me
-                app.setStatus(['Load failed: ' me.message]);
-            end
+            app.loadBankFile(fullfile(pn,fn));
         end
 
         % --- stimgen bank designer -------------------------------------------
@@ -1759,13 +2074,45 @@ classdef App < handle
             try
                 app.Designer = stimgen.StimPlayer();
                 app.hideDesignerSessionControls();
-                app.setStatus(['Designer open. Build a bank, then press Adopt bank ' ...
-                               'to bring it into MABR.']);
+                msg = ['Designer open. Build a bank, then press Adopt bank ' ...
+                       'to bring it into MABR.'];
+                bankFile = app.designerBankFile();
+                if ~isempty(bankFile)
+                    try
+                        app.Designer.load_bank(bankFile);
+                        msg = ['Designer opened on the loaded bank (' bankFile '). ' ...
+                               'Edit it, then press Adopt bank.'];
+                    catch me
+                        msg = ['Designer open, but the loaded bank could not be ' ...
+                               'shown in it: ' me.message];
+                    end
+                elseif ~isempty(app.Stimuli) && app.Stimuli.numStimuli > 0
+                    msg = ['Designer open empty: the loaded bank has no .spl ' ...
+                           'file the designer can read. ' msg];
+                end
+                app.setStatus(msg);
             catch me
                 app.Designer = [];
                 app.setStatus(['Could not open the stimgen designer: ' me.message]);
             end
             app.syncDesignButton();
+        end
+
+        function f = designerBankFile(app)
+            % The .spl file behind the loaded bank, if there is one. The
+            % designer can only open a saved stimgen bank; a demo bank, a
+            % .mat bank, or one built live and never saved has nothing to
+            % hand it, so the designer opens empty rather than guessing.
+            f = '';
+            if isempty(app.Stimuli), return; end
+            src = app.Stimuli.Source;
+            if isstruct(src) && isfield(src,'File') && ~isempty(src.File)
+                file = char(src.File);
+                [~,~,ext] = fileparts(file);
+                if strcmpi(ext,'.spl') && isfile(file)
+                    f = file;
+                end
+            end
         end
 
         function hideDesignerSessionControls(app)
@@ -1832,10 +2179,14 @@ classdef App < handle
             app.setStatus('Loaded built-in test stimuli.');
         end
 
-        function adoptStimuli(app,set,announce)
+        function adoptStimuli(app,set,announce,file)
             % Take on a new stimulus bank and reset the repetition counts to
             % whatever the bank suggests (its own Repetitions field, else the
             % schedule default).
+            %
+            % file (default '') is the file the bank was read from, which the
+            % Bank dropdown shows as selected; a bank from anywhere else (the
+            % demo, the designer) leaves the dropdown on a description of it.
             %
             % announce (default true) governs only the uncalibrated-levels
             % alert. retuneStimuli passes false: re-rendering the bank the user
@@ -1843,8 +2194,10 @@ classdef App < handle
             % was raised when it was first loaded, and raising it again would
             % put a modal alert behind the still-open modal audio dialog that
             % prompted the re-render.
-            app.Stimuli = set;
-            app.Reps    = mabr.stim.Schedule.startingRepetitions(set);
+            if nargin < 4, file = ''; end
+            app.Stimuli  = set;
+            app.BankFile = char(file);
+            app.Reps     = mabr.stim.Schedule.startingRepetitions(set);
             if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
             % An open stimulus viewer shows the bank that is loaded, not the
             % one that was loaded when it was opened.
@@ -1852,6 +2205,7 @@ classdef App < handle
                 app.StimViewer.setStimuli(set);
             end
             app.setSourceLabel();
+            app.syncRecentBanks();
             app.syncDesignButton();
             app.checkOverlap();
             app.refreshPlan();
@@ -2458,11 +2812,14 @@ classdef App < handle
                 if ~ispref('MABR','LastSession'), return; end
                 cfg = getpref('MABR','LastSession');
                 if ~isstruct(cfg) || ~isscalar(cfg), return; end
+                app.RestoringSession = true;   % see rememberBank
                 warn = app.applyConfiguration(cfg);
+                app.RestoringSession = false;
                 msg  = 'Settings restored from the last session.';
                 if ~isempty(warn), msg = [msg ' ' warn]; end
                 app.setStatus(msg);
             catch me
+                app.RestoringSession = false;
                 app.setStatus(['Last session''s settings could not be restored: ' me.message]);
                 mabr.log.vprintf(1,'App: last-session restore failed (%s).',me.message);
             end
@@ -3502,11 +3859,15 @@ classdef App < handle
             % joins them for the same reason as Load bank/Audio Device -- it
             % can replace the stimulus bank, ISI, and audio mapping out from
             % under a running schedule. Recent Configurations is the same
-            % action by another route and joins for the same reason. Save
-            % Configuration does not: it only reads the current settings, so
-            % it stays live throughout.
+            % action by another route and joins for the same reason, and so
+            % does the Bank dropdown (picking a bank loads it -- and the +/−
+            % list-editing buttons with it, a small price for one switch).
+            % Save Configuration does not: it only reads the current
+            % settings, so it stays live throughout.
             h = {app.SubjectField, app.OutputField, app.BrowseButton, ...
                  app.DesignButton, app.LoadButton, app.TestButton, ...
+                 app.RecentBankDrop, ...
+                 app.RecentAddButton, app.RecentRemoveButton, ...
                  app.StrategyDrop, app.RepsField, app.RepsButton, ...
                  app.AdvanceDrop, app.CorrField, ...
                  app.ISIField, app.RateField, app.JitterCheck, ...
@@ -3567,6 +3928,9 @@ classdef App < handle
                 % Same reason: configControls just switched all five ISI
                 % controls back on, but only one pair of them is ever live.
                 app.syncISIFields();
+                % An empty bank list has nothing to pick or remove, however
+                % configControls just left the row.
+                app.syncRecentEnables();
             end
             drawnow limitrate
         end
@@ -3638,8 +4002,12 @@ classdef App < handle
                     mabr.Config.rateText(app.Stimuli.SampleRate), ...
                     mabr.Config.rateText(app.Config.DACSampleRate));
                 app.SourceLabel.FontColor = [0.8 0.2 0];
+                app.SourceLabel.Tooltip   = app.SourceLabel.Text;
                 return
             end
+            % The label shares its row with two buttons, so a long provenance
+            % can be cut short; the tooltip always has all of it.
+            app.SourceLabel.Tooltip = app.SourceLabel.Text;
             [cal,known] = app.Stimuli.isCalibrated();
             if n > 0 && known && ~cal
                 app.SourceLabel.FontColor = [0.75 0.45 0];
@@ -3656,6 +4024,29 @@ classdef App < handle
     end
 
     methods (Static, Access = private)
+        function s = launchStepLabel(acqName,useCompute)
+            % The startup dialog's second step, naming what it launches.
+            if useCompute
+                s = ['Launching the ' acqName ' and the DSP worker'];
+            else
+                s = ['Launching the ' acqName];
+            end
+        end
+
+        function s = startupIntro(acqName,useCompute)
+            % What the startup dialog says before its checklist: what is
+            % starting, why it takes a while, and that it is a one-off.
+            if useCompute
+                what = ['MABR is starting its ' acqName ' and the background ' ...
+                        'compute workers (live signal processing and analysis).'];
+            else
+                what = ['MABR is starting its ' acqName '.'];
+            end
+            s = [what ' The first Start after launching MATLAB can take ' ...
+                 '30–60 s while the parallel pool comes up; later Starts ' ...
+                 'reuse the running workers.'];
+        end
+
         function c = builtinStrategies()
             % The canonical names of the five strategies Schedule plans
             % itself, in StrategyItems' order -- everything in
@@ -3826,6 +4217,17 @@ end
 % ======================= local helpers ================================
 function s = onOff(tf)
 if tf, s = 'on'; else, s = 'off'; end
+end
+
+function f = bankFilter()
+% The file types a stimulus bank comes in, for Load bank… and Add Bank….
+f = {'*.spl;*.mat','Stimulus bank (*.spl, *.mat)'; ...
+     '*.spl','stimgen bank (*.spl)'; ...
+     '*.mat','MATLAB struct array (*.mat)'};
+end
+
+function s = plural(n)
+if n == 1, s = ''; else, s = 's'; end
 end
 
 function figs = addFig(figs,h)
