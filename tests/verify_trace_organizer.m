@@ -12,7 +12,9 @@ function verify_trace_organizer()
 %          exactly, and a version-1 file still loads;
 %       7. keyboard and menu wiring;
 %       8. listenTo auto-adds a trace for each block an AcqController
-%          finalizes, without duplicating listeners.
+%          finalizes, without duplicating listeners;
+%       9. a trace added that way is drawn on its own, and the view is
+%          exactly what a full redraw would leave.
 %
 %   Creates (invisible-capable) figures but needs no hardware. Run:
 %       >> verify_trace_organizer
@@ -244,12 +246,47 @@ src.emit(make_block('16kHz_60dB',4));
 assert(numel(to3.Traces) == 3,'stopListening did not detach the organizer');
 fprintf('  PASS: blocks auto-added on BlockReady, no duplicate listeners\n');
 
+% --- 9. an added trace is drawn on its own, exactly as a redraw would ------
+% A trace added mid-session (one per finalized block) is drawn without
+% redrawing the rest -- unless it moves the shared amplitude scale, which
+% moves every trace. Either way the screen must be what a full redraw from
+% scratch (show) leaves, pixel data and margins included.
+to4 = mabr.ui.TraceOrganizer();
+cleanTo4 = onCleanup(@() delete(to4)); %#ok<NASGU>
+to4.show();
+t = (0:119)'/12000;
+w = sin(2*pi*1000*t)*1e-6;
+to4.addTrace(w,t,'A');
+to4.addTrace(0.5*w,t,'B, whose label is the longest by far');   % smaller: incremental
+to4.addTrace(0.7*w,t,'C');                                      % incremental
+drawn = view_state(to4);
+to4.show();
+assert(isequaln(drawn,view_state(to4)), ...
+    'traces added one at a time differ from a full redraw of the same traces');
+to4.addTrace(3*w,t,'D');                  % bigger: rescales all, so all redrawn
+drawn = view_state(to4);
+to4.show();
+assert(isequaln(drawn,view_state(to4)), ...
+    'a trace that moved the shared scale left the others drawn at the old one');
+fprintf('  PASS: an added trace is drawn alone, identically to a full redraw\n');
+
 delete(viewFile); delete(oldFile);
 fprintf('== verify_trace_organizer PASSED ==\n');
 end
 
 
 % =====================================================================
+function s = view_state(to)
+% Everything a redraw decides: each trace's drawn data and label, and the
+% axes' limits and placement (the label margin).
+tr = to.Traces;
+s = struct('XLim',to.Axes.XLim,'YLim',to.Axes.YLim,'Position',to.Axes.Position, ...
+    'X',{arrayfun(@(t) t.LineHandle.XData,tr,'UniformOutput',false)}, ...
+    'Y',{arrayfun(@(t) t.LineHandle.YData,tr,'UniformOutput',false)}, ...
+    'LabelPos',{arrayfun(@(t) t.LabelHandle.Position,tr,'UniformOutput',false)}, ...
+    'LabelStr',{arrayfun(@(t) t.LabelHandle.String,tr,'UniformOutput',false)});
+end
+
 function block = make_block(id,k)
 % A short synthetic block with a distinct wavelet, tagged with a stimulus ID.
 Fs = 12000; df = 1;

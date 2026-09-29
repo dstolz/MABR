@@ -780,11 +780,19 @@ classdef MetricPlot < handle
         end
 
         function onBlockReady(obj,e)
+            % Merged, not drawn. An intermixed run raises one of these per
+            % condition in a single burst, and drawing after each -- a full
+            % evaluation and rebuild of the plot -- was that many redraws back
+            % to back at the end of every run. The window's own clock draws
+            % them all at its next tick (UpdateInterval), which is also what
+            % draws everything else here.
+            obj.Suspend = true;
             try
                 obj.addBlock(e.Info.block);
             catch me
                 mabr.log.vprintf(2,1,'Metric plot could not take a block: %s',me.message);
             end
+            obj.Suspend = false;
         end
 
         % --- Metric evaluation --------------------------------------------------

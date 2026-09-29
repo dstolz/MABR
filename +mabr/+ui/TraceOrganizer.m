@@ -128,6 +128,13 @@ classdef TraceOrganizer < handle
         BlockListener   % listener on an AcqController's BlockReady event
         Inspector       % mabr.ui.TraceInspector, at most one at a time
         NotesView       % mabr.ui.Notes, the button-and-window form
+        % What the traces on screen were last drawn with: the per-trace
+        % amplitude scale, and the widest label in pixels (NaN = measure
+        % again). They let a trace added mid-session be drawn on its own
+        % (plotAdded) while every other trace still looks exactly as a full
+        % redraw would leave it. plotAll and fitLabelMargin refresh both.
+        PlotScale    = zeros(1,0)
+        LabelWidthPx = NaN
     end
 
     methods
@@ -312,7 +319,7 @@ classdef TraceOrganizer < handle
             tr.ShowLabel = obj.ShowLabels;
             if isempty(obj.Traces), obj.Traces = tr; else, obj.Traces(end+1) = tr; end
             obj.computeBands(numel(obj.Traces));
-            if obj.isvalidView(), obj.plotAll(true); end
+            if obj.isvalidView(), obj.plotAdded(); end
         end
 
         function clear(obj)
@@ -939,7 +946,43 @@ classdef TraceOrganizer < handle
                 allY = [obj.Traces.YOffset];
                 obj.Axes.YLim = [min(allY)-obj.YSpacing, max(allY)+obj.YSpacing];
             end
+            obj.PlotScale = sc(:).';
             obj.fitLabelMargin();
+            obj.refreshStatus();
+        end
+
+        function plotAdded(obj)
+            % Draw the trace addTrace just appended, and only that one. A
+            % session adds a trace per finalized block, and redrawing EVERY
+            % trace each time (plotAll) -- a dozen graphics writes and a label
+            % measurement apiece -- made the end of each run cost more the
+            % longer the session had run, for traces that had not changed.
+            % Anything that would change how the others are drawn falls back
+            % to plotAll: a new trace that moves the shared amplitude scale, or
+            % the time axis (the labels hang off its left end).
+            n = numel(obj.Traces);
+            if n < 2 || numel(obj.PlotScale) ~= n-1
+                obj.plotAll(true);
+                return
+            end
+            sc = obj.yscale();
+            tr = obj.Traces(n);
+            tl = reshape(tr.Time([1 end]),1,2)*1000;
+            xl = obj.Axes.XLim;
+            if ~isequal(sc(1:n-1),obj.PlotScale) || tl(1) < xl(1) || tl(2) > xl(2)
+                obj.plotAll(true);
+                return
+            end
+            tr.ShowLabel = obj.ShowLabels;
+            tr.plot(obj.Axes,sc(n),obj.labelX());
+            tr.LineHandle.ButtonDownFcn  = @(~,~) obj.onTraceClick(n);
+            tr.LabelHandle.ButtonDownFcn = @(~,~) obj.onTraceClick(n);
+            obj.attachContextMenu(tr.LineHandle);
+            obj.attachContextMenu(tr.LabelHandle);
+            obj.PlotScale = sc(:).';
+            allY = [obj.Traces.YOffset];
+            obj.Axes.YLim = [min(allY)-obj.YSpacing, max(allY)+obj.YSpacing];
+            obj.fitLabelMargin(tr);
             obj.refreshStatus();
         end
 
@@ -949,11 +992,16 @@ classdef TraceOrganizer < handle
             x = obj.Axes.XLim(1) - 0.015*diff(obj.Axes.XLim);
         end
 
-        function fitLabelMargin(obj)
+        function fitLabelMargin(obj,added)
             % Widen the axes' left inset to whatever the longest label needs.
             % Label pixel width depends only on the font, not on the axes size,
             % so measuring and then resizing cannot chase its own tail.
             % Also fires as a resize callback, possibly before the axes exists.
+            %
+            % fitLabelMargin(obj,added) is the incremental form plotAdded uses:
+            % only the new trace's label is measured, against the widest one
+            % the last full pass found -- each measurement is a text layout,
+            % and a session's worth of them per block is what it replaces.
             if ~obj.isvalidView() || isempty(obj.Axes) || ~isgraphics(obj.Axes)
                 return
             end
@@ -962,23 +1010,28 @@ classdef TraceOrganizer < handle
             minLeft   = 0.13;      % MATLAB's default inset
             left      = minLeft;
 
+            if nargin >= 2 && isfinite(obj.LabelWidthPx)
+                if ~obj.ShowLabels, return; end
+                w = max(obj.LabelWidthPx,mabr.ui.TraceOrganizer.labelWidth(added.LabelHandle));
+                if w == obj.LabelWidthPx, return; end   % no wider: the margin stands
+                obj.LabelWidthPx = w;
+                figPos = getpixelposition(obj.Figure);
+                left = min(0.5,max(minLeft,(w+16)/figPos(3)));
+                ax.Position = [left ax.Position(2) rightEdge-left ax.Position(4)];
+                return
+            end
+
+            w = 0;
             if obj.ShowLabels && ~isempty(obj.Traces)
                 figPos = getpixelposition(obj.Figure);
-                w = 0;
                 for k = 1:numel(obj.Traces)
-                    h = obj.Traces(k).LabelHandle;
-                    if isempty(h) || ~isgraphics(h) || strcmp(h.Visible,'off')
-                        continue
-                    end
-                    u = h.Units;
-                    h.Units = 'pixels';
-                    w = max(w,h.Extent(3));
-                    h.Units = u;
+                    w = max(w,mabr.ui.TraceOrganizer.labelWidth(obj.Traces(k).LabelHandle));
                 end
                 if w > 0
                     left = min(0.5,max(minLeft,(w+16)/figPos(3)));
                 end
             end
+            obj.LabelWidthPx = w;
             ax.Position = [left ax.Position(2) rightEdge-left ax.Position(4)];
         end
 
@@ -1204,6 +1257,18 @@ classdef TraceOrganizer < handle
     end
 
     methods (Static, Access = private)
+        function w = labelWidth(h)
+            % A visible label's width in pixels; 0 for one that is absent or
+            % hidden. Reading Extent lays the text out, which is the cost the
+            % incremental margin fit exists to avoid repeating.
+            w = 0;
+            if isempty(h) || ~isgraphics(h) || strcmp(h.Visible,'off'), return; end
+            u = h.Units;
+            h.Units = 'pixels';
+            w = h.Extent(3);
+            h.Units = u;
+        end
+
         function c = icon(name,rgb)
             % 16x16 CData from a named glyph.
             c = mabr.ui.Icon.fromArt(mabr.ui.TraceOrganizer.glyph(name),rgb);

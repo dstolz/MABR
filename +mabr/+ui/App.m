@@ -3950,12 +3950,14 @@ classdef App < handle
             % One .abr per condition from a recorded run, or one .stimlog per
             % run from a stimulation-only one -- the event means "a file was
             % written" and the extension says which.
+            % No forced repaint: these come in a burst, one per file, while
+            % a run is (usually) already streaming again.
             [~,fn,ext] = fileparts(e.Info.file);
             if strcmpi(ext,'.stimlog')
                 app.StimLogsWritten = app.StimLogsWritten + 1;
-                app.setStatus(['Saved stimulation sequence ' fn ext]);
+                app.setStatus(['Saved stimulation sequence ' fn ext],false);
             else
-                app.setStatus(['Saved ' fn ext]);
+                app.setStatus(['Saved ' fn ext],false);
             end
         end
 
@@ -4208,10 +4210,19 @@ classdef App < handle
             end
         end
 
-        function setStatus(app,txt)
+        function setStatus(app,txt,flush)
+            % flush (default true) forces the repaint: most status arrives
+            % mid-blocking-call (the pool starting, a bank loading), where
+            % nothing else would draw it. A caller on the acquisition path
+            % passes false -- a full drawnow flushes every figure and runs
+            % every queued callback, once per saved file at the end of an
+            % intermixed run, while the live view's own refresh draws the
+            % label within a tick anyway.
             if ~isvalid(app.UIFigure), return; end
             app.StatusLabel.Text = txt;
-            drawnow   % status arrives mid-blocking-call; force the repaint
+            if nargin < 3 || flush
+                drawnow
+            end
         end
     end
 
