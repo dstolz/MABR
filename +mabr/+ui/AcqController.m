@@ -640,7 +640,8 @@ classdef AcqController < handle
             else
                 tol = max(1,round(50e-6*obj.Config.DACSampleRate));
             end
-            R = mabr.metrics.alignment_report(obj.CurOnsets,recovered,tol);
+            R = mabr.metrics.alignment_report(obj.CurOnsets,recovered,tol, ...
+                obj.deviceReport());
             R.Tolerance = tol;
             % The waveform fields exist in EVERY report, Test Mode or not, so
             % a consumer reads one shape of struct rather than testing for
@@ -1309,6 +1310,26 @@ classdef AcqController < handle
         end
 
         % --- Finalization / save -------------------------------------------
+        function d = deviceReport(obj)
+            % What the audio device said about the run that just streamed, in
+            % the shape mabr.metrics.alignment_report takes: so a MISALIGNED
+            % verdict can name the underrun that stepped the offset instead of
+            % leaving the operator to find "# Underruns" in the log. Only ever
+            % read AFTER the run (the worker reports it once, before its
+            % Completed state), and it belongs to this run because
+            % Engine.prep clears it and nothing preps again before
+            % emit_blocks has announced the verdict.
+            d = struct('SampleRate',obj.Config.DACSampleRate, ...
+                'Underruns',0,'Overruns',0,'UnderrunAt',zeros(1,0),'OverrunAt',zeros(1,0));
+            s = obj.Engine.LastStream;
+            if isfield(s,'underruns')
+                d.Underruns  = s.underruns;
+                d.Overruns   = s.overruns;
+                d.UnderrunAt = s.underrunAt;
+                d.OverrunAt  = s.overrunAt;
+            end
+        end
+
         function R = compare_waveforms(obj,R,recovered)
             % The half of alignmentCheck that only TEST MODE makes answerable:
             % the samples sitting at each recovered onset must BE the stimulus

@@ -49,7 +49,15 @@ Every timing pulse recovered from the recording is held against the onset list t
 | `Jitter` | the largest departure from that constant offset. **This is the number that matters.** A constant offset is a cable; a varying one means the k-th sweep is not the k-th presentation |
 | `Extra` | pulses recovered beyond the plan. Spurious pulses shift the pairing for everything after them |
 | `Truncated` | fewer came back than were planned. Not a fault on its own — a run stopped early by Abort or an advance criterion plays fewer presentations than it renders |
+| `NumJumps` / `JumpAt` / `JumpSize` | *how* the offset strayed: how many times it changed between neighbouring presentations, at which presentation, and by how many samples. One jump is a gap or dropout at one moment; none with a large `Jitter` is a slow creep |
+| `Underruns` / `Overruns` | what the audio device reported during the run, in samples (rig runs only — Test Mode has no device). Named in a misaligned verdict beside the jump they explain, never used to decide one |
 | `Aligned` | zero jitter, no spurious pulses, at least one presentation recovered |
+
+A misaligned verdict leads with what happened to the offset, then says whether the run ended early, then what the device reported — for example
+
+> MISALIGNED: offset jumped +1023 samples (+5.33 ms) at presentation 3258 (usual offset 4835); run ended early, 3602 of 9216 played; device underran 1 time (1024 samples) near presentation 3258
+
+which reads: the recording was one audio frame later than planned from presentation 3258 on, the run was stopped part-way (so "3602 of 9216" is not lost pulses), and the device ran out of output data once, at about that point. An **underrun** makes the device play silence for that long and then carry on, so nothing is lost but everything after it comes out late; an **overrun** drops recorded input, which moves everything after it *early* and can take a pulse with it. If underruns recur, raise the ASIO buffer size in the driver's own panel (Settings ▸ Audio Device ▸ ASIO panel…) or switch off Settings ▸ Background compute workers for a run to see whether the load goes with them.
 
 ### 2. The samples at each onset are the right stimulus
 

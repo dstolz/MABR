@@ -52,13 +52,22 @@ classdef Engine < handle
         Role      (1,:) char = 'acquisition'
 
         % What the worker reported about the last block it streamed:
-        %   .samples  play-matrix samples actually emitted
-        %   .reason   'completed' | 'stopped' | 'killed'
+        %   .samples     play-matrix samples actually emitted
+        %   .reason      'completed' | 'stopped' | 'killed'
+        %   .underruns   samples of output the device ran dry for (it plays
+        %                silence, then carries on: everything after comes out
+        %                late by about that much)
+        %   .overruns    samples of input the device had nowhere to put
+        %   .underrunAt  [1 x k] play-matrix sample each was reported at
+        %   .overrunAt   [1 x k]
         % Cleared at each prep. In stimulation-only mode nothing comes back
         % through the ring buffer, so this is the only record of how far
         % through a run that was stopped early the presentation actually got
-        % (see mabr.ui.AcqController's stimulation log).
-        LastStream (1,1) struct = struct('samples',0,'reason','')
+        % (see mabr.ui.AcqController's stimulation log). For a recorded run
+        % the device counts are what a MISALIGNED verdict names as its likely
+        % cause (mabr.ui.AcqController.alignmentCheck).
+        LastStream (1,1) struct = struct('samples',0,'reason','', ...
+            'underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0))
     end
 
     properties (Dependent)
@@ -189,7 +198,8 @@ classdef Engine < handle
             % The previous block's stream report belongs to the previous block:
             % clear it here so nothing downstream can mistake a stale count for
             % this block's.
-            obj.LastStream = struct('samples',0,'reason','');
+            obj.LastStream = struct('samples',0,'reason','', ...
+                'underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0));
             obj.send_cmd(mabr.acq.Cmd.Prep,blockSpec);
         end
 
@@ -249,7 +259,11 @@ classdef Engine < handle
                     % Always arrives before the Completed state that raises
                     % BlockCompleted, so a listener on that event can read it.
                     obj.LastStream = struct('samples',double(msg.samples), ...
-                                            'reason',char(msg.reason));
+                                            'reason',char(msg.reason), ...
+                                            'underruns',double(msg.underruns), ...
+                                            'overruns',double(msg.overruns), ...
+                                            'underrunAt',double(msg.underrunAt(:)'), ...
+                                            'overrunAt',double(msg.overrunAt(:)'));
 
                 case 'state'
                     prev = obj.State;

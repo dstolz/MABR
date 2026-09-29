@@ -18,6 +18,9 @@ function verify_test_mode()
 %   Part A (the arithmetic): mabr.metrics.alignment_report on its own. A clean
 %   run, a run stopped early, a run whose onsets drift, a spurious pulse, and
 %   a run that recovered nothing at all.
+%   Part A2 (the wording): what a MISALIGNED verdict says -- where the offset
+%   stepped and by how much, that the run ended early, and what the audio
+%   device reported (an underrun, an overrun) beside the step it explains.
 %   Part B (the copy): drive a whole schedule through the real
 %   mabr.ui.AcqController and confirm the ring buffer holds the run's rendered
 %   play matrix -- the timing channel bit-for-bit, the signal channel to
@@ -91,6 +94,63 @@ assert(~R.Aligned && R.NumCompared == 0 && isnan(R.Offset), ...
 R = mabr.metrics.alignment_report(expected,expected + [0 1 0 1 0],1);
 assert(R.Aligned,'one sample of jitter should pass at a tolerance of one sample');
 fprintf('  PASS Part A: clean, truncated, drifting, spurious and empty all judged correctly\n');
+
+%% ---- Part A2: what a misaligned verdict SAYS ---------------------------
+% The case that prompted the wording: a rig run that was stopped early, in
+% which the audio device ran dry for one frame. Stopped at 6 of 8 planned
+% presentations, and from the fourth the recording is 1023 samples later than
+% it was -- one step, not a drift, and nothing was lost.
+planned = 1000*(0:7) + 1;
+played  = planned(1:6) + 4835 + [0 0 0 1023 1023 1023];
+dev     = struct('SampleRate',192000,'Underruns',1024,'UnderrunAt',2500);
+R = mabr.metrics.alignment_report(planned,played,10,dev);
+assert(~R.Aligned && R.Truncated && R.NumCompared == 6, ...
+    'a stopped run with a step in its offset is truncated AND misaligned');
+assert(R.Offset == 4835 && R.Jitter == 1023, ...
+    'the mode should still be the usual offset (%g) and the jitter the step (%g)', ...
+    R.Offset,R.Jitter);
+assert(R.NumJumps == 1 && R.JumpAt == 4 && R.JumpSize == 1023, ...
+    ['one step of +1023 landing on presentation 4 should be reported as exactly ' ...
+     'that (%d jump(s), at %s, of %s)'],R.NumJumps,mat2str(R.JumpAt),mat2str(R.JumpSize));
+assert(startsWith(R.Summary,'MISALIGNED: offset jumped +1023 samples'), ...
+    'the verdict should lead with what happened to the offset: %s',R.Summary);
+assert(contains(R.Summary,'+5.33 ms'), ...
+    'a known sample rate should let the step be quoted in milliseconds: %s',R.Summary);
+assert(contains(R.Summary,'at presentation 4'), ...
+    'the step should be placed at the presentation it landed on: %s',R.Summary);
+assert(contains(R.Summary,'run ended early, 6 of 8'), ...
+    'a stopped run must say so, or "6 of 8" reads as two lost pulses: %s',R.Summary);
+assert(contains(R.Summary,'underran 1 time (1024 samples), near presentation 4'), ...
+    'the device''s own report should be named beside the step it explains: %s',R.Summary);
+assert(R.Underruns == 1024 && R.Overruns == 0 && isequal(R.UnderrunAt,2500), ...
+    'the device fields should be carried on the report for other consumers');
+
+% Without a device report, or a sample rate, the same run still reads sensibly
+% and says nothing it cannot back up.
+R = mabr.metrics.alignment_report(planned,played,10);
+assert(~contains(R.Summary,'device') && ~contains(R.Summary,' ms'), ...
+    'nothing about a device or a duration should appear when neither was given: %s',R.Summary);
+assert(R.Underruns == 0 && isempty(R.UnderrunAt),'the device fields exist, empty, when none was given');
+
+% A creep too slow to exceed the tolerance between neighbours is a different
+% failure from a step, and is worded as one.
+R = mabr.metrics.alignment_report(1:5,(1:5) + [0 0 1 2 3],1);
+assert(~R.Aligned && R.NumJumps == 0 && contains(R.Summary,'crept'), ...
+    'a slow creep should read as a creep, not a jump: %s',R.Summary);
+
+% An aligned run is unchanged by all of this, whatever the device said: the
+% onsets decide, the device only explains.
+R = mabr.metrics.alignment_report(planned,planned + 4835,10,dev);
+assert(R.Aligned && ~contains(R.Summary,'device'), ...
+    'an aligned run should not be re-labelled by a device report: %s',R.Summary);
+
+% An overrun takes samples out of the RECORDING, which is a different thing to
+% say from an underrun and is worded as one.
+R = mabr.metrics.alignment_report(planned,planned - [0 0 0 512 512 512 512 512],10, ...
+    struct('Overruns',512,'OverrunAt',[2500 6100]));
+assert(contains(R.Summary,'overran 2 times (512 samples of input dropped), first near presentation 4'), ...
+    'overruns should be named as dropped input, with where the first was: %s',R.Summary);
+fprintf('  PASS Part A2: the verdict says where the offset stepped, that the run ended early, and what the device reported\n');
 
 %% ---- Parts B-E: one schedule, in Test Mode -----------------------------
 outDir = fullfile(tempdir, ...
@@ -177,6 +237,18 @@ assert(A.Offset == 0 && A.Jitter == 0, ...
 assert(A.NumCompared == numel(spec.ExpectedOnsets), ...
     'every presentation of the run should have been accounted for (%d of %d)', ...
     A.NumCompared,numel(spec.ExpectedOnsets));
+
+% What the worker said about the device reaches the report. Test Mode opens no
+% device, so there is nothing to report and both counts are zero -- but the
+% fields must arrive (worker_loop -> Engine.LastStream -> alignmentCheck), or
+% a rig's underrun would be logged in the worker and never named in a verdict.
+S = ctrl.Engine.LastStream;
+assert(all(isfield(S,{'underruns','overruns','underrunAt','overrunAt'})), ...
+    'the worker''s stream report should carry the device''s underrun and overrun counts');
+assert(S.underruns == 0 && S.overruns == 0 && isempty(S.underrunAt) && isempty(S.overrunAt), ...
+    'Test Mode has no device to underrun, yet the worker reported one');
+assert(A.Underruns == 0 && A.Overruns == 0, ...
+    'the alignment report should carry the same (empty) device counts');
 
 % The half only Test Mode makes answerable: not just that the onsets are in
 % the right places, but that the samples AT them are the right stimulus.

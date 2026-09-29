@@ -37,6 +37,14 @@ function worker_loop(rootPath,resultQueue,testing)
 %                                   audioDeviceWriter and record nothing
 %                 Device            (optional) ASIO device name
 %       worker -> client : struct('type',...) — see send_* helpers below.
+%           'streamed' (once per block, before its Completed state):
+%                 samples      play-matrix samples actually emitted
+%                 reason       'completed' | 'stopped' | 'killed'
+%                 underruns    samples of output the device ran dry for
+%                 overruns     samples of input the device dropped
+%                 underrunAt   [1 x k] play-matrix sample each was reported at
+%                 overrunAt    [1 x k]
+%                 (mabr.acq.Engine.LastStream holds it client-side)
 %
 %   testing (logical) selects TEST MODE, which the GUI names and documents as
 %   such (mabr.ui.AudioSettingsDialog, and the wiki page it links to): no audio
@@ -106,14 +114,20 @@ try
                         'Received Run before Prep.');
                     continue
                 end
-                [reason,nStreamed] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
-                % How much of the play matrix actually went out, and why the
-                % block ended. Sent BEFORE the Completed state, so the client's
+                [reason,nStreamed,xr] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
+                % How much of the play matrix actually went out, why the
+                % block ended, and what the device said about it (underruns
+                % and overruns, with where in the block each was reported).
+                % Sent BEFORE the Completed state, so the client's
                 % BlockCompleted handler already has it: with nothing recorded
                 % (stimulation only) this is the only evidence of how far
-                % through the planned sequence a stopped run got.
+                % through the planned sequence a stopped run got, and for a
+                % recorded run it is what lets a misaligned verdict name its
+                % likeliest cause (mabr.ui.AcqController.alignmentCheck).
                 send(resultQueue,struct('type','streamed', ...
-                    'samples',nStreamed,'reason',reason));
+                    'samples',nStreamed,'reason',reason, ...
+                    'underruns',xr.underruns,'overruns',xr.overruns, ...
+                    'underrunAt',xr.underrunAt,'overrunAt',xr.overrunAt));
                 if strcmp(reason,'killed')
                     running = false;
                 else
@@ -163,11 +177,19 @@ end
 
 
 % =====================================================================
-function [reason,nStreamed] = stream_block(cmdQueue,resultQueue,rb,apr,spec,cfg,testing)
+function [reason,nStreamed,xr] = stream_block(cmdQueue,resultQueue,rb,apr,spec,cfg,testing)
 % Stream one prepared block frame-by-frame. Returns 'completed', 'stopped',
 % or 'killed', plus the number of play-matrix samples actually emitted --
 % which is the whole matrix unless a Stop/Kill cut it short. Analogue of the
 % legacy acquire_block.m tight loop.
+%
+% xr is what the device reported while it ran, in the units it reports them
+% in (samples): underruns (output it ran dry for -- silence is played, then
+% the next frame, so everything after comes out late) and overruns (input it
+% had nowhere to put -- recorded samples dropped), each with the play-matrix
+% sample at which every event was reported (the start of the frame being
+% handed over, so approximate to about a device buffer). Empty in Test Mode,
+% where there is no device to say anything.
 
 fl  = cfg.frameLength;
 src = mabr.stim.PlayPlan.fromSpec(spec);   % frames on demand -- never a whole matrix
@@ -192,6 +214,7 @@ end
 mabr.log.vprintf(1,'Streaming %s: %d samples (%d frames)',kind,N,ceil(N/fl));
 
 reason = 'completed';
+xr = struct('underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0));
 i = 1;
 % Pace against a running deadline rather than pause()-per-frame: pause has
 % millisecond-scale granularity on Windows and the frame work itself takes
@@ -240,11 +263,10 @@ while i <= N
         % Output only: both columns (signal AND timing pulse) go out, the
         % device clock paces the loop, and nothing comes back to record.
         nUnder = apr(frame);
-        if nUnder, mabr.log.vprintf(0,'# Underruns = %d',nUnder); end
+        xr = note_xruns(xr,nUnder,0,i,spec.SampleRate);
     else
         [audioADC,nUnder,nOver] = apr(frame);
-        if nUnder, mabr.log.vprintf(0,'# Underruns = %d',nUnder); end
-        if nOver,  mabr.log.vprintf(0,'# Overruns = %d',nOver);   end
+        xr = note_xruns(xr,nUnder,nOver,i,spec.SampleRate);
         rb.writeFrame(audioADC(:,1),audioADC(:,2));
     end
 
@@ -264,6 +286,27 @@ nStreamed = min(i-1,N);
 
 mabr.log.vprintf(1,'Block %s (%d of %d samples, head = %d)', ...
     reason,nStreamed,N,rb.WriteHead);
+end
+
+
+% =====================================================================
+function xr = note_xruns(xr,nUnder,nOver,at,fs)
+% Log and keep what the device reported for the frame starting at play-matrix
+% sample `at`. Both counts are in samples, and an event is kept with WHERE it
+% was reported so a misaligned verdict can say whether the jump it found is
+% the one the device owned up to (mabr.metrics.alignment_report).
+if nUnder
+    xr.underruns = xr.underruns + double(nUnder);
+    xr.underrunAt(end+1) = at;
+    mabr.log.vprintf(0,'# Underruns = %d (at %.2f s into the block)', ...
+        nUnder,(at-1)/fs);
+end
+if nOver
+    xr.overruns = xr.overruns + double(nOver);
+    xr.overrunAt(end+1) = at;
+    mabr.log.vprintf(0,'# Overruns = %d (at %.2f s into the block)', ...
+        nOver,(at-1)/fs);
+end
 end
 
 
