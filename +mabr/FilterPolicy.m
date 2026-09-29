@@ -34,6 +34,13 @@ classdef FilterPolicy
 %       f = f.design(12000);        % build the chain at this sample rate
 %       y = f.apply(x);             % zero-phase (filtfilt), column-wise
 %
+%   design() is also memoized per MATLAB process, keyed on the settings and
+%   the rate, so asking again for a chain already built -- which every
+%   finalized block does, in two processes -- is a lookup instead of the
+%   ~280 ms three designfilt calls take (designCacheStats shows how it is
+%   faring). A policy never shares state with another through it: the memo
+%   hands back the chain designfilt would have built.
+%
 %   apply() on an undesigned policy returns x untouched — the same opt-in
 %   rule mabr.data.Recording follows. Because filtfilt runs the chain
 %   forwards and backwards, the realized magnitude response is |H|^2; that
@@ -49,6 +56,10 @@ classdef FilterPolicy
         % fragile, and there is nothing to gain from a steeper skirt on a
         % 10 ms sweep, so the range is deliberately narrow and even-only.
         Orders = [2 4 6 8];
+        % Distinct designs design()'s per-process memo holds before it
+        % starts over. A session asks for one or two (the live and saved
+        % rates are the same); the filter dialog, a handful more.
+        MaxCachedDesigns = 32;
     end
 
     properties
@@ -104,32 +115,22 @@ classdef FilterPolicy
         function obj = design(obj,Fs)
             % Build the enabled sections at sample rate Fs. Reassign the
             % result — this is a value class.
-            nyq = Fs/2;
-            d   = {};
-
-            if obj.HighPass
-                d{end+1} = designfilt('highpassiir', ...
-                    'FilterOrder',         obj.clampOrder(), ...
-                    'HalfPowerFrequency',  min(obj.HighPassHz,0.99*nyq), ...
-                    'SampleRate',          Fs);
+            %
+            % MEMOIZED per MATLAB process (see designMemo). designfilt costs
+            % roughly 90 ms a section -- about 280 ms for the default chain
+            % -- and the same chain is asked for again, at the same rate, by
+            % every block a run finalizes, twice over: once on the DSP worker
+            % (Pipeline.finalize -> Recording.designFilters) and once on the
+            % GUI thread (Recording.withProcessed). That was most of the dead
+            % time between runs. A design depends on nothing but designKey's
+            % inputs, so the cached chain is the one designfilt would return.
+            % A design that throws is not cached.
+            key = obj.designKey(Fs);
+            d   = mabr.FilterPolicy.designMemo('get',key);
+            if ~iscell(d)
+                d = obj.designSections(Fs);
+                mabr.FilterPolicy.designMemo('put',key,d);
             end
-            if obj.LowPass
-                d{end+1} = designfilt('lowpassiir', ...
-                    'FilterOrder',         obj.clampOrder(), ...
-                    'HalfPowerFrequency',  min(obj.LowPassHz,0.99*nyq), ...
-                    'SampleRate',          Fs);
-            end
-            if obj.Notch
-                w  = obj.NotchWidthHz/2;
-                f1 = max(eps,      obj.NotchHz - w);
-                f2 = min(0.99*nyq, obj.NotchHz + w);
-                d{end+1} = designfilt('bandstopiir', ...
-                    'FilterOrder',          2, ...
-                    'HalfPowerFrequency1',  f1, ...
-                    'HalfPowerFrequency2',  f2, ...
-                    'SampleRate',           Fs);
-            end
-
             obj.Designs    = d;
             obj.DesignRate = Fs;
         end
@@ -239,6 +240,46 @@ classdef FilterPolicy
     end
 
     methods (Access = private)
+        function d = designSections(obj,Fs)
+            % The designfilt calls themselves -- design() is the only caller,
+            % and only on a memo miss.
+            nyq = Fs/2;
+            d   = {};
+
+            if obj.HighPass
+                d{end+1} = designfilt('highpassiir', ...
+                    'FilterOrder',         obj.clampOrder(), ...
+                    'HalfPowerFrequency',  min(obj.HighPassHz,0.99*nyq), ...
+                    'SampleRate',          Fs);
+            end
+            if obj.LowPass
+                d{end+1} = designfilt('lowpassiir', ...
+                    'FilterOrder',         obj.clampOrder(), ...
+                    'HalfPowerFrequency',  min(obj.LowPassHz,0.99*nyq), ...
+                    'SampleRate',          Fs);
+            end
+            if obj.Notch
+                w  = obj.NotchWidthHz/2;
+                f1 = max(eps,      obj.NotchHz - w);
+                f2 = min(0.99*nyq, obj.NotchHz + w);
+                d{end+1} = designfilt('bandstopiir', ...
+                    'FilterOrder',          2, ...
+                    'HalfPowerFrequency1',  f1, ...
+                    'HalfPowerFrequency2',  f2, ...
+                    'SampleRate',           Fs);
+            end
+        end
+
+        function k = designKey(obj,Fs)
+            % Everything a design depends on, bit-exact: the three switches,
+            % the corners, the order AS CLAMPED (3 and 4 are one design),
+            % and the rate. %bx prints a double's IEEE bits, so no two
+            % distinct values can share a key through rounding.
+            k = sprintf('%bx,',double([obj.HighPass obj.HighPassHz ...
+                obj.LowPass obj.LowPassHz obj.Notch obj.NotchHz ...
+                obj.NotchWidthHz obj.clampOrder() Fs]));
+        end
+
         function n = clampOrder(obj)
             % Even, and inside Orders — designfilt demands an even order for
             % these IIR designs and a 10 Hz corner at 12 kHz will not
@@ -324,9 +365,53 @@ classdef FilterPolicy
                 obj.Order = mabr.FilterPolicy.coercePositive(s.Order,obj.Order);
             end
         end
+
+        function s = designCacheStats()
+            % How design()'s memo has fared in THIS process: .Entries,
+            % .Hits, .Misses. Each MATLAB process (the GUI, each compute
+            % worker) keeps its own.
+            s = mabr.FilterPolicy.designMemo('stats');
+        end
+
+        function clearDesignCache()
+            % Forget every memoized design in this process (tests).
+            mabr.FilterPolicy.designMemo('clear');
+        end
     end
 
     methods (Static, Access = private)
+        function out = designMemo(op,key,d)
+            % The per-process memo behind design(). One function, because a
+            % persistent variable belongs to the function that declares it.
+            %   d = designMemo('get',key)   the cached chain, or [] on a miss
+            %   designMemo('put',key,d)     keep one
+            %   designMemo('clear') / s = designMemo('stats')
+            persistent C nHit nMiss
+            if isempty(nHit)      % first call (not isempty(C): a Map's is its Count)
+                C = containers.Map('KeyType','char','ValueType','any');
+                nHit = 0; nMiss = 0;
+            end
+            out = [];
+            switch op
+                case 'get'
+                    if isKey(C,key)
+                        out = C(key); nHit = nHit + 1;
+                    else
+                        nMiss = nMiss + 1;
+                    end
+                case 'put'
+                    if C.Count >= mabr.FilterPolicy.MaxCachedDesigns
+                        C = containers.Map('KeyType','char','ValueType','any');
+                    end
+                    C(key) = d;
+                case 'clear'
+                    C = containers.Map('KeyType','char','ValueType','any');
+                    nHit = 0; nMiss = 0;
+                case 'stats'
+                    out = struct('Entries',C.Count,'Hits',nHit,'Misses',nMiss);
+            end
+        end
+
         function v = getPositive(name,default)
             v = mabr.FilterPolicy.coercePositive(getpref('MABR',name,default),default);
         end

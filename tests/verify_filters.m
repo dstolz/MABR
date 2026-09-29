@@ -15,6 +15,9 @@ function verify_filters()
 %   .abr struct mabr.data.io builds carries the raw samples.
 %   Part E (validation): an unrealizable chain is reported, not thrown, so
 %   mabr.ui.FilterDialog can grey out OK instead of erroring at the user.
+%   Part F (memo): design() is memoized per process -- a repeat is a hit,
+%   anything a design depends on is a miss -- and a memoized chain filters
+%   bit-identically to a fresh one.
 %
 %   No hardware, no parallel pool. Run:  >> verify_filters
 %
@@ -146,6 +149,39 @@ assert(mabr.FilterPolicy().validate(Fs),'the default chain must be valid');
 odd = mabr.FilterPolicy; odd.LowPass = false; odd.LowPassHz = Fs;
 assert(odd.validate(Fs),'a switched-off section must not fail validation');
 fprintf('  PASS Part E: unrealizable chains are reported, not thrown\n');
+
+% ---- Part F: designs are memoized, and a memoized one is exact -----------
+% Every finalized block asks for the same chain twice (DSP worker, then GUI
+% thread); at ~280 ms a design that was most of the gap between runs.
+mabr.FilterPolicy.clearDesignCache();
+p  = mabr.FilterPolicy;
+x  = randn(4000,3);
+y0 = p.design(Fs).apply(x);                       % a fresh design
+s  = mabr.FilterPolicy.designCacheStats();
+assert(s.Misses == 1 && s.Hits == 0 && s.Entries == 1, ...
+    'the first design of a chain should be a miss');
+y1 = p.design(Fs).apply(x);                       % the same chain again
+s  = mabr.FilterPolicy.designCacheStats();
+assert(s.Hits == 1 && s.Misses == 1,'asking again should be a hit');
+assert(isequal(y0,y1),'a memoized design must filter exactly as a fresh one');
+
+% What the design depends on is a new design: the rate, a corner, the order
+% as clamped, a switch. A clamped order that lands on the same value is not.
+p.design(2*Fs);
+q = p; q.LowPassHz = 2500;      q.design(Fs);
+q = p; q.Order = 6;             q.design(Fs);
+q = p; q.Notch = false;         q.design(Fs);
+s = mabr.FilterPolicy.designCacheStats();
+assert(s.Misses == 5,'rate, corner, order and switches must each key a new design');
+q = p; q.Order = 3;             q.design(Fs);     % clamps to 4, the default
+s = mabr.FilterPolicy.designCacheStats();
+assert(s.Misses == 5 && s.Hits == 2,'an order clamping to the same value is the same design');
+
+% Filtering after a cleared memo is bit-identical: the memo changes when a
+% chain is built, never what it is.
+mabr.FilterPolicy.clearDesignCache();
+assert(isequal(p.design(Fs).apply(x),y0),'a rebuilt design must reproduce the first');
+fprintf('  PASS Part F: designs memoized per process, and exact\n');
 
 fprintf('== verify_filters PASSED ==\n');
 end
