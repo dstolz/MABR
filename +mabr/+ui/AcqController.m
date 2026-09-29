@@ -1590,7 +1590,22 @@ classdef AcqController < handle
                 % write time because a Block reaches a viewer through
                 % BlockReady whether or not the session is saving.
                 blk.Notes         = obj.Session.noteRecord();
-                blk = blk.computeMetrics();
+
+                % The file first: nothing in it depends on the metrics below
+                % (io writes the Recording, never Block.Metrics), and a
+                % metric that fails or runs out of memory must cost the
+                % metric -- not this block's .abr and every later one of the
+                % run, which is what an error here used to do.
+                if ~isempty(obj.Session.OutputPath)
+                    files{end+1} = mabr.data.io.writeABR(blk, ...
+                        obj.Session.OutputPath,obj.Session.Subject.ID); %#ok<AGROW>
+                end
+                try
+                    blk = blk.computeMetrics();
+                catch me
+                    mabr.log.vprintf(1,1,'Block metrics for stimulus %d not computed: %s', ...
+                        u,me.message);
+                end
 
                 obj.Session.addBlock(blk);
                 blocks(end+1) = blk; %#ok<AGROW>
@@ -1605,11 +1620,6 @@ classdef AcqController < handle
                         mabr.log.vprintf(1,1,'Could not hand the block to the metrics worker: %s', ...
                             me.message);
                     end
-                end
-
-                if ~isempty(obj.Session.OutputPath)
-                    files{end+1} = mabr.data.io.writeABR(blk, ...
-                        obj.Session.OutputPath,obj.Session.Subject.ID); %#ok<AGROW>
                 end
             end
         end

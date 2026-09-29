@@ -97,6 +97,26 @@ assert(abs(p2p - (max(ctx.Mean)-min(ctx.Mean))*1e6) < 1e-9, ...
 eLat = mabr.metrics.online.catalog('latency');
 lat  = eLat.Fcn(ctx);
 assert(lat >= 0 && lat <= 10,'the peak latency (%g ms) is outside the window',lat);
+
+% The pairwise correlation is taken a tile at a time instead of through the
+% whole nSweeps x nSweeps corrcoef matrix (435 MB at 7,374 sweeps). It must
+% be the same number: checked against that matrix directly, over enough
+% sweeps to span several tiles, and on the edge cases the old rules settled.
+ref = @(D) mean(atanh_pairs(corrcoef(double(D))),'all','omitnan');
+rng(3);
+D  = randn(121,3000) + 0.3*sin((1:121)'/9);        % 3,000 sweeps: 3 tiles
+assert(abs(mabr.metrics.mean_pairwise_corr(D) - ref(D)) < 1e-10, ...
+    'the tiled pairwise correlation differs from the whole-matrix one');
+Dc = D(:,1:40); Dc(:,7) = 1;                       % a constant sweep -> NaN pairs
+assert(abs(mabr.metrics.mean_pairwise_corr(Dc) - ref(Dc)) < 1e-10, ...
+    'a constant sweep should drop out of the mean, as it did');
+% Bit-identical sweeps are perfectly correlated. corrcoef lands on exactly 1
+% there (z = Inf) and unit-norm columns on 1 - eps (z ~ 18); either reads as
+% "identical", which is all a value that degenerate can say.
+Ds = repmat(D(:,1),1,5);
+rs = mabr.metrics.mean_pairwise_corr(Ds);
+assert(rs > 15,'identical sweeps should read as perfectly correlated (z %g)',rs);
+assert(mabr.metrics.mean_pairwise_corr(D(:,1)) == 0,'one sweep has no pairs');
 fprintf('  PASS: %d built-in metrics, each one number in its stated unit\n',numel(C));
 
 % --- 3. values from finalized blocks ------------------------------------
@@ -330,6 +350,15 @@ end
 
 
 % =====================================================================
+function z = atanh_pairs(r)
+% The pre-tiling mean_pairwise_corr, verbatim from the point it had the
+% correlation matrix: every pair below the diagonal, exact zeros dropped,
+% Fisher z.
+r = tril(r,-1);
+r = r(r ~= 0);
+z = (log(1+r) - log(1-r))/2;
+end
+
 function block = make_block(fkHz,levelDb,nSweeps,Fs)
 % One condition's finalized block: a decaying 900 Hz wavelet at ~4 ms whose
 % amplitude grows with level, on deterministic noise (no rng, so a failure is
