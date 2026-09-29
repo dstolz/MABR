@@ -9,7 +9,9 @@ function verify_play_plan()
 %   polarity applied at the same onsets, explicit and synthesized timing
 %   channels alike. Parts A-D check that with no hardware and no pool; Part E
 %   streams a plan through the engine in TESTING loopback and reads the run
-%   back off the ring buffer.
+%   back off the ring buffer. Part F checks the silence a run is bracketed in:
+%   SilencePad in front, and at the end enough for the last response to reach
+%   the recording once a ResponseWindow is set.
 %
 %   Run from anywhere on the MABR path:  >> verify_play_plan
 %
@@ -142,6 +144,35 @@ fprintf('  PASS Part E: worker streamed %d samples from the plan; %d/%d onsets r
     N2,numel(found),numel(spec2.ExpectedOnsets),err);
 
 eng.kill();
+
+% ---- Part F: the silence a run is bracketed in -------------------------
+% The lead-in is SilencePad (0.1 s: a device starting up is warmed by the
+% worker on unrecorded silence instead). The run ends with at least that --
+% and, once the controller says where the analysis stops reading after an
+% onset (ResponseWindow), with enough for the last response to make the
+% recording, round trip included. A window left short is a dropped sweep.
+sch3 = mabr.stim.Schedule(set,cfg);
+assert(sch3.SilencePad == 0.1,'the default lead-in should be 0.1 s');
+sch3.Strategy    = 'conventional';
+sch3.Repetitions = 2;
+sch3.ISI         = 0.02;
+sch3.build();
+closing = @(sp) sp.Plan.N - (sp.ExpectedOnsets(end) + ...
+    numel(set.signal(sp.StimulusIndex(end))) - 1);
+P  = round(sch3.SilencePad*Fs);
+sp = sch3.renderSpec(1);
+assert(sp.ExpectedOnsets(1) == P + 1,'the first onset should follow SilencePad of lead-in');
+assert(closing(sp) >= P && closing(sp) < P + fl, ...
+    'with no ResponseWindow the run should close on SilencePad (+ frame rounding)');
+sch3.ResponseWindow = 0.2;                          % a long analysis window
+sp = sch3.renderSpec(1);
+need = round((0.2 + mabr.stim.Schedule.LatencyAllowance)*Fs);
+assert(sp.ExpectedOnsets(1) == P + 1,'ResponseWindow must not move the lead-in');
+assert(closing(sp) >= need, ...
+    'the run must close on ResponseWindow + LatencyAllowance (%d < %d samples)',closing(sp),need);
+assert(abs(sch3.padSeconds() - (0.1 + 0.25)) < 1e-12,'padSeconds should add both ends');
+fprintf('  PASS Part F: 0.1 s lead-in; the close covers the response window plus the round trip\n');
+
 fprintf('== verify_play_plan PASSED ==\n');
 end
 

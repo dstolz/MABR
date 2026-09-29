@@ -1286,7 +1286,7 @@ classdef ProgressMonitor < handle
             % the silence bracket, and the longest stimulus finishing after
             % the last onset (what mabr.stim.Schedule.summary adds per run).
             try
-                over = 2*sch.SilencePad + sch.Set.maxDuration();
+                over = sch.padSeconds() + sch.Set.maxDuration();
             catch
                 over = 2*sch.SilencePad;
             end

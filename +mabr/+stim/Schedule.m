@@ -176,6 +176,10 @@ classdef Schedule < handle
         % The ways a parameter named in OrderBy can be ordered.
         OrderDirections = {'ascending','descending','listed'};
 
+        % s added to ResponseWindow for the device's round trip when sizing a
+        % run's closing silence: twice the reference rig's (~25 ms).
+        LatencyAllowance = 0.05;
+
         % Names from before the strategies were named for the designs they
         % implement, [old new] per row. Still accepted (canonicalStrategy)
         % because .mabrcfg files and last-session prefs carry them.
@@ -233,7 +237,19 @@ classdef Schedule < handle
         ISIRange         (1,2) double {mustBePositive,mustBeFinite} = [1 1]/21.1
 
         Seed                          = []      % [] = nondeterministic shuffle
-        SilencePad       (1,1) double = 0.25    % s of silence bracketing a run
+        % s of silence bracketing a run. The lead-in only has to clear the
+        % first sweep's baseline window (the samples just before its onset):
+        % a device starting up is warmed on unrecorded silence by the worker
+        % instead (mabr.acq.worker_loop), and between runs it is kept
+        % streaming, so 0.25 s of it on every run was dead time. The end is
+        % at least this long, and longer where ResponseWindow says so.
+        SilencePad       (1,1) double = 0.1
+        % s after an onset the analysis reads to -- mabr.ui.AcqController
+        % sets it from its Window at every run. When set (> 0) the run ends
+        % with at least this plus LatencyAllowance of silence, so the last
+        % presentation's response is in the recording before the stream
+        % stops: a window left short is a sweep dropped. 0 = pad symmetric.
+        ResponseWindow   (1,1) double {mustBeNonnegative,mustBeFinite} = 0
         PlayerChannels   (1,2) double = [1 2]   % [DACsignal DACtiming]
         RecorderChannels (1,2) double = [1 2]   % [ADCsignal ADCtiming]
         Device           (1,:) char   = ''
@@ -668,9 +684,10 @@ classdef Schedule < handle
             % Check the run fits the ring buffer BEFORE allocating anything: an
             % over-ambitious plan is many gigabytes, and running out of memory
             % here would mask the real problem behind a MATLAB:nomem.
-            P     = round(obj.SilencePad*Fs);
+            P     = round(obj.SilencePad*Fs);         % lead-in
+            T     = round(obj.trailPad()*Fs);         % closing silence
             fl    = obj.Config.frameLength;
-            total = ceil((N + 2*P)/fl)*fl;
+            total = ceil((N + P + T)/fl)*fl;
             cap   = obj.Config.maxInputBufferLength;
             assert(total <= cap,'mabr:stim:Schedule:tooLong', ...
                 ['Run %d needs %d samples (%.1f s) but the ring buffer holds %d ' ...
@@ -698,8 +715,9 @@ classdef Schedule < handle
             % the overlap up front). So a run costs the client the size of
             % its bank, not of its duration, and the Prep message the same.
             %
-            % `total` already brackets the run in SilencePad (2P) and rounds it
-            % up to whole frames -- the padding the matrix used to carry.
+            % `total` already brackets the run in silence (P in front, T
+            % behind) and rounds it up to whole frames -- the padding the
+            % matrix used to carry.
             onsets  = onsets + P;                 % silence bracket in front
             present = unique(seq,'stable');
             [~,loc] = ismember(seq,present);      % bank index -> plan index
@@ -742,8 +760,24 @@ classdef Schedule < handle
             for r = 1:obj.NumRuns
                 n = numel(obj.Runs{r});
                 s.duration = s.duration + (n-1)*obj.MeanISI + obj.Set.maxDuration() ...
-                             + 2*obj.SilencePad;
+                             + obj.padSeconds();
             end
+        end
+
+        function t = trailPad(obj)
+            % Seconds of silence a run ends with: SilencePad, or -- once the
+            % controller has said where the analysis stops reading
+            % (ResponseWindow) -- enough for the last presentation's response
+            % to make the recording, round trip included, if that is longer.
+            t = obj.SilencePad;
+            if obj.ResponseWindow > 0
+                t = max(t,obj.ResponseWindow + obj.LatencyAllowance);
+            end
+        end
+
+        function t = padSeconds(obj)
+            % All the silence a run carries, both ends.
+            t = obj.SilencePad + obj.trailPad();
         end
 
         function tf = overlaps(obj)

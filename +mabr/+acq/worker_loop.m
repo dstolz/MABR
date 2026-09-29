@@ -39,6 +39,9 @@ function worker_loop(rootPath,resultQueue,testing)
 %                 IdleClockSeconds  (optional, default 10) how long a device
 %                                   kept open after a run is kept clocked
 %                                   before its stream is stopped (idle_frame)
+%                 WarmupSeconds     (optional, default 0.25) unrecorded
+%                                   silence a device not already streaming
+%                                   is started on before a run (warm_up)
 %                 DeviceFactory     (optional, TESTS ONLY) constructor to use
 %                                   in place of the device class
 %       worker -> client : struct('type',...) — see send_* helpers below.
@@ -186,6 +189,19 @@ try
                         idle.frames,idle.under,idle.over);
                 end
                 idle.frames = 0; idle.under = 0; idle.over = 0;
+                % A device not already streaming -- just opened, or stopped
+                % after an idle spell -- starts on silence nobody records,
+                % so its start-up lands there and not in the run.
+                if ~isempty(apr) && ~idle.clocking
+                    [idle,apr] = warm_up(apr,idle,prepared,cfg.frameLength);
+                    if isempty(apr)
+                        send_error(resultQueue,'mabr:acq:worker:deviceFailed', ...
+                            'The audio device failed while starting; the run was not streamed.');
+                        send_state(resultQueue,mabr.acq.State.Idle);
+                        prepared = [];
+                        continue
+                    end
+                end
                 [reason,nStreamed,xr,timing] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
                 % Keep the device clocked until the next run, so that run
                 % starts on the next frame of a stream already running
@@ -595,6 +611,29 @@ else
     mabr.log.vprintf(1,'Opened a full-duplex device: play [%d %d], record [%d %d].', ...
         player,recorder);
 end
+end
+
+
+% =====================================================================
+function [idle,apr] = warm_up(apr,idle,spec,fl)
+% Start a device that is not already streaming on WarmupSeconds (spec field,
+% default 0.25) of silence that is never recorded. The driver opens its
+% stream on the first call -- a quarter to half a second on the reference
+% rig, the first of a session longer -- and a stream just started can report
+% underruns while it settles. That used to happen on the first frames of the
+% run itself, which is why every run opened with 0.25 s of silence
+% (Schedule.SilencePad); a device kept clocked between runs (idle_frame)
+% needs none of it, and a fresh one gets it here, where it records nothing.
+n = ceil(getdef(spec,'WarmupSeconds',0.25)*spec.SampleRate/fl);
+for k = 1:n
+    [idle,apr] = idle_frame(apr,idle,fl);
+    if isempty(apr), return; end
+end
+if idle.under > 0 || idle.over > 0
+    mabr.log.vprintf(2,['Audio device start-up: %d samples of underrun and %d of ' ...
+        'overrun in %d warm-up frames (none of them recorded).'],idle.under,idle.over,n);
+end
+idle.frames = 0; idle.under = 0; idle.over = 0;
 end
 
 

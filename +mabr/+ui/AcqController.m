@@ -731,6 +731,11 @@ classdef AcqController < handle
             obj.RunStartTic = tic;
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot), obj.LivePlot.reset(); end
 
+            % Where the analysis stops reading after an onset, so the run's
+            % closing silence is long enough for the last response to reach
+            % the recording (mabr.stim.Schedule.trailPad). Every run, since
+            % the window can change between them.
+            obj.Schedule.ResponseWindow = max(0,obj.Window(2));
             spec = obj.Schedule.renderSpec(r);
 
             % In TESTING there is no audio device, so nothing throttles the
