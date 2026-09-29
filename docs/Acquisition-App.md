@@ -15,7 +15,8 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
  │      Output  [ C:\data\subj001    v ] [ Browse… ] │
  └───────────────────────────────────────────────────┘
  ┌ Stimulus ────────────────────────────────────────┐
- │  Bank 8 stimuli · stimgen [Design…][Load bank…][Demo] │
+ │  Bank [ ABR_tones.spl          v ][+][−][ Open…  ] │
+ │       8 stimuli · stimgen          [Demo][Design…] │
  └───────────────────────────────────────────────────┘
  ┌ Presentation ────────────────────────────────────┐
  │    Strategy  [ Conventional — one stimulus v ]    │
@@ -51,7 +52,9 @@ Every panel shares one label-column width, so the fields line up along a single 
 
 Greyed out with an explanatory tooltip if the stimgen submodule was never fetched — run `git submodule update --init` and restart.
 
-**Load bank…** — Loads a bank from file: a stimgen `.spl`, or a `.mat` holding a struct array in which each entry is **one** stimulus (a `signal` and an `ID`; MABR finds it among the loaded variables). Fields are listed in [Extending MABR](Extending.md#the-stimulus-entry).
+**Open…** — Loads a bank from file: a stimgen `.spl`, or a `.mat` holding a struct array in which each entry is **one** stimulus (a `signal` and an `ID`; MABR finds it among the loaded variables). Fields are listed in [Extending MABR](Extending.md#the-stimulus-entry). The file dialog opens in the folder you last picked a bank from.
+
+**Bank dropdown** — The banks you have loaded from files before, newest first, with the loaded one showing. **Picking a bank loads it.** **+** adds bank files to the list without loading them (several at once — lay out a protocol's banks ahead of time); **−** chooses entries to take off the list. Neither touches the files, and a bank that has gone missing drops off the list by itself when you pick it.
 
 Note what neither contains: repetition counts, spacing, or ordering. Those are yours to choose here, per session, and are described below. A `.spl` does carry stimgen's own reps and ISI — MABR takes the reps as a starting value and ignores the rest.
 
@@ -235,6 +238,6 @@ The events the app listens for:
 
 Rather than the app pushing traces into the viewer, `onTraceOrg` hands the controller to `TraceOrganizer.listenTo`, and the organizer adds each block itself as it lands — so a view left open during a run fills in live. Opening the organizer re-points the listener instead of adding a second one, and `ensureController` re-points it again when the controller is rebuilt, so neither action can duplicate traces or leave the view attached to a deleted controller.
 
-`ensureController` rebuilds the controller when the Testing checkbox changes, since testing mode is fixed at Engine construction. It is also where the one-time `waitUntilReady(120)` handshake happens — the only bounded wait in the program, and the reason the first Start is slower than the rest.
+`ensureController` rebuilds the controller when the Testing checkbox changes, since testing mode is fixed at Engine construction. It is also where the one-time `waitUntilReady(120)` handshake happens — the only bounded wait in the program, and the reason the first Start is slower than the rest. While a controller is being built, `mabr.ui.StartupDialog` covers the main window with a progress dialog naming the workers being started, a checklist of the startup steps, and the latest milestone; every message still reaches the status line too.
 
 To build a different front end, subclass or ignore `App` entirely and drive `AcqController` directly; see [Extending MABR](Extending.md#building-a-different-front-end).

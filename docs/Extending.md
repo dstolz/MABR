@@ -54,7 +54,7 @@ Supplying `Frequency` and `Level` specifically makes the written filename match 
 
 ### Loading it
 
-Save the struct array to a `.mat` file and the GUI's **Load bank…** button picks it up — [mabr.stim.StimulusSet.fromFile](../+mabr/+stim/StimulusSet.m) finds any variable that is a struct array with `signal` and `ID`. Headlessly:
+Save the struct array to a `.mat` file and the Stimulus panel's **Open…** button picks it up — [mabr.stim.StimulusSet.fromFile](../+mabr/+stim/StimulusSet.m) finds any variable that is a struct array with `signal` and `ID`. Headlessly:
 
 ```matlab
 set = mabr.stim.StimulusSet(stim);       % validates and normalizes

@@ -50,7 +50,7 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 | `Source`, `describeSource()` | Provenance: `Kind` (`stimgen`/`file`/`demo`), `File`, `Calibration`, `Generated`. Read by the GUI's bank label and written into the `.abr`; nothing in acquisition uses it |
 | `isCalibrated()` | True only when **every** entry was built against a measurement — half-calibrated is not a reportable state, since levels across the bank are then not comparable |
 | `validate(s,idx,cfg)` | Static. Validates and normalizes one entry; specific error identifiers on a bad one |
-| `fromFile(ffn,[cfg])` | Static. Loads a bank — `.spl` via `fromStimgen`, anything else as a `.mat`. What the GUI's **Load bank…** uses |
+| `fromFile(ffn,[cfg])` | Static. Loads a bank — `.spl` via `fromStimgen`, anything else as a `.mat`. What the GUI's **Open…** and Bank dropdown use |
 
 **`Schedule` surface**
 

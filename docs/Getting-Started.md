@@ -34,10 +34,10 @@ If you leave Output blank, blocks are still recorded and held in memory, but not
 MABR does not create sounds. It plays waveforms a calibrated stimulus package produced for you, so that the levels in your data mean what they say.
 
 - **Design…** opens the stimgen bank editor — the suggested route. Pick a stimulus type, give a parameter a vector (`Frequency = [8000 16000]`, `SoundLevel = [30 60]`) and it expands into every combination; each one becomes a MABR stimulus. The editor stays open and the button becomes **Adopt bank**, so you can adjust and re-adopt freely.
-- **Load bank…** opens a saved bank: a stimgen `.spl`, or a `.mat` of pre-computed stimuli. Each entry carries its own waveform, sample rate, and metadata (frequency, level, and so on).
+- **Open…** opens a saved bank: a stimgen `.spl`, or a `.mat` of pre-computed stimuli. Each entry carries its own waveform, sample rate, and metadata (frequency, level, and so on). Banks you have opened before are in the **Bank** dropdown — pick one to load it again.
 - **Demo** loads a built-in grid of tone pips (8 and 16 kHz at 30 and 60 dB). These are **not calibrated** — the levels are nominal. Use this to learn the software or to check the signal chain, never to collect real data.
 
-Once loaded, the label next to **Bank** turns from red to a count and its source — `4 stimuli · stimgen`. If it is **amber**, the bank has no calibration behind it: the sounds will play, but their levels are nominal, and a bank asking for several different levels will produce sounds that are all equally loud. Calibrate first (**Settings ▸ Calibration…**) and rebuild the bank before collecting data.
+Once loaded, the label under **Bank** turns from red to a count and its source — `4 stimuli · stimgen`. If it is **amber**, the bank has no calibration behind it: the sounds will play, but their levels are nominal, and a bank asking for several different levels will produce sounds that are all equally loud. Calibrate first (**Settings ▸ Calibration…**) and rebuild the bank before collecting data.
 
 ### 4. Decide when each condition stops
 

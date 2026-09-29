@@ -12,7 +12,7 @@
 - A pool was already running that was started before MABR was on the path. Run `>> delete(gcp('nocreate'))` and try again.
 - Another MATLAB session is holding the pool or the audio device. Close it.
 
-**The first Start takes 30+ seconds** — Expected. The parallel pool is starting. It stays warm for the rest of the session, so subsequent blocks begin immediately.
+**The first Start takes 30+ seconds** — Expected. The parallel pool is starting. It stays warm for the rest of the session, so subsequent blocks begin immediately. A *Starting background workers* dialog shows which step it is on; if it sits on *Waiting for the workers to report in* for the full two minutes, the worker failed to start — the error log says why.
 
 ## Audio and recording
 
