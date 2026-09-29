@@ -94,15 +94,32 @@ classdef Pipeline < handle
 
     properties (Access = private)
         Configured (1,1) logical = false
-        SweepState = struct()        % extract_sweeps cursor + raw sweep cache
+        SweepState = struct()        % extract_sweeps cursor: onsets, not sweeps
         BlockSeq   (1,1) double = -1 % ring-buffer block the cache belongs to
-        Filt = zeros(0,0)            % [nSweeps x 2L] filtered [pre post], rows = sweeps
-        Bad  = false(1,0)            % artifact preview, one per row of Filt
+        Epoch      (1,1) double = -1 % ...and the extraction pass (SweepState.epoch)
+        % The filtered sweeps, ONE COLUMN PER SWEEP ([pre; post], 2L rows),
+        % preallocated for the planned run and filled in place. As rows of a
+        % column-major matrix, every step's new sweeps used to reallocate and
+        % copy the whole run so far.
+        Filt = zeros(0,0)
+        Bad  = false(1,0)            % artifact preview, one per column of Filt
+        Idx  = zeros(1,0)            % stimulus behind each column of Filt
         NumFiltered (1,1) double = 0
         L    (1,1) double = 0        % samples in the post-onset window
         Time = zeros(1,0)            % [1 x 2L] s re onset, starts negative
-        Idx  = zeros(1,0)            % stimulus behind each row of Filt
         NeedRejudge (1,1) logical = false
+        Row  = zeros(1,0)            % stimulus index -> row of the per-condition stats
+        % RUNNING statistics, updated one sweep at a time in sweep order
+        % (accumulate): per condition a Welford mean and sum of squared
+        % deviations, and over every clean sweep the odd/even split-half
+        % sums the onset-contrast correlation is made of. Recomputing all of
+        % it from every sweep of the run on every 50 ms cycle made a run cost
+        % the square of its length. One sweep at a time, in order, is also
+        % what keeps a worker (many small steps) and this process (perhaps
+        % one big one) bit-identical: the result depends on the sweeps, never
+        % on where the step boundaries fell.
+        Acc  = []
+        LastStats = []               % step()'s last answer, reused while nothing changes
     end
 
     methods
@@ -127,20 +144,24 @@ classdef Pipeline < handle
             window = double(window(:)');
             gain   = mabr.AudioSettings.coerceGain(gain,1);
 
+            % A new gain or chain changes every filtered sweep: forget them
+            % and rewind the extraction cursor, so the next step reads them
+            % all back off the ring (which still holds the block) and filters
+            % them afresh. A new window changes which samples a sweep IS, so
+            % extraction starts over entirely.
             if gain ~= obj.Gain
                 obj.Gain = gain;
-                obj.invalidateFiltered();
+                obj.invalidateFiltered(true);
             end
 
             if ~obj.Configured || ~filters.sameSettings(obj.Filters)
                 obj.Filters = filters;
                 obj.designLive();
-                obj.invalidateFiltered();
+                obj.invalidateFiltered(true);
             end
             if ~obj.Configured || ~isequal(window,obj.Window)
                 obj.Window     = window;
-                obj.SweepState = struct();
-                obj.invalidateFiltered();
+                obj.restartExtraction();
             end
             if ~obj.Configured || ~isequal(artifacts.toStruct(),obj.Artifacts.toStruct())
                 obj.Artifacts   = artifacts;
@@ -166,9 +187,11 @@ classdef Pipeline < handle
             if ~isfield(runInfo,'Stimuli') || isempty(runInfo.Stimuli)
                 runInfo.Stimuli = unique(double(runInfo.StimIndex(:)'),'stable');
             end
-            obj.Run        = runInfo;
-            obj.SweepState = struct();
-            obj.invalidateFiltered();
+            obj.Run = runInfo;
+            st      = double(runInfo.Stimuli(:)');
+            obj.Row = zeros(1,max([st 0]));
+            obj.Row(st) = 1:numel(st);
+            obj.restartExtraction();
         end
 
         function endRun(obj)
@@ -204,39 +227,60 @@ classdef Pipeline < handle
             [pre,post,~,obj.SweepState,tw] = ...
                 mabr.metrics.extract_sweeps(rb,params,obj.SweepState);
             obj.StepCount = obj.StepCount + 1;
-            if isempty(post), return; end
 
             % extract_sweeps starts over on a block boundary (a BlockSeq bump
-            % or a head that went backwards); the filtered cache has to
-            % follow it, or it would describe sweeps that no longer exist.
-            n = size(post,1);
-            if obj.SweepState.blockSeq ~= obj.BlockSeq || n < obj.NumFiltered
-                obj.invalidateFiltered();
+            % or a head that went backwards), and what it just returned is
+            % then the new block's first sweeps: the cache follows it, or it
+            % would describe sweeps that no longer exist.
+            if obj.SweepState.blockSeq ~= obj.BlockSeq || obj.SweepState.epoch ~= obj.Epoch
+                obj.invalidateFiltered(false);
                 obj.BlockSeq = obj.SweepState.blockSeq;
+                obj.Epoch    = obj.SweepState.epoch;
             end
 
-            L = size(post,2);
+            L        = numel(tw.post);
             obj.L    = L;
             obj.Time = [tw.pre tw.post];
 
-            if n > obj.NumFiltered
-                new = obj.NumFiltered+1:n;
-                Yn  = obj.filterRows(pre(new,:)/obj.Gain,post(new,:)/obj.Gain);
-                obj.Filt(new,:) = Yn;
-                obj.Bad(new)    = obj.judge(Yn(:,L+1:end));
-                obj.NumFiltered = n;
+            % The sweeps this call windowed -- only those -- filtered and
+            % judged into the next columns of the cache.
+            k       = size(post,1);
+            changed = k > 0;
+            if changed
+                n0   = obj.NumFiltered;
+                cols = n0+1:n0+k;
+                obj.ensureCapacity(n0+k);
+                Y = obj.filterCols(pre/obj.Gain,post/obj.Gain);
+                obj.Filt(:,cols) = Y;
+                obj.Bad(cols)    = obj.judgeCols(Y(L+1:end,:));
+                obj.Idx(cols)    = obj.stimulusAt(cols);
+                obj.NumFiltered  = n0 + k;
             end
+            n = obj.NumFiltered;
+
+            % A new artifact policy re-judges every cached sweep, and the
+            % running statistics are rebuilt from them in sweep order --
+            % exactly what accumulating them one at a time would have given.
             if obj.NeedRejudge
-                obj.Bad         = obj.judge(obj.Filt(:,L+1:end));
                 obj.NeedRejudge = false;
+                if n > 0
+                    obj.Bad(1:n) = obj.judgeCols(obj.Filt(L+1:end,1:n));
+                    obj.resetStats();
+                    obj.accumulate(1:n);
+                    changed = true;
+                end
+            elseif changed
+                if isempty(obj.Acc), obj.resetStats(); end
+                obj.accumulate(cols);
             end
 
-            keep = ~obj.Bad;
-            R = 0;
-            if nnz(keep) > 1
-                R = mabr.metrics.partition_corr(obj.Filt(keep,1:L),obj.Filt(keep,L+1:end));
+            if n == 0, return; end
+            if ~changed && ~isempty(obj.LastStats)
+                stats = obj.LastStats;          % nothing new: the same answer
+                return
             end
-            stats = obj.buildStats(R);
+            stats = obj.buildStats();
+            obj.LastStats = stats;
         end
 
         function S = sweeps(obj)
@@ -244,9 +288,13 @@ classdef Pipeline < handle
             % (rows = sweeps, the orientation the live path uses), t [1 x 2L]
             % s re onset, bad [1 x nSweeps], stimIdx [1 x nSweeps] the
             % stimulus behind each, n. What a consumer that needs the matrix
-            % rather than its statistics reads.
-            S = struct('Y',obj.Filt,'t',obj.Time,'bad',obj.Bad, ...
-                       'stimIdx',obj.Idx,'n',size(obj.Filt,1));
+            % rather than its statistics reads -- a COPY of the part in use,
+            % built on request: the analysis snapshot asks at most twice a
+            % second and the metrics worker once, and neither may hold the
+            % cache itself (the next step writes into it in place).
+            n = obj.NumFiltered;
+            S = struct('Y',obj.Filt(:,1:n).','t',obj.Time,'bad',obj.Bad(1:n), ...
+                       'stimIdx',obj.Idx(1:n),'n',n);
         end
 
         % --- Finalization ---------------------------------------------------
@@ -401,32 +449,100 @@ classdef Pipeline < handle
             end
         end
 
-        function invalidateFiltered(obj)
+        function invalidateFiltered(obj,rewind)
+            % Forget the filtered sweeps and everything accumulated from them.
+            % rewind = true also sends extraction back to the run's first
+            % onset, so the next step reads every sweep back off the ring (a
+            % new chain or gain); false leaves the cursor where it is (the
+            % ring started a new block, and extraction already started over).
             obj.Filt        = zeros(0,0);
             obj.Bad         = false(1,0);
+            obj.Idx         = zeros(1,0);
             obj.NumFiltered = 0;
             obj.NeedRejudge = false;
+            obj.Acc         = [];
+            obj.LastStats   = [];
+            if rewind && isfield(obj.SweepState,'nWindowed')
+                obj.SweepState.nWindowed = 0;
+            end
         end
 
-        function Y = filterRows(obj,pre,post)
+        function restartExtraction(obj)
+            % Extraction from scratch: onsets, cursor and all (a new run, a
+            % new window).
+            obj.SweepState = struct();
+            obj.BlockSeq   = -1;
+            obj.Epoch      = -1;
+            obj.invalidateFiltered(false);
+        end
+
+        function ensureCapacity(obj,need)
+            % Room for `need` sweeps, and for the run's planned presentations
+            % from the start, so a run fills its cache in place; doubling past
+            % that (extra onsets are not planned for, and not expected).
+            cap = size(obj.Filt,2);
+            if need <= cap && size(obj.Filt,1) == 2*obj.L, return; end
+            planned = 0;
+            if ~isempty(obj.Run), planned = numel(obj.Run.StimIndex); end
+            newCap = max([need, 2*cap, planned + 64, 64]);
+            n = obj.NumFiltered;
+            F = zeros(2*obj.L,newCap);
+            B = false(1,newCap);
+            I = zeros(1,newCap);
+            if n > 0
+                F(:,1:n) = obj.Filt(:,1:n);
+                B(1:n)   = obj.Bad(1:n);
+                I(1:n)   = obj.Idx(1:n);
+            end
+            obj.Filt = F; obj.Bad = B; obj.Idx = I;
+        end
+
+        function idx = stimulusAt(obj,cols)
+            % Which stimulus evoked each of these sweeps: the k-th recorded
+            % onset is the k-th planned presentation. More onsets than the
+            % plan should not happen; if it does, the extras belong with the
+            % last one rather than inventing a condition for them (the live
+            % view's own rule).
+            seq = double(obj.Run.StimIndex(:)');
+            if isempty(seq)
+                idx = ones(size(cols));
+            else
+                idx = seq(min(cols,numel(seq)));
+            end
+        end
+
+        function Y = filterCols(obj,pre,post)
             % Run the display chain over sweeps given as [nSweeps x nSamples]
             % -- the baseline and the response as ONE segment each (see the
-            % class help) -- and return them as [nSweeps x 2L], still rows.
-            Y = [pre post];
+            % class help) -- and return them as COLUMNS, [2L x nSweeps], the
+            % cache's own orientation. apply is column-wise, and any grouping
+            % of two or more columns filters each column identically -- but a
+            % LONE column takes filtfilt's vector path, which rounds
+            % differently (~1e-14). A step that windowed exactly one sweep
+            % (the norm at a slow ISI) therefore filters it as a pair with
+            % itself, so a sweep's filtered samples never depend on how many
+            % arrived with it: that is what keeps a worker and this process
+            % bit-identical (verify_live_pipeline Part B).
+            Y = [pre post].';
             if isempty(post) || ~obj.LiveFilter.Designed, return; end
-            Y = obj.LiveFilter.apply(Y.').';      % columns = sweeps inside apply
+            if size(Y,2) == 1
+                Y = obj.LiveFilter.apply([Y Y]);
+                Y = Y(:,1);
+            else
+                Y = obj.LiveFilter.apply(Y);
+            end
         end
 
-        function bad = judge(obj,post)
-            % Preview the artifact verdict on [nSweeps x L] filtered response
+        function bad = judgeCols(obj,P)
+            % Preview the artifact verdict on [L x nSweeps] filtered response
             % windows. detect_artifacts wants the FILTERED sweeps, and by here
             % they are. With the high pass switched OFF there is nothing
             % removing a baseline offset, and a sweep sitting on one would
             % trip a voltage threshold on the offset alone -- so in that case,
             % and only that case, each sweep's own mean stands in for it.
-            bad = false(1,size(post,1));
-            if ~obj.Artifacts.Enabled || isempty(post), return; end
-            D = double(post).';                     % [nSamples x nSweeps]
+            bad = false(1,size(P,2));
+            if ~obj.Artifacts.Enabled || isempty(P), return; end
+            D = double(P);
             if ~obj.LiveFilter.HighPass
                 D = D - mean(D,1,'omitnan');
             end
@@ -434,45 +550,88 @@ classdef Pipeline < handle
             bad = logical(bad(:)');
         end
 
-        function stats = buildStats(obj,R)
-            Y   = obj.Filt;
-            bad = obj.Bad;
-            n   = size(Y,1);
-            keep = ~bad;
+        function resetStats(obj)
+            nC = numel(obj.Run.Stimuli);
+            m  = 2*obj.L;
+            obj.Acc = struct('Mean',zeros(m,nC),'M2',zeros(m,nC), ...
+                'Clean',zeros(1,nC),'Total',zeros(1,nC),'Rejected',zeros(1,nC), ...
+                'Odd',zeros(m,1),'Even',zeros(m,1),'NumOdd',0,'NumEven',0,'NumBad',0);
+        end
 
-            % Which stimulus evoked each sweep: the k-th recorded onset is the
-            % k-th planned presentation. More onsets than the plan should not
-            % happen; if it does, the extras belong with the last one rather
-            % than inventing a condition for them (the live view's own rule).
-            seq = double(obj.Run.StimIndex(:)');
-            idx = ones(1,n);
-            k   = min(numel(seq),n);
-            if k > 0
-                idx(1:k) = seq(1:k);
-                if k < n, idx(k+1:end) = seq(k); end
+        function accumulate(obj,cols)
+            % Fold these sweeps into the running statistics, one at a time and
+            % in order. Per condition, Welford's update of the mean and of the
+            % sum of squared deviations (numerically stable, and a mean of one
+            % sweep is that sweep exactly); over every CLEAN sweep, whichever
+            % of the odd/even split-half sums its place among the clean ones
+            % puts it in -- mabr.metrics.partition_corr's odd and even rows.
+            A = obj.Acc;
+            obj.Acc = [];                 % sole owner, so the updates are in place
+            for j = cols
+                c = 0;
+                u = obj.Idx(j);
+                if u >= 1 && u <= numel(obj.Row), c = obj.Row(u); end
+                if c > 0, A.Total(c) = A.Total(c) + 1; end
+                if obj.Bad(j)
+                    A.NumBad = A.NumBad + 1;
+                    if c > 0, A.Rejected(c) = A.Rejected(c) + 1; end
+                    continue
+                end
+                y = obj.Filt(:,j);
+                if mod(A.NumOdd + A.NumEven,2) == 0
+                    A.Odd  = A.Odd + y;  A.NumOdd  = A.NumOdd + 1;
+                else
+                    A.Even = A.Even + y; A.NumEven = A.NumEven + 1;
+                end
+                if c > 0
+                    k = A.Clean(c) + 1;
+                    A.Clean(c)  = k;
+                    d = y - A.Mean(:,c);
+                    A.Mean(:,c) = A.Mean(:,c) + d/k;
+                    A.M2(:,c)   = A.M2(:,c) + d.*(y - A.Mean(:,c));
+                end
             end
-            obj.Idx = idx;
+            obj.Acc = A;
+        end
 
+        function stats = buildStats(obj)
+            % The run so far, from the running statistics: nothing here is
+            % proportional to the number of sweeps.
+            A = obj.Acc;
+            n = obj.NumFiltered;
+            L = obj.L;
             stimuli = double(obj.Run.Stimuli(:)');
             nC = numel(stimuli);
-            M  = nan(nC,size(Y,2));
-            SD = nan(nC,size(Y,2));
-            counts = zeros(nC,3);
-            for c = 1:nC
-                sel  = idx == stimuli(c);
-                good = sel & keep;
-                counts(c,:) = [nnz(good) nnz(sel) nnz(sel & bad)];
-                if ~any(good), continue; end
-                M(c,:)  = mean(Y(good,:),1);
-                SD(c,:) = std(Y(good,:),0,1);
+            M  = nan(nC,2*L);
+            SD = nan(nC,2*L);
+            % Each guarded by any(): with ONE condition these masks are
+            % scalars, and a 1x1 indexed by a scalar false is 0x0 rather
+            % than 1x0 -- which does not broadcast against [2L x 0].
+            has  = A.Clean > 0;
+            if any(has), M(has,:) = A.Mean(:,has).'; end
+            % std of one sweep is 0; of more, from the squared deviations
+            % (floored at 0 against round-off).
+            SD(A.Clean == 1,:) = 0;
+            many = A.Clean > 1;
+            if any(many)
+                SD(many,:) = sqrt(max(A.M2(:,many),0) ./ (A.Clean(many) - 1)).';
+            end
+
+            R = 0;
+            if A.NumOdd + A.NumEven > 1
+                mo = (A.Odd/A.NumOdd).';
+                me = (A.Even/A.NumEven).';
+                R  = mabr.metrics.partition_corr_from_means( ...
+                    [mo(1:L); me(1:L); mo(L+1:end); me(L+1:end)]);
             end
 
             stats = struct('RunId',obj.Run.RunId,'Time',obj.Time, ...
                 'NumSamples',numel(obj.Time), ...
-                'Latest',Y(end,:),'LatestBad',bad(end),'LatestStim',idx(end), ...
+                'Latest',obj.Filt(:,n).','LatestBad',obj.Bad(n),'LatestStim',obj.Idx(n), ...
                 'Corr',R, ...
-                'NumSweeps',n,'NumClean',nnz(keep),'NumArtifacts',nnz(bad), ...
-                'Stimuli',stimuli,'Mean',M,'SD',SD,'CondCounts',counts);
+                'NumSweeps',n,'NumClean',n - A.NumBad,'NumArtifacts',A.NumBad, ...
+                'Stimuli',stimuli,'Mean',M,'SD',SD, ...
+                'CondCounts',[A.Clean(:) A.Total(:) A.Rejected(:)]);
         end
     end
 

@@ -8,7 +8,9 @@ function R = partition_corr(preSweep,postSweep)
 %
 %   Inputs are [nSweeps x nSamples] matrices (rows = sweeps), as produced by
 %   mabr.metrics.extract_sweeps. Computed after Arnold et al. (1985), Ear &
-%   Hearing 6(3):144-150. Ported unchanged from the legacy ControlPanel.
+%   Hearing 6(3):144-150. Ported unchanged from the legacy ControlPanel; the
+%   arithmetic after the four means is mabr.metrics.partition_corr_from_means,
+%   which mabr.compute.Pipeline calls with running means instead.
 %
 % Daniel Stolzberg (c) 2019-2026
 
@@ -17,9 +19,5 @@ M = [mean(preSweep(1:2:end,:), 1); ...
      mean(postSweep(1:2:end,:),1); ...
      mean(postSweep(2:2:end,:),1)];
 
-M = M - mean(M,2);
-M = M ./ std(M,0,2);
-R = (M * M.') / (size(M,2) - 1);
-
-R = max(R(4,3) - R(2,1),0);
+R = mabr.metrics.partition_corr_from_means(M);
 end

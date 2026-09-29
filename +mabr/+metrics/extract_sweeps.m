@@ -1,15 +1,19 @@
 function [preSweep,postSweep,onsets,state,tvec] = extract_sweeps(rb,params,state)
 % mabr.metrics.extract_sweeps  Slice pre-/post-onset sweep windows from the
-% acquisition ring buffer.
+% acquisition ring buffer, incrementally.
 %
-%   [preSweep,postSweep,onsets,state] = extract_sweeps(rb,params,state)
+%   [preSweep,postSweep,onsets,state,tvec] = extract_sweeps(rb,params,state)
 %
 %   Rewrite of the legacy abr.Runtime.extract_sweeps with EXPLICIT state
-%   instead of a persistent variable, so the caller (AcqController) owns the
-%   incremental extraction cursor. Each call detects onsets only in the
-%   freshly arrived region and windows only the newly completed sweeps,
-%   caching them in state; it returns the full accumulated pre/post matrices
-%   (rebuilt from the cache, not re-read from the memmap every call).
+%   instead of a persistent variable, so the caller (mabr.compute.Pipeline)
+%   owns the incremental extraction cursor. Each call detects onsets only in
+%   the freshly arrived region and windows only the sweeps completed since the
+%   last call, and returns THOSE -- not the run so far. It keeps no sweeps: a
+%   caller that needs them again (a new filter chain, a new gain) rewinds the
+%   cursor (state.nWindowed = 0) and they are read back off the ring, which
+%   still holds the block. Returning the whole run on every call, which it
+%   used to do from a cache of every sweep so far, made each call cost the run
+%   so far: two copies of the cache per call, twenty calls a second.
 %
 %   Inputs
 %     rb      a mabr.acq.RingBuffer (read-only) exposing WriteHead, BlockSeq,
@@ -22,11 +26,15 @@ function [preSweep,postSweep,onsets,state,tvec] = extract_sweeps(rb,params,state
 %               shadow      (optional) min onset spacing, seconds (default 2 ms)
 %     state   struct carried across calls (pass [] or struct() to reset).
 %
-%   Outputs (empty until at least one sweep is complete)
-%     preSweep   [nSweeps x nSamples] baseline window before each onset
-%     postSweep  [nSweeps x nSamples] response window at/after each onset
-%     onsets     [nSweeps x 1] absolute onset sample indices (this block)
-%     state      updated cursor + sweep cache
+%   Outputs
+%     preSweep   [nNew x nSamples] baseline window before each onset
+%     postSweep  [nNew x nSamples] response window at/after each onset
+%     onsets     [nNew x 1] absolute onset sample indices of those sweeps
+%     state      updated cursor. state.nWindowed is how many onsets have been
+%                windowed so far, state.onsets every onset found, and
+%                state.epoch counts the times it started over (a new block,
+%                or a head that went backwards) -- when it moves, the sweeps
+%                returned are the first of a new block, not more of the last
 %     tvec       struct with .pre and .post: the time (SECONDS, relative to
 %                onset) of each column of the matching matrix. The two are
 %                contiguous, so [tvec.pre tvec.post] is one unbroken time
@@ -38,29 +46,24 @@ function [preSweep,postSweep,onsets,state,tvec] = extract_sweeps(rb,params,state
 %
 % Daniel Stolzberg (c) 2019-2026
 
-preSweep = []; postSweep = []; onsets = [];
-tvec = struct('pre',[],'post',[]);
+onsets = zeros(0,1);
 
 if nargin < 3 || isempty(state), state = struct(); end
-if ~isfield(state,'onsets'),     state.onsets     = []; end
+if ~isfield(state,'onsets'),     state.onsets     = zeros(0,1); end
 if ~isfield(state,'lastHead'),   state.lastHead   = 0;  end
 if ~isfield(state,'blockSeq'),   state.blockSeq   = -1; end
 if ~isfield(state,'nWindowed'),  state.nWindowed  = 0;  end
-if ~isfield(state,'preCache'),   state.preCache   = []; end   % [nSamples x nSweeps]
-if ~isfield(state,'postCache'),  state.postCache  = []; end   % [nSamples x nSweeps]
-if ~isfield(state,'onsetCache'), state.onsetCache = []; end
+if ~isfield(state,'epoch'),      state.epoch      = 0;  end
 
 % Reset on a new block or a head decrease (block boundary).
 seq  = rb.BlockSeq;
 head = rb.WriteHead;
 if seq ~= state.blockSeq || state.lastHead > head
-    state.blockSeq   = seq;
-    state.lastHead   = 0;
-    state.onsets     = [];
-    state.nWindowed  = 0;
-    state.preCache   = [];
-    state.postCache  = [];
-    state.onsetCache = [];
+    state.blockSeq  = seq;
+    state.lastHead  = 0;
+    state.onsets    = zeros(0,1);
+    state.nWindowed = 0;
+    state.epoch     = state.epoch + 1;
 end
 
 Fs = params.SampleRate;
@@ -100,14 +103,17 @@ if head > state.lastHead
         if ~isempty(prev) && double(prev(1)) >= thr, rel(1) = []; end
     end
 
-    newOnsets = LB + rel - 1;                 % absolute indices
-    state.onsets = [state.onsets; newOnsets(:)];
-    % de-duplicate onsets genuinely closer together than the shadow
-    if ~isempty(state.onsets)
-        state.onsets = sort(state.onsets);
-        keep = [true; diff(state.onsets) >= shadowSamples];
-        state.onsets = state.onsets(keep);
+    % Every new onset lies after every old one, and find_timing_onsets has
+    % already merged those within the shadow of each other -- so the one
+    % pair that can still be closer than the shadow is the last old onset
+    % and the first new one. (The whole list used to be re-sorted and
+    % re-merged on every call to reach the same answer.)
+    newOnsets = LB + rel(:) - 1;              % absolute indices
+    if ~isempty(newOnsets) && ~isempty(state.onsets) ...
+            && newOnsets(1) - state.onsets(end) < shadowSamples
+        newOnsets(1) = [];
     end
+    state.onsets   = [state.onsets; newOnsets];
     state.lastHead = head;
 end
 
@@ -122,29 +128,31 @@ L    = numel(swin);
 bwin = -df*(L:-1:1);                          % pre-onset (baseline) offsets
 tvec = struct('pre',bwin/Fs,'post',swin/Fs);
 
+preSweep  = zeros(0,L);
+postSweep = zeros(0,L);
+
 respEnd     = w(2);                           % last response offset
 oldestValid = max(1,head - rb.MaxLength + 1); % oldest sample still retained
 
-% --- window only the newly completed, in-range sweeps --------------------
-i = state.nWindowed;
-while i < numel(state.onsets)
-    o = state.onsets(i+1);
-    if o + respEnd > head, break; end         % response not fully recorded yet
-    i = i + 1;
-    postI = o + swin;
-    preI  = o + bwin;
-    if any(preI < oldestValid) || any(postI > head)
-        continue;                             % baseline/response outside retained range
-    end
-    state.postCache(:,end+1) = double(rb.readSignalAt(postI(:)));
-    state.preCache(:,end+1)  = double(rb.readSignalAt(preI(:)));
-    state.onsetCache(end+1,1) = o;
+% --- window the newly completed, in-range sweeps: ONE read per half --------
+% The onsets whose response has been fully recorded, from the cursor on.
+first = state.nWindowed + 1;
+last  = first - 1;
+while last < numel(state.onsets) && state.onsets(last+1) + respEnd <= head
+    last = last + 1;
 end
-state.nWindowed = i;
+state.nWindowed = last;
+if last < first, return; end
 
-if isempty(state.postCache), return; end
-
-postSweep = state.postCache.';                % [nSweeps x nSamples]
-preSweep  = state.preCache.';
-onsets    = state.onsetCache;
+o     = state.onsets(first:last).';           % [1 x k]
+postI = o + swin(:);                          % [L x k] absolute indices
+preI  = o + bwin(:);
+% A baseline or response outside the retained range is skipped, as it
+% always was (a run longer than the ring is refused at build, so this is a
+% guard rather than a path).
+ok = all(preI >= oldestValid,1) & all(postI <= head,1);
+if ~any(ok), return; end
+postSweep = double(rb.readSignalAt(postI(:,ok))).';   % [k x L]
+preSweep  = double(rb.readSignalAt(preI(:,ok))).';
+onsets    = o(ok).';
 end

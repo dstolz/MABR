@@ -18,8 +18,10 @@ classdef AcqController < handle
 %   'fixedSpacing', so a tick's period is measured from when the previous one
 %   RETURNS: work in the fast tick comes straight off the live view's frame
 %   rate, which is the whole reason the slow half is not in it. Nothing on the
-%   aux timer recomputes anything -- the fast tick leaves its already-built
-%   sweeps in PendingLive and the aux tick reads them.
+%   aux timer recomputes anything -- the fast tick leaves a note in
+%   PendingLive that a run's sweeps are in this process, and the aux tick
+%   asks the pipeline for them (a copy of the run so far, built at most twice
+%   a second rather than on every live tick).
 %
 %   Because the worker polls commands every frame, an online advance criterion
 %   (e.g. mabr.stim.advance.corr_threshold) can stop a run early the moment a
@@ -214,9 +216,11 @@ classdef AcqController < handle
         % work in that tick comes straight off the live view's frame rate.
         % Moving it here buys the trace back.
         AuxTimer
-        % What the fast tick leaves for the slow one: the sweeps it has
-        % already built, so the aux tick re-derives nothing. Assignment is
-        % copy-on-write, so stashing these costs a reference, not an array.
+        % What the fast tick leaves for the slow one: [] when there is no
+        % sweep matrix in this process (a worker does the DSP, or no run),
+        % else a note that the in-process pipeline holds the run's sweeps --
+        % the aux tick asks it for them (Pipeline.sweeps) when it builds the
+        % snapshot, so the copy is made at the aux rate, not the live one.
         PendingLive = []
         CurMetrics (1,1) struct = struct('numSweeps',0,'numArtifacts',0, ...
                                          'numClean',0,'corr',0);
@@ -1121,7 +1125,7 @@ classdef AcqController < handle
                 stats = obj.Pipeline.step(obj.Engine.RingBuffer);
                 obj.Timing.stats(toc(tStats),'local');
                 if isempty(stats), return; end
-                S = obj.Pipeline.sweeps();
+                S = true;     % the sweeps are in this process (see below)
             end
             R = stats.Corr;
 
@@ -1143,16 +1147,18 @@ classdef AcqController < handle
                 obj.Timing.render(toc(tRender),obj.LivePlot.RenderTiming);
             end
 
-            % The sweeps themselves, left where the aux tick can find them
-            % for liveSnapshot (copy-on-write: a reference, not a copy). With
-            % a worker doing the DSP there is no sweep matrix in this process
-            % to leave, and liveSnapshot stays empty -- the metrics worker
-            % serves the analysis windows then.
+            % Where the aux tick finds the sweeps for liveSnapshot: this
+            % process's pipeline, which it asks itself -- the sweep matrix is
+            % a copy of the run so far, built only when a snapshot is taken
+            % (at most twice a second), never on this 20 Hz path. With a
+            % worker doing the DSP there is no sweep matrix in this process,
+            % and liveSnapshot stays empty -- the metrics worker serves the
+            % analysis windows then.
             if isempty(S)
                 obj.PendingLive = [];
             else
-                obj.PendingLive = struct('Y',S.Y,'t',S.t,'bad',S.bad, ...
-                    'n',S.n,'metrics',obj.CurMetrics,'state',obj.State);
+                obj.PendingLive = struct('fromPipeline',true, ...
+                    'metrics',obj.CurMetrics,'state',obj.State);
             end
 
             % Online advance: stop the run early if the criterion is met. Only
@@ -1219,11 +1225,12 @@ classdef AcqController < handle
             % the sweeps are in this process; a worker-served run leaves none.
             P = obj.PendingLive;
             if ~isempty(P)
+                S = obj.Pipeline.sweeps();
                 obj.LiveSnap = struct('Run',obj.CurRun, ...
                     'SampleRate',obj.Config.ADCSampleRate, ...
-                    'Time',P.t,'Sweeps',P.Y, ...
-                    'StimIndex',obj.CurSeq(1:min(P.n,numel(obj.CurSeq))), ...
-                    'Bad',P.bad(:)','Stimuli',obj.CurStim,'Labels',{obj.CurLabels});
+                    'Time',S.t,'Sweeps',S.Y, ...
+                    'StimIndex',obj.CurSeq(1:min(S.n,numel(obj.CurSeq))), ...
+                    'Bad',S.bad(:)','Stimuli',obj.CurStim,'Labels',{obj.CurLabels});
             end
 
             % The tally and the Run panel ride this whichever process did
