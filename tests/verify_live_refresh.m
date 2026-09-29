@@ -8,15 +8,18 @@ function verify_live_refresh()
 %   LiveTimer for the trace and the advance criterion, and a slower AuxTimer
 %   (AuxPeriod, default 0.2 s) for everything else drawn from a running block.
 %
-%   Both are 'fixedSpacing', so a tick's period is measured from when the
-%   previous one RETURNS: work in the fast tick comes straight off the live
-%   view's frame rate. That is what this file guards. With the progress
-%   monitor and an online-analysis window attached, doing their work in the
-%   live tick took the realized refresh from ~13 Hz to ~1 Hz -- a regression
-%   invisible to every other verification, because every number it produced
-%   was still correct. Only the RATE was wrong.
+%   The live timer POLLS (AcqController.LivePoll, 10 ms) and draws a frame
+%   once LivePeriod (50 ms) has passed since the last one began, so a frame's
+%   own work no longer adds to the interval -- but work in it still comes
+%   straight off the frame rate once a frame outgrows the period. That is what
+%   this file guards. With the progress monitor and an online-analysis window
+%   attached, doing their work in the live tick took the realized refresh
+%   from ~13 Hz to ~1 Hz -- a regression invisible to every other
+%   verification, because every number it produced was still correct. Only
+%   the RATE was wrong.
 %
-%   Part A: the two timers exist, differ in period, and start/stop together.
+%   Part A: the two timers exist, differ in period, and start/stop together;
+%           the live one polls faster than it draws.
 %   Part B: AuxPeriod retunes the running timer rather than waiting for a run.
 %   Part C: with both low-priority viewers attached, a real (loopback) run
 %           serves them at AuxPeriod and NOT at the live tick's rate.
@@ -55,8 +58,15 @@ assert(aux(1).Period > live(1).Period, ...
 assert(strcmp(aux(1).BusyMode,'drop'), ...
     ['the aux timer must DROP a late tick rather than queue a backlog that ' ...
      'would later compete with the live view for the same single thread']);
-fprintf('  PASS Part A: live %g s / aux %g s, both drop-on-busy\n', ...
-    live(1).Period,aux(1).Period);
+% The live timer is a poll: it must ask more often than it draws, or a frame's
+% own work goes back onto the interval between frames. And it must drop, not
+% queue -- a queued backlog of polls is a burst of ticks after any stall.
+assert(abs(live(1).Period - ctrl.LivePoll) < 1e-9 && ctrl.LivePoll < ctrl.LivePeriod, ...
+    'the live timer should poll every %g s, faster than its %g s frame period (it runs at %g s)', ...
+    ctrl.LivePoll,ctrl.LivePeriod,live(1).Period);
+assert(strcmp(live(1).BusyMode,'drop'),'the live timer must drop a poll that lands on a busy tick');
+fprintf('  PASS Part A: live frames every %g s (polled every %g s) / aux %g s, both drop-on-busy\n', ...
+    ctrl.LivePeriod,live(1).Period,aux(1).Period);
 
 %% ---- Part B: AuxPeriod is retunable ------------------------------------
 % Deliberately not the default: assigning the value it already holds would
@@ -154,14 +164,17 @@ assert(auxRate <= 2/ctrl.AuxPeriod, ...
      'Hz) -- AuxPeriod is not governing the rate, so the low-priority work ' ...
      'looks like it is back in the ~%.0f Hz live tick (see ' ...
      'AcqController''s two timers)'], ...
-    auxRate,ctrl.AuxPeriod,1/ctrl.AuxPeriod,1/live(1).Period);
+    auxRate,ctrl.AuxPeriod,1/ctrl.AuxPeriod,1/ctrl.LivePeriod);
 
 if ns > 5
     fprintf('  (live view repainted %d times, ~%.1f Hz observed)\n', ...
         ns,1/median(diff(stamps(1:ns))));
 end
+if ~isempty(ctrl.LastLiveTiming)
+    fprintf('%s\n',ctrl.LastLiveTiming.Text);
+end
 fprintf(['  PASS Part C: aux served at %.1f Hz (AuxPeriod %g s) against a ' ...
-    '%.0f Hz live tick\n'],auxRate,ctrl.AuxPeriod,1/live(1).Period);
+    '%.0f Hz live view\n'],auxRate,ctrl.AuxPeriod,1/ctrl.LivePeriod);
 
 fprintf('== verify_live_refresh PASSED ==\n');
 end

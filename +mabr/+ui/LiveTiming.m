@@ -1,21 +1,29 @@
 classdef LiveTiming < handle
 % mabr.ui.LiveTiming  Where one run's live-view ticks spent their time.
 %
-%   mabr.ui.AcqController's LiveTimer runs 'fixedSpacing' at a 50 ms period,
-%   so the rate the live view actually redraws at is 1/(period + whatever the
-%   tick cost) -- and "whatever the tick cost" includes every other callback
-%   MATLAB chose to run inside it, since the render ends in a drawnow and a
-%   drawnow services the queue. A view that redraws at 1 Hz is therefore
-%   either doing ~1 s of its own work per tick or sharing the one GUI thread
-%   with something that is, and which of those it is decides the fix. This
-%   records enough of every tick to tell them apart, and says so once per run.
+%   mabr.ui.AcqController's LiveTimer polls every 10 ms and draws a frame once
+%   50 ms have passed since the last one BEGAN, so the rate the live view
+%   actually redraws at is 1/max(period, what a frame cost + a poll) -- and
+%   "what a frame cost" includes every other callback MATLAB chose to run
+%   inside it, since the render ends in a drawnow and a drawnow services the
+%   queue. A view that redraws at 1 Hz is therefore either doing ~1 s of its
+%   own work per frame or sharing the one GUI thread with something that is,
+%   and which of those it is decides the fix. This records enough of every
+%   frame to tell them apart, and says so once per run.
+%
+%   A tick here is a FRAME: a poll that finds no frame due is not recorded at
+%   all, and a due poll that finds nothing new to draw from is not a tick
+%   either (noData) -- its time is the next frame's wait.
 %
 %   Per tick it keeps:
 %       start / end     s since reset() -- so interval = diff(start) and the
-%                       GAP between ticks = start(k) - end(k-1). Under
-%                       fixedSpacing the gap is the period plus whatever ran on
-%                       the thread between ticks (other windows' timers, the
-%                       aux tick, queue callbacks).
+%                       GAP between ticks = start(k) - end(k-1): what was left
+%                       of the period, plus whatever ran on the thread between
+%                       ticks (other windows' timers, the aux tick, queue
+%                       callbacks), plus any wait for data.
+%       wait            how long the frame was due with nothing new to draw
+%                       from: no sweep yet, or nothing the DSP worker had
+%                       published since the last frame
 %       stats           fetching the statistics: Pipeline.step in-process, or
 %                       reading the DSP worker's publish
 %       render          inside LivePlot.updateStats, broken down from
@@ -32,19 +40,22 @@ classdef LiveTiming < handle
 %   measurable; it is always on.
 %
 %       T = mabr.ui.LiveTiming();
-%       T.reset(runId,0.05);
+%       T.reset(runId,0.05,0.01);
 %       T.beginTick(); ... T.stats(dt,'local'); ... T.render(dt,lp.RenderTiming);
-%       T.endTick(nSweeps);
+%       T.endTick(nSweeps);       % or T.noData() when there was nothing new
 %       S = T.summary();     % struct, with S.Text the human-readable report
 %
 % Daniel Stolzberg (c) 2026
 
     properties (SetAccess = private)
         RunId  (1,1) double = 0
-        Period (1,1) double = 0.05     % s, the live timer's configured period
+        Period (1,1) double = 0.05     % s, the frame period the view aims for
+        Poll   (1,1) double = 0.01     % s, how often the timer asks if one is due
         Source (1,:) char   = ''       % 'worker' / 'local', as of the last tick
         Start      = zeros(0,1)        % s since reset(), per tick
         End        = zeros(0,1)
+        Wait       = zeros(0,1)        % s due with nothing new, before the tick
+        EmptyPolls (1,1) double = 0    % due polls that found nothing new
         Stats      = zeros(0,1)        % s
         Render     = zeros(0,1)        % s, 0 on a tick that drew nothing
         Prep       = zeros(0,1)
@@ -66,19 +77,24 @@ classdef LiveTiming < handle
     properties (Access = private)
         T0  = uint64(0)
         Cur = struct()
+        WaitStart = NaN                % s, the first due poll that found nothing
     end
 
     methods
         function obj = LiveTiming()
-            obj.reset(0,0.05);
+            obj.reset(0,0.05,0.01);
         end
 
-        function reset(obj,runId,period)
+        function reset(obj,runId,period,poll)
             if nargin >= 2 && ~isempty(runId),  obj.RunId  = runId;  end
             if nargin >= 3 && ~isempty(period), obj.Period = period; end
+            if nargin >= 4 && ~isempty(poll),   obj.Poll   = poll;   end
             obj.Source    = '';
             obj.Start     = zeros(0,1);
             obj.End       = zeros(0,1);
+            obj.Wait      = zeros(0,1);
+            obj.EmptyPolls = 0;
+            obj.WaitStart = NaN;
             obj.Stats     = zeros(0,1);
             obj.Render    = zeros(0,1);
             obj.Prep      = zeros(0,1);
@@ -130,8 +146,14 @@ classdef LiveTiming < handle
             obj.InTick = false;
             c = obj.Cur;
             if nargin < 2 || isempty(nSweeps), nSweeps = NaN; end
+            w = 0;
+            if ~isnan(obj.WaitStart)
+                w = c.start - obj.WaitStart;
+                obj.WaitStart = NaN;
+            end
             obj.Start(end+1,1)     = c.start;
             obj.End(end+1,1)       = toc(obj.T0);
+            obj.Wait(end+1,1)      = w;
             obj.Stats(end+1,1)     = c.stats;
             obj.Render(end+1,1)    = c.render;
             obj.Prep(end+1,1)      = c.prep;
@@ -139,6 +161,16 @@ classdef LiveTiming < handle
             obj.Gutters(end+1,1)   = c.gutters;
             obj.Drew(end+1,1)      = c.drew;
             obj.NumSweeps(end+1,1) = nSweeps;
+        end
+
+        function noData(obj)
+            % Close a tick that found nothing new to draw from: it was a
+            % poll, not a frame, so it is not recorded -- the time from the
+            % first such poll to the next frame is that frame's wait.
+            if ~obj.InTick, return; end
+            obj.InTick     = false;
+            obj.EmptyPolls = obj.EmptyPolls + 1;
+            if isnan(obj.WaitStart), obj.WaitStart = obj.Cur.start; end
         end
 
         function aux(obj,dt)
@@ -161,6 +193,7 @@ classdef LiveTiming < handle
             if n > 0, S.Duration = obj.End(end) - obj.Start(1); end
             S.TargetHz   = 1/obj.Period;
             S.PeriodMs   = 1000*obj.Period;
+            S.PollMs     = 1000*obj.Poll;
             S.TickHz     = NaN;
             if n > 1, S.TickHz = (n-1)/(obj.Start(end) - obj.Start(1)); end
             S.RealizedHz = NaN;
@@ -172,6 +205,10 @@ classdef LiveTiming < handle
             S.FrameGap   = ms(diff(sd));                   % between DRAWN ticks
             S.Busy       = ms(obj.End - obj.Start);
             S.Gap        = ms(obj.Start(2:end) - obj.End(1:end-1));
+            % The first frame's wait runs from the start of the run to its
+            % first sweep, which is not the view being slow: left out.
+            S.Wait       = ms(obj.Wait(2:end));
+            S.EmptyPolls = obj.EmptyPolls;
             S.Stats      = ms(obj.Stats);
             S.Render     = ms(obj.Render(d));
             S.Prep       = ms(obj.Prep(d));
@@ -209,11 +246,17 @@ classdef LiveTiming < handle
             if S.RealizedHz >= 0.75*S.TargetHz
                 v = 'keeping up'; return
             end
-            busy   = S.Busy(1);
-            extra  = S.Gap(1) - S.PeriodMs;     % thread time between ticks
-            if strcmp(S.Source,'worker') && S.Drawn < 0.5*S.Ticks && busy < S.PeriodMs
-                v = ['ticks are cheap but most found nothing new: the DSP worker ' ...
-                     'is publishing slower than the live timer asks'];
+            busy  = S.Busy(1);
+            wait  = S.Wait(1);
+            if ~isfinite(wait), wait = 0; end
+            % The part of a frame interval that neither the period, the
+            % frame's own work (plus the poll that notices it is over), nor
+            % waiting for data accounts for: other work on the thread.
+            extra = S.Interval(1) - max(S.PeriodMs,busy + S.PollMs) - wait;
+            if wait > max(busy,extra)
+                v = ['frames were due with nothing new to draw from: the ' ...
+                     'statistics arrive slower than the live view asks (the DSP ' ...
+                     'worker''s publishes, or the sweeps themselves)'];
                 return
             end
             if extra > busy
@@ -245,11 +288,14 @@ classdef LiveTiming < handle
                 '(target %.0f Hz); %d ticks, %d drew, %.1f s, %g sweeps'], ...
                 S.RunId,S.Source,S.RealizedHz,S.TargetHz,S.Ticks,S.Drawn, ...
                 S.Duration,S.Sweeps);
-            L{end+1} = sprintf('  ms, median / p95 / max -- period %.0f ms, fixedSpacing',S.PeriodMs);
+            L{end+1} = sprintf(['  ms, median / p95 / max -- a frame every %.0f ms, ' ...
+                'polled every %.0f ms'],S.PeriodMs,S.PollMs);
             L{end+1} = sprintf('    between drawn frames  %s',f(S.FrameGap));
             L{end+1} = sprintf('    tick interval         %s',f(S.Interval));
             L{end+1} = sprintf('      busy in tick        %s',f(S.Busy));
-            L{end+1} = sprintf('      gap after tick      %s   (period + other work on the thread)',f(S.Gap));
+            L{end+1} = sprintf('      gap after tick      %s   (rest of the period + other work on the thread)',f(S.Gap));
+            L{end+1} = sprintf('      waiting for data    %s   (%d due polls found nothing new)', ...
+                f(S.Wait),S.EmptyPolls);
             L{end+1} = sprintf('    stats fetch           %s',f(S.Stats));
             L{end+1} = sprintf('    render (drawn ticks)  %s',f(S.Render));
             L{end+1} = sprintf('      prep                %s',f(S.Prep));

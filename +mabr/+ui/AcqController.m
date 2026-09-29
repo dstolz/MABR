@@ -14,10 +14,12 @@ classdef AcqController < handle
 %   decide. AuxTimer (~2 Hz, see
 %   AuxPeriod) does everything else drawn from a running block -- the snapshot
 %   the online analysis windows pull from, and the MetricsUpdated event the
-%   progress tally and the Run panel's readouts ride. Both timers are
-%   'fixedSpacing', so a tick's period is measured from when the previous one
-%   RETURNS: work in the fast tick comes straight off the live view's frame
-%   rate, which is the whole reason the slow half is not in it. Nothing on the
+%   progress tally and the Run panel's readouts ride. The aux timer is
+%   'fixedSpacing'; the live one polls every LivePoll (10 ms) and draws a
+%   frame once LivePeriod (50 ms) has passed since the last one BEGAN
+%   (on_live_tick) -- so it holds 20 Hz while a frame costs less than about
+%   40 ms, and work in it still comes straight off the frame rate beyond
+%   that, which is the whole reason the slow half is not in it. Nothing on the
 %   aux timer recomputes anything -- the fast tick leaves a note in
 %   PendingLive that a run's sweeps are in this process, and the aux tick
 %   asks the pipeline for them (a copy of the run so far, built at most twice
@@ -199,6 +201,16 @@ classdef AcqController < handle
         FinalizeTimeout (1,1) double {mustBePositive} = 30;
     end
 
+    properties (Constant)
+        % The live view's frame pacing (s; see on_live_tick). A frame is
+        % drawn once LivePeriod has passed since the last one began, and the
+        % timer asks every LivePoll whether one is due -- so a frame's own
+        % work no longer adds to the interval between frames, and the thread
+        % still has LivePoll to itself after every tick.
+        LivePeriod = 0.05
+        LivePoll   = 0.01
+    end
+
     properties (Access = private)
         LiveTimer
         % The second, slower timer. The live view is the one thing that has to
@@ -210,11 +222,11 @@ classdef AcqController < handle
         % not a sweep, and there is no reason for it to be recomputed twenty
         % times a second.
         %
-        % The two are split because LiveTimer runs 'fixedSpacing': the next
-        % tick starts Period AFTER the previous one returns, so the realized
-        % refresh rate is 1/(Period + work). Every millisecond of low-priority
-        % work in that tick comes straight off the live view's frame rate.
-        % Moving it here buys the trace back.
+        % The two are split because every millisecond of low-priority work in
+        % the live tick comes straight off the live view's frame rate: a
+        % frame is due LivePeriod after the last one began, so once a tick
+        % costs more than that (less the poll) it drags the whole view down
+        % with it. Moving the slow work here buys the trace back.
         AuxTimer
         % What the fast tick leaves for the slow one: [] when there is no
         % sweep matrix in this process (a worker does the DSP, or no run),
@@ -222,6 +234,11 @@ classdef AcqController < handle
         % the aux tick asks it for them (Pipeline.sweeps) when it builds the
         % snapshot, so the copy is made at the aux rate, not the live one.
         PendingLive = []
+        % Frame pacing (on_live_tick): when the last frame began, in seconds
+        % on LiveClock (a tic taken at construction). -Inf = the next poll
+        % draws.
+        LiveClock      = uint64(0)
+        LastFrameStart (1,1) double = -Inf
         CurMetrics (1,1) struct = struct('numSweeps',0,'numArtifacts',0, ...
                                          'numClean',0,'corr',0);
         BlockStart (1,:) char = '';
@@ -364,10 +381,23 @@ classdef AcqController < handle
                 end
             end
 
+            % A poll, not a frame clock: every LivePoll it asks whether a frame
+            % is due (on_live_tick), and one is once LivePeriod has passed
+            % since the last BEGAN. A 50 ms 'fixedSpacing' timer measured its
+            % period from the END of a tick, so the realized interval was
+            % 50 ms PLUS the frame -- ~70 ms, about 14 Hz, before anything else
+            % ran. Polling holds 20 Hz up to a ~40 ms frame and follows a
+            % slower frame by one poll, and 'fixedSpacing' at the poll still
+            % leaves the thread LivePoll to itself after EVERY tick, so the
+            % engine's states and a finalize reply always get their moment
+            % ('fixedRate' at 50 ms reaches 20 Hz too, but halves the rate
+            % the moment a frame outgrows the gap it would leave). A poll that
+            % draws nothing costs ~0.02 ms.
             obj.LiveTimer = timer('Tag','MABR_LiveView', ...
                 'ExecutionMode','fixedSpacing','BusyMode','drop', ...
-                'Period',0.05,'TasksToExecute',Inf, ...
+                'Period',obj.LivePoll,'TasksToExecute',Inf, ...
                 'TimerFcn',@(~,~) obj.on_live_tick());
+            obj.LiveClock = tic;
 
             % Ten times slower, and everything on it is something nobody
             % reads at 20 Hz anyway: a sweep tally, a metric across
@@ -722,7 +752,7 @@ classdef AcqController < handle
             % starts over here too, so nothing from the last run can be
             % attributed to this one.
             obj.RunSerial = obj.RunSerial + 1;
-            obj.Timing.reset(obj.CurRun,obj.LiveTimer.Period);
+            obj.Timing.reset(obj.CurRun,obj.LivePeriod,obj.LivePoll);
             info = struct('RunId',obj.RunSerial, ...
                 'StimIndex',obj.CurSeq,'Stimuli',obj.CurStim, ...
                 'Labels',{obj.CurLabels});
@@ -1084,19 +1114,39 @@ classdef AcqController < handle
 
         % --- Live view ------------------------------------------------------
         function on_live_tick(obj)
-            % Wrapped so a transient error never kills the live-view timer.
-            % The timing brackets the whole tick, errors included, so every
-            % tick is counted and the gaps between them are real.
+            % Every poll lands here; most of them only look at the clock. A
+            % frame is due LivePeriod after the last one BEGAN -- less half a
+            % poll, so a poll landing just short of it does not push the
+            % frame a whole poll later. A due poll that finds nothing new (no
+            % sweep yet, or nothing the DSP worker has published since) is
+            % not a frame: the next poll asks again, and LiveTiming counts the
+            % time spent waiting rather than logging it as a tick.
+            %
+            % Wrapped so a transient error never kills the live-view timer;
+            % a failing tick is paced like a frame, so a persistent error is
+            % reported at the frame rate rather than every poll. The timing
+            % brackets the whole frame, errors included, so every frame is
+            % counted and the gaps between them are real.
+            t0 = toc(obj.LiveClock);
+            if t0 - obj.LastFrameStart < obj.LivePeriod - obj.LivePoll/2
+                return
+            end
             obj.Timing.beginTick();
+            fresh = true;
             try
-                obj.live_tick_body();
+                fresh = obj.live_tick_body();
             catch me
                 mabr.log.vprintf(2,1,'Live tick error: %s',me.message);
             end
-            obj.Timing.endTick(obj.CurMetrics.numSweeps);
+            if fresh
+                obj.LastFrameStart = t0;
+                obj.Timing.endTick(obj.CurMetrics.numSweeps);
+            else
+                obj.Timing.noData();
+            end
         end
 
-        function live_tick_body(obj)
+        function fresh = live_tick_body(obj)
             % One step of the pipeline: extract whatever sweeps have completed,
             % filter and judge the new ones, correlate. [] until a sweep exists.
             % Everything below only reads what it produced -- the traces, the
@@ -1113,6 +1163,10 @@ classdef AcqController < handle
             % cares -- and a worker that dies mid-run is covered on the very
             % next tick, since the pipeline here has been following the run
             % too and re-extracts from the ring, which still holds it.
+            %
+            % fresh = false when there was nothing to draw from, which is
+            % what tells on_live_tick the poll was not a frame.
+            fresh  = false;
             tStats = tic;
             if obj.usingWorkerDSP()
                 [stats,changed] = obj.Compute.live();
@@ -1127,6 +1181,7 @@ classdef AcqController < handle
                 if isempty(stats), return; end
                 S = true;     % the sweeps are in this process (see below)
             end
+            fresh = true;
             R = stats.Corr;
 
             obj.CurMetrics.numSweeps    = stats.NumSweeps;
@@ -1720,8 +1775,12 @@ classdef AcqController < handle
 
         function start_timer(obj)
             % Both views start together; they only differ in how often they
-            % are served.
-            if strcmp(obj.LiveTimer.Running,'off'), start(obj.LiveTimer); end
+            % are served. The run's first frame is due as soon as there is a
+            % sweep to draw.
+            obj.LastFrameStart = -Inf;
+            if strcmp(obj.LiveTimer.Running,'off')
+                start(obj.LiveTimer);
+            end
             if ~isempty(obj.AuxTimer) && isvalid(obj.AuxTimer) ...
                     && strcmp(obj.AuxTimer.Running,'off')
                 start(obj.AuxTimer);
