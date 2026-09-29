@@ -231,9 +231,53 @@ assert(isscalar(liveOne),'the live condition did not merge onto its stimulus ID'
 assert(liveOne.NumSweeps == nSweeps/2, ...
     'the live condition reports %d sweeps, expected %d',liveOne.NumSweeps,nSweeps/2);
 
+% A refresh that only moves the numbers moves the lines: the same objects,
+% new YData -- not the axes cleared and every series, the legend and the menus
+% rebuilt, once a second per window.
+mp.updateLive(snap,stimuli);
+h0 = series_lines(mp.Axes);
+y0 = arrayfun(@(h) h.YData,h0,'UniformOutput',false);
+snap2 = snap; snap2.Sweeps = 1.5*snap.Sweeps;
+mp.updateLive(snap2,stimuli);
+h1 = series_lines(mp.Axes);
+assert(numel(h1) == numel(h0) && all(h1 == h0), ...
+    'a values-only refresh rebuilt the lines instead of moving them');
+assert(~isequal(arrayfun(@(h) h.YData,h1,'UniformOutput',false),y0), ...
+    'the lines kept their old values');
+mp.updateLive([],stimuli);                    % the live conditions go: a new layout
+h2 = series_lines(mp.Axes);
+assert(isempty(h2) || ~all(ismember(h2,h1)),'a changed layout must be redrawn');
+
 mp.updateLive([],stimuli);
 Vc = mp.values();
 assert(~any([Vc.Live]),'clearing the snapshot left live conditions behind');
+
+% evaluateJobs remembers a FINISHED condition's value (its sweeps change only
+% when a block is merged, which changes its counts) and never a live one's --
+% re-evaluating the session's finished conditions every pass made each pass
+% cost the whole session.
+calls = containers.Map({'n'},{0});
+fc  = @(ctx) count_call(calls,ctx);
+fin = [mabr.compute.ConditionStore.fromBlock(make_block(freqs(1),levels(1),nSweeps,Fs)), ...
+       mabr.compute.ConditionStore.fromBlock(make_block(freqs(1),levels(2),nSweeps,Fs))];
+lv  = mabr.compute.ConditionStore.fromLive(snap,stimuli);
+C   = [fin lv(1)];
+memo = containers.Map('KeyType','char','ValueType','double');
+job  = struct('Name','count','Fcn',fc,'Window',[],'Sig','test:count');
+v1 = mabr.compute.evaluateJobs(C,job,[],memo);
+assert(calls('n') == 3,'the first pass should evaluate all 3 conditions');
+v2 = mabr.compute.evaluateJobs(C,job,[],memo);
+assert(calls('n') == 4 && isequaln(v1,v2),'a second pass should evaluate the live one only');
+C(1).Sweeps = [C(1).Sweeps C(1).Sweeps]; C(1).NumTotal = 2*C(1).NumTotal;
+mabr.compute.evaluateJobs(C,job,[],memo);
+assert(calls('n') == 6,'a finished condition that gained sweeps must be evaluated again');
+mabr.compute.evaluateJobs(C,rmfield(job,'Sig'),[],memo);
+assert(calls('n') == 9,'a job with no signature is never remembered');
+% ...and under a budget, the live condition is reached first.
+slow = struct('Name','slow','Fcn',@(ctx) slow_metric(ctx),'Window',[],'Sig','');
+[~,~,done] = mabr.compute.evaluateJobs(C,slow,0.01);
+assert(done(1,end) && ~all(done),'the live condition should be evaluated before the finished ones');
+fprintf('  PASS: a values-only refresh moves the lines; finished conditions are evaluated once, live ones first\n');
 assert(isempty(hollow_lines(mp.Axes)),'a hollow marker outlived its run');
 fprintf('  PASS: live conditions appear hollow, override, and clear\n');
 
@@ -350,6 +394,18 @@ end
 
 
 % =====================================================================
+function v = count_call(m,ctx)
+% A metric that counts how often it is asked (a handle store, so the count
+% survives the call); the answer itself is just the sweep count.
+m('n') = m('n') + 1;
+v = size(ctx.Sweeps,2);
+end
+
+function v = slow_metric(ctx)
+pause(0.05);
+v = size(ctx.Sweeps,2);
+end
+
 function z = atanh_pairs(r)
 % The pre-tiling mean_pairwise_corr, verbatim from the point it had the
 % correlation matrix: every pair below the diagonal, exact zeros dropped,

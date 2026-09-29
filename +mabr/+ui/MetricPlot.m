@@ -158,6 +158,20 @@ classdef MetricPlot < handle
         Drawn     (1,1) logical = false      % something has been drawn at all
         DrawnNote (1,:) char = ''            % the WorkerNote it was drawn with
         WarnedMetric (1,:) char = ''         % last metric that threw, so it logs once
+        % Values of finished conditions, remembered across refreshes
+        % (mabr.compute.evaluateJobs) -- in-process, every refresh used to
+        % re-evaluate the metric over every finished condition of the
+        % session. CustomGen names each custom function adopted, so a
+        % replacement is never answered from its predecessor's values.
+        Memo = []
+        CustomGen (1,1) double = 0
+        % What the last full render drew as lines, so a refresh that only
+        % moved the numbers updates them in place (updateLines): the series
+        % and live-ring handles, and everything the drawing depended on
+        % besides the values (layoutKey).
+        SeriesLines = gobjects(1,0)
+        RingLines   = gobjects(1,0)
+        LastLayout  = []
     end
 
     methods
@@ -285,6 +299,7 @@ classdef MetricPlot < handle
             % Forget everything -- a fresh subject on the same window.
             obj.Blocks    = mabr.ui.MetricPlot.emptyStore();
             obj.LiveConds = mabr.ui.MetricPlot.emptyStore();
+            obj.Memo      = [];
             obj.refresh();
         end
 
@@ -312,6 +327,7 @@ classdef MetricPlot < handle
             assert(ok,'mabr:ui:MetricPlot:badMetric', ...
                 'That is not a valid online metric: %s',why);
             obj.CustomFcn = fcn;
+            obj.CustomGen = obj.CustomGen + 1;
             if nargin < 3 || isempty(name), name = func2str(fcn); end
             obj.CustomName = char(name);
             obj.Metric     = 'custom';
@@ -830,8 +846,14 @@ classdef MetricPlot < handle
             e = obj.metricEntry();
             V = struct('Key',{},'Label',{},'Params',{},'Value',{}, ...
                        'NumSweeps',{},'Live',{});
-            job = struct('Name',e.Name,'Fcn',e.Fcn,'Window',obj.Window);
-            [vals,errs] = mabr.compute.evaluateJobs(C,job);
+            if isempty(obj.Memo)
+                obj.Memo = containers.Map('KeyType','char','ValueType','double');
+            end
+            if strcmp(e.Key,'custom'), sig = sprintf('custom.%d',obj.CustomGen);
+            else,                      sig = ['catalog:' e.Key];
+            end
+            job = struct('Name',e.Name,'Fcn',e.Fcn,'Window',obj.Window,'Sig',sig);
+            [vals,errs] = mabr.compute.evaluateJobs(C,job,[],obj.Memo);
             % A metric that throws costs its own point, not the window, and
             % says so ONCE per metric rather than on every refresh -- this runs
             % every second, and a log line per tick is a log nobody reads.
@@ -873,11 +895,35 @@ classdef MetricPlot < handle
             obj.Drawn      = true;
             obj.Note = '';
 
+            e = obj.metricEntry();
+            layout = [];
+            if ~isempty(V)
+                names = mabr.ui.MetricPlot.paramNames(V);
+                [xname,sname] = obj.axesChoice(names);
+                ptype = obj.resolvePlotType(xname,sname);
+                % Only the numbers moved -- the same conditions, axes, style
+                % and notes -- is every refresh of a run in progress. Then
+                % the lines already drawn are moved to them, instead of
+                % clearing the axes and rebuilding every series, the legend
+                % and the menus once a second per window.
+                layout = obj.layoutKey(V,xname,sname,ptype,e);
+                if ~force && ~isempty(layout) && isequal(layout,obj.LastLayout) ...
+                        && obj.updateLines(V,xname,sname,e)
+                    obj.noteHiddenParams(names,xname,sname,ptype);
+                    s = ax.Subtitle;
+                    if isgraphics(s), s.String = obj.subtitleText(V); end
+                    obj.setStatus(obj.statusText());
+                    return
+                end
+            end
+
             cla(ax,'reset');
             set(ax,'NextPlot','add','Box','on');
             obj.applyTheme();
+            obj.SeriesLines = gobjects(1,0);
+            obj.RingLines   = gobjects(1,0);
+            obj.LastLayout  = [];
 
-            e = obj.metricEntry();
             if isempty(V)
                 obj.dropColorbar();
                 obj.emptyMessage(e);
@@ -885,10 +931,6 @@ classdef MetricPlot < handle
                 obj.setStatus('waiting for the first sweeps');
                 return
             end
-
-            names = mabr.ui.MetricPlot.paramNames(V);
-            [xname,sname] = obj.axesChoice(names);
-            ptype = obj.resolvePlotType(xname,sname);
 
             switch ptype
                 case {'line','scatter'}
@@ -910,6 +952,49 @@ classdef MetricPlot < handle
             obj.decorate(V,xname,sname,e,ptype);
             obj.attachMenus();
             obj.setStatus(obj.statusText());
+            obj.LastLayout = layout;         % [] unless updateLines can take it from here
+        end
+
+        function k = layoutKey(obj,V,xname,sname,ptype,e)
+            % Everything a LINE drawing depends on except the values: which
+            % conditions (and so the x positions and the series), which of
+            % them are live (the rings), the axes, the metric, the style and
+            % theme, and the caveats in the subtitle. [] where there is no
+            % fast path -- bars and maps, and value labels, which move with
+            % their values.
+            k = [];
+            if ~any(strcmp(ptype,{'line','scatter'})) || obj.Style.ShowValues, return; end
+            k = struct('ptype',ptype,'x',xname,'s',sname,'keys',{{V.Key}}, ...
+                'params',{{V.Params}},'live',logical([V.Live]), ...
+                'metric',e.Name,'units',e.Units,'style',obj.Style, ...
+                'note',obj.Note,'worker',obj.WorkerNote);
+        end
+
+        function ok = updateLines(obj,V,xname,sname,e)
+            % Move the lines drawLines drew to new values, in place. False when
+            % the handles no longer match what is to be drawn -- the caller
+            % then redraws from scratch.
+            ok = false;
+            h = obj.SeriesLines;
+            r = obj.RingLines;
+            if isempty(h) || numel(r) ~= numel(h) || ~all(isgraphics(h)), return; end
+            x    = obj.xValues(V,xname);
+            v    = [V.Value];
+            live = logical([V.Live]);
+            [~,sidx,slabels] = obj.seriesLevels(V,sname,e);
+            kk = 0;
+            for k = 1:numel(slabels)
+                m = sidx == k;
+                if ~any(m), continue; end
+                kk = kk + 1;
+                if kk > numel(h), return; end
+                [~,ord] = sort(x(m));
+                vs = v(m);    vs = vs(ord);
+                ls = live(m); ls = ls(ord);
+                set(h(kk),'YData',vs);
+                if any(ls) && isgraphics(r(kk)), set(r(kk),'YData',vs(ls)); end
+            end
+            ok = kk == numel(h);
         end
 
         function [xname,sname] = axesChoice(obj,names)
@@ -989,6 +1074,7 @@ classdef MetricPlot < handle
             st  = obj.Style;
 
             h = gobjects(1,0);
+            rings = gobjects(1,0);           % one per series, a placeholder where none
             for k = 1:numel(slabels)
                 m = sidx == k;
                 if ~any(m), continue; end
@@ -1006,14 +1092,18 @@ classdef MetricPlot < handle
                 % In-progress conditions get a hollow ring over the filled
                 % marker. Drawn as a legend-less overlay so the series keeps
                 % one handle, one colour, and one legend entry.
+                ring = gobjects(1);
                 if any(ls)
-                    plot(ax,xs(ls),vs(ls),'LineStyle','none', ...
+                    ring = plot(ax,xs(ls),vs(ls),'LineStyle','none', ...
                         'Marker',mabr.ui.MetricPlot.ringMarker(st.Marker), ...
                         'MarkerSize',st.MarkerSize+3, ...
                         'MarkerEdgeColor',col(k,:),'MarkerFaceColor','none', ...
                         'LineWidth',st.LineWidth,'HandleVisibility','off');
                 end
+                rings(end+1) = ring; %#ok<AGROW>
             end
+            obj.SeriesLines = h;
+            obj.RingLines   = rings;
             obj.applyValueLabels(x,v);
             obj.applyTicks(xname,xticks_,xlabels);
             obj.applyLegend(h,sname);

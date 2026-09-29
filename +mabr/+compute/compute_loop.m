@@ -81,7 +81,12 @@ pipe       = [];                % mabr.compute.Pipeline, once configured
 run        = [];                % the RunStart payload while a run streams
 store      = mabr.compute.ConditionStore.empty();
 custom     = cell(1,cfg.MaxComputeJobs);
+customGen  = zeros(1,cfg.MaxComputeJobs);   % bumped whenever a slot's function is replaced
 catalog    = mabr.metrics.online.catalog();
+% Values of finished conditions, remembered across cycles (evaluateJobs):
+% re-evaluating the whole session's finished conditions every cycle made a
+% cycle cost the session so far.
+memo       = containers.Map('KeyType','char','ValueType','double');
 rosterId   = 0;
 rosterKeys = {};
 periods    = [0.05 1];
@@ -160,11 +165,13 @@ try
 
                 case mabr.compute.Cmd.ClearConditions
                     store = mabr.compute.ConditionStore.empty();
+                    remove(memo,keys(memo));
 
                 case mabr.compute.Cmd.SetCustomMetric
                     d = msg.data;
                     if d.Slot >= 1 && d.Slot <= numel(custom)
                         custom{d.Slot} = d.Fcn;
+                        customGen(d.Slot) = customGen(d.Slot) + 1;
                         mabr.log.vprintf(1,'Compute worker (%s): custom metric %s in slot %d', ...
                             role,func2str(d.Fcn),d.Slot);
                     end
@@ -196,7 +203,7 @@ try
             out.publish(stats);
         else
             [rosterId,rosterKeys] = metric_cycle(pipe,rb,run,store,jobs,custom, ...
-                catalog,out,resultQueue,rosterId,rosterKeys,reqSeq,period,cfg);
+                customGen,catalog,out,resultQueue,rosterId,rosterKeys,reqSeq,period,cfg,memo);
         end
     end
 
@@ -212,7 +219,7 @@ end
 
 % =====================================================================
 function [rosterId,rosterKeys] = metric_cycle(pipe,rb,run,store,jobs,custom, ...
-    catalog,out,resultQueue,rosterId,rosterKeys,reqSeq,budget,cfg)
+    customGen,catalog,out,resultQueue,rosterId,rosterKeys,reqSeq,budget,cfg,memo)
 % One pass of the metrics worker: the run in progress as live conditions
 % over the finalized table, then every requested metric over the result.
 L = mabr.compute.ConditionStore.empty();
@@ -239,12 +246,12 @@ if ~isequal(keys,rosterKeys)
 end
 
 nSlots = cfg.MaxComputeJobs;
-J = build_jobs(jobs,custom,catalog,nSlots);
+J = build_jobs(jobs,custom,customGen,catalog,nSlots);
 active = find(~cellfun(@isempty,{J.Fcn}));
 vals   = nan(nSlots,numel(C));
 incomplete = 0;
 if ~isempty(active) && ~isempty(C)
-    [v,~,done] = mabr.compute.evaluateJobs(C,J(active),budget);
+    [v,~,done] = mabr.compute.evaluateJobs(C,J(active),budget,memo);
     vals(active,:) = v;
     late = active(any(~done,2));
     incomplete = sum(2.^(late-1));
@@ -256,10 +263,13 @@ out.publish(struct('RosterId',rosterId,'Values',vals,'ReqSeq',reqSeq, ...
 end
 
 
-function J = build_jobs(jobs,custom,catalog,nSlots)
+function J = build_jobs(jobs,custom,customGen,catalog,nSlots)
 % The request table as evaluateJobs jobs, one per slot; an inactive slot
-% (or one whose function is missing) has an empty Fcn.
-J = repmat(struct('Name','','Fcn',[],'Window',[]),1,nSlots);
+% (or one whose function is missing) has an empty Fcn. Sig names the metric
+% for evaluateJobs' memo: a catalog entry by name, a custom function by its
+% slot and the generation of that slot's function, so one replaced by
+% another -- even with the same text -- is never answered from the last.
+J = repmat(struct('Name','','Fcn',[],'Window',[],'Sig',''),1,nSlots);
 for i = 1:min(nSlots,size(jobs,1))
     row = jobs(i,:);
     if row(1) <= 0, continue; end
@@ -268,9 +278,11 @@ for i = 1:min(nSlots,size(jobs,1))
         if isempty(custom{i}), continue; end
         J(i).Fcn  = custom{i};
         J(i).Name = sprintf('custom metric (slot %d)',i);
+        J(i).Sig  = sprintf('custom%d.%d',i,customGen(i));
     elseif idx >= 1 && idx <= numel(catalog)
         J(i).Fcn  = catalog(idx).Fcn;
         J(i).Name = catalog(idx).Name;
+        J(i).Sig  = ['catalog:' catalog(idx).Key];
     else
         continue
     end
