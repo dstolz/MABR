@@ -20,6 +20,10 @@ function run_all_verifications()
 %                                  demand are bit-identical to a whole-matrix
 %                                  render, and the worker streams from one
 %       verify_engine_loopback   - acquisition engine (ring buffer, Pause/Stop/Kill)
+%       verify_device_reuse      - the worker keeps its audio device open and
+%                                  clocked between runs, rebuilding it only on
+%                                  a changed setting (a real worker over a
+%                                  stand-in device, since Test Mode opens none)
 %       verify_data_roundtrip    - .abr writer satisfies the offline pipeline
 %       verify_legacy_import     - legacy .abr import shim
 %       verify_analysis          - the offline analysis classes
@@ -149,7 +153,7 @@ function run_all_verifications()
 % Daniel Stolzberg (c) 2026
 
 tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_plan, ...
-         @verify_engine_loopback, @verify_data_roundtrip, ...
+         @verify_engine_loopback, @verify_device_reuse, @verify_data_roundtrip, ...
          @verify_legacy_import,  @verify_analysis, ...
          @verify_online_advance, ...
          @verify_custom_advance, @verify_custom_strategy, ...

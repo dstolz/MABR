@@ -36,6 +36,11 @@ function worker_loop(rootPath,resultQueue,testing)
 %                 StimulationOnly   (optional) true = open an output-only
 %                                   audioDeviceWriter and record nothing
 %                 Device            (optional) ASIO device name
+%                 IdleClockSeconds  (optional, default 10) how long a device
+%                                   kept open after a run is kept clocked
+%                                   before its stream is stopped (idle_frame)
+%                 DeviceFactory     (optional, TESTS ONLY) constructor to use
+%                                   in place of the device class
 %       worker -> client : struct('type',...) — see send_* helpers below.
 %           'streamed' (once per block, before its Completed state):
 %                 samples      play-matrix samples actually emitted
@@ -47,6 +52,11 @@ function worker_loop(rootPath,resultQueue,testing)
 %                 timing       where the frame loop's time went -- percentiles
 %                              per stage and the slowest frames with their
 %                              ring positions (see summarize_frames)
+%                 deviceOpens  devices this worker has constructed so far
+%                              (the same number from run to run = reused)
+%                 idleFrames   silent frames the device this block streamed
+%                              on was kept clocked with before it (0 for a
+%                              device opened for this block)
 %                 (mabr.acq.Engine.LastStream holds it client-side)
 %
 %   testing (logical) selects TEST MODE, which the GUI names and documents as
@@ -87,7 +97,12 @@ send(resultQueue,struct('type','handshake', ...
     'cmdQueue',cmdQueue,'pid',feature('getpid')));
 
 apr = [];
+aprSig = '';     % what apr was built for (see prepare_device): reused while unchanged
+nOpened = 0;     % devices constructed this session -- reported with every block
 prepared = [];   % last Prep payload
+% A device kept open between runs is kept CLOCKED: see idle_frame.
+idle = struct('clocking',false,'since',tic,'limit',10,'duplex',true, ...
+              'frames',0,'under',0,'over',0);
 
 try
     rb = mabr.acq.RingBuffer(cfg,true);   % writable
@@ -112,19 +127,49 @@ try
 
     running = true;
     while running
-        % Block (with a short timeout) waiting for the next command.
-        [msg,ok] = poll(cmdQueue,0.1);
+        if idle.clocking
+            % An open device between runs: one frame of silence (which is
+            % also what paces this loop), then a look at the queue without
+            % waiting. After idle.limit seconds with nothing to do, stop the
+            % stream -- the next run then starts it again, which is what
+            % every run used to pay.
+            [idle,apr] = idle_frame(apr,idle,cfg.frameLength);
+            [msg,ok] = poll(cmdQueue,0);
+            if ~ok && idle.clocking && toc(idle.since) > idle.limit
+                try, release(apr); end %#ok<TRYNC>
+                idle.clocking = false;
+                mabr.log.vprintf(2,'Audio device idle for %g s: stream stopped (%d idle frames).', ...
+                    idle.limit,idle.frames);
+            end
+        else
+            % Block (with a short timeout) waiting for the next command.
+            [msg,ok] = poll(cmdQueue,0.1);
+        end
         if ~ok, continue; end
 
         switch msg.cmd
             case mabr.acq.Cmd.Prep
                 prepared = msg.data;
-                apr = prepare_device(apr,prepared,testing);
+                [apr,aprSig,opened] = prepare_device(apr,aprSig,prepared,testing);
+                if opened
+                    % A new device starts its stream at the first frame, and
+                    % what the old one's idle stream went through is not
+                    % this device's history.
+                    nOpened = nOpened + 1;
+                    idle.clocking = false;
+                    idle.frames = 0; idle.under = 0; idle.over = 0;
+                end
+                idle.limit  = getdef(prepared,'IdleClockSeconds',10);
+                idle.duplex = ~getdef(prepared,'StimulationOnly',false);
                 % Every run writes the ring from its start, so these are
                 % the pages it is about to write: touch them here, between
                 % runs, rather than one at a time inside the frame loop
                 % (resident pages cost microseconds; see the start-up call).
                 rb.prefault(1,mabr.stim.PlayPlan.fromSpec(prepared).N);
+                % The Prep work above was time the idle stream went unfed;
+                % one more frame now takes whatever the device has to say
+                % about it, so it is not reported as the run's first frame.
+                if idle.clocking, [idle,apr] = idle_frame(apr,idle,cfg.frameLength); end
                 send_state(resultQueue,mabr.acq.State.Ready);
 
             case mabr.acq.Cmd.Run
@@ -133,7 +178,24 @@ try
                         'Received Run before Prep.');
                     continue
                 end
+                % What the idle stream went through since the last run is
+                % the stream's business, not this run's.
+                idleFrames = idle.frames;
+                if idle.under > 0 || idle.over > 0
+                    mabr.log.vprintf(2,'Between runs (%d idle frames): %d samples of underrun, %d of overrun.', ...
+                        idle.frames,idle.under,idle.over);
+                end
+                idle.frames = 0; idle.under = 0; idle.over = 0;
                 [reason,nStreamed,xr,timing] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
+                % Keep the device clocked until the next run, so that run
+                % starts on the next frame of a stream already running
+                % rather than paying the device's start-up (a quarter to
+                % half a second a run on the reference rig) -- and with the
+                % same round-trip latency as this one.
+                if ~isempty(apr) && ~strcmp(reason,'killed')
+                    idle.clocking = true;
+                    idle.since    = tic;
+                end
                 % How much of the play matrix actually went out, why the
                 % block ended, and what the device said about it (underruns
                 % and overruns, with where in the block each was reported).
@@ -149,7 +211,7 @@ try
                     'samples',nStreamed,'reason',reason, ...
                     'underruns',xr.underruns,'overruns',xr.overruns, ...
                     'underrunAt',xr.underrunAt,'overrunAt',xr.overrunAt, ...
-                    'timing',timing));
+                    'timing',timing,'deviceOpens',nOpened,'idleFrames',idleFrames));
                 if strcmp(reason,'killed')
                     running = false;
                 else
@@ -175,6 +237,8 @@ try
                     try, release(apr); end %#ok<TRYNC>
                     apr = [];
                 end
+                aprSig = '';
+                idle.clocking = false;
                 prepared = [];
                 mabr.log.vprintf(1,'Worker released the audio device.');
                 send_state(resultQueue,mabr.acq.State.Idle);
@@ -452,7 +516,7 @@ end
 
 
 % =====================================================================
-function apr = prepare_device(apr,spec,testing)
+function [apr,sig,opened] = prepare_device(apr,sig,spec,testing)
 % Build/refresh the audio device for a prepared block. Three modes, in
 % precedence order:
 %
@@ -464,14 +528,21 @@ function apr = prepare_device(apr,spec,testing)
 %                    the mode also runs on hardware with no input channels.
 %   otherwise        the full-duplex audioPlayerRecorder
 %
+% The device is REUSED while nothing it was built from has changed -- `sig`
+% is the constructor and every argument it was given -- and a device kept
+% between runs is kept clocked (idle_frame), so the next run starts on the
+% next frame of a stream already running. Every Prep used to release the
+% device and build a new one, and the new one paid the driver's start-up on
+% the run's first frame. Change the mode, the device, the rate or a channel
+% and it is rebuilt as before. `opened` says which happened.
+%
 % release() works for both device classes, so switching modes between runs
 % needs nothing special here.
+opened = false;
 if testing
-    apr = [];
+    apr = []; sig = '';
     return
 end
-
-if ~isempty(apr) && isvalid(apr), release(apr); end
 
 player   = getdef(spec,'PlayerChannels',  [1 2]);
 recorder = getdef(spec,'RecorderChannels',[1 2]);
@@ -499,14 +570,60 @@ if isfield(spec,'Device') && ~isempty(spec.Device)
     args = [args, {'Device',spec.Device}];
 end
 
+% The class to build: the real device, or -- for tests only; nothing on a
+% rig sets it -- a stand-in with the same calling convention
+% (mabrtest.FakeAudioDevice), which is how the suite, run in Test Mode where
+% no device is opened at all, can still see a device being kept.
+ctor = getdef(spec,'DeviceFactory',[]);
+if isempty(ctor)
+    if stimOnly, ctor = @audioDeviceWriter; else, ctor = @audioPlayerRecorder; end
+end
+
+newSig = [func2str(ctor) '|' jsonencode(args)];
+if ~isempty(apr) && isvalid(apr) && strcmp(newSig,sig)
+    return                            % the device this run needs is the one open
+end
+if ~isempty(apr) && isvalid(apr), release(apr); end
+
+apr    = ctor(args{:});
+sig    = newSig;
+opened = true;
 if stimOnly
-    apr = audioDeviceWriter(args{:});
     mabr.log.vprintf(1,['Opened an OUTPUT-ONLY device (stimulation only): ' ...
         'play channels [%d %d], nothing recorded.'],player);
 else
-    apr = audioPlayerRecorder(args{:});
     mabr.log.vprintf(1,'Opened a full-duplex device: play [%d %d], record [%d %d].', ...
         player,recorder);
+end
+end
+
+
+% =====================================================================
+function [idle,apr] = idle_frame(apr,idle,fl)
+% One frame of silence into a device kept open between runs (see the main
+% loop). Keeping the stream running is what lets the next run start on the
+% next frame, without the device's start-up and at the same round-trip
+% latency as the last. The recorded input is discarded, and what the device
+% reports goes into idle's own tallies, never into a run's. A device that
+% fails here is released and dropped, so the next Prep builds a fresh one
+% rather than the error ending the worker.
+silence = zeros(fl,2,'single');
+try
+    if idle.duplex
+        [~,nU,nO] = apr(silence);
+    else
+        nU = apr(silence);
+        nO = 0;
+    end
+    idle.frames = idle.frames + 1;
+    idle.under  = idle.under + double(nU);
+    idle.over   = idle.over + double(nO);
+catch me
+    mabr.log.vprintf(0,1,['The audio device failed while idle between runs (%s); ' ...
+        'it will be opened again for the next run.'],me.message);
+    try, release(apr); end %#ok<TRYNC>
+    apr = [];
+    idle.clocking = false;
 end
 end
 

@@ -64,6 +64,11 @@ classdef Engine < handle
         %                percentiles and the slowest frames with their ring
         %                positions (mabr.acq.worker_loop's summarize_frames);
         %                [] until a block has streamed
+        %   .deviceOpens devices the worker has constructed so far: the same
+        %                number from one block to the next means the device
+        %                was kept open (and clocked) between them
+        %   .idleFrames  silent frames the device this block streamed on was
+        %                clocked with before it (0 for one opened for it)
         % Cleared at each prep. In stimulation-only mode nothing comes back
         % through the ring buffer, so this is the only record of how far
         % through a run that was stopped early the presentation actually got
@@ -72,7 +77,7 @@ classdef Engine < handle
         % cause (mabr.ui.AcqController.alignmentCheck).
         LastStream (1,1) struct = struct('samples',0,'reason','', ...
             'underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0), ...
-            'timing',[])
+            'timing',[],'deviceOpens',0,'idleFrames',0)
     end
 
     properties (Dependent)
@@ -205,7 +210,7 @@ classdef Engine < handle
             % this block's.
             obj.LastStream = struct('samples',0,'reason','', ...
                 'underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0), ...
-                'timing',[]);
+                'timing',[],'deviceOpens',0,'idleFrames',0);
             obj.send_cmd(mabr.acq.Cmd.Prep,blockSpec);
         end
 
@@ -266,13 +271,17 @@ classdef Engine < handle
                     % BlockCompleted, so a listener on that event can read it.
                     timing = [];
                     if isfield(msg,'timing'), timing = msg.timing; end
+                    opens = 0; idleF = 0;
+                    if isfield(msg,'deviceOpens'), opens = double(msg.deviceOpens); end
+                    if isfield(msg,'idleFrames'),  idleF = double(msg.idleFrames);  end
                     obj.LastStream = struct('samples',double(msg.samples), ...
                                             'reason',char(msg.reason), ...
                                             'underruns',double(msg.underruns), ...
                                             'overruns',double(msg.overruns), ...
                                             'underrunAt',double(msg.underrunAt(:)'), ...
                                             'overrunAt',double(msg.overrunAt(:)'), ...
-                                            'timing',timing);
+                                            'timing',timing, ...
+                                            'deviceOpens',opens,'idleFrames',idleF);
 
                 case 'state'
                     prev = obj.State;
