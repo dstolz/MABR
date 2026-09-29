@@ -163,6 +163,7 @@ classdef App < handle
         RecentConfigsMenu
         SettingsMenu
         AudioMenuItem
+        StimgenMenuItem
         CalMenuItem
         ComputeMenuItem
         PoolMenuItem
@@ -191,6 +192,10 @@ classdef App < handle
         % can turn into "Adopt bank" and pull the current bank back out; see
         % onDesignStimuli.
         Designer
+        % The stimgen tools launcher (mabr.ui.StimgenLauncher), while one is
+        % open. Held so the menu item raises it rather than opening a second,
+        % and so the app can close it with itself.
+        Launcher
         StrategyDrop
         RepsField
         RepsButton
@@ -374,6 +379,7 @@ classdef App < handle
             try, delete(app.StimViewer); end %#ok<TRYNC>
             try, delete(app.ProgressMon); end %#ok<TRYNC>
             try, delete(app.TestRunner); end %#ok<TRYNC>
+            try, delete(app.Launcher);   end %#ok<TRYNC>
             try, delete(app.UIFigure);   end %#ok<TRYNC>
             % Last, and only once every worker above has been killed and
             % waited for -- mabr.shutdownPool leaves a busy pool alone, and
@@ -475,6 +481,16 @@ classdef App < handle
                 'MenuSelectedFcn',@(~,~) app.onAudioSettings());
             app.CalMenuItem = uimenu(app.SettingsMenu,'Text','Calibration…', ...
                 'MenuSelectedFcn',@(~,~) app.onCalibration());
+            % Not a config control: the launcher itself touches nothing. The
+            % tools it opens that DO need the device (calibration, spot check)
+            % are refused by mabr.stim.CalibrationAdapter while a schedule holds
+            % it, and its Audio settings button is refused by
+            % applyAudioFromLauncher for the same reason the Audio menu item
+            % locks.
+            app.StimgenMenuItem = uimenu(app.SettingsMenu,'Text','stimgen Tools…', ...
+                'Tooltip',['Open the stimgen designer, calibration, spot check and stimulus ' ...
+                           'inspector on this rig.'], ...
+                'MenuSelectedFcn',@(~,~) app.onStimgenTools());
             % A preference rather than a live switch: it decides how big the
             % parallel pool is made, and a pool cannot be resized once the
             % acquisition worker is on it (see mabr.pool), so it takes effect
@@ -1224,6 +1240,9 @@ classdef App < handle
             cfg.Artifacts = app.Artifacts.toStruct();
             cfg.Filters   = app.Filters.toStruct();
             cfg.Audio     = app.Audio.toStruct();
+            % The stimgen tools' rig -- which hardware the tools measure through
+            % and which calibration file they load -- is part of the protocol.
+            cfg.StimgenTools = mabr.ui.StimgenLauncher.configStruct();
 
             % The rest of what a session IS, beyond what it plays: which
             % windows come up, how they are arranged, and how the two plotting
@@ -1356,6 +1375,14 @@ classdef App < handle
                 app.Filters = mabr.FilterPolicy.fromStruct(cfg.Filters);
                 app.syncFilterFields();
                 app.applyFilters();
+            end
+            if isfield(cfg,'StimgenTools')
+                % Into the pref, and into the launcher if it is up (which
+                % reloads the calibration file it now names).
+                mabr.ui.StimgenLauncher.saveConfigStruct(cfg.StimgenTools);
+                if ~isempty(app.Launcher) && isvalid(app.Launcher)
+                    app.Launcher.applyStruct(cfg.StimgenTools);
+                end
             end
             if isfield(cfg,'Views')
                 app.Views = mabr.ViewPolicy.fromStruct(cfg.Views);
@@ -2521,6 +2548,41 @@ classdef App < handle
             catch me
                 app.setStatus(['Calibration failed to open: ' me.message]);
             end
+        end
+
+        % --- stimgen tools ----------------------------------------------------
+        % One window for every stimgen GUI, opened on THIS rig: it reads the
+        % app's own AudioSettings (not a second copy) and applies what its
+        % audio dialog commits through applyAudioSettings, so the device,
+        % rate and mic input the tools are told are the ones the rest of the
+        % window is running on.
+        function onStimgenTools(app)
+            [ok,why] = mabr.stim.stimgenAvailable();
+            if ~ok, app.setStatus(why); return; end
+            try
+                if isempty(app.Launcher) || ~isvalid(app.Launcher) || ~app.Launcher.isOpen()
+                    app.Launcher = mabr.ui.StimgenLauncher( ...
+                        AudioFcn=@() app.Audio, ...
+                        AudioApplyFcn=@(s) app.applyAudioFromLauncher(s), ...
+                        ControllerFcn=@() app.Controller);
+                end
+                app.Launcher.show();
+                app.setStatus('stimgen tools open — each tool is opened on the rig shown there.');
+            catch me
+                app.setStatus(['stimgen tools failed to open: ' me.message]);
+            end
+        end
+
+        function applyAudioFromLauncher(app,s)
+            % Same rule as the Audio menu item, which configControls locks
+            % for the duration of a schedule: the worker's device is already
+            % open on whatever Start handed it. Thrown, not merely reported,
+            % so the dialog leaves the edit uncommitted.
+            if strcmp(app.AudioMenuItem.Enable,'off')
+                error('mabr:ui:App:audioLocked', ...
+                    'Audio settings are locked while a schedule is running.');
+            end
+            app.applyAudioSettings(s);
         end
 
         % --- Display filtering ----------------------------------------------

@@ -116,6 +116,14 @@ function run_all_verifications()
 %       verify_test_runner       - the window that runs this list
 %                                  (mabr.ui.TestRunner): discovery, ordering,
 %                                  output capture, verdicts
+%       verify_stimgen_launcher  - the stimgen tools launcher: settings and
+%                                  their two persistence routes, the rig
+%                                  (Test Mode / Offline / adapter reuse), the
+%                                  designer opened at the rig's rate with
+%                                  capture routed through it, a shared
+%                                  calibration window, the inspector, and a
+%                                  vanished calibration file. Skips without
+%                                  the stimgen submodule.
 %       verify_shutdown_pool     - MABR gives the parallel pool back when the
 %                                  GUI closes, and declines to touch a BUSY
 %                                  one. LAST because it ends with no pool
@@ -128,8 +136,8 @@ function run_all_verifications()
 %   Requires the Parallel Computing Toolbox (all but verify_logging,
 %   verify_isi_jitter, verify_strategies, verify_analysis, verify_filters, verify_live_plot,
 %   verify_progress_monitor, verify_metric_plot, verify_trace_organizer,
-%   verify_trace_inspector, verify_audio_settings, verify_view_prefs, and
-%   verify_calibration_latency).
+%   verify_trace_inspector, verify_audio_settings, verify_view_prefs,
+%   verify_stimgen_launcher, and verify_calibration_latency).
 %   None require audio hardware.
 %
 % Daniel Stolzberg (c) 2026
@@ -146,7 +154,7 @@ tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_p
          @verify_progress_monitor, @verify_metric_plot, ...
          @verify_trace_organizer, @verify_trace_inspector, ...
          @verify_notes, @verify_audio_settings, @verify_view_prefs, ...
-         @verify_stimgen_import, @verify_calibration_latency, ...
+         @verify_stimgen_import, @verify_stimgen_launcher, @verify_calibration_latency, ...
          @verify_stimulation_only, ...
          @verify_timing_selftest, @verify_timing_loopback, @verify_test_runner, ...
          @verify_shutdown_pool};
