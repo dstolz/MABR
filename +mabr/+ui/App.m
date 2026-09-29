@@ -2152,11 +2152,10 @@ classdef App < handle
                     msg = ['Designer open empty: the loaded bank has no .spl ' ...
                            'file the designer can read. ' msg];
                 end
-                % After the bank: assigning Fs regenerates every item, so
-                % routing to the rig last puts a loaded bank on its clock too
-                % (mabr.ui.StimgenLauncher.openDesigner follows the same order).
-                rigNote = app.routeDesignerToRig();
-                if ~isempty(rigNote), msg = [msg ' ' rigNote]; end
+                % After the bank: putting the designer on the rig assigns its
+                % sample rate, which regenerates every item, so doing it
+                % last puts a loaded bank on the rig's clock too.
+                msg = [msg ' ' app.routeDesignerToRig()];
                 app.setStatus(msg);
             catch me
                 app.Designer = [];
@@ -2166,34 +2165,13 @@ classdef App < handle
         end
 
         function note = routeDesignerToRig(app)
-            % Point the Design… designer at MABR's own rig, the same way
-            % mabr.ui.StimgenLauncher.openDesigner routes a designer it opens:
-            % rendered at the rig's rate and played/captured through
-            % mabr.stim.CalibrationAdapter (loop-back-latency-compensated)
-            % rather than the embedded speakers stimgen defaults to. Without
-            % this, Play/Play All in a Design…-opened designer go out the
-            % computer's own audio device, not the ASIO rig -- what
-            % Settings > stimgen Tools already gets right.
-            note = '';
-            a = app.Audio;
-            if a.Testing || a.isStimulationOnly()
-                note = ['(playing through the computer''s own speakers -- ' ...
-                    'Test Mode/Stimulation Only has no device to route through.)'];
-                return
-            end
-            try
-                app.Designer.Fs = a.SampleRate;
-                app.Designer.CaptureAdapter = @() mabr.ui.StimgenLauncher.captureAdapter( ...
-                    'mabr',a,@() app.Controller);
-                % No HardwareHost is attached, so CaptureAdapter is also the
-                % designer's hardware preview route (see StimgenLauncher).
-                app.Designer.PlaybackOutput = "Hardware";
-                note = sprintf('Playing and capturing through the rig (%s kHz).', ...
-                    mabr.Config.rateText(a.SampleRate));
-            catch me
-                note = ['(could not route the designer to the rig, so it will ' ...
-                    'use the computer''s own speakers: ' me.message ')'];
-            end
+            % The designer behind Design… plays through the same rig as one
+            % opened from Settings ▸ stimgen Tools: that window's Hardware
+            % choice, on this window's audio settings. Without it Play and
+            % Play All only ever reach the computer's own speakers.
+            s = mabr.ui.StimgenLauncher.loadPrefs();
+            [~,note] = mabr.ui.App.putDesignerOnRig(app.Designer,s.Source, ...
+                app.Audio,@() app.Controller);
         end
 
         function f = designerBankFile(app)
@@ -2224,6 +2202,8 @@ classdef App < handle
             % set_control_visibility collapses them out of the layout (the
             % properties stay settable programmatically), so the designer is
             % reduced to what it is being used for here: building a bank.
+            % The preview-output dropdown goes with them and comes back in
+            % putDesignerOnRig, once there is a second output to choose.
             %
             % Guarded on the method rather than assumed, since stimgen is an
             % optional submodule a rig may have checked out at an older commit
@@ -4232,6 +4212,51 @@ classdef App < handle
             if ~isvalid(app.UIFigure), return; end
             app.StatusLabel.Text = txt;
             drawnow   % status arrives mid-blocking-call; force the repaint
+        end
+    end
+
+    methods (Static)
+        function [routed,note] = putDesignerOnRig(sp,source,a,controllerFcn)
+            % Put the Design… designer SP on the rig: SOURCE is the stimgen
+            % tools' Hardware choice (mabr.ui.StimgenLauncher.Sources), A
+            % the audio settings. ROUTED says whether Play reaches the rig,
+            % NOTE what to tell the operator either way.
+            %
+            % Routed, the designer gets its Output dropdown back.
+            % hideDesignerSessionControls takes it away with the session
+            % controls, which suits a designer with one output to offer;
+            % with two it is the choice between auditioning on the
+            % computer's speakers and playing the calibrated waveform
+            % through the rig, and MABR has no control of its own for that.
+            %
+            % Static, and of plain values, so it is verified without an App
+            % (verify_stimgen_launcher).
+            routed = false;
+            speakers = 'Play is on the computer''s speakers: ';
+            if strcmp(source,'offline')
+                note = [speakers 'Hardware is set to Offline in Settings ▸ ' ...
+                        'stimgen Tools.'];
+                return
+            end
+            if strcmp(source,'mabr') && a.Testing
+                % The adapter is built from the settings as they are now,
+                % so one made under Test Mode could never open a device.
+                note = [speakers 'Test Mode is on, so there is no device ' ...
+                        'to play through.'];
+                return
+            end
+            try
+                [routed,notes] = mabr.ui.StimgenLauncher.routeDesigner( ...
+                    sp,source,a,controllerFcn);
+            catch me
+                note = [speakers 'the designer could not be put on the rig (' ...
+                        me.message ').'];
+                return
+            end
+            if routed && ismethod(sp,'set_control_visibility')
+                try, sp.set_control_visibility(Output=true); end %#ok<TRYNC>
+            end
+            note = ['Rig: ' strjoin(notes,' · ') '.'];
         end
     end
 

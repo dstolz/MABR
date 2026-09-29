@@ -266,25 +266,10 @@ classdef StimgenLauncher < handle
                     sp.load_bank(bankFile);
                     obj.noteFile(bankFile);
                 end
-                notes = {};
-                if ~strcmp(obj.Settings.Source,'offline')
-                    % After the bank: assigning Fs regenerates every item, so
-                    % doing it last puts a loaded bank on the rig's clock too.
-                    sp.Fs = a.SampleRate;
-                    notes{end+1} = sprintf('%s kHz',mabr.Config.rateText(a.SampleRate));
-                    src = obj.Settings.Source; ctlFcn = obj.ControllerFcn;
-                    sp.CaptureAdapter = @() mabr.ui.StimgenLauncher.captureAdapter(src,a,ctlFcn);
-                    % The same adapter is the designer's hardware preview
-                    % route (no HardwareHost is attached), so Play reaches
-                    % the rig at its calibrated level rather than the
-                    % computer speakers. Speakers stay one dropdown away.
-                    try
-                        sp.PlaybackOutput = "Hardware";
-                    catch me
-                        mabr.log.vprintf(1,1,'stimgen designer: hardware preview unavailable: %s',me.message);
-                    end
-                    notes{end+1} = 'play and capture through the rig';
-                end
+                % After the bank: assigning Fs regenerates every item, so
+                % doing it last puts a loaded bank on the rig's clock too.
+                [~,notes] = mabr.ui.StimgenLauncher.routeDesigner( ...
+                    sp,obj.Settings.Source,a,obj.ControllerFcn);
                 cal = obj.Settings.CalibrationFile;
                 if ~isempty(cal) && isfile(cal)
                     sp.load_calibration_(cal);
@@ -557,6 +542,33 @@ classdef StimgenLauncher < handle
                     end
                 otherwise
                     why = 'Hardware is set to Offline.';
+            end
+        end
+
+        function [routed,notes] = routeDesigner(sp,source,a,controllerFcn)
+            % Put the designer SP on the rig SOURCE names, on the audio
+            % settings A: generated at the rig's sample rate, with capture
+            % and hardware Play through the rig's adapter. The one place
+            % that is done, so a designer the launcher opens and the one
+            % behind mabr.ui.App's Design… button reach the same rig the
+            % same way. ROUTED says whether Play reaches the rig; NOTES is
+            % what there is to tell the operator. Offline leaves SP alone.
+            routed = false; notes = {};
+            if strcmp(source,'offline'), return; end
+            sp.Fs = a.SampleRate;
+            notes{end+1} = sprintf('%s kHz',mabr.Config.rateText(a.SampleRate));
+            sp.CaptureAdapter = @() mabr.ui.StimgenLauncher.captureAdapter(source,a,controllerFcn);
+            % The same adapter is the designer's hardware preview route (no
+            % HardwareHost is attached), so Play reaches the rig at its
+            % calibrated level rather than the computer speakers. Speakers
+            % stay one dropdown away.
+            try
+                sp.PlaybackOutput = "Hardware";
+                routed = true;
+                notes{end+1} = 'play and capture through the rig';
+            catch me
+                mabr.log.vprintf(1,1,'stimgen designer: hardware preview unavailable: %s',me.message);
+                notes{end+1} = 'capture through the rig (play on the speakers)';
             end
         end
 

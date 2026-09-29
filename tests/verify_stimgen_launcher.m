@@ -18,7 +18,11 @@ function verify_stimgen_launcher()
 %   launcher holds (one owner per device) -- and its preview output on that
 %   adapter, since with no HardwareHost the capture adapter is also the
 %   designer's hardware Play route (Offline stays on the speakers, and with
-%   no adapter the hardware output is refused); the calibration window opens
+%   no adapter the hardware output is refused); the designer behind the main
+%   window's Design… button (mabr.ui.App.putDesignerOnRig) lands on that same
+%   adapter with its Output dropdown back and the session controls still
+%   hidden, and stays on the speakers, saying why, under Test Mode and
+%   Offline; the calibration window opens
 %   on the shared engine and is raised, not duplicated, on a second press;
 %   the inspector reads a stimulus out of a .mat; every tool button carries
 %   its icon and the Help button is there.
@@ -164,6 +168,37 @@ sp = lch.openDesigner();
 assert(isempty(sp.CaptureAdapter),'offline: the designer must get no capture adapter');
 assert(sp.PlaybackOutput == "Speakers",'offline: the designer must preview on the speakers');
 delete(sp);
+
+% The main window's Design… button opens its own designer with the session
+% controls hidden, and must put it on the same rig the same way.
+lch.setSource('mabr');
+sp = stimgen.StimPlayer();
+sp.set_control_visibility(All=false);
+[routed,note] = mabr.ui.App.putDesignerOnRig(sp,'mabr',audio,[]);
+assert(routed && sp.PlaybackOutput == "Hardware", ...
+    'Design: Play must reach the rig, not the speakers (%s)',note);
+assert(sp.Fs == 48000,'Design: the designer must be at the rig''s sample rate (got %g)',sp.Fs);
+assert(sp.CaptureAdapter() == lch.resolveAdapter(), ...
+    'Design: the designer must share the launcher''s adapter (one owner per device)');
+vis = sp.ControlVisibility;
+assert(vis.Output,'Design: a routed designer must show its Output dropdown');
+assert(~vis.Run && ~vis.ISI && ~vis.Reps && ~vis.SampleRate, ...
+    'Design: the session controls MABR owns must stay hidden');
+delete(sp);
+
+testing = audio; testing.Testing = true;
+for c = {{'mabr',testing,'Test Mode'},{'offline',audio,'Offline'}}
+    sp = stimgen.StimPlayer();
+    sp.set_control_visibility(All=false);
+    [routed,note] = mabr.ui.App.putDesignerOnRig(sp,c{1}{1},c{1}{2},[]);
+    assert(~routed && sp.PlaybackOutput == "Speakers" && isempty(sp.CaptureAdapter), ...
+        'Design, %s: the designer must stay on the speakers',c{1}{3});
+    assert(contains(note,c{1}{3}),'Design, %s: the status must say why (%s)',c{1}{3},note);
+    vis = sp.ControlVisibility;
+    assert(~vis.Output,'Design, %s: with one output there is no dropdown to show',c{1}{3});
+    delete(sp);
+end
+lch.setSource('offline');
 
 g1 = lch.openCalibration();
 assert(~isempty(g1) && isvalid(g1),'the calibration window must open (offline is fine)');

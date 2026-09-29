@@ -52,6 +52,8 @@ Every panel shares one label-column width, so the fields line up along a single 
 
 **Design…** — Opens the [stimgen](https://github.com/dstolz/stimgen) bank editor, the suggested way to build stimuli. Set a parameter to a vector (`Frequency = [8000 16000]`) and stimgen expands it into variants; each variant becomes one MABR stimulus. The window stays open and the button becomes **Adopt bank** — press it to bring the current bank into MABR, tweak, and adopt again as often as you like. Everything is regenerated at MABR's 192 kHz rate, so nothing is resampled.
 
+The editor's **Play** and **Play All** go out through the rig — the device, output channel and sample rate in **Settings ▸ Audio Device**, as selected by the Hardware choice in **Settings ▸ stimgen Tools…** — so a calibrated stimulus is heard at its calibrated level. Its **Output** dropdown switches to the computer's speakers and back. In Test Mode, or with Hardware set to Offline, there is no device to play through: the editor stays on the speakers and the status line says why.
+
 Greyed out with an explanatory tooltip if the stimgen submodule was never fetched — run `git submodule update --init` and restart.
 
 **Open…** — Loads a bank from file: a stimgen `.spl`, or a `.mat` holding a struct array in which each entry is **one** stimulus (a `signal` and an `ID`; MABR finds it among the loaded variables). Fields are listed in [Extending MABR](Extending.md#the-stimulus-entry). The file dialog opens in the folder you last picked a bank from.
