@@ -3986,11 +3986,13 @@ classdef App < handle
             % in a waveform. Amber rather than green when it is not calibrated,
             % since that is a runnable state but not a publishable one.
             n = app.Stimuli.numStimuli;
-            src = app.Stimuli.describeSource();
+            [src,detail] = app.Stimuli.describeSource();
             if isempty(src)
                 app.SourceLabel.Text = sprintf('%d stimuli',n);
+                tip = app.SourceLabel.Text;
             else
                 app.SourceLabel.Text = sprintf('%d stimuli · %s',n,src);
+                tip = sprintf('%d stimuli · %s',n,detail);
             end
             % A bank rendered at a rate the device is no longer set to cannot
             % be played at all (mabr.stim.Schedule refuses to plan against it),
@@ -4006,8 +4008,9 @@ classdef App < handle
                 return
             end
             % The label shares its row with two buttons, so a long provenance
-            % can be cut short; the tooltip always has all of it.
-            app.SourceLabel.Tooltip = app.SourceLabel.Text;
+            % can be cut short; the tooltip always has all of it -- and, for a
+            % calibrated bank, when the calibration behind it was measured.
+            app.SourceLabel.Tooltip = tip;
             [cal,known] = app.Stimuli.isCalibrated();
             if n > 0 && known && ~cal
                 app.SourceLabel.FontColor = [0.75 0.45 0];

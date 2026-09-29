@@ -437,9 +437,13 @@ classdef StimulusSet < handle
     end
 
     methods
-        function s = describeSource(obj)
+        function [s,detail] = describeSource(obj)
             % One-line provenance for the status line / bank label, in the
             % shape of FilterPolicy.describe and AudioSettings.describe.
+            %
+            % detail is the same line with nothing left out -- WHICH
+            % calibration, by when it was measured -- for a tooltip or a log,
+            % where s has to fit a label sharing its row with two buttons.
             src = obj.Source;
             switch lower(src.Kind)
                 case 'stimgen', s = 'stimgen';
@@ -453,14 +457,53 @@ classdef StimulusSet < handle
             % nothing to qualify, and a bare "(uncalibrated)" would read as a
             % claim about a bank we know nothing about -- most banks predate
             % this field entirely.
+            detail = s;
             if isempty(s), return; end
 
             if ~isempty(src.Calibration)
                 [~,n,e] = fileparts(src.Calibration);
                 s = sprintf('%s, cal %s',s,[n e]);
+                detail = s;
             else
                 [cal,known] = obj.isCalibrated();
-                if known && ~cal, s = [s ' (uncalibrated)']; end
+                if known && ~cal
+                    s = [s ' (uncalibrated)'];
+                    detail = s;
+                elseif known
+                    % Said, not implied. Until this read "(calibrated)" the
+                    % only evidence of a calibrated bank was the ABSENCE of
+                    % "(uncalibrated)" and a green label -- and an operator
+                    % holding a log line that said otherwise had nothing on
+                    % screen to weigh against it.
+                    when   = obj.calibrationTime();
+                    detail = [s ' (calibrated)'];
+                    if ~isempty(when)
+                        detail = sprintf('%s (calibrated, measured %s)',s,when);
+                    end
+                    s = [s ' (calibrated)'];
+                end
+            end
+        end
+
+        function t = calibrationTime(obj)
+            % When the calibration behind this bank was measured, as text, or
+            % '' where the bank does not say. Entries built against different
+            % measurements give the span, earliest to latest: the stamps are
+            % 'yyyy-MM-dd HH:mm:ss', which sorts as text the way it sorts as
+            % time.
+            t = '';
+            if obj.numStimuli == 0 || ~isfield(obj.Stimuli,'CalibrationTime')
+                return
+            end
+            c = {obj.Stimuli.CalibrationTime};
+            keep = cellfun(@(x) (ischar(x) || isstring(x)) && ...
+                                all(strlength(string(x)) > 0) && isscalar(string(x)),c);
+            if ~any(keep), return; end
+            u = unique(cellstr(string(c(keep))));
+            if isscalar(u)
+                t = u{1};
+            else
+                t = sprintf('%s .. %s',u{1},u{end});
             end
         end
 

@@ -188,8 +188,26 @@ entries = uniqueIDs([entries{:}]);
 entries = relativeLevels(entries);
 set = mabr.stim.StimulusSet(entries,cfg,source);
 
-mabr.log.vprintf(1,'fromStimgen: %d stimuli -> %d presentations at %g Hz.', ...
-    numel(items),set.numStimuli,set.SampleRate);
+% The calibration state is said here rather than left to be inferred from the
+% absence of a warning: this is the line an operator reads to find out what
+% was loaded, and "no complaint" is not the same statement as "calibrated".
+mabr.log.vprintf(1,'fromStimgen: %d stimuli -> %d presentations at %g Hz, %s.', ...
+    numel(items),set.numStimuli,set.SampleRate,calibrationText(set,entries));
+end
+
+% =========================================================================
+function txt = calibrationText(set,entries)
+% How much of the bank was built against a measurement, in words.
+cal = logical([entries.Calibrated]);
+if all(cal)
+    txt = 'calibrated';
+    when = set.calibrationTime();
+    if ~isempty(when), txt = sprintf('calibrated (measured %s)',when); end
+elseif any(cal)
+    txt = sprintf('PARTLY calibrated (%d of %d)',nnz(cal),numel(cal));
+else
+    txt = 'UNCALIBRATED';
+end
 end
 
 % =========================================================================
@@ -421,6 +439,26 @@ for k = 1:bank.NItems
         stimStruct = rmfield(stimStruct,'Calibration');
     end
 
+    % ...and with calibration switched OFF for as long as that takes.
+    % fromStruct assigns Fs and the user properties onto a live object, and
+    % every one of them regenerates the signal (StimType's PostSet listeners)
+    % -- against the default, EMPTY StimCalibration, since the real one only
+    % goes back on below. stimgen's apply_calibration answers that with a
+    % red, level-0 "No calibration data available for stim": true of the
+    % object for those few milliseconds, false of the bank, and word for word
+    % the warning a genuinely uncalibrated bank earns. An operator reading the
+    % log could not tell the two apart, which is the one thing that line is
+    % for. With ApplyCalibration false, apply_calibration returns before it
+    % looks. The bank's own value is put back LAST, once the calibration is in
+    % place, so that assignment is the one regeneration run against the real
+    % tables -- or, for a bank that carries none, the one that raises
+    % stimgen's warning for a reason.
+    applyCal = true;
+    if isfield(stimStruct,'ApplyCalibration')
+        applyCal = logical(stimStruct.ApplyCalibration);
+    end
+    stimStruct.ApplyCalibration = false;
+
     s = stimgen.StimType.fromStruct(stimStruct);
 
     % fromStruct restores the variant settings but not the four
@@ -444,6 +482,8 @@ for k = 1:bank.NItems
                 'will not be acoustically correct.'],k,me.message);
         end
     end
+
+    s.ApplyCalibration = applyCal;   % last: see above
 
     items(end+1).Stim = s; %#ok<AGROW>
     items(end).Reps   = 0;

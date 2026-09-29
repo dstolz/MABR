@@ -16,7 +16,7 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
  └───────────────────────────────────────────────────┘
  ┌ Stimulus ────────────────────────────────────────┐
  │  Bank [ ABR_tones.spl          v ][+][−][ Open…  ] │
- │       8 stimuli · stimgen          [Demo][Design…] │
+ │   8 stimuli · stimgen (calibrated) [Demo][Design…] │
  └───────────────────────────────────────────────────┘
  ┌ Presentation ────────────────────────────────────┐
  │    Strategy  [ Conventional — one stimulus v ]    │
@@ -60,7 +60,7 @@ Note what neither contains: repetition counts, spacing, or ordering. Those are y
 
 **Demo** — Loads the built-in tone-pip grid (8 and 16 kHz × 30 and 60 dB). **Uncalibrated** — for testing the software and signal chain only.
 
-The **Bank** field shows `(none loaded)` in red until stimuli are loaded, then the count and where they came from — `12 stimuli · stimgen`. Green when the bank is calibrated, **amber when it is not**. It sits in the field column rather than beside the buttons, so it reads as the panel's current value.
+The **Bank** field shows `(none loaded)` in red until stimuli are loaded, then the count, where they came from, and whether a calibration is behind them — `12 stimuli · stimgen (calibrated)`, green, or `12 stimuli · stimgen (uncalibrated)`, **amber**. Hover over it for when that calibration was measured, which is how to tell that the bank carries the one you meant. It sits in the field column rather than beside the buttons, so it reads as the panel's current value.
 
 > **Without a calibration, levels are relative — not dB SPL.** dB SPL becomes a voltage *through* the calibration. With none loaded, stimgen would generate every stimulus at the same amplitude, so a bank asking for 30, 60, and 90 dB would be three identical sounds. MABR instead scales an uncalibrated bank **relative to its own loudest entry**: the top level plays at the bank's normalized amplitude and each lower one is attenuated by the right ratio, so level *differences* are correct while the absolute level is arbitrary. MABR warns when you adopt such a bank rather than blocking it — it is still useful for testing, and for anything that only needs relative levels — but do not report absolute thresholds from one. Calibrate under **Settings ▸ Calibration…**, then rebuild the bank.
 

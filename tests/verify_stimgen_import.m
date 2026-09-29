@@ -19,6 +19,10 @@ function verify_stimgen_import()
 %     6. a .spl bank round-trips through the file path, and a live designer's
 %        Reps is honoured only while the operator can see it (mabr.ui.App
 %        hides that control, so a hidden one falls back to the GUI default)
+%     6c. a bank saved WITH its calibration imports calibrated: the volts are
+%        the lookup table's and identical to the live stimulus's, the set says
+%        so, and stimgen's "No calibration data" warning is NOT raised on the
+%        way in -- while it still is for a bank that has none
 %     7. Level/Frequency reach a filename in the shape the offline regex wants
 %     8. a Tone's Polarity: -1 inverts the waveform, 0 (alternate) imports as
 %        alternatePolarity with ONE variant per condition -- repetitions split
@@ -174,6 +178,101 @@ assert(isequal(got2,want), ...
 assert(strcmp(set2.Source.Kind,'stimgen'),'Source.Kind is "%s".',set2.Source.Kind);
 fprintf('  .spl round-trip: 4 entries, Reps=77, grid intact\n');
 
+% --- 6c. a CALIBRATED bank: the LUT's volts, said so, and no false alarm
+% A bank the designer saves carries its calibration as a struct, and readBank
+% restores the stimulus first and puts the calibration back after. In between,
+% every property stimgen's fromStruct assigns regenerates the signal against
+% an EMPTY calibration -- and stimgen answers that with a red, level-0
+% "No calibration data available for stim", word for word what a genuinely
+% uncalibrated bank earns. That line appeared on a correctly calibrated rig
+% bank, where nothing on screen could be weighed against it. So three things:
+% the volts are the table's, the set SAYS it is calibrated, and the warning
+% is not raised -- while it still IS for the bank above that has none, since
+% a check that cannot fail is not a check.
+calS = struct('version',2, ...
+    'CalibrationData',struct('tone',struct( ...
+        'frequency',[1000 2000 4000 8000 16000 32000], ...
+        'voltage',  [0.10 0.08 0.20 0.12 0.05 0.25])), ...
+    'MicSensitivity',0.03,'NormativeValue',80, ...
+    'CalibrationTimestamp',datetime(2026,9,29,10,59,22));
+cal = stimgen.StimCalibration.loadobj(calS);
+
+tc = stimgen.Tone;
+tc.Frequency   = [8000 16000];
+tc.SoundLevel  = [30 60];
+tc.Duration    = 0.02;
+tc.DisplayName = "calpip";
+tc.Calibration = cal;
+
+spc      = stimgen.StimPlay(tc);
+spc.Name = "calpips";
+tmpC  = [tempname '.spl'];
+cc    = onCleanup(@() delete_if(tmpC));
+bankC = struct('ISI',[1 1],'SelectionType',"Serial",'NItems',1, ...
+               'Items',{{spc.toStruct}}); %#ok<NASGU>
+save(tmpC,'-struct','bankC','-v7');
+
+% Heard at stimgen's own logging seam rather than scraped off the console, so
+% it does not depend on the verbosity in force or on which stream red text
+% goes to. The sink in place (mabr.ui.App's, when the suite runs from the GUI)
+% goes back however this ends.
+heard = containers.Map('KeyType','double','ValueType','any');
+prev  = stimgen.util.logSink();
+cs    = onCleanup(@() stimgen.util.logSink(prev));
+stimgen.util.logSink(stimgen.FcnLogSink( ...
+    @(lvl,~,msg,~) hear(heard,lvl,msg),@(~) true));
+
+set3       = mabr.stim.StimulusSet.fromFile(tmpC,cfg);
+falseAlarm = heardSince(heard,0,'No calibration data');
+
+n0 = heard.Count;
+mabr.stim.StimulusSet.fromFile(tmp,cfg);      % part 6's bank: no calibration
+realAlarm = heardSince(heard,n0,'No calibration data');
+clear cs
+
+assert(set3.numStimuli == 4,'Calibrated bank gave %d entries.',set3.numStimuli);
+assert(set3.isCalibrated(), ...
+    'A bank saved WITH its calibration imported as uncalibrated.');
+
+% The file route against the live object, which never passes through
+% readBank: same calibration, same parameters, so the same samples.
+setLive = mabr.stim.fromStimgen(tc,cfg);
+assert(isequal(set3.IDs(),setLive.IDs()), ...
+    'The bank file and the live stimulus disagree about the conditions.');
+for i = 1:set3.numStimuli
+    m = set3.meta(i);
+    assert(isequal(set3.signal(i),setLive.signal(i)), ...
+        ['Entry %d ("%s"): the waveform read back from the bank is not the ' ...
+         'one the calibrated stimulus generates.'],i,m.ID);
+    assert(~isfield(m,'LevelScale'), ...
+        ['Entry %d ("%s") was rescaled relative to the bank -- that is for ' ...
+         'an UNCALIBRATED bank; these volts came from a measurement.'],i,m.ID);
+
+    % And against the table itself: a Tone is normalized to a unit peak and
+    % gated with a plateau, so its peak IS the drive voltage.
+    vWant = cal.compute_adjusted_voltage("tone",m.Frequency*1000,m.Level);
+    vGot  = max(abs(double(set3.signal(i))));
+    assert(abs(vGot - vWant) <= 1e-4*vWant, ...
+        ['Entry %d ("%s") peaks at %.6g V; the calibration asks for %.6g V ' ...
+         'at %g kHz, %g dB.'],i,m.ID,vGot,vWant,m.Frequency,m.Level);
+end
+
+[lbl,detail] = set3.describeSource();
+assert(contains(lbl,'(calibrated)') && ~contains(lbl,'uncalibrated'), ...
+    'A calibrated bank describes itself as "%s".',lbl);
+assert(contains(detail,'2026-09-29 10:59:22'), ...
+    'The bank''s description does not say which calibration ("%s").',detail);
+
+assert(~falseAlarm, ...
+    ['Importing a CALIBRATED bank raised stimgen''s "No calibration data" ' ...
+     'warning. The waveforms are right; the log says they are not.']);
+assert(realAlarm, ...
+    ['Importing an UNCALIBRATED bank raised no "No calibration data" warning ' ...
+     '-- so its absence above proves nothing, and a bank with no calibration ' ...
+     'behind it loads without a word from stimgen.']);
+fprintf(['  calibrated .spl: LUT volts, identical to the live stimulus, says ' ...
+         '"%s", no false alarm\n'],lbl);
+
 % --- 6b. a hidden Reps field is no opinion ---------------------------
 % The one case that needs the live designer, so this is the one place the
 % file avoids the GUI for: mabr.ui.App hides the designer's session controls
@@ -277,4 +376,25 @@ end
 % =========================================================================
 function delete_if(f)
 if isfile(f), delete(f); end
+end
+
+% =========================================================================
+function hear(heard,level,msg)
+% A stimgen.LogSink must never throw (stimgen logs from inside catch blocks).
+try
+    if isa(msg,'MException') || isstruct(msg), msg = msg.message; end
+    k = heard.Count + 1;
+    heard(k) = struct('Level',level,'Text',char(string(msg)));
+catch
+end
+end
+
+% =========================================================================
+function tf = heardSince(heard,after,pattern)
+% Whether any message numbered above `after` contains `pattern`.
+tf = false;
+for k = after+1:heard.Count
+    m = heard(k);       % a containers.Map takes one level of indexing
+    if contains(m.Text,pattern), tf = true; return; end
+end
 end
