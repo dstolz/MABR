@@ -96,6 +96,25 @@ assert(isequal(eng.RingBuffer.readSignal(1,N),before),'prefault changed the ring
 fprintf('  PASS test 1b: %d frames timed (work p99 %.3f ms of %.2f); prefault leaves the ring intact\n', ...
     T.frames,T.p99(5),T.frameMs);
 
+% ---- Test 1c: onsets read off the single samples are the double path's -----
+% Finalization finds a whole run's onsets; it now compares the recorded
+% singles directly rather than a 512 MB double copy of a full ring. The
+% answer must not move: noise with its negative half, and a threshold (0.7)
+% whose single rounding lies BELOW it, with a sample sitting exactly there.
+assert(double(single(0.7)) < 0.7,'0.7 is meant to round down into single');
+rng(5);
+tim = single(0.05*randn(20000,1));
+tim(500:520)   = 1;
+tim(3000:3004) = 0.7;
+tim(7000)      = single(0.7);
+tim(9000:9010) = single(0.7) + eps(single(0.7));
+for thr = [0.1 0.3 1/3 0.7 0.95]
+    a = mabr.metrics.find_timing_onsets(tim,5,thr);
+    b = mabr.metrics.find_timing_onsets(double(tim),5,thr);
+    assert(isequal(a,b),'single and double onset detection disagree at threshold %g',thr);
+end
+fprintf('  PASS test 1c: onsets found on single samples match the double path exactly\n');
+
 % ---- Test 2: Pause freezes the head, Resume continues ----------------------
 eng.prep(spec);
 wait_until(@() eng.State == mabr.acq.State.Ready, 10);

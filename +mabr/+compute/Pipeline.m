@@ -312,6 +312,10 @@ classdef Pipeline < handle
             adcFs = cfg.ADCSampleRate;         % analysis/storage rate
 
             onsetsRaw = mabr.metrics.find_timing_onsets(rawTiming,round(0.002*Fs),0.1);
+            % The timing channel has said all it will: let it go before the
+            % resample below makes its double copy of the signal (a full ring
+            % is 256 MB a channel as single, 512 MB as double).
+            rawTiming = []; %#ok<NASGU>
             F.OnsetsAll = base + onsetsRaw(:)' - 1;   % before any trimming
             if isempty(onsetsRaw), return; end
 
@@ -327,7 +331,10 @@ classdef Pipeline < handle
             % 12 kHz .abr the legacy save_abr_data produced.
             % Referred to the electrodes here, once, so the .abr, the
             % filtered trace, and the artifact verdicts below all agree.
-            adcData  = single(resample(double(rawSignal),1,df)/obj.Gain);
+            x         = double(rawSignal);
+            rawSignal = []; %#ok<NASGU>          % only the double copy from here
+            adcData   = single(resample(x,1,df)/obj.Gain);
+            x         = []; %#ok<NASGU>
             onsets   = max(1,round(onsetsRaw(:)./df));
             sweepLen = max(1,round(adcFs*diff(obj.Window)));
 
