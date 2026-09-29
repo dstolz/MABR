@@ -208,9 +208,18 @@ spec = ctrl.Schedule.renderSpec(nRuns);
 X    = spec.Plan.matrix();
 
 [sig,tim] = ctrl.Engine.RingBuffer.readBlock();
-assert(numel(sig) == size(X,1), ...
-    ['the ring holds %d samples, the run rendered %d -- Test Mode should have ' ...
-     'copied the whole play matrix'],numel(sig),size(X,1));
+% Every controller run carries an advance criterion at the plan's own count
+% (num_sweeps), which stops the run once its last sweep is in -- cutting the
+% closing silence short whenever the stop beats the stream to the end. So
+% the ring holds at least every presentation, and exactly the rendered
+% samples for as far as it goes; the silence after the last one is not the
+% question here.
+lastEnd = spec.ExpectedOnsets(end) + numel(bank.signal(spec.StimulusIndex(end))) - 1;
+assert(numel(sig) >= lastEnd && numel(sig) <= size(X,1), ...
+    ['the ring holds %d samples; the run rendered %d, its last presentation ending ' ...
+     'at %d -- Test Mode should have copied every presentation'], ...
+    numel(sig),size(X,1),lastEnd);
+X = X(1:numel(sig),:);
 
 % The timing channel is copied untouched, so this can be asserted at its
 % strongest: not "close to", but the same samples.

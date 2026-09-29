@@ -625,59 +625,13 @@ classdef AcqController < handle
             %
             % F is mabr.compute.Pipeline.finalize's output (from this process
             % or from the DSP worker -- the answer must not depend on which).
-            recovered = zeros(1,0);
-            if isstruct(F) && isfield(F,'OnsetsAll'), recovered = F.OnsetsAll; end
-
-            % How much departure from a constant offset is allowed before the
-            % run is called misaligned, and it is not the same question in the
-            % two modes.
             %
-            % In TEST MODE the answer is zero. Nothing is being measured: the
-            % onsets came off the very timing channel the plan rendered, with
-            % no converter in between, so one sample of drift is a defect in
-            % the plan, the render, the ring buffer or the extraction.
-            %
-            % On a RIG it is 50 us, deliberately the same line
-            % verify_timing_loopback draws (its MaxJitter default) so MABR and
-            % its own rig diagnostic cannot disagree about whether a rig is
-            % healthy. Zero would be wrong here and worse than no check at
-            % all: a red warning that fires on every ordinary run is one the
-            % operator learns to ignore, which is exactly how the run that
-            % genuinely is misaligned gets ignored with it.
-            if obj.Testing
-                tol = 0;
-            else
-                tol = max(1,round(50e-6*obj.Config.DACSampleRate));
-            end
-            R = mabr.metrics.alignment_report(obj.CurOnsets,recovered,tol, ...
-                obj.deviceReport());
-            R.Tolerance = tol;
-            % The waveform fields exist in EVERY report, Test Mode or not, so
-            % a consumer reads one shape of struct rather than testing for
-            % half of it: NaN/0/false is "not compared here", which is the
-            % honest answer on a rig and a different thing from "compared and
-            % failed".
-            R.Run            = obj.CurRun;
-            R.TestMode       = obj.Testing;
-            R.MaxError       = NaN;
-            R.NumWaveforms   = 0;
-            R.WaveformsMatch = false;
-            if obj.Testing
-                R = obj.compare_waveforms(R,recovered);
-            end
-
-            obj.LastAlignment = R;
-            if R.Aligned
-                mabr.log.vprintf(1,'Alignment: %s',R.Summary);
-            else
-                % Level 0 in red: a run whose sweeps are attributed to the
-                % wrong conditions is not a warning, it is data that must not
-                % be believed -- and the operator has to hear that whether or
-                % not they were watching the status line at the time.
-                mabr.log.vprintf(0,1,'Alignment: %s',R.Summary);
-            end
-            notify(obj,'AlignmentChecked',mabr.ui.ProgStateEventData( ...
-                obj.State,struct('report',R)));
+            % The two halves are also callable apart: conclude_run computes
+            % the report as soon as the run is finalized -- while the ring and
+            % the device's report are still this run's -- and announces it
+            % once the run's blocks have been announced.
+            R = obj.alignment_compute(F);
+            obj.alignment_announce(R);
         end
 
         function tf = canRepeat(obj)
@@ -930,20 +884,103 @@ classdef AcqController < handle
                 return
             end
             obj.finalize_here();
-            obj.after_finalize();
         end
 
         function finalize_here(obj)
-            % Finalize the run in this process, from the ring buffer.
+            % Finalize the run in this process, from the ring buffer, and move
+            % the plan on (conclude_run). A DSP failure still moves it on: a
+            % run whose recording cannot be read is lost either way, and the
+            % schedule must not stall on it.
+            F = [];
             try
-                [files,blocks,F] = obj.finalize_run();
-                obj.emit_blocks(files,blocks,F);
+                F = obj.finalize_run();
             catch me
                 mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
             end
+            obj.conclude_run(F);
         end
 
-        function emit_blocks(obj,files,blocks,F)
+        function conclude_run(obj,F)
+            % The tail of every recorded run once its finalization DSP is done
+            % (F, from this process or the DSP worker; [] if that failed):
+            % credit the run, move the plan on, and build and announce its
+            % blocks -- in THAT order whenever the plan goes on.
+            %
+            % Nothing about the next run depends on this run's Blocks: its
+            % presentations are credited from F (credit_run), any make-up is
+            % appended before advance() looks at the plan, and the alignment
+            % verdict is COMPUTED now -- it reads the ring and the device's
+            % report, both of which the next run's Prep/Run replace -- and only
+            % announced later. So the next run is already streaming while
+            % this one's Blocks are assembled, saved, and handed to the
+            % viewers, instead of the rig sitting silent through all of it
+            % (with the organizer, analysis windows and files, the part that
+            % grows over a session).
+            %
+            % The LAST run of a plan, and a halt, keep the old order, so
+            % ScheduleComplete (and Idle after an abort) still means every
+            % Block is built and every file written.
+            ctx = obj.run_context();
+            R   = [];
+            if ~isempty(F)
+                try
+                    R = obj.alignment_compute(F);
+                catch me
+                    % A diagnostic must never be the reason a run's data is lost.
+                    mabr.log.vprintf(1,1,'Alignment check failed: %s',me.message);
+                end
+                obj.credit_run(F,ctx);
+            end
+            goOn = ~obj.HaltAfterBlock && ~obj.Schedule.isComplete();
+            if goOn, obj.after_finalize(); end
+            if ~isempty(F)
+                try
+                    [files,blocks] = obj.assemble_blocks(F,ctx);
+                    obj.emit_blocks(files,blocks,R);
+                catch me
+                    mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
+                end
+            end
+            if ~goOn, obj.after_finalize(); end
+        end
+
+        function ctx = run_context(obj)
+            % What assembling a run's Blocks needs to know about the run
+            % itself, taken before begin_current_run overwrites it for the
+            % next one (see conclude_run).
+            ctx = struct('CurRun',obj.CurRun,'CurSeq',obj.CurSeq, ...
+                         'CurPol',obj.CurPol,'CurOnsets',obj.CurOnsets, ...
+                         'BlockStart',obj.BlockStart);
+        end
+
+        function credit_run(obj,F,ctx)
+            % Book what the run presented into the schedule -- and, if asked,
+            % append a make-up for what the artifact policy rejected -- from
+            % the finalization output alone, so it can happen before the
+            % Blocks exist. counts(u) is every sweep recovered for stimulus u,
+            % lost(u) those the policy flagged (the same numbers the Blocks
+            % will carry: Count and nnz(Flags) are what Recording.NumSweeps
+            % and NumArtifacts come from). A run with no onsets is credited
+            % nothing, as it always was.
+            if isempty(F) || F.NumOnsets < 1, return; end
+            n      = obj.Stimuli.numStimuli;
+            counts = zeros(1,n);
+            lost   = zeros(1,n);
+            for i = 1:numel(F.Parts)
+                u         = F.Parts(i).Stimulus;
+                counts(u) = F.Parts(i).Count;
+                lost(u)   = nnz(F.Parts(i).Flags);
+            end
+            obj.Schedule.recordRun(ctx.CurRun,counts);
+            % Win back what the artifacts cost, if asked to. The schedule
+            % appends the make-up to the end of the plan and caps it, so this
+            % converges even when the rejection rate stays high.
+            if obj.Artifacts.Repeat && any(lost > 0)
+                obj.Schedule.appendMakeup(lost);
+            end
+        end
+
+        function emit_blocks(obj,files,blocks,R)
             % Announce the blocks themselves first: a viewer should get the
             % data whether or not the session is writing files.
             for i = 1:numel(blocks)
@@ -954,25 +991,15 @@ classdef AcqController < handle
                 notify(obj,'BlockSaved',mabr.ui.ProgStateEventData( ...
                     obj.State,struct('file',files{i})));
             end
-            % The alignment verdict goes LAST, and that ordering is the whole
-            % reason it is announced from here rather than from inside
-            % assemble_blocks where it is computed. Both of the events above
-            % write the status line ("Saved ...abr"), so a verdict raised
-            % before them -- above all a MISALIGNED one -- would be on screen
-            % for a few milliseconds and then gone.
-            %
-            % Waiting costs nothing: the check reads the ring buffer, and
-            % nothing overwrites that until the next Run, which after_finalize
-            % has not reached yet. F is passed down from the caller rather
-            % than recomputed, so this describes the run those blocks were
-            % built from and no other.
-            if nargin >= 4
-                try
-                    obj.alignmentCheck(F);
-                catch me
-                    % A diagnostic must never be the reason a run's data is lost.
-                    mabr.log.vprintf(1,1,'Alignment check failed: %s',me.message);
-                end
+            % The alignment verdict goes LAST. Both of the events above write
+            % the status line ("Saved ...abr"), so a verdict raised before
+            % them -- above all a MISALIGNED one -- would be on screen for a
+            % few milliseconds and then gone. It was computed when the run
+            % was concluded (alignment_compute), from the ring and the device
+            % report as they stood then, so it describes the run these blocks
+            % came from even when the next run is already streaming.
+            if nargin >= 4 && ~isempty(R)
+                obj.alignment_announce(R);
             end
         end
 
@@ -1008,14 +1035,8 @@ classdef AcqController < handle
                     'finalizing here.'],msg.error);
                 obj.finalize_here();
             else
-                try
-                    [files,blocks] = obj.assemble_blocks(msg.result);
-                    obj.emit_blocks(files,blocks,msg.result);
-                catch me
-                    mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
-                end
+                obj.conclude_run(msg.result);
             end
-            obj.after_finalize();
         end
 
         function on_finalize_timeout(obj)
@@ -1029,7 +1050,6 @@ classdef AcqController < handle
                 try, obj.Compute.reportStall('dsp','finalization timed out'); end %#ok<TRYNC>
             end
             obj.finalize_here();
-            obj.after_finalize();
         end
 
         function arm_finalize_timeout(obj)
@@ -1358,6 +1378,69 @@ classdef AcqController < handle
             end
         end
 
+        function R = alignment_compute(obj,F)
+            % alignmentCheck's verdict, without announcing it. Reads CurOnsets,
+            % CurSeq/CurPol (Test Mode), the ring (Test Mode) and the device's
+            % report -- everything the next run replaces -- so it must run
+            % before that run is begun (see conclude_run).
+            recovered = zeros(1,0);
+            if isstruct(F) && isfield(F,'OnsetsAll'), recovered = F.OnsetsAll; end
+
+            % How much departure from a constant offset is allowed before the
+            % run is called misaligned, and it is not the same question in the
+            % two modes.
+            %
+            % In TEST MODE the answer is zero. Nothing is being measured: the
+            % onsets came off the very timing channel the plan rendered, with
+            % no converter in between, so one sample of drift is a defect in
+            % the plan, the render, the ring buffer or the extraction.
+            %
+            % On a RIG it is 50 us, deliberately the same line
+            % verify_timing_loopback draws (its MaxJitter default) so MABR and
+            % its own rig diagnostic cannot disagree about whether a rig is
+            % healthy. Zero would be wrong here and worse than no check at
+            % all: a red warning that fires on every ordinary run is one the
+            % operator learns to ignore, which is exactly how the run that
+            % genuinely is misaligned gets ignored with it.
+            if obj.Testing
+                tol = 0;
+            else
+                tol = max(1,round(50e-6*obj.Config.DACSampleRate));
+            end
+            R = mabr.metrics.alignment_report(obj.CurOnsets,recovered,tol, ...
+                obj.deviceReport());
+            R.Tolerance = tol;
+            % The waveform fields exist in EVERY report, Test Mode or not, so
+            % a consumer reads one shape of struct rather than testing for
+            % half of it: NaN/0/false is "not compared here", which is the
+            % honest answer on a rig and a different thing from "compared and
+            % failed".
+            R.Run            = obj.CurRun;
+            R.TestMode       = obj.Testing;
+            R.MaxError       = NaN;
+            R.NumWaveforms   = 0;
+            R.WaveformsMatch = false;
+            if obj.Testing
+                R = obj.compare_waveforms(R,recovered);
+            end
+        end
+
+        function alignment_announce(obj,R)
+            % Record, log and raise a verdict alignment_compute reached.
+            obj.LastAlignment = R;
+            if R.Aligned
+                mabr.log.vprintf(1,'Alignment: %s',R.Summary);
+            else
+                % Level 0 in red: a run whose sweeps are attributed to the
+                % wrong conditions is not a warning, it is data that must not
+                % be believed -- and the operator has to hear that whether or
+                % not they were watching the status line at the time.
+                mabr.log.vprintf(0,1,'Alignment: %s',R.Summary);
+            end
+            notify(obj,'AlignmentChecked',mabr.ui.ProgStateEventData( ...
+                obj.State,struct('report',R)));
+        end
+
         function R = compare_waveforms(obj,R,recovered)
             % The half of alignmentCheck that only TEST MODE makes answerable:
             % the samples sitting at each recovered onset must BE the stimulus
@@ -1420,30 +1503,31 @@ classdef AcqController < handle
             end
         end
 
-        function [files,blocks,F] = finalize_run(obj)
-            % Split the run's recording into one Block (and one .abr) per
-            % stimulus that appeared in it, and return the blocks built and the
-            % files written. There is one block per stimulus present; files is
-            % empty when the Session has no OutputPath.
-            %
-            % Two halves. The DSP -- reading the ring, recovering the onsets,
-            % decimating, splitting by stimulus, filtering, judging -- is
-            % mabr.compute.Pipeline.finalize, which can run in any process;
-            % assemble_blocks is the half only the GUI process can do, since
-            % it owns the Session, the schedule, and the files.
+        function F = finalize_run(obj)
+            % The DSP half of splitting the run's recording into one Block
+            % (and one .abr) per stimulus that appeared in it, done in this
+            % process: reading the ring, recovering the onsets, decimating,
+            % splitting by stimulus, filtering, judging. That is
+            % mabr.compute.Pipeline.finalize, which can run in any process --
+            % the DSP worker does the same thing when there is one. The rest
+            % (crediting, the Blocks, the files) is conclude_run's, whichever
+            % process produced F.
             F = obj.Pipeline.finalize(obj.Engine.RingBuffer,obj.CurSeq);
-            [files,blocks] = obj.assemble_blocks(F);
-            % F is returned as well so the caller can hand it to emit_blocks,
-            % which is where the alignment check is announced (see there).
         end
 
-        function [files,blocks] = assemble_blocks(obj,F)
+        function [files,blocks] = assemble_blocks(obj,F,ctx)
             % Turn the pipeline's finalization output (see
-            % mabr.compute.Pipeline.finalize) into Recordings, Blocks, files
-            % and schedule bookkeeping. Nothing here filters a sample: the
-            % filtered trace arrives with each part and is adopted through
+            % mabr.compute.Pipeline.finalize) into Recordings, Blocks and
+            % files. Nothing here filters a sample: the filtered trace arrives
+            % with each part and is adopted through
             % mabr.data.Recording.withProcessed, so a Block's every accessor
             % reads a kept copy rather than running the chain again.
+            %
+            % ctx is the run's own context (run_context), taken before the
+            % next run was begun -- by the time this runs the next one may
+            % already be streaming, so nothing here reads the Cur* fields.
+            % The schedule has already been credited (credit_run).
+            if nargin < 3 || isempty(ctx), ctx = obj.run_context(); end
             files  = {};
             blocks = mabr.data.Block.empty;
             if isempty(F) || F.NumOnsets < 1, return; end
@@ -1459,16 +1543,12 @@ classdef AcqController < handle
             if isfield(F,'AmplifierGain'), gain = F.AmplifierGain; end
             % Polarity is per presentation, so it truncates with the sequence
             % -- a run can end early (Stop/Abort, or an advance criterion).
-            pol = obj.CurPol;
+            pol = ctx.CurPol;
             if numel(pol) >= n, pol = pol(1:n); else, pol = ones(1,n); end
-
-            counts = zeros(1,obj.Stimuli.numStimuli);
-            lost   = zeros(1,obj.Stimuli.numStimuli);   % sweeps rejected, per stimulus
 
             for i = 1:numel(F.Parts)
                 p = F.Parts(i);
                 u = p.Stimulus;
-                counts(u) = p.Count;
 
                 % The Recording carries the raw trace and the chain separately:
                 % the chain only decides what SweepData/SweepMean look like,
@@ -1481,16 +1561,16 @@ classdef AcqController < handle
                 rec.Filters    = obj.Filters;
                 rec            = rec.withProcessed(p.Processed,made);
                 rec.IsArtifact = p.Flags;
-                lost(u)        = rec.NumArtifacts;
-                if lost(u) > 0
+                nLost          = rec.NumArtifacts;
+                if nLost > 0
                     mabr.log.vprintf(1,'Stimulus %d: %d of %d sweeps rejected (%s)', ...
-                        u,lost(u),p.Count,obj.Artifacts.describe());
+                        u,nLost,p.Count,obj.Artifacts.describe());
                 end
 
                 % keep only lightweight metadata on the Block (not the waveform)
                 stimMeta = struct('Meta',obj.Stimuli.meta(u), ...
                                   'SampleRate',obj.Stimuli.SampleRate);
-                blk = mabr.data.Block(stimMeta,rec,obj.BlockStart);
+                blk = mabr.data.Block(stimMeta,rec,ctx.BlockStart);
                 % Test Mode blocks are marked at the source. Everything
                 % downstream -- the viewers, the .abr, an analysis six months
                 % from now -- reads it off the block rather than having to
@@ -1531,15 +1611,6 @@ classdef AcqController < handle
                     files{end+1} = mabr.data.io.writeABR(blk, ...
                         obj.Session.OutputPath,obj.Session.Subject.ID); %#ok<AGROW>
                 end
-            end
-
-            obj.Schedule.recordRun(obj.CurRun,counts);
-
-            % Win back what the artifacts cost, if asked to. The schedule
-            % appends the make-up to the end of the plan and caps it, so this
-            % converges even when the rejection rate stays high.
-            if obj.Artifacts.Repeat && any(lost > 0)
-                obj.Schedule.appendMakeup(lost);
             end
         end
 

@@ -17,6 +17,10 @@ function verify_online_advance()
 %   and confirm one continuous run is de-interleaved back into one
 %   mabr.data.Block per stimulus ID with the scheduled repetition counts.
 %
+%   Part D (run boundaries): over three blocked runs, each run is credited to
+%   the schedule and the next run begun BEFORE the finished run's blocks are
+%   announced -- except the last, whose blocks come before SchedComplete.
+%
 %   Requires the Parallel Computing Toolbox. Run:  >> verify_online_advance
 %
 % Daniel Stolzberg (c) 2026
@@ -147,7 +151,57 @@ end
 fprintf('  PASS Part C: intermixed run split into %s, %d sweeps each\n', ...
     strjoin(ids,' + '),repsC);
 
+% ---- Part D: the next run starts before this one's blocks are built -----
+% Nothing about run k+1 depends on run k's Blocks: its presentations are
+% credited from the finalization output, and any make-up is appended before
+% the plan is advanced. So run k+1 is begun first and run k's Blocks are
+% assembled, saved and announced while it streams -- except after the LAST
+% run, where the old order stands so SchedComplete still means every Block
+% is built. Logged through a LOCAL callback over a handle store: a nested
+% one would make this workspace an object the controller's listener list
+% keeps alive (see verify_test_mode).
+ctrl.setStimuli(mabr.stim.demoStimuli(cfg,'Frequencies',8,'Levels',[30 45 60]));
+ctrl.Schedule.Strategy    = 'conventional';
+ctrl.Schedule.Repetitions = 8;
+ctrl.Schedule.ISI         = 0.02;
+ctrl.Schedule.build();
+ctrl.Schedule.TestingFrameDelay = 0.001;
+n0  = ctrl.Session.NumBlocks;
+ev  = containers.Map({'log','credited'},{{},zeros(1,0)});
+lh1 = addlistener(ctrl,'StateChanged',@(~,e) log_event(ev,ctrl,char(e.State)));
+lh2 = addlistener(ctrl,'BlockReady',  @(~,~) log_event(ev,ctrl,'BlockReady'));
+run_schedule(ctrl,120);
+delete([lh1 lh2]);
+
+L     = ev('log');
+prep  = find(strcmp(L,'PrepBlock'));
+ready = find(strcmp(L,'BlockReady'));
+done  = find(strcmp(L,'SchedComplete'),1);
+assert(numel(prep) == 3 && numel(ready) == 3 && ~isempty(done), ...
+    'expected 3 runs and 3 blocks before completion (log: %s)',strjoin(L,' > '));
+assert(ready(1) > prep(2) && ready(2) > prep(3), ...
+    'a run''s blocks should be announced after the next run has begun (log: %s)', ...
+    strjoin(L,' > '));
+assert(ready(3) < done,'the last run''s blocks must be announced before SchedComplete');
+credited = ev('credited');                 % sum(RunCounts) at each PrepBlock
+assert(isequal(credited,[0 8 16]), ...
+    'each run should be credited before the next begins (RunCounts at PrepBlock %s)', ...
+    mat2str(credited));
+assert(ctrl.Session.NumBlocks == n0 + 3,'expected 3 blocks, got %d',ctrl.Session.NumBlocks - n0);
+fprintf('  PASS Part D: each run credited, then the next begun, then its blocks announced\n');
+
 fprintf('== verify_online_advance PASSED ==\n');
+end
+
+
+% =====================================================================
+function log_event(ev,ctrl,name)
+% Part D's listener: the order events arrive in, and how much of the plan the
+% schedule had credited at each run's start.
+ev('log') = [ev('log') {name}];
+if strcmp(name,'PrepBlock')
+    ev('credited') = [ev('credited') sum(ctrl.Schedule.RunCounts)];
+end
 end
 
 

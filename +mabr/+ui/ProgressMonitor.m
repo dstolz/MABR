@@ -887,7 +887,8 @@ classdef ProgressMonitor < handle
 
         function onBlockReady(obj)
             % The run's presentations are in Schedule.RunCounts as of now
-            % (assemble_blocks credits them before announcing), so the live
+            % (the controller credits a run before it announces its blocks --
+            % usually before it begins the next run, too), so the live
             % counter is given up. NOT forced: an intermixed run raises one of
             % these per stimulus in a single burst, and the state change that
             % always follows finalization repaints once for all of them.
