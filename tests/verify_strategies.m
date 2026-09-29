@@ -23,6 +23,12 @@ function verify_strategies()
 %   Part F (invariants): every built-in presents each entry exactly its
 %   repetition count (unequal counts included, where an entry drops out of
 %   later cycles), and only the conventional ones are not intermixed.
+%   Part G (run order): 'conventional' plays its runs in the order OrderBy
+%   and OrderDirection ask for -- one parameter or two, ascending,
+%   descending, or as the bank lists them -- with ties left in bank order in
+%   every direction; a parameter the bank does not vary is passed over
+%   without shifting the directions of the others; no other strategy reads
+%   the setting; and the order in force is named in strategyLabel.
 %
 %   No hardware, no parallel pool. Run:  >> verify_strategies
 %
@@ -130,6 +136,122 @@ assert(isequal(c2,due), ...
     'second ramp cycle should be %s, got %s',mat2str(due),mat2str(c2));
 fprintf('  PASS Part F: every entry its count; only conventional runs one stimulus at a time\n');
 
+% ---- Part G: the order of conventional runs --------------------------------
+% The same banks: frequencies listed 32, 16, 8 and levels 70, 40, 10, so
+% neither ascending nor descending is the order a bank is already in.
+up = sort(L);  down = sort(L,'descend');
+
+assert(isequal(runOrder(fm,cfg,{},{}),1:fm.numStimuli), ...
+    'with no OrderBy the runs should play in bank order');
+
+% One parameter. The ties stay in bank order in BOTH directions, so
+% descending reverses the levels and leaves the frequencies at 32, 16, 8.
+assertOrder(fm,runOrder(fm,cfg,'Level','ascending'), ...
+    pairs(F,up,'plateau'),'Level ascending');
+assertOrder(fm,runOrder(fm,cfg,'Level','descending'), ...
+    pairs(F,down,'plateau'),'Level descending');
+assertOrder(fm,runOrder(fm,cfg,'Frequency','ascending'), ...
+    pairs(sort(F),L,'ramp'),'Frequency ascending');
+assertOrder(lm,runOrder(lm,cfg,'Frequency','descending'), ...
+    pairs(sort(F,'descend'),L,'ramp'),'Frequency descending');
+% 'listed' sorts nothing: it gathers each frequency's runs together and
+% keeps the frequencies in the order the bank first lists them.
+assertOrder(lm,runOrder(lm,cfg,'Frequency','listed'), ...
+    pairs(F,L,'ramp'),'Frequency as listed');
+
+% Two parameters, on the bank listed level-major so that the order asked
+% for is not one it happens to be in. The threshold series first: one
+% frequency at a time, loudest first within it.
+assertOrder(lm,runOrder(lm,cfg,{'Frequency','Level'},{'ascending','descending'}), ...
+    pairs(sort(F),down,'ramp'),'Frequency ascending, then Level descending');
+assertOrder(lm,runOrder(lm,cfg,{'Frequency','Level'},{'listed','descending'}), ...
+    pairs(F,down,'ramp'),'Frequency as listed, then Level descending');
+assertOrder(lm,runOrder(lm,cfg,{'Frequency','Level'},{'listed','ascending'}), ...
+    pairs(F,up,'ramp'),'Frequency as listed, then Level ascending');
+% The same two the other way round makes the level the outer loop.
+assertOrder(fm,runOrder(fm,cfg,{'Level','Frequency'},{'descending','ascending'}), ...
+    pairs(sort(F),down,'plateau'),'Level descending, then Frequency ascending');
+% One direction given for two parameters applies to both.
+assertOrder(lm,runOrder(lm,cfg,{'Frequency','Level'},'descending'), ...
+    pairs(sort(F,'descend'),down,'ramp'),'one direction for both parameters');
+% Names and directions are matched without regard to case.
+assertOrder(fm,runOrder(fm,cfg,'level','Descending'), ...
+    pairs(F,down,'plateau'),'level / Descending');
+
+% A parameter the bank does not vary means bank order, not an error ...
+assert(isequal(runOrder(nl,cfg,'Level','descending'),1:nl.numStimuli), ...
+    'ordering by a Level the bank does not vary should keep bank order');
+assert(isequal(runOrder(fm,cfg,'NoSuchParameter','descending'),1:fm.numStimuli), ...
+    'ordering by an unknown parameter should keep bank order');
+% ... and is passed over without handing its direction to the next one.
+assertOrder(fm,runOrder(fm,cfg,{'NoSuchParameter','Level'},{'descending','ascending'}), ...
+    pairs(F,up,'plateau'),'an unknown name must not shift the directions');
+
+% A direction that is not one of the three is refused where it is assigned.
+s = mabr.stim.Schedule(fm,cfg);
+try
+    s.OrderDirection = 'sideways';
+    error('verify:strategies:noThrow','an unknown direction must be refused');
+catch me
+    assert(strcmp(me.identifier,'mabr:stim:Schedule:orderDirection'), ...
+        'unknown direction threw %s, not mabr:stim:Schedule:orderDirection', ...
+        me.identifier);
+end
+
+% Ordering changes the order and nothing else: every entry still gets its
+% own count in one run of its own, and an entry owed nothing is left out
+% without disturbing the order of the rest.
+reps0 = reps;  reps0(4) = 0;
+s = mabr.stim.Schedule(fm,cfg);
+s.OrderBy = 'Level';  s.OrderDirection = 'descending';
+s.Repetitions = reps0;
+s.build();
+want = runOrder(fm,cfg,'Level','descending');
+want = want(reps0(want) > 0);
+got  = cellfun(@(r) r(1),s.Runs);
+assert(isequal(got,want), ...
+    'ordered runs with unequal counts are %s, expected %s',mat2str(got),mat2str(want));
+assert(all(cellfun(@(r) isscalar(unique(r)),s.Runs)) && ~s.isIntermixed(), ...
+    'an ordered conventional plan must still run one stimulus at a time');
+assert(isequal(cellfun(@numel,s.Runs),reps0(want)), ...
+    'an ordered conventional plan must still present each entry its count');
+
+% No other strategy reads the setting.
+for name = {'interleaved-ramp','interleaved-plateau'}
+    s = mabr.stim.Schedule(fm,cfg);
+    s.Strategy = name{1};  s.Repetitions = 3;
+    s.OrderBy  = 'Level';  s.OrderDirection = 'descending';
+    s.build();
+    seq = s.Runs{1};
+    assert(isequal(seq(1:fm.numStimuli),cycleOf(fm,cfg,name{1})), ...
+        '%s must not be reordered by OrderBy',name{1});
+    assert(isempty(s.orderLabel()) && strcmp(s.strategyLabel(),name{1}), ...
+        '%s must not be labelled with an order it does not follow',name{1});
+end
+a = mabr.stim.Schedule(fm,cfg);
+a.Strategy = 'conventional-shuffled';  a.Seed = 11;  a.Repetitions = 2;
+a.build();
+b = mabr.stim.Schedule(fm,cfg);
+b.Strategy = 'conventional-shuffled';  b.Seed = 11;  b.Repetitions = 2;
+b.OrderBy  = 'Level';  b.OrderDirection = 'descending';
+b.build();
+assert(isequal(a.Runs,b.Runs),'conventional-shuffled must not be reordered by OrderBy');
+
+% What a record of the session says: the order in force, and only that.
+s = mabr.stim.Schedule(lm,cfg);
+s.OrderBy = {'Frequency','Level'};  s.OrderDirection = {'listed','descending'};
+s.build();
+assert(strcmp(s.orderLabel(),'Frequency as listed, Level descending'), ...
+    'orderLabel is "%s"',s.orderLabel());
+assert(strcmp(s.strategyLabel(),'conventional (Frequency as listed, Level descending)'), ...
+    'strategyLabel is "%s"',s.strategyLabel());
+s = mabr.stim.Schedule(nl,cfg);
+s.OrderBy = 'Level';  s.OrderDirection = 'descending';
+s.build();
+assert(strcmp(s.strategyLabel(),'conventional'), ...
+    'an order the bank cannot give must not be named, got "%s"',s.strategyLabel());
+fprintf('  PASS Part G: conventional runs follow OrderBy; ties keep bank order\n');
+
 fprintf('== verify_strategies PASSED ==\n');
 end
 
@@ -164,6 +286,22 @@ seq = s.Runs{1};
 c   = seq(1:set.numStimuli);
 assert(isequal(seq,repmat(c,1,3)), ...
     '%s: every cycle should repeat the first under equal counts',strategy);
+end
+
+function order = runOrder(set,cfg,by,way)
+% The stimulus each conventional run presents, in play order, under the order
+% asked for. Every stimulus must get exactly one run, holding nothing else.
+s = mabr.stim.Schedule(set,cfg);
+s.Strategy       = 'conventional';
+s.OrderBy        = by;
+s.OrderDirection = way;
+s.Repetitions    = 2;
+s.build();
+assert(all(cellfun(@(r) isscalar(unique(r)),s.Runs)), ...
+    'a conventional run must present one stimulus');
+order = cellfun(@(r) r(1),s.Runs);
+assert(isequal(sort(order),1:set.numStimuli), ...
+    'every stimulus should get exactly one run, got %s',mat2str(order));
 end
 
 function P = pairs(F,L,kind)

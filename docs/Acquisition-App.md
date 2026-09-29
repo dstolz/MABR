@@ -20,6 +20,8 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
  └───────────────────────────────────────────────────┘
  ┌ Presentation ────────────────────────────────────┐
  │    Strategy  [ Conventional — one stimulus v ]    │
+ │    Order by  [ Frequency     v ] [ As listed  v ] │
+ │     then by  [ Level         v ] [ Descending v ] │
  │ Repetitions  [   512 ] [ Per stimulus…          ] │
  │  ISI / Rate  [ 47.39 ms ] [        21.10 Hz     ] │
  │              overlap! 60.0 ms stim                │
@@ -70,8 +72,8 @@ The **Bank** field shows `(none loaded)` in red until stimuli are loaded, then t
 
 | Setting | Behavior |
 |---------|----------|
-| Conventional — one stimulus per run | All repetitions of the first stimulus, then all of the second, and so on |
-| Conventional, shuffled run order | The same, but which stimulus goes first is shuffled |
+| Conventional — one stimulus per run | All repetitions of one stimulus, then all of the next, and so on — in the order the bank lists them, or the order **Order by** asks for (below) |
+| Conventional — shuffled run order | The same, but which stimulus goes first is shuffled |
 | Interleaved ramp — levels within each frequency | One continuous run of repeated cycles through the bank. Each cycle takes one frequency at a time and steps through its levels from lowest to highest |
 | Interleaved plateau — frequencies within each level | The same cycles with the loops swapped: every frequency at the lowest level, then every frequency at the next level, and so on |
 | Interleaved random — each cycle shuffled | Repeated cycles through the bank, each cycle in its own random order |
@@ -86,11 +88,33 @@ Shuffling only reorders — it never resamples. Every stimulus is presented exac
 
 **Custom strategies.** Picking **Custom function…** opens a file browser; choose a function that takes one context struct describing the design — the bank, the repetition counts, and the stimulus parameters as a table — and returns the stimulus indices to present, a vector for one run or a cell of vectors for several. MABR puts its folder on the path and checks it against the contract before accepting it, running it on a representative design with unequal repetition counts, so a malformed one is refused at selection rather than at Start. Once chosen it appears as `Custom: <name>` and is remembered by file in a saved configuration. Polarity is assigned for you, balanced across the whole plan exactly as the built-ins balance it. Copy [`+mabr/+stim/+strategy/custom_template.m`](../+mabr/+stim/+strategy/custom_template.m) — which is itself a useful strategy, one run per condition ordered loudest-first within each frequency — and see [Extending](Extending.md#ordering-presentations-yourself) for the full contract and more worked examples.
 
+**Order by / then by** — The order the **Conventional** runs play in. Pick a stimulus parameter — the dropdown offers the ones your bank actually varies, `Level` and `Frequency` for an ordinary tone grid — and a direction:
+
+| Direction | The runs are played |
+|-----------|---------------------|
+| Ascending | from the lowest value of the parameter to the highest |
+| Descending | from the highest to the lowest |
+| As listed | grouped by value, the groups in the order the bank first lists them — nothing is sorted, so a frequency order you chose on purpose (most important first, say) is kept |
+
+**then by** orders the runs *inside* each value of the first parameter, and is what most designs need on a bank that varies two things:
+
+| Order by | then by | Runs, on an 8 / 16 kHz × 30 / 60 / 90 dB bank |
+|----------|---------|-----------------------------------------------|
+| Level, descending | *(Bank order)* | `8k·90  16k·90  8k·60  16k·60  8k·30  16k·30` — every frequency at the loudest level, then the next |
+| Frequency, ascending | Level, descending | `8k·90  8k·60  8k·30  16k·90  16k·60  16k·30` — the threshold series: one frequency at a time, loudest first |
+| Frequency, as listed | Level, descending | the same, with the frequencies in whatever order the bank lists them |
+
+Starting loud is usually what a threshold series wants: the loud conditions respond visibly, so a dead electrode or a slipped ear plug shows up in the first minute rather than after twenty spent collecting noise near threshold.
+
+Stimuli that tie on everything you chose keep the bank's order, whichever direction you sort in — reversing a direction reverses that parameter and nothing else. **Bank order** in the first row leaves the runs exactly as the bank lists them, which is what MABR did before this setting existed. Hover over the plan summary at the bottom of the panel to read the resulting run order back before you press Start.
+
+Both rows are greyed under every other strategy: the shuffled and interleaved strategies decide their own order, and a custom function returns its own. Ordering never changes *what* is presented — every stimulus still gets its own run and its full repetition count. The choice is saved in a configuration and recalled next session; loaded against a bank that does not vary the parameter it names, that row simply falls back to **Bank order**.
+
 **Repetitions** — How many times each stimulus is presented. The number field applies one value to every stimulus. **Per stimulus…** opens a small editor where you can either keep one value for the whole bank or give each stimulus its own count; it shows the running total and estimated acquisition time as you type. Stimuli with unequal counts drop out of the cycle once they are done, so the extra repetitions of the others stay spread out rather than clumping at the end.
 
 **ISI / Rate** — The inter-stimulus interval, onset to onset. The two fields are two views of one number — edit either and the other follows. If the longest stimulus does not fit inside the interval, a red `overlap!` warning appears and the status line tells you the highest rate that would fit; MABR will still run, summing the overlap, but this is almost always a mistake.
 
-**Plan summary** — The grey line below shows what the current settings actually buy: how many runs, how many presentations in total, and roughly how long it will take. Check it before pressing Start.
+**Plan summary** — The grey line below shows what the current settings actually buy: how many runs, how many presentations in total, and roughly how long it will take. Check it before pressing Start. Under the Conventional strategy its tooltip lists the runs in the order they will play.
 
 ## Acquisition settings
 

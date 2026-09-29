@@ -75,7 +75,7 @@ classdef App < handle
         % ensureCustomStrategyItem.
         StrategyItems = { ...
             'Conventional — one stimulus per run', ...
-            'Conventional, shuffled run order', ...
+            'Conventional — shuffled run order', ...
             'Interleaved ramp — levels within each frequency', ...
             'Interleaved plateau — frequencies within each level', ...
             'Interleaved random — each cycle shuffled', ...
@@ -86,6 +86,9 @@ classdef App < handle
         % already resolved one: the sentinel opens the file picker, 'custom'
         % is the resolved selection.
         StrategyPickSentinel = '__mabr_choose_strategy__';
+        % ItemsData for "Bank order" in the two Order dropdowns; orderSetting()
+        % turns it back into the {} Schedule.OrderBy means by it.
+        OrderBankSentinel    = '__mabr_bank_order__';
 
         % ItemsData of the bank dropdown's leading item whenever the loaded
         % bank is not one of the listed files -- nothing loaded, the demo, a
@@ -242,6 +245,14 @@ classdef App < handle
         % and so the app can close it with itself.
         Launcher
         StrategyDrop
+        % The parameters a conventional run order follows and which way each
+        % goes (Schedule.OrderBy / OrderDirection): "Order by", and "then by"
+        % for the order inside each value of the first. Live only under
+        % 'conventional'.
+        OrderDrop
+        OrderDirDrop
+        ThenDrop
+        ThenDirDrop
         RepsField
         RepsButton
         AdvanceDrop
@@ -503,13 +514,14 @@ classdef App < handle
     % ===================================================================
     methods (Access = private)
         function createComponents(app)
-            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 736], ...
+            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 796], ...
                 'Tag',mabr.ui.App.InstanceTag, ...
                 'CloseRequestFcn',@(~,~) app.onClose());
-            % The panels' fixed heights add up to 720 px; a window remembered
-            % from before the Stimulus panel gained its second row would
-            % reopen with the Run panel's bottom edge below the window.
-            mabr.ui.WindowPos.restore(app.UIFigure,'MABR',app.UIFigure.Position,[0 736]);
+            % The panels' fixed heights add up to 780 px; a window remembered
+            % from before the Stimulus panel gained its second row, or the
+            % Presentation panel its two Order rows, would reopen with the Run
+            % panel's bottom edge below the window.
+            mabr.ui.WindowPos.restore(app.UIFigure,'MABR',app.UIFigure.Position,[0 796]);
             if getpref('MABR','AlwaysOnTop',false)
                 app.UIFigure.WindowStyle = 'alwaysontop';
             end
@@ -635,7 +647,7 @@ classdef App < handle
             % not see through a panel to its nested grid.
             app.Grid = uigridlayout(app.UIFigure,[7 1]);
             app.Grid.ColumnWidth = {'1x'};
-            app.Grid.RowHeight   = {96,96,196,150,'1x',96,22};
+            app.Grid.RowHeight   = {96,96,256,150,'1x',96,22};
             app.Grid.RowSpacing  = 8;
             app.Grid.Padding     = [10 10 10 6];
 
@@ -758,7 +770,7 @@ classdef App < handle
         end
 
         function buildPresentationPanel(app,row)
-            g = app.panelGrid('Presentation',row,{24,24,24,24,16,18},{app.LabelWidth,'1x','1x'});
+            g = app.panelGrid('Presentation',row,{24,24,24,24,24,24,16,18},{app.LabelWidth,'1x','1x'});
 
             app.addLabel(g,'Strategy',1,1);
             app.StrategyDrop = uidropdown(g, ...
@@ -770,32 +782,71 @@ classdef App < handle
                 'ValueChangedFcn',@(~,~) app.onStrategySelected());
             app.StrategyDrop.Layout.Row = 1; app.StrategyDrop.Layout.Column = [2 3];
 
-            app.addLabel(g,'Repetitions',2,1);
+            % The order the conventional runs play in: by which parameter and
+            % which way, then by which one inside each value of the first.
+            % Two rows because one cannot say the ordinary threshold series --
+            % one frequency at a time, loudest first within it -- which takes
+            % a parameter to group by and another to order. Items are
+            % re-derived from the bank (syncOrderItems), since which
+            % parameters exist is the bank's to say.
+            none = {mabr.ui.App.OrderBankSentinel};
+            dirItems = {'Ascending','Descending','As listed'};
+            dirTip   = ['Low to high, high to low, or as listed: grouped by value, ' ...
+                        'in the order the bank first lists each one.'];
+            app.addLabel(g,'Order by',2,1);
+            app.OrderDrop = uidropdown(g, ...
+                'Items',{'Bank order'},'ItemsData',none, ...
+                'Tooltip',['The stimulus parameter the runs are ordered by — Level or ' ...
+                           'Frequency, say. Stimuli tied on it follow the row below, ' ...
+                           'then the bank''s order. Conventional strategy only.'], ...
+                'ValueChangedFcn',@(~,~) app.onOrderChanged());
+            app.OrderDrop.Layout.Row = 2; app.OrderDrop.Layout.Column = 2;
+            app.OrderDirDrop = uidropdown(g, ...
+                'Items',dirItems,'ItemsData',mabr.stim.Schedule.OrderDirections, ...
+                'Tooltip',dirTip, ...
+                'ValueChangedFcn',@(~,~) app.onOrderChanged());
+            app.OrderDirDrop.Layout.Row = 2; app.OrderDirDrop.Layout.Column = 3;
+
+            app.addLabel(g,'then by',3,1);
+            app.ThenDrop = uidropdown(g, ...
+                'Items',{'Bank order'},'ItemsData',none, ...
+                'Tooltip',['The order inside each value of the parameter above: ' ...
+                           'Frequency, then Level descending, presents one frequency ' ...
+                           'at a time, loudest first.'], ...
+                'ValueChangedFcn',@(~,~) app.onOrderChanged());
+            app.ThenDrop.Layout.Row = 3; app.ThenDrop.Layout.Column = 2;
+            app.ThenDirDrop = uidropdown(g, ...
+                'Items',dirItems,'ItemsData',mabr.stim.Schedule.OrderDirections, ...
+                'Tooltip',dirTip, ...
+                'ValueChangedFcn',@(~,~) app.onOrderChanged());
+            app.ThenDirDrop.Layout.Row = 3; app.ThenDirDrop.Layout.Column = 3;
+
+            app.addLabel(g,'Repetitions',4,1);
             app.RepsField = uieditfield(g,'numeric','Value',512, ...
                 'Limits',[0 Inf],'RoundFractionalValues','on', ...
                 'Tooltip','Presentations per stimulus. Sets every entry in the bank at once.', ...
                 'ValueChangedFcn',@(~,~) app.onRepsChanged());
-            app.RepsField.Layout.Row = 2; app.RepsField.Layout.Column = 2;
+            app.RepsField.Layout.Row = 4; app.RepsField.Layout.Column = 2;
             app.RepsButton = uibutton(g,'Text','Per stimulus…', ...
                 'Tooltip','Give individual stimuli their own repetition counts.', ...
                 'ButtonPushedFcn',@(~,~) app.onRepsDialog());
-            app.RepsButton.Layout.Row = 2; app.RepsButton.Layout.Column = 3;
+            app.RepsButton.Layout.Row = 4; app.RepsButton.Layout.Column = 3;
 
             % Two views of one number; the units live in the display format so
             % the pair needs no second label to say which is which.
-            app.addLabel(g,'ISI / Rate',3,1);
+            app.addLabel(g,'ISI / Rate',5,1);
             app.ISIField = uieditfield(g,'numeric', ...
                 'Value',1e3/mabr.ui.App.DefaultRateHz,'Limits',[eps Inf], ...
                 'ValueDisplayFormat','%.2f ms', ...
                 'Tooltip','Onset-to-onset interval. Editing this updates the rate.', ...
                 'ValueChangedFcn',@(~,~) app.onISIChanged());
-            app.ISIField.Layout.Row = 3; app.ISIField.Layout.Column = 2;
+            app.ISIField.Layout.Row = 5; app.ISIField.Layout.Column = 2;
             app.RateField = uieditfield(g,'numeric', ...
                 'Value',mabr.ui.App.DefaultRateHz,'Limits',[eps Inf], ...
                 'ValueDisplayFormat','%.2f Hz', ...
                 'Tooltip','Presentation rate. Editing this updates the ISI.', ...
                 'ValueChangedFcn',@(~,~) app.onRateChanged());
-            app.RateField.Layout.Row = 3; app.RateField.Layout.Column = 3;
+            app.RateField.Layout.Row = 5; app.RateField.Layout.Column = 3;
 
             % Randomized ISI: the switch and the two bounds it governs read as
             % one setting, so they share a row inside the field columns with
@@ -804,7 +855,7 @@ classdef App < handle
             % play entirely (syncISIFields greys them), because the interval is
             % then drawn per presentation and no single number describes it.
             j = uigridlayout(g,[1 3]);
-            j.Layout.Row = 4; j.Layout.Column = [2 3];
+            j.Layout.Row = 6; j.Layout.Column = [2 3];
             j.ColumnWidth   = {'fit','1x','1x'};
             j.Padding       = [0 0 0 0];
             j.ColumnSpacing = 6;
@@ -829,14 +880,14 @@ classdef App < handle
             % A full-width warning line directly under the fields that cause
             % it, rather than a clipped stub squeezed in beside them.
             app.OverlapLabel = uilabel(g,'Text','','FontColor',[0.8 0.2 0]);
-            app.OverlapLabel.Layout.Row = 5; app.OverlapLabel.Layout.Column = [2 3];
+            app.OverlapLabel.Layout.Row = 7; app.OverlapLabel.Layout.Column = [2 3];
 
             % Live consequence of everything above it: runs, presentations,
             % estimated duration. Kept in this panel because those are the
             % settings that change it.
             app.PlanLabel = uilabel(g,'Text','','FontColor',[0.3 0.3 0.3], ...
                 'HorizontalAlignment','right');
-            app.PlanLabel.Layout.Row = 6; app.PlanLabel.Layout.Column = [1 3];
+            app.PlanLabel.Layout.Row = 8; app.PlanLabel.Layout.Column = [1 3];
         end
 
         function buildAcquisitionPanel(app,row)
@@ -1523,6 +1574,9 @@ classdef App < handle
             % serialised handle, with its captured workspace, would not.
             cfg.StrategyCustomFile = app.CustomStrategyFile;
             cfg.StrategyCustomName = app.CustomStrategyName;
+            % As Schedule holds them: a list of names and a list of directions,
+            % both empty for the bank's own order.
+            [cfg.OrderBy,cfg.OrderDirection] = app.orderSetting();
             cfg.Advance       = app.AdvanceDrop.Value;
             cfg.CorrThreshold = app.CorrField.Value;
             % A custom criterion is saved as its FILE, not its handle: a path
@@ -1626,6 +1680,14 @@ classdef App < handle
                     app.LastStrategyValue  = strat;
                 end
             end
+            % The order comes after the bank (its rows offer the bank's varying
+            % parameters) and before the plan is rebuilt. A file from before
+            % the setting existed simply lacks the fields, which reads as the
+            % bank's own order -- the only order there was.
+            by = {}; way = {};
+            if isfield(cfg,'OrderBy'),        by  = cfg.OrderBy;        end
+            if isfield(cfg,'OrderDirection'), way = cfg.OrderDirection; end
+            app.applyOrderSetting(by,way);
             % The plan decides whether a restored custom strategy intermixes,
             % and syncAdvanceEnables below is about to ask. Building it here
             % also puts the plan summary in step with the settings just
@@ -2243,6 +2305,7 @@ classdef App < handle
             app.setSourceLabel();
             app.syncRecentBanks();
             app.syncDesignButton();
+            app.syncOrderItems();
             app.checkOverlap();
             app.refreshPlan();
             if nargin < 3 || announce
@@ -2425,6 +2488,7 @@ classdef App < handle
             app.refreshPlan();
             intermixed = app.currentStrategyIntermixes();
             app.syncAdvanceEnables();
+            app.syncOrderEnable();
             % Remember the last real selection so a cancelled or rejected
             % Custom function... pick has somewhere to fall back to. Without
             % this a user who had chosen 'interleaved-ramp', then opened the
@@ -2437,6 +2501,104 @@ classdef App < handle
                 app.setStatus(['Intermixed runs play to completion — ' ...
                     'correlation early-stop is available for blocked strategies only.']);
             end
+        end
+
+        function onOrderChanged(app)
+            % The second row's items follow the first row's choice, so they
+            % are re-derived on every change rather than only with the bank.
+            app.syncOrderItems();
+            app.refreshPlan();
+        end
+
+        function [by,way] = orderSetting(app)
+            % The order the two rows ask for, as Schedule.OrderBy and
+            % OrderDirection take it -- the setting, not the widgets'
+            % sentinel: both {} for the bank's own order. The second row
+            % counts only under a first, since "then by" with nothing before
+            % it is not an order.
+            by = {}; way = {};
+            none = mabr.ui.App.OrderBankSentinel;
+            if strcmp(app.OrderDrop.Value,none), return; end
+            by  = {app.OrderDrop.Value};
+            way = {app.OrderDirDrop.Value};
+            if ~strcmp(app.ThenDrop.Value,none)
+                by{2}  = app.ThenDrop.Value;
+                way{2} = app.ThenDirDrop.Value;
+            end
+        end
+
+        function applyOrderSetting(app,by,way)
+            % Put a saved order onto the two rows. BY and WAY are OrderBy and
+            % OrderDirection as a configuration holds them -- a name or a
+            % list of names -- and are read the way mabr.stim.Schedule reads
+            % them: a parameter the loaded bank does not vary is passed over,
+            % so the first one it does vary takes the first row whatever its
+            % place in the list, and each direction stays with its own
+            % parameter. Anything unreadable leaves the bank's own order.
+            none = mabr.ui.App.OrderBankSentinel;
+            by   = mabr.ui.App.orderList(by);
+            way  = lower(mabr.ui.App.orderList(way));
+            app.OrderDrop.Value = none;
+            app.syncOrderItems();                   % both rows to bank order
+            rows = {app.OrderDrop,app.OrderDirDrop; app.ThenDrop,app.ThenDirDrop};
+            r = 1;
+            for k = 1:numel(by)
+                if r > size(rows,1), break; end
+                drop  = rows{r,1};
+                names = drop.ItemsData;
+                j = find(strcmpi(names,by{k}) & ~strcmp(names,none),1);
+                if isempty(j), continue; end
+                drop.Value = names{j};
+                if isscalar(way),       d = way{1};
+                elseif k <= numel(way), d = way{k};
+                else,                   d = 'ascending';
+                end
+                dirDrop = rows{r,2};
+                if any(strcmp(d,dirDrop.ItemsData)), dirDrop.Value = d; end
+                app.syncOrderItems();               % the next row offers what is left
+                r = r + 1;
+            end
+        end
+
+        function syncOrderItems(app)
+            % Offer the parameters this bank actually varies -- ordering by
+            % one that does not would change nothing -- keeping each row's
+            % choice where it still can be made and falling back to bank
+            % order where it cannot. The second row never offers the first's
+            % parameter, which has already decided every comparison it could.
+            % Called wherever the bank or the first row changes;
+            % programmatic, so it never fires ValueChangedFcn.
+            none  = mabr.ui.App.OrderBankSentinel;
+            names = {};
+            if ~isempty(app.Stimuli) && app.Stimuli.numStimuli > 0
+                P     = app.Stimuli.paramTable();
+                names = P.Names(P.Varying);
+            end
+            first = refillOrderDrop(app.OrderDrop,names,none);
+            if strcmp(first,none)
+                % Nothing to be "then" to: a choice left showing here would
+                % read as part of an order that is not in force.
+                app.ThenDrop.Value = none;
+            end
+            refillOrderDrop(app.ThenDrop,names(~strcmp(names,first)),none);
+            app.syncOrderEnable();
+        end
+
+        function syncOrderEnable(app)
+            % The order only means something to 'conventional'; the shuffled
+            % and interleaved strategies decide their own. Each control is
+            % live only once the one before it has something to say. Called
+            % from transport() too (configControls switches all four on
+            % wholesale), so it must not touch the status line.
+            none  = mabr.ui.App.OrderBankSentinel;
+            on    = strcmp(app.strategySetting(),'conventional') ...
+                && numel(app.OrderDrop.Items) > 1;
+            first = on && ~strcmp(app.OrderDrop.Value,none);
+            then  = first && numel(app.ThenDrop.Items) > 1;
+            app.OrderDrop.Enable    = onOff(on);
+            app.OrderDirDrop.Enable = onOff(first);
+            app.ThenDrop.Enable     = onOff(then);
+            app.ThenDirDrop.Enable  = onOff(then && ~strcmp(app.ThenDrop.Value,none));
         end
 
         function tf = currentStrategyIntermixes(app)
@@ -3171,7 +3333,8 @@ classdef App < handle
         function refreshPlan(app)
             % Show what the current strategy/repetitions/ISI actually buy: how
             % many runs, how many presentations, and roughly how long.
-            app.PlanLabel.Text = '';
+            app.PlanLabel.Text    = '';
+            app.PlanLabel.Tooltip = '';
             if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
             try
                 sch = app.buildSchedule();
@@ -3180,6 +3343,9 @@ classdef App < handle
                 app.PlanLabel.Text = ['plan error: ' me.message];
                 return
             end
+            % The one place a run order chosen above can be read back before
+            % Start: which stimulus each run presents, in the order they play.
+            app.PlanLabel.Tooltip = mabr.ui.App.runOrderText(sch);
             % The one place a custom plan's shape becomes known -- summary()
             % asks the built runs, not the strategy's name. Recorded so
             % currentStrategyIntermixes can answer without rebuilding, and
@@ -3200,6 +3366,7 @@ classdef App < handle
             % under 'custom' it is the whole plan, and build() refuses without
             % it rather than falling back to an order nobody chose.
             sch.StrategyFcn = app.currentStrategyFcn();
+            [sch.OrderBy,sch.OrderDirection] = app.orderSetting();
             sch.Repetitions = app.Reps;
             % Both settings travel every time and the mode picks between them,
             % so the one not in force is still whatever the user last set it to.
@@ -3277,6 +3444,9 @@ classdef App < handle
                 % it with the one the GUI has been previewing.
                 c.Schedule.Strategy    = app.strategySetting();
                 c.Schedule.StrategyFcn = app.currentStrategyFcn();
+                [by,way] = app.orderSetting();
+                c.Schedule.OrderBy        = by;
+                c.Schedule.OrderDirection = way;
                 c.Schedule.Repetitions = app.Reps;
                 c.Schedule.ISI         = app.ISIField.Value/1e3;   % ms -> s
                 c.Schedule.ISIRange    = [app.ISIMinField.Value app.ISIMaxField.Value]/1e3;
@@ -3904,7 +4074,9 @@ classdef App < handle
                  app.DesignButton, app.LoadButton, app.TestButton, ...
                  app.RecentBankDrop, ...
                  app.RecentAddButton, app.RecentRemoveButton, ...
-                 app.StrategyDrop, app.RepsField, app.RepsButton, ...
+                 app.StrategyDrop, app.OrderDrop, app.OrderDirDrop, ...
+                 app.ThenDrop, app.ThenDirDrop, ...
+                 app.RepsField, app.RepsButton, ...
                  app.AdvanceDrop, app.CorrField, ...
                  app.ISIField, app.RateField, app.JitterCheck, ...
                  app.ISIMinField, app.ISIMaxField, app.AudioMenuItem, ...
@@ -3961,6 +4133,7 @@ classdef App < handle
             if ~running
                 app.PauseButton.Text = 'Pause';
                 app.syncAdvanceEnables();     % re-derives the Advance/Corr enables
+                app.syncOrderEnable();        % the order applies to 'conventional' only
                 % Same reason: configControls just switched all five ISI
                 % controls back on, but only one pair of them is ever live.
                 app.syncISIFields();
@@ -4063,6 +4236,46 @@ classdef App < handle
     end
 
     methods (Static, Access = private)
+        function c = orderList(v)
+            % A configuration's OrderBy / OrderDirection as a cellstr row, and
+            % {} for anything that is not a name or a list of them -- a file
+            % edited by hand, or one from a version that kept it otherwise.
+            try
+                c = mabr.stim.Schedule.textList(v,'order');
+            catch
+                c = cell(1,0);
+            end
+        end
+
+        function s = runOrderText(sch)
+            % The plan label's tooltip: the stimulus each run presents, in
+            % play order, headed by the order in words where one is in force.
+            %
+            % 'conventional' only, because it is the one strategy whose order
+            % is the same every time it is built. This schedule is the
+            % PREVIEW's; Start builds its own, so a shuffled order read off
+            % this one would be a different shuffle from the one played --
+            % and a list that looks like the plan and is not is worse than
+            % no list.
+            s = '';
+            if ~strcmpi(sch.Strategy,'conventional'), return; end
+            runs = sch.Runs(~cellfun(@isempty,sch.Runs));
+            if isempty(runs), return; end
+            ids   = sch.Set.IDs();
+            first = cellfun(@(r) r(1),runs);
+            most  = 24;                      % a tooltip, not a report
+            shown = first(1:min(most,numel(first)));
+            lines = arrayfun(@(k) sprintf('%2d.  %s',k,char(string(ids{shown(k)}))), ...
+                1:numel(shown),'UniformOutput',false);
+            if numel(first) > most
+                lines{end+1} = sprintf('… and %d more',numel(first)-most);
+            end
+            head = 'Run order (bank order)';
+            by   = sch.orderLabel();
+            if ~isempty(by), head = ['Run order (' by ')']; end
+            s = strjoin([{[head ':']} lines],newline);
+        end
+
         function s = launchStepLabel(acqName,useCompute)
             % The startup dialog's second step, naming what it launches.
             if useCompute
@@ -4256,6 +4469,16 @@ end
 % ======================= local helpers ================================
 function s = onOff(tf)
 if tf, s = 'on'; else, s = 'off'; end
+end
+
+function v = refillOrderDrop(drop,names,none)
+% Give an order dropdown the parameters it may offer, keeping its choice where
+% that is still one of them. Items and ItemsData go in one set(), as the bank
+% dropdown's do, so the two are never seen at different lengths.
+v = drop.Value;
+set(drop,'Items',[{'Bank order'} names],'ItemsData',[{none} names]);
+if ~any(strcmp(v,drop.ItemsData)), v = none; end
+drop.Value = v;
 end
 
 function f = bankFilter()

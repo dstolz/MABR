@@ -61,13 +61,15 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 | `Repetitions` | Per-entry repetition counts; a scalar is broadcast to every entry |
 | `Strategy`, `Seed` | How entries combine, and the shuffle seed (`[]` = fresh shuffle, via a private `RandStream`) |
 | `StrategyFcn`, `StrategyParams` | Under `Strategy = 'custom'`, the user's ordering function and its knobs. Called once per `build()` with [`strategy.context`](../+mabr/+stim/+strategy/context.m); `build()` refuses without one |
-| `build()` | (Re)build `Runs` from `Repetitions` + `Strategy`. **Required after changing either** |
+| `OrderBy`, `OrderDirection` | Under `Strategy = 'conventional'`, the stimulus parameter(s) the runs are sorted by, most significant first, and the way each goes: `ascending`, `descending`, or `listed` (grouped by value, in the order the bank first lists each — see the constant `OrderDirections`). Cellstr rows that take a char for one parameter; `{}` = array order. Ties keep array order in every direction, a parameter the bank does not vary is skipped, and one direction given for several parameters applies to all. An unknown direction is refused on assignment (`mabr:stim:Schedule:orderDirection`) |
+| `build()` | (Re)build `Runs` from `Repetitions` + `Strategy` (and `OrderBy` + `OrderDirection`). **Required after changing any of them** |
 | `NumRuns`, `current()`, `advance()`, `reset()`, `isComplete()` | Run walk; `advance` returns `[]` when finished |
 | `runSequence(r)` | The stimulus index presented at each onset of run `r` |
 | `runPolarity(r)` | The polarity (`+1`/`-1`) applied at each onset of run `r` |
 | `renderSpec(r)` | Build the acquisition spec for run `r` — the argument to `Engine.prep` |
 | `isIntermixed()` | True when one run mixes stimuli. For `custom` it asks the built **runs**, not the strategy name |
-| `strategyLabel()` | The strategy as a record should name it — `custom: my_ordering`, not bare `custom` |
+| `strategyLabel()` | The strategy as a record should name it — `custom: my_ordering`, not bare `custom`, and `conventional (Frequency as listed, Level descending)` where an order is in force |
+| `orderLabel()` | The run order in force, in words; `''` for array order, for a parameter this bank does not vary, and for every strategy but `conventional` |
 | `normalizedRepetitions()` | `Repetitions` as the plan uses them: scalar expanded, zero-filled, rounded |
 | `summary()` | Plan overview: `numRuns`, `presentations`, `repetitions`, `duration` (s), `intermixed` |
 | `overlaps()` | True when the longest stimulus does not fit inside the ISI |

@@ -36,7 +36,8 @@ classdef Schedule < handle
 %   variants and the user's own:
 %
 %     'conventional'          one run per stimulus, each the full repetition
-%                             train. Entries play in bank order.
+%                             train. Entries play in bank order, or in the
+%                             order OrderBy asks for -- see "Run order" below.
 %     'conventional-shuffled' as 'conventional', but the order of the runs is
 %                             shuffled.
 %     'interleaved-ramp'      ONE run of repeated cycles through the bank. Each
@@ -67,6 +68,31 @@ classdef Schedule < handle
 %   the level: they read the one named Level (see cycleOrder), keep every
 %   other parameter in the order the bank first lists it, and fall back to
 %   plain bank order when the bank does not vary a Level.
+%
+%   Run order ('conventional')
+%   --------------------------
+%   OrderBy names the stimulus parameter(s) the runs are sorted by, most
+%   significant first, and OrderDirection says which way each one goes:
+%
+%     'ascending'   low to high
+%     'descending'  high to low
+%     'listed'      grouped by value, the groups in the order the bank first
+%                   lists them -- which keeps a frequency order that was
+%                   chosen on purpose (most important first, say)
+%
+%       sch.OrderBy = 'Level';  sch.OrderDirection = 'descending';
+%           every stimulus at the loudest level, then every one at the next
+%
+%       sch.OrderBy        = {'Frequency','Level'};
+%       sch.OrderDirection = {'listed','descending'};
+%           the threshold series: one frequency at a time, in the bank's own
+%           order, loudest first within each
+%
+%   Entries tied on every parameter named keep their bank order, in either
+%   direction, so reversing a direction reverses that parameter and nothing
+%   else. A name the bank does not vary is skipped, never refused. Only
+%   'conventional' reads the pair: the shuffled and interleaved strategies
+%   decide their own order, and so does a 'custom' one.
 %
 %   The first six are permutations of a FIXED multiset, never probabilistic
 %   sampling: each entry is presented exactly its repetition count in all of
@@ -147,6 +173,9 @@ classdef Schedule < handle
                       'interleaved-plateau','interleaved-random','shuffled','custom'};
         ISIModes   = {'fixed','random'};
 
+        % The ways a parameter named in OrderBy can be ordered.
+        OrderDirections = {'ascending','descending','listed'};
+
         % Names from before the strategies were named for the designs they
         % implement, [old new] per row. Still accepted (canonicalStrategy)
         % because .mabrcfg files and last-session prefs carry them.
@@ -176,6 +205,21 @@ classdef Schedule < handle
         % are passed to an advance criterion. Anything here reaches the
         % strategy under its own field name.
         StrategyParams   (1,1) struct = struct()
+
+        % The parameter(s) 'conventional' plays its runs in the order of, most
+        % significant first, and which way each goes (OrderDirections). Both
+        % are held as cellstr rows and take a char for the one-parameter case;
+        % {} = the bank's own order. OrderDirection is read in parallel with
+        % OrderBy: a single direction applies to every parameter, and a
+        % parameter with none of its own is 'ascending'.
+        %
+        % A name the bank does not vary (unknown, or constant across entries)
+        % is skipped rather than refused: the setting outlives the bank it was
+        % chosen for, and a configuration naming Level must still load against
+        % a bank without one. Read by 'conventional' only -- the shuffled and
+        % interleaved strategies decide their own order.
+        OrderBy                       = {}
+        OrderDirection                = {'ascending'}
 
         ISI              (1,1) double = 1/21.1  % s, onset-to-onset ('fixed')
 
@@ -271,6 +315,24 @@ classdef Schedule < handle
             obj.Strategy = mabr.stim.Schedule.canonicalStrategy(v);
         end
 
+        function set.OrderBy(obj,v)
+            obj.OrderBy = mabr.stim.Schedule.textList(v,'OrderBy');
+        end
+
+        function set.OrderDirection(obj,v)
+            % Refused here rather than at build(): a direction is one of three
+            % words, and a misspelt one silently read as 'ascending' would
+            % present a session backwards from what was asked for.
+            v = lower(mabr.stim.Schedule.textList(v,'OrderDirection'));
+            if isempty(v), v = {'ascending'}; end
+            bad = ~ismember(v,mabr.stim.Schedule.OrderDirections);
+            assert(~any(bad),'mabr:stim:Schedule:orderDirection', ...
+                'Unknown order direction "%s". Expected one of: %s.', ...
+                strjoin(v(bad),'", "'), ...
+                strjoin(mabr.stim.Schedule.OrderDirections,', '));
+            obj.OrderDirection = v;
+        end
+
         function set.ISIRange(obj,v)
             % Ascending, and never silently sorted: [50 20] is a mistake about
             % which bound is which, and quietly swapping it would hide that.
@@ -309,16 +371,38 @@ classdef Schedule < handle
             % the .stimlog's Presentation.Strategy, a log line, a status line.
             % 'custom' alone does not say which custom, and a file recording
             % only that the order was "custom" cannot be reproduced from.
+            %
+            % The same goes for a conventional plan played in an order of its
+            % own: 'conventional (Frequency as listed, Level descending)'.
             s = obj.Strategy;
             if strcmpi(s,'custom') && ~isempty(obj.StrategyFcn)
                 s = ['custom: ' mabr.stim.Schedule.fcnName(obj.StrategyFcn)];
+                return
             end
+            by = obj.orderLabel();
+            if ~isempty(by), s = [s ' (' by ')']; end
+        end
+
+        function s = orderLabel(obj)
+            % The run order in force, in words -- 'Level descending',
+            % 'Frequency as listed, Level descending' -- and '' for the bank's
+            % own order. In force, not merely asked for: a parameter this bank
+            % does not vary is left out, and any strategy but 'conventional'
+            % answers '', since none of the others reads OrderBy.
+            s = '';
+            if ~strcmpi(obj.Strategy,'conventional'), return, end
+            K = obj.orderKeys();
+            if isempty(K), return, end
+            words = strrep({K.Direction},'listed','as listed');
+            parts = cellfun(@(n,d) [n ' ' d],{K.Name},words,'UniformOutput',false);
+            s = strjoin(parts,', ');
         end
 
         % --- Plan construction ----------------------------------------------
         function build(obj)
-            % (Re)build the run list from Repetitions + Strategy. Call after
-            % changing either; reset() alone does not rebuild.
+            % (Re)build the run list from Repetitions + Strategy (and, under
+            % 'conventional', OrderBy + OrderDirection). Call after changing
+            % any of them; reset() alone does not rebuild.
             n    = obj.Set.numStimuli;
             reps = obj.normalizedRepetitions();
 
@@ -335,7 +419,7 @@ classdef Schedule < handle
 
             switch lower(obj.Strategy)
                 case 'conventional'
-                    [obj.Runs,obj.Polarities] = obj.blockRuns(1:n,reps,alt);
+                    [obj.Runs,obj.Polarities] = obj.blockRuns(obj.parameterOrder(),reps,alt);
 
                 case 'conventional-shuffled'
                     [obj.Runs,obj.Polarities] = obj.blockRuns(randperm(rs,n),reps,alt);
@@ -767,6 +851,58 @@ classdef Schedule < handle
             end
         end
 
+        function order = parameterOrder(obj)
+            % The bank as a permutation of 1:n in the order OrderBy asks for;
+            % bank order when it asks for none this bank can give.
+            %
+            % One sortrows over a column per parameter, most significant
+            % first, with the bank index as the last column -- so the sort is
+            % stable in every direction: entries tied on every parameter keep
+            % their bank order, descending included, and reversing a
+            % direction reverses that parameter and nothing else.
+            n     = obj.Set.numStimuli;
+            order = 1:n;
+            K     = obj.orderKeys();
+            if isempty(K), return; end
+            M = zeros(n,numel(K));
+            for k = 1:numel(K)
+                v = K(k).Values;
+                switch K(k).Direction
+                    case 'descending'
+                        v = -v;
+                    case 'listed'
+                        % Values numbered by first appearance, so sorting on
+                        % the number keeps the bank's order of the groups.
+                        [~,~,v] = unique(v,'stable');
+                end
+                M(:,k) = v;
+            end
+            [~,order] = sortrows([M (1:n)']);
+            order = order(:)';
+        end
+
+        function K = orderKeys(obj)
+            % OrderBy as this bank can honour it: one element per parameter it
+            % actually varies, in the order asked for, with the direction
+            % that goes with it and its column of values.
+            K = struct('Name',{},'Direction',{},'Values',{});
+            if isempty(obj.OrderBy) || obj.Set.numStimuli == 0, return; end
+            P = obj.Set.paramTable();
+            d = obj.OrderDirection;
+            for k = 1:numel(obj.OrderBy)
+                j = find(strcmpi(P.Names,obj.OrderBy{k}) & P.Varying,1);
+                % Named a second time a parameter adds nothing: the first has
+                % already decided every comparison it could.
+                if isempty(j) || any(strcmp({K.Name},P.Names{j})), continue; end
+                if isscalar(d),       way = d{1};
+                elseif k <= numel(d), way = d{k};
+                else,                 way = 'ascending';
+                end
+                K(end+1) = struct('Name',P.Names{j},'Direction',way, ...
+                                  'Values',P.Values(:,j)); %#ok<AGROW>
+            end
+        end
+
         function order = cycleOrder(obj,kind)
             % The order one cycle of 'interleaved-ramp' / '-plateau' walks the
             % bank in, as a permutation of 1:n.
@@ -860,6 +996,25 @@ classdef Schedule < handle
             map = mabr.stim.Schedule.LegacyStrategies;
             k = find(strcmp(s,map(:,1)),1);
             if ~isempty(k), s = map{k,2}; end
+        end
+
+        function c = textList(v,what)
+            % A char, a string array, or a cell of either as a cellstr row;
+            % '' / [] / {} as the empty list. Empty ENTRIES are kept:
+            % OrderBy and OrderDirection are read in parallel, and dropping
+            % one from the middle would pair every later name with the wrong
+            % direction.
+            if isempty(v), c = cell(1,0); return, end
+            if iscell(v) && all(cellfun(@(x) ischar(x) || ...
+                    (isstring(x) && isscalar(x)),v(:)))
+                c = cellfun(@char,v,'UniformOutput',false);
+            elseif ischar(v) || isstring(v)
+                c = cellstr(v);
+            else
+                error('mabr:stim:Schedule:orderList', ...
+                    '%s must be a name or a list of names, not a %s.',what,class(v));
+            end
+            c = reshape(c,1,[]);
         end
 
         function s = fcnName(fcn)

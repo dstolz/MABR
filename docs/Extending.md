@@ -94,13 +94,24 @@ The strategies:
 
 | Strategy | Runs | Shape |
 |----------|------|-------|
-| `conventional` | one per stimulus | `A A A … / B B B … / C C C …`, in array order |
+| `conventional` | one per stimulus | `A A A … / B B B … / C C C …`, in array order — or sorted by stimulus parameter, see `OrderBy` below |
 | `conventional-shuffled` | one per stimulus | same, but the order of the runs is shuffled |
 | `interleaved-ramp` | one | repeated cycles; each walks one frequency at a time with its levels **ascending** — `8k·10 8k·20 8k·30 16k·10 16k·20 …` |
 | `interleaved-plateau` | one | repeated cycles; each climbs the levels with every frequency at each — `8k·10 16k·10 32k·10 8k·20 16k·20 …` |
 | `interleaved-random` | one | repeated cycles, each cycle's order shuffled independently |
 | `shuffled` | one | the whole multiset shuffled uniformly, no cycle structure |
 | `custom` | as many as you return | whatever your own function decides — see [Ordering presentations yourself](#ordering-presentations-yourself) |
+
+`conventional` alone takes a run order of its own. `OrderBy` names the stimulus parameter(s) to sort the runs by, most significant first, and `OrderDirection` the way each goes — `'ascending'`, `'descending'`, or `'listed'` (grouped by value, the groups in the order the bank first lists them):
+
+```matlab
+sch.OrderBy = 'Level';  sch.OrderDirection = 'descending';     % loudest level first, every frequency at each
+sch.OrderBy        = {'Frequency','Level'};                    % one frequency at a time,
+sch.OrderDirection = {'listed','descending'};                  % loudest first within it
+sch.build();
+```
+
+Entries tied on every parameter named keep their array order in either direction, a parameter the bank does not vary is skipped rather than refused, and no other strategy reads the pair. `sch.orderLabel()` says the order in force in words.
 
 The names are those of the acquisition designs they implement: conventional, and the three interleaved designs (ramp, plateau, random). Ramp and plateau only sort the **level** — the parameter named `Level` — and keep every other parameter in the order the bank first lists it, since frequencies are often listed non-adjacently on purpose; a bank that does not vary a `Level` is cycled in bank order under either name.
 
@@ -180,7 +191,7 @@ Structural mistakes are errors rather than warnings, because no design intends t
 
 [custom_template.m](../+mabr/+stim/+strategy/custom_template.m) is a copy-me stereotype and a real strategy: **one run per condition, grouped by frequency, loudest first within each group.**
 
-No built-in can express it — `conventional` presents in array order, the interleaved ones mix conditions inside one run, and the shuffled ones scramble it — and it is what an ABR threshold series usually wants. The loud conditions respond visibly, so a dead electrode or a slipped ear plug shows up in the first minute rather than after twenty spent collecting noise near threshold.
+It is what an ABR threshold series usually wants: the loud conditions respond visibly, so a dead electrode or a slipped ear plug shows up in the first minute rather than after twenty spent collecting noise near threshold. `conventional` presents the same plan when asked to — `OrderBy = {'Frequency','Level'}`, `OrderDirection = {'ascending','descending'}` — and that is the way to get this order for its own sake. It is written out here because sorting the bank by its parameters is where most strategies start, and the ones worth writing go on to do what a sort cannot.
 
 ```matlab
 function runs = descending_levels(ctx)

@@ -57,12 +57,14 @@ function runs = custom_template(ctx)
 %   (so each still saves to its own .abr and early stop stays available), the
 %   conditions grouped by Frequency and ordered LOUDEST FIRST within each.
 %
-%   None of the six built-in strategies can express it -- 'conventional'
-%   presents in bank order, the interleaved ones mix conditions inside one
-%   run, and the shuffled ones scramble it -- and it is what an ABR
-%   threshold series usually wants: the loud conditions respond visibly, so a
-%   dead electrode or a slipped ear plug shows up in the first minute rather
-%   than after twenty spent collecting noise near threshold.
+%   It is what an ABR threshold series usually wants: the loud conditions
+%   respond visibly, so a dead electrode or a slipped ear plug shows up in
+%   the first minute rather than after twenty spent collecting noise near
+%   threshold. 'conventional' presents the same plan when asked to
+%   (Schedule.OrderBy = {'Frequency','Level'}, OrderDirection =
+%   {'ascending','descending'}), and that is the way to get this order for
+%   its own sake; it is written out here because sorting the bank by its
+%   parameters is where most strategies start.
 %
 %   A bank with no Level parameter simply comes back in bank order: a strategy
 %   that errors on a bank missing the field it hoped for is worse than one
