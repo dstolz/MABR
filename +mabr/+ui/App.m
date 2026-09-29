@@ -2090,12 +2090,48 @@ classdef App < handle
                     msg = ['Designer open empty: the loaded bank has no .spl ' ...
                            'file the designer can read. ' msg];
                 end
+                % After the bank: assigning Fs regenerates every item, so
+                % routing to the rig last puts a loaded bank on its clock too
+                % (mabr.ui.StimgenLauncher.openDesigner follows the same order).
+                rigNote = app.routeDesignerToRig();
+                if ~isempty(rigNote), msg = [msg ' ' rigNote]; end
                 app.setStatus(msg);
             catch me
                 app.Designer = [];
                 app.setStatus(['Could not open the stimgen designer: ' me.message]);
             end
             app.syncDesignButton();
+        end
+
+        function note = routeDesignerToRig(app)
+            % Point the Design… designer at MABR's own rig, the same way
+            % mabr.ui.StimgenLauncher.openDesigner routes a designer it opens:
+            % rendered at the rig's rate and played/captured through
+            % mabr.stim.CalibrationAdapter (loop-back-latency-compensated)
+            % rather than the embedded speakers stimgen defaults to. Without
+            % this, Play/Play All in a Design…-opened designer go out the
+            % computer's own audio device, not the ASIO rig -- what
+            % Settings > stimgen Tools already gets right.
+            note = '';
+            a = app.Audio;
+            if a.Testing || a.isStimulationOnly()
+                note = ['(playing through the computer''s own speakers -- ' ...
+                    'Test Mode/Stimulation Only has no device to route through.)'];
+                return
+            end
+            try
+                app.Designer.Fs = a.SampleRate;
+                app.Designer.CaptureAdapter = @() mabr.ui.StimgenLauncher.captureAdapter( ...
+                    'mabr',a,@() app.Controller);
+                % No HardwareHost is attached, so CaptureAdapter is also the
+                % designer's hardware preview route (see StimgenLauncher).
+                app.Designer.PlaybackOutput = "Hardware";
+                note = sprintf('Playing and capturing through the rig (%s kHz).', ...
+                    mabr.Config.rateText(a.SampleRate));
+            catch me
+                note = ['(could not route the designer to the rig, so it will ' ...
+                    'use the computer''s own speakers: ' me.message ')'];
+            end
         end
 
         function f = designerBankFile(app)
