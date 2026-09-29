@@ -11,9 +11,10 @@ function set = fromStimgen(src,cfg,opts)
 %       stimgen.StimType      one or more stimuli directly
 %
 %   Options (name-value):
-%       AlternatePolarity  (1,1) logical  false. Applied to every entry.
-%                          stimgen has no polarity concept; MABR owns it (see
-%                          mabr.stim.Schedule).
+%       AlternatePolarity  (1,1) logical  false. Applied to every entry, on
+%                          top of any stimulus that asks for it itself (a
+%                          stimgen.Tone with Polarity = 0 -- see below). The
+%                          alternation is MABR's (mabr.stim.Schedule).
 %       Calibration        (1,:) char     ''. Path of the .esgc the bank was
 %                          built against, recorded as provenance.
 %
@@ -48,6 +49,19 @@ function set = fromStimgen(src,cfg,opts)
 %   dB is a ratio. So an entirely uncalibrated bank is rescaled RELATIVE to
 %   its own loudest entry (10^(dL/20) each), and every entry records the gain
 %   it was given in LevelScale. See relativeLevels below.
+%
+%   Alternating polarity is carried across
+%   --------------------------------------
+%   A stimgen.Tone with Polarity = 0 ("+/- Alternate") generates the positive
+%   waveform and reports alternates_polarity() = true: a tone pip has no train
+%   to alternate within, so the flipping belongs to whoever presents it. Here
+%   that is mabr.stim.Schedule, so such a variant imports with
+%   alternatePolarity = true and its repetitions are split between the signs
+%   rather than doubled (which is what OnsetPhase = [0 180] would do, as two
+%   variants). A ClickTrain offers both kinds: Polarity = 2 ("+/- Alternate
+%   presentations") imports the same way, while Polarity = 0 alternates
+%   click by click inside its own waveform, reports false, and is imported as
+%   the waveform it already is.
 %
 %   What is deliberately dropped
 %   ----------------------------
@@ -190,7 +204,7 @@ e = struct();
 e.signal      = single(sig);
 e.SampleRate  = s.Fs;
 e.Repetitions = reps;
-e.alternatePolarity = opts.AlternatePolarity;
+e.alternatePolarity = opts.AlternatePolarity || stimAlternates(s);
 
 % --- Parameters -------------------------------------------------------
 % Level and Frequency are renamed and rescaled because the offline pipeline
@@ -245,6 +259,17 @@ catch me
     % Calibration is optional and its state is stimgen's business; an
     % uncalibrated or half-configured bank must still import.
     mabr.log.vprintf(2,'fromStimgen: calibration state unreadable (%s).',me.message);
+end
+end
+
+% =========================================================================
+function tf = stimAlternates(s)
+% Whether this variant asks its presenter to alternate polarity. Guarded on
+% ismethod because the submodule is optional and may be checked out at a
+% commit older than stimgen.StimType.alternates_polarity.
+tf = false;
+if ismethod(s,'alternates_polarity')
+    tf = logical(s.alternates_polarity());
 end
 end
 

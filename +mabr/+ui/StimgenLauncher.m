@@ -97,8 +97,6 @@ classdef StimgenLauncher < handle
         OwnAudio                 % mabr.AudioSettings, used when AudioFcn is empty
         H struct = struct()      % UI handles
         Adapter = []             % adapter last handed to the shared engine
-        AdapterKey = ''          % what it was built from
-        AdapterController = []   % the controller it was built against
         CalGui = []              % the open CalibrationGui, if any
         CalGuiEngine = []        % the engine it was opened on
     end
@@ -227,26 +225,13 @@ classdef StimgenLauncher < handle
         end
 
         function [ad,why] = resolveAdapter(obj)
-            % The adapter the rig setting calls for -- built once and reused
-            % while nothing it was built from has changed, since a sound-card
-            % adapter holds its device open. WHY says why there is none.
-            a = obj.audio();
-            ctl = obj.controller();
-            key = sprintf('%s|%s|%.10g|%d %d|%d %d|%d',obj.Settings.Source,a.Device, ...
-                a.SampleRate,a.PlayerChannels,a.RecorderChannels,a.MicChannel);
-            key = [key sprintf('|%d',a.Testing)];
-            if ~isempty(obj.Adapter) && isvalid(obj.Adapter) && strcmp(key,obj.AdapterKey) ...
-                    && isequal(ctl,obj.AdapterController)
-                ad = obj.Adapter; why = '';
-                return
-            end
-            % Let go of the old one before opening a new one on the same device.
-            try, delete(obj.Adapter); end %#ok<TRYNC>
-            obj.Adapter = []; obj.AdapterKey = ''; obj.AdapterController = [];
-            [ad,why] = mabr.ui.StimgenLauncher.buildAdapter(obj.Settings.Source,a,ctl);
-            if ~isempty(ad)
-                obj.Adapter = ad; obj.AdapterKey = key; obj.AdapterController = ctl;
-            end
+            % The adapter the rig setting calls for -- the shared one (see
+            % sharedAdapter), so the calibration window, the spot checks and
+            % every designer play through one adapter. WHY says why there is
+            % none.
+            [ad,why] = mabr.ui.StimgenLauncher.sharedAdapter( ...
+                obj.Settings.Source,obj.audio(),obj.controller());
+            obj.Adapter = ad;
         end
 
         function [eng,why] = prepareEngine(obj)
@@ -289,7 +274,16 @@ classdef StimgenLauncher < handle
                     notes{end+1} = sprintf('%s kHz',mabr.Config.rateText(a.SampleRate));
                     src = obj.Settings.Source; ctlFcn = obj.ControllerFcn;
                     sp.CaptureAdapter = @() mabr.ui.StimgenLauncher.captureAdapter(src,a,ctlFcn);
-                    notes{end+1} = 'capture through the rig';
+                    % The same adapter is the designer's hardware preview
+                    % route (no HardwareHost is attached), so Play reaches
+                    % the rig at its calibrated level rather than the
+                    % computer speakers. Speakers stay one dropdown away.
+                    try
+                        sp.PlaybackOutput = "Hardware";
+                    catch me
+                        mabr.log.vprintf(1,1,'stimgen designer: hardware preview unavailable: %s',me.message);
+                    end
+                    notes{end+1} = 'play and capture through the rig';
                 end
                 cal = obj.Settings.CalibrationFile;
                 if ~isempty(cal) && isfile(cal)
@@ -567,7 +561,8 @@ classdef StimgenLauncher < handle
         end
 
         function ad = captureAdapter(source,a,controllerFcn)
-            % Called by a designer at each capture (StimPlayer.CaptureAdapter):
+            % Called by a designer at each capture and at each hardware
+            % Play (StimPlayer.CaptureAdapter is also its preview route):
             % errors with the reason rather than returning [], since the
             % designer reports a thrown message where it would only say
             % "unavailable" for an empty one.
@@ -575,10 +570,44 @@ classdef StimgenLauncher < handle
             if ~isempty(controllerFcn)
                 try, ctl = controllerFcn(); catch, ctl = []; end
             end
-            [ad,why] = mabr.ui.StimgenLauncher.buildAdapter(source,a,ctl);
+            [ad,why] = mabr.ui.StimgenLauncher.sharedAdapter(source,a,ctl);
             if isempty(ad)
                 error('mabr:ui:StimgenLauncher:noAdapter','%s',why);
             end
+        end
+
+        function [ad,why] = sharedAdapter(source,a,controller)
+            % The one adapter this MATLAB session plays through, rebuilt
+            % only when something it was built from changes. One, because a
+            % sound-card adapter holds its device open and an ASIO device
+            % has exactly one owner: the launcher's engine and a designer
+            % each holding their own would leave the second unable to open
+            % it. Reused, because a designer's Play All asks once per
+            % combination and a fresh adapter would reopen the device (and
+            % repeat its warnings) every time. Static and persistent rather
+            % than the launcher's, so a designer outliving the launcher
+            % still shares with whatever opens next.
+            persistent lastKey lastAd lastCtl
+            why = '';
+            key = mabr.ui.StimgenLauncher.adapterKey(source,a);
+            if ~isempty(lastAd) && isvalid(lastAd) && strcmp(key,lastKey) ...
+                    && isequal(controller,lastCtl)
+                ad = lastAd;
+                return
+            end
+            % Let go of the old one before opening a new one on the same device.
+            try, delete(lastAd); end %#ok<TRYNC>
+            lastAd = []; lastKey = ''; lastCtl = [];
+            [ad,why] = mabr.ui.StimgenLauncher.buildAdapter(source,a,controller);
+            if ~isempty(ad)
+                lastAd = ad; lastKey = key; lastCtl = controller;
+            end
+        end
+
+        function key = adapterKey(source,a)
+            % What an adapter is built from, as one comparable string.
+            key = sprintf('%s|%s|%.10g|%d %d|%d %d|%d|%d',source,a.Device, ...
+                a.SampleRate,a.PlayerChannels,a.RecorderChannels,a.MicChannel,a.Testing);
         end
 
         % --- files ---------------------------------------------------------

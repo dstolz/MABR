@@ -14,7 +14,11 @@ function verify_stimgen_launcher()
 %   yields none; a real setting yields a CalibrationAdapter that is REUSED
 %   while nothing it was built from changes and rebuilt when it does.
 %   Part C (the tools): the designer opens at the rig's sample rate with
-%   capture routed to an adapter built from it; the calibration window opens
+%   capture routed to an adapter built from it -- the SAME adapter the
+%   launcher holds (one owner per device) -- and its preview output on that
+%   adapter, since with no HardwareHost the capture adapter is also the
+%   designer's hardware Play route (Offline stays on the speakers, and with
+%   no adapter the hardware output is refused); the calibration window opens
 %   on the shared engine and is raised, not duplicated, on a second press;
 %   the inspector reads a stimulus out of a .mat; every tool button carries
 %   its icon and the Help button is there.
@@ -135,11 +139,30 @@ assert(isa(sp.CaptureAdapter,'function_handle'),'capture must be routed through 
 capAd = sp.CaptureAdapter();
 assert(isa(capAd,'mabr.stim.CalibrationAdapter') && capAd.sample_rate() == 48000, ...
     'the designer''s capture adapter must be the rig''s');
+assert(capAd == lch.resolveAdapter() && capAd == sp.CaptureAdapter(), ...
+    'the designer and the launcher must share one adapter (one owner per device)');
+% With no HardwareHost, the capture adapter is also the designer's hardware
+% preview route -- Play must reach the rig, not the computer speakers.
+assert(sp.PlaybackOutput == "Hardware", ...
+    'the designer must open with its preview output on the rig (got %s)',sp.PlaybackOutput);
+sp.PlaybackOutput = "Speakers";
+sp.PlaybackOutput = "Hardware";   % selectable by hand, not only at open
+sp.CaptureAdapter = [];
+assert(sp.PlaybackOutput == "Speakers", ...
+    'taking the adapter away must take the hardware preview route with it');
+refused = false;
+try
+    sp.PlaybackOutput = "Hardware";
+catch me
+    refused = strcmp(me.identifier,'stimgen:StimPlayer:NoHardwareHost');
+end
+assert(refused,'hardware preview with no host and no adapter must be refused');
 delete(sp);
 
 lch.setSource('offline');
 sp = lch.openDesigner();
 assert(isempty(sp.CaptureAdapter),'offline: the designer must get no capture adapter');
+assert(sp.PlaybackOutput == "Speakers",'offline: the designer must preview on the speakers');
 delete(sp);
 
 g1 = lch.openCalibration();

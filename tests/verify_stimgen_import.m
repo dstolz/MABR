@@ -20,6 +20,11 @@ function verify_stimgen_import()
 %        Reps is honoured only while the operator can see it (mabr.ui.App
 %        hides that control, so a hidden one falls back to the GUI default)
 %     7. Level/Frequency reach a filename in the shape the offline regex wants
+%     8. a Tone's Polarity: -1 inverts the waveform, 0 (alternate) imports as
+%        alternatePolarity with ONE variant per condition -- repetitions split
+%        between the signs, not doubled as OnsetPhase = [0 180] would; a
+%        ClickTrain alternates presentations the same way under Polarity = 2,
+%        and its in-train alternation (0) is not flipped a second time
 %
 %   Skips (and passes) when the stimgen submodule is not initialized, so the
 %   suite still runs on a clone that never fetched it.
@@ -204,6 +209,67 @@ fn = mabr.data.io.buildFilename(blk,'SUBJ_ID_1');
 assert(contains(fn,'Frequency_') && contains(fn,'kHz_Level_') && endsWith(fn,'.abr'), ...
     'Filename "%s" does not match the offline pipeline''s shape.',fn);
 fprintf('  filename: %s\n',fn);
+
+% --- 8. Tone polarity ------------------------------------------------
+pos = stimgen.Tone(Frequency=[8000 16000],Duration=0.02);
+neg = stimgen.Tone(Frequency=[8000 16000],Duration=0.02,Polarity=-1);
+alt = stimgen.Tone(Frequency=[8000 16000],Duration=0.02,Polarity=0);
+setPos = mabr.stim.fromStimgen(pos,cfg);
+setNeg = mabr.stim.fromStimgen(neg,cfg);
+setAlt = mabr.stim.fromStimgen(alt,cfg);
+
+assert(setAlt.numStimuli == 2, ...
+    ['Alternating polarity made %d entries from 2 frequencies -- it must not ' ...
+     'add a variant (that is what OnsetPhase = [0 180] is for).'],setAlt.numStimuli);
+assert(all(setAlt.alternatesPolarity()) && ~any(setPos.alternatesPolarity()) ...
+    && ~any(setNeg.alternatesPolarity()), ...
+    'Only Polarity = 0 should import as alternatePolarity.');
+for i = 1:2
+    assert(isequal(setNeg.signal(i),-setPos.signal(i)), ...
+        'Polarity = -1 entry %d is not the inverted Polarity = 1 waveform.',i);
+    assert(isequal(setAlt.signal(i),setPos.signal(i)), ...
+        'Polarity = 0 entry %d is not generated positive (the schedule flips it).',i);
+end
+
+% Repetitions are split between the signs, per stimulus.
+schA = mabr.stim.Schedule(setAlt,cfg);
+schA.Repetitions(:) = 6;
+schA.ISI = 0.05;
+schA.build();
+for r = 1:schA.NumRuns
+    seq = schA.runSequence(r);
+    pol = schA.runPolarity(r);
+    for k = unique(seq(:))'
+        pk = pol(seq == k);
+        assert(numel(pk) == 6 && sum(pk == 1) == 3 && sum(pk == -1) == 3, ...
+            'Stimulus %d: polarities %s, expected 3 x +1 and 3 x -1.',k,mat2str(pk(:)'));
+    end
+end
+
+% Polarity survives a bank save (it is a UserProperty).
+back = stimgen.StimType.fromStruct(alt.toStruct);
+assert(isequal(back.Polarity,0),'Tone.Polarity did not survive toStruct/fromStruct.');
+
+% A ClickTrain's Polarity = 0 alternates inside its own waveform; flipping
+% whole presentations as well is not what it means.
+ck = stimgen.ClickTrain(Polarity=0,Duration=0.02,Rate=200);
+assert(~any(mabr.stim.fromStimgen(ck,cfg).alternatesPolarity()), ...
+    'A ClickTrain was imported as alternatePolarity; its alternation is in-waveform.');
+
+% Polarity = 2 alternates PRESENTATIONS -- the one a single click needs, since
+% with one click there is nothing to alternate within. Generated positive.
+one    = stimgen.ClickTrain(Duration=0.005,Rate=100,ClickDuration=1e-4);
+onePos = mabr.stim.fromStimgen(one,cfg);
+one.Polarity = 2;
+oneAlt = mabr.stim.fromStimgen(one,cfg);
+assert(all(oneAlt.alternatesPolarity()) && ~any(onePos.alternatesPolarity()), ...
+    'ClickTrain Polarity = 2 did not import as alternatePolarity.');
+assert(isequal(oneAlt.signal(1),onePos.signal(1)), ...
+    'ClickTrain Polarity = 2 is not generated positive (the schedule flips it).');
+assert(max(oneAlt.signal(1)) > 0 && min(oneAlt.signal(1)) >= 0, ...
+    'A single-click ClickTrain under Polarity = 2 is not a positive click.');
+fprintf(['  polarity: Tone -1 inverts, 0 alternates presentations (3 + 3 of 6); ' ...
+         'ClickTrain 2 alternates presentations, 0 stays in-train\n']);
 
 fprintf('== verify_stimgen_import PASSED ==\n');
 end
