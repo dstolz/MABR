@@ -2044,7 +2044,7 @@ classdef App < handle
                 {'Parallel pool', ...
                  mabr.ui.App.launchStepLabel(acqName,useCompute), ...
                  'Waiting for the workers to report in'}, ...
-                mabr.ui.App.startupIntro(acqName,useCompute), ...
+                mabr.ui.App.startupIntro(), ...
                 @(msg) app.setStatus(msg));
             closeDlg = onCleanup(@() dlg.close()); %#ok<NASGU>
             progress = @(msg) dlg.report(msg);
@@ -4310,18 +4310,15 @@ classdef App < handle
             end
         end
 
-        function s = startupIntro(acqName,useCompute)
-            % What the startup dialog says before its checklist: what is
-            % starting, why it takes a while, and that it is a one-off.
-            if useCompute
-                what = ['MABR is starting its ' acqName ' and the background ' ...
-                        'compute workers (live signal processing and analysis).'];
-            else
-                what = ['MABR is starting its ' acqName '.'];
-            end
-            s = [what ' The first Start after launching MATLAB can take ' ...
-                 '30–60 s while the parallel pool comes up; later Starts ' ...
-                 'reuse the running workers.'];
+        function s = startupIntro()
+            % What the startup dialog says before its checklist: why it takes
+            % a while, and that it is a one-off. What is starting is the
+            % dialog's title and the checklist's own steps, so it is not said
+            % a third time -- uiprogressdlg has no size property, its message
+            % area scrolls at about six lines, and a scroll bar on a dialog
+            % that is only ever read once is worse than a shorter sentence.
+            s = ['The first Start after launching MATLAB takes 30–60 s ' ...
+                 'while the parallel pool comes up.'];
         end
 
         function c = builtinStrategies()

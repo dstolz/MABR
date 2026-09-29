@@ -128,7 +128,7 @@ classdef StartupDialog < handle
                 lines{end+1} = row; %#ok<AGROW>
             end
             if ~isempty(obj.Detail)
-                lines = [lines {'' obj.Detail}];
+                lines = [lines {obj.Detail}];
             end
             txt = strjoin(lines,newline);
         end
