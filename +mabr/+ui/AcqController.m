@@ -230,6 +230,15 @@ classdef AcqController < handle
         % from one Start to the next -- a publish left over from the last
         % schedule's run 1 must not be taken for this one's.
         RunSerial  (1,1) double = 0;
+        % The RunStart for the compute workers, held from begin_current_run
+        % until the run's FIRST Acquire (see on_engine_state), and [] once
+        % sent or once the run is over. A worker windows whatever the ring
+        % holds, and until the acquisition worker resets it for the run --
+        % which it does just before reporting Acquire -- the ring holds the
+        % PREVIOUS run: told any earlier, the DSP worker published that run's
+        % sweeps under the new run's id, and the first live tick's advance
+        % check stopped the new run one frame in, with nothing recorded.
+        PendingRunStart = []
         CurRun     (1,1) double = 0;    % index of the run being acquired
         CurSeq     (1,:) double = [];   % stimulus index at each of its onsets
         CurPol     (1,:) double = [];   % polarity (+1/-1) at each of its onsets
@@ -758,10 +767,13 @@ classdef AcqController < handle
             % The workers get the same, plus the bank's metadata -- they
             % hold no StimulusSet, and the metrics worker names and places a
             % condition from its meta exactly as mabr.ui.MetricPlot would.
+            % Held, not sent: they start the run at its Acquire, once the
+            % ring holds it (see PendingRunStart).
+            obj.PendingRunStart = [];
             if ~isempty(obj.Compute)
                 info.Meta = arrayfun(@(u) obj.Stimuli.meta(u), ...
                     1:obj.Stimuli.numStimuli,'UniformOutput',false);
-                obj.Compute.runStart(info);
+                obj.PendingRunStart = info;
             end
 
             % The live view's progress bar tracks this run's own presentation
@@ -838,6 +850,17 @@ classdef AcqController < handle
             if obj.SelfTestActive, return; end   % see verifyTimingLoop
             switch e.State
                 case mabr.acq.State.Acquire
+                    % The worker resets the ring and THEN reports Acquire, so
+                    % from here the ring holds this run and nothing else: the
+                    % moment the compute workers can safely start on it. Once
+                    % per run -- a Resume reports Acquire again. Before the
+                    % state change, so a listener to it sees the workers
+                    % already on this run.
+                    if ~isempty(obj.PendingRunStart)
+                        info = obj.PendingRunStart;
+                        obj.PendingRunStart = [];
+                        if ~isempty(obj.Compute), obj.Compute.runStart(info); end
+                    end
                     obj.set_state(mabr.ui.ProgState.Acquire);
                     % Nothing is recorded in stimulation-only mode, so there
                     % is nothing for the live timer to read out of the ring
@@ -1625,6 +1648,7 @@ classdef AcqController < handle
             % out of the aux tick after the fact, and the pipeline stops
             % attributing sweeps to it.
             obj.PendingLive = [];
+            obj.PendingRunStart = [];   % a run over before it streamed never starts
             if ~isempty(obj.Pipeline), obj.Pipeline.endRun(); end
             if ~isempty(obj.Compute) && obj.Compute.InRun
                 obj.Compute.runEnd(obj.RunSerial);

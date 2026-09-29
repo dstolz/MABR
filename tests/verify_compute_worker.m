@@ -25,6 +25,10 @@ function verify_compute_worker()
 %           back without it.
 %   Part G: the online advance criterion still stops a run early when the
 %           correlation it judges is the worker's.
+%   Part H: a run reaches the compute workers only at its Acquire, once
+%           the ring has been reset for it -- told earlier, the DSP worker
+%           published the previous run's sweeps under the new run's id and
+%           the advance criterion stopped the new run one frame in.
 %   Part F: a DSP worker lost mid-run -- the run is finalized anyway (by
 %           this process from the intact ring when the reply never comes)
 %           and the schedule completes.
@@ -359,6 +363,43 @@ assert(nAdv >= 10 && nAdv < 0.75*200, ...
     'the advance criterion did not stop the run early through the worker (%d of 200)',nAdv);
 assert(ctrl.Pipeline.StepCount == steps0,'in-process DSP ran during the advance test');
 fprintf('  PASS Part G: advance criterion fired through the worker at %d of 200 sweeps\n',nAdv);
+
+%% ---- Part H: a run reaches the workers only once the ring holds it -----
+% A worker windows whatever the ring holds, and the acquisition worker resets
+% the ring only when the run starts streaming. Told about a run before that,
+% the DSP worker's first cycle windowed the PREVIOUS run's sweeps and
+% published them under the new run's id; the first live tick then saw a
+% complete run and the advance criterion stopped the new one a single frame
+% in, with nothing recorded (8 of 143 blocks on one rig day). The order is
+% checked directly, because the race itself seldom fires in loopback: start()
+% returns with the first run prepped and running, but its Acquire -- the one
+% moment the workers may be told -- cannot be delivered until this thread
+% yields.
+lvl = mabr.stim.demoStimuli(cfg,'Frequencies',1,'Levels',[30 40 50]);
+ctrl.setStimuli(lvl);
+ctrl.Schedule.Strategy    = 'conventional';
+ctrl.Schedule.Repetitions = 24;
+ctrl.Schedule.ISI         = 0.02;
+ctrl.Schedule.build();
+ctrl.Schedule.TestingFrameDelay = 1024/cfg.DACSampleRate;
+ctrl.AdvanceFcn    = @mabr.stim.advance.num_sweeps;   % stops at the plan's own count,
+ctrl.AdvanceParams = struct('targetSweeps',24,'corrThreshold',0.5, ...  % as on the rig
+                            'minSweeps',16,'maxSweeps',Inf);
+n0  = ctrl.Session.NumBlocks;
+id0 = ctrl.Compute.CurrentRunId;
+ctrl.start();
+assert(ctrl.Compute.CurrentRunId == id0, ...
+    ['the compute workers were told about run %d before the ring held it -- their ' ...
+     'first cycle would window the previous run''s sweeps'],ctrl.Compute.CurrentRunId);
+wait_until(@() ctrl.State == mabr.ui.ProgState.SchedComplete,120);
+assert(ctrl.State == mabr.ui.ProgState.SchedComplete, ...
+    'the three-run schedule did not complete (state %s)',string(ctrl.State));
+assert(ctrl.Compute.CurrentRunId == id0 + 3, ...
+    'expected the workers to have started 3 runs, not %d',ctrl.Compute.CurrentRunId - id0);
+assert(ctrl.Session.NumBlocks == n0 + 3,'expected 3 blocks, got %d',ctrl.Session.NumBlocks - n0);
+nb = arrayfun(@(b) b.NumSweeps,ctrl.Session.Blocks(n0+1:end));
+assert(all(nb == 24),'every run should keep all 24 of its sweeps (got %s)',mat2str(nb));
+fprintf('  PASS Part H: runs reach the workers at Acquire; 3 blocked runs kept all %d sweeps\n',24);
 
 %% ---- Part F: a DSP worker lost mid-run ---------------------------------
 % The run still finalizes -- by the relaunched worker if it is back in time,
