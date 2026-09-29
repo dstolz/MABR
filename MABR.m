@@ -42,6 +42,24 @@ if ~hasLog
     warning('MABR:granaryMissing','%s',why);
 end
 
+% Only one MABR window may be open (mabr.ui.App enforces it by throwing).
+% Typing MABR again is a reasonable thing to do, though, and not an error, so
+% answer it here by raising the window that is already up.
+existing = findall(groot,'Type','figure','Tag',mabr.ui.App.InstanceTag);
+if ~isempty(existing)
+    f = existing(1);
+    try
+        if isprop(f,'WindowState') && strcmp(f.WindowState,'minimized')
+            f.WindowState = 'normal';
+        end
+    catch
+    end
+    figure(f);
+    fprintf('MABR is already open -- brought the existing window to the front.\n');
+    if nargout, h = []; end
+    return
+end
+
 h = mabr.ui.App;
 
 if nargout == 0, clear h; end
