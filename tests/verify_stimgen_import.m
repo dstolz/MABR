@@ -209,7 +209,7 @@ spc.Name = "calpips";
 tmpC  = [tempname '.spl'];
 cc    = onCleanup(@() delete_if(tmpC));
 bankC = struct('ISI',[1 1],'SelectionType',"Serial",'NItems',1, ...
-               'Items',{{spc.toStruct}}); %#ok<NASGU>
+               'Items',{{spc.toStruct}});
 save(tmpC,'-struct','bankC','-v7');
 
 % Heard at stimgen's own logging seam rather than scraped off the console, so
@@ -228,6 +228,14 @@ falseAlarm = heardSince(heard,0,'No calibration data');
 n0 = heard.Count;
 mabr.stim.StimulusSet.fromFile(tmp,cfg);      % part 6's bank: no calibration
 realAlarm = heardSince(heard,n0,'No calibration data');
+
+% stimgen's own restore, which the designer and SpotCheck load through and
+% which had the same ordering. REPORTED, not asserted: it is the submodule's
+% behaviour, and a suite must not fail over which commit of an optional
+% dependency happens to be checked out. MABR's route above is quiet either way.
+n0 = heard.Count;
+viaStimgen   = stimgen.StimType.fromStruct(tc.toStruct);
+stimgenQuiet = ~heardSince(heard,n0,'No calibration data');
 clear cs
 
 assert(set3.numStimuli == 4,'Calibrated bank gave %d entries.',set3.numStimuli);
@@ -272,6 +280,16 @@ assert(realAlarm, ...
      'behind it loads without a word from stimgen.']);
 fprintf(['  calibrated .spl: LUT volts, identical to the live stimulus, says ' ...
          '"%s", no false alarm\n'],lbl);
+
+assert(viaStimgen.ApplyCalibration && ~isempty(viaStimgen.Calibration.CalibrationData), ...
+    'stimgen.StimType.fromStruct dropped the calibration it was given.');
+if stimgenQuiet
+    fprintf('  stimgen''s own fromStruct restores a calibrated stimulus quietly\n');
+else
+    fprintf(['  NOTE: stimgen''s own fromStruct still raises "No calibration data" on a\n' ...
+             '        calibrated stimulus -- an older submodule; the designer will log it\n' ...
+             '        when it loads a calibrated bank. MABR''s import is unaffected.\n']);
+end
 
 % --- 6b. a hidden Reps field is no opinion ---------------------------
 % The one case that needs the live designer, so this is the one place the
@@ -384,7 +402,9 @@ function hear(heard,level,msg)
 try
     if isa(msg,'MException') || isstruct(msg), msg = msg.message; end
     k = heard.Count + 1;
-    heard(k) = struct('Level',level,'Text',char(string(msg)));
+    % A containers.Map is a handle: this writes into the caller's map.
+    heard(k) = struct('Level',level,'Text',char(string(msg))); %#ok<NASGU>
+
 catch
 end
 end
