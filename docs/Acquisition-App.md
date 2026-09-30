@@ -76,21 +76,18 @@ The **Bank** field shows `(none loaded)` in red until stimuli are loaded, then t
 |---------|----------|
 | Conventional — one stimulus per run | All repetitions of one stimulus, then all of the next, and so on — in the order the bank lists them, or the order **Order by** asks for (below) |
 | Conventional — shuffled run order | The same, but which stimulus goes first is shuffled |
-| Interleaved ramp — levels within each frequency | One continuous run of repeated cycles through the bank. Each cycle takes one frequency at a time and steps through its levels from lowest to highest |
-| Interleaved plateau — frequencies within each level | The same cycles with the loops swapped: every frequency at the lowest level, then every frequency at the next level, and so on |
+| Interleaved — cycles in the order below | One continuous run of repeated cycles through the bank, every cycle in the same order — the order the bank lists them in, or the order **Order by** asks for (below) |
 | Interleaved random — each cycle shuffled | Repeated cycles through the bank, each cycle in its own random order |
 | Fully shuffled — no cycles | One continuous run, every presentation shuffled with no cycle structure |
 | Custom function… | The order your own function returns — see below |
 
-Ramp and plateau sort by the stimulus parameter named **Level** and leave frequencies (and anything else) in the order the bank lists them, since frequencies are often listed non-adjacently on purpose. A bank with only one level has no ramp or plateau to form, and is cycled in bank order.
-
 The interleaved and fully shuffled strategies **intermix** stimuli within a single continuous run, which removes drift and order effects from the comparison between conditions. You still get one `.abr` file per stimulus: MABR knows which stimulus it played at every onset and separates the sweeps when it saves.
 
-Shuffling only reorders — it never resamples. Every stimulus is presented exactly the number of times you asked for under any of the six built-in strategies, so the counts are identical whichever you pick; only the order changes.
+Shuffling only reorders — it never resamples. Every stimulus is presented exactly the number of times you asked for under any of the five built-in strategies, so the counts are identical whichever you pick; only the order changes.
 
 **Custom strategies.** Picking **Custom function…** opens a file browser; choose a function that takes one context struct describing the design — the bank, the repetition counts, and the stimulus parameters as a table — and returns the stimulus indices to present, a vector for one run or a cell of vectors for several. MABR puts its folder on the path and checks it against the contract before accepting it, running it on a representative design with unequal repetition counts, so a malformed one is refused at selection rather than at Start. Once chosen it appears as `Custom: <name>` and is remembered by file in a saved configuration. Polarity is assigned for you, balanced across the whole plan exactly as the built-ins balance it. Copy [`+mabr/+stim/+strategy/custom_template.m`](../+mabr/+stim/+strategy/custom_template.m) — which is itself a useful strategy, one run per condition ordered loudest-first within each frequency — and see [Extending](Extending.md#ordering-presentations-yourself) for the full contract and more worked examples.
 
-**Order by / then by** — The order the **Conventional** runs play in. Pick a stimulus parameter — the dropdown offers the ones your bank actually varies, `Level` and `Frequency` for an ordinary tone grid — and a direction:
+**Order by / then by** — The order the **Conventional** runs play in, or the order every **Interleaved** cycle walks the bank in. Pick a stimulus parameter — the dropdown offers the ones your bank actually varies, `Level` and `Frequency` for an ordinary tone grid — and a direction:
 
 | Direction | The runs are played |
 |-----------|---------------------|
@@ -108,9 +105,18 @@ Shuffling only reorders — it never resamples. Every stimulus is presented exac
 
 Starting loud is usually what a threshold series wants: the loud conditions respond visibly, so a dead electrode or a slipped ear plug shows up in the first minute rather than after twenty spent collecting noise near threshold.
 
-Stimuli that tie on everything you chose keep the bank's order, whichever direction you sort in — reversing a direction reverses that parameter and nothing else. **Bank order** in the first row leaves the runs exactly as the bank lists them, which is what MABR did before this setting existed. Hover over the plan summary at the bottom of the panel to read the resulting run order back before you press Start.
+Under **Interleaved** the same rows order each cycle rather than the runs. The two classic interleaved designs are two settings of them:
 
-Both rows are greyed under every other strategy: the shuffled and interleaved strategies decide their own order, and a custom function returns its own. Ordering never changes *what* is presented — every stimulus still gets its own run and its full repetition count. The choice is saved in a configuration and recalled next session; loaded against a bank that does not vary the parameter it names, that row simply falls back to **Bank order**.
+| Design | Order by | then by | One cycle, on the same bank |
+|--------|----------|---------|-----------------------------|
+| Ramp — levels within each frequency | Frequency, as listed | Level, ascending | `8k·30  8k·60  8k·90  16k·30  16k·60  16k·90` |
+| Plateau — frequencies within each level | Level, ascending | *(Bank order)* | `8k·30  16k·30  8k·60  16k·60  8k·90  16k·90` |
+
+These used to be two strategies of their own, *Interleaved ramp* and *Interleaved plateau*. A configuration saved with either one still loads: it selects **Interleaved** and sets the rows to that design's order.
+
+Stimuli that tie on everything you chose keep the bank's order, whichever direction you sort in — reversing a direction reverses that parameter and nothing else. **Bank order** in the first row leaves the stimuli exactly as the bank lists them. Hover over the plan summary at the bottom of the panel to read the resulting run order (or, under Interleaved, one cycle) back before you press Start.
+
+Both rows are greyed under every other strategy: the shuffled strategies decide their own order, and a custom function returns its own. Ordering never changes *what* is presented — every stimulus still gets its full repetition count. The choice is saved in a configuration and recalled next session; loaded against a bank that does not vary the parameter it names, that row simply falls back to **Bank order**.
 
 **Repetitions** — How many times each stimulus is presented. The number field applies one value to every stimulus. **Per stimulus…** opens a small editor where you can either keep one value for the whole bank or give each stimulus its own count; it shows the running total and estimated acquisition time as you type. Stimuli with unequal counts drop out of the cycle once they are done, so the extra repetitions of the others stay spread out rather than clumping at the end.
 

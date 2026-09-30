@@ -77,7 +77,7 @@ ctrl.waitUntilReady();
 ctrl.setStimuli(set);
 ctrl.Session.Subject.ID = 'REFRESH';
 ctrl.Session.OutputPath = '';            % record without saving
-ctrl.Schedule.Strategy    = 'interleaved-ramp';
+ctrl.Schedule.Strategy    = 'interleaved';
 ctrl.Schedule.Repetitions = 128;
 ctrl.Schedule.ISI         = 0.02;
 ctrl.Schedule.build();

@@ -76,8 +76,7 @@ classdef App < handle
         StrategyItems = { ...
             'Conventional — one stimulus per run', ...
             'Conventional — shuffled run order', ...
-            'Interleaved ramp — levels within each frequency', ...
-            'Interleaved plateau — frequencies within each level', ...
+            'Interleaved — cycles in the order below', ...
             'Interleaved random — each cycle shuffled', ...
             'Fully shuffled — no cycles'};
 
@@ -245,10 +244,11 @@ classdef App < handle
         % and so the app can close it with itself.
         Launcher
         StrategyDrop
-        % The parameters a conventional run order follows and which way each
+        % The parameters the presentation order follows and which way each
         % goes (Schedule.OrderBy / OrderDirection): "Order by", and "then by"
-        % for the order inside each value of the first. Live only under
-        % 'conventional'.
+        % for the order inside each value of the first. Live only under the
+        % strategies that read them, 'conventional' (the run order) and
+        % 'interleaved' (the order of each cycle).
         OrderDrop
         OrderDirDrop
         ThenDrop
@@ -782,7 +782,8 @@ classdef App < handle
                 'ValueChangedFcn',@(~,~) app.onStrategySelected());
             app.StrategyDrop.Layout.Row = 1; app.StrategyDrop.Layout.Column = [2 3];
 
-            % The order the conventional runs play in: by which parameter and
+            % The order the conventional runs play in, or the order each
+            % interleaved cycle walks the bank in: by which parameter and
             % which way, then by which one inside each value of the first.
             % Two rows because one cannot say the ordinary threshold series --
             % one frequency at a time, loudest first within it -- which takes
@@ -796,9 +797,10 @@ classdef App < handle
             app.addLabel(g,'Order by',2,1);
             app.OrderDrop = uidropdown(g, ...
                 'Items',{'Bank order'},'ItemsData',none, ...
-                'Tooltip',['The stimulus parameter the runs are ordered by — Level or ' ...
-                           'Frequency, say. Stimuli tied on it follow the row below, ' ...
-                           'then the bank''s order. Conventional strategy only.'], ...
+                'Tooltip',['The stimulus parameter the stimuli are ordered by — Level ' ...
+                           'or Frequency, say: the order of the runs under Conventional, ' ...
+                           'of every cycle under Interleaved. Stimuli tied on it follow ' ...
+                           'the row below, then the bank''s order.'], ...
                 'ValueChangedFcn',@(~,~) app.onOrderChanged());
             app.OrderDrop.Layout.Row = 2; app.OrderDrop.Layout.Column = 2;
             app.OrderDirDrop = uidropdown(g, ...
@@ -812,7 +814,9 @@ classdef App < handle
                 'Items',{'Bank order'},'ItemsData',none, ...
                 'Tooltip',['The order inside each value of the parameter above: ' ...
                            'Frequency, then Level descending, presents one frequency ' ...
-                           'at a time, loudest first.'], ...
+                           'at a time, loudest first. Under Interleaved, Frequency as ' ...
+                           'listed then Level ascending cycles through level ramps, and ' ...
+                           'Level ascending alone through level plateaus.'], ...
                 'ValueChangedFcn',@(~,~) app.onOrderChanged());
             app.ThenDrop.Layout.Row = 3; app.ThenDrop.Layout.Column = 2;
             app.ThenDirDrop = uidropdown(g, ...
@@ -1669,24 +1673,30 @@ classdef App < handle
             % rather than selecting a 'custom' with no function behind it --
             % which build() would refuse at Start.
             warn = app.applyConfigCustomStrategy(cfg,warn);
+            by = {}; way = {};
+            if isfield(cfg,'OrderBy'),        by  = cfg.OrderBy;        end
+            if isfield(cfg,'OrderDirection'), way = cfg.OrderDirection; end
             if isfield(cfg,'Strategy') && (ischar(cfg.Strategy) || isstring(cfg.Strategy))
-                % A file saved before the strategies were renamed carries the
-                % old name ('blocked', 'shuffled-cycles', ...); translate it
-                % before asking whether the dropdown offers it.
+                % A file saved before a rename carries the retired name
+                % ('blocked', 'interleaved-ramp', ...); translate it before
+                % asking whether the dropdown offers it.
                 strat = mabr.stim.Schedule.canonicalStrategy(cfg.Strategy);
                 if ~strcmp(strat,mabr.ui.App.StrategyPickSentinel) ...
                         && any(strcmp(strat,app.StrategyDrop.ItemsData))
                     app.StrategyDrop.Value = strat;
                     app.LastStrategyValue  = strat;
                 end
+                % A retired interleaved name stood for an order of its own,
+                % and it replaces whatever order the file saved beside it:
+                % that one was the conventional run order, which the old
+                % interleaved strategies never read.
+                [oldBy,oldWay] = mabr.stim.Schedule.legacyOrder(cfg.Strategy);
+                if ~isempty(oldBy), by = oldBy; way = oldWay; end
             end
             % The order comes after the bank (its rows offer the bank's varying
             % parameters) and before the plan is rebuilt. A file from before
             % the setting existed simply lacks the fields, which reads as the
             % bank's own order -- the only order there was.
-            by = {}; way = {};
-            if isfield(cfg,'OrderBy'),        by  = cfg.OrderBy;        end
-            if isfield(cfg,'OrderDirection'), way = cfg.OrderDirection; end
             app.applyOrderSetting(by,way);
             % The plan decides whether a restored custom strategy intermixes,
             % and syncAdvanceEnables below is about to ask. Building it here
@@ -2471,7 +2481,7 @@ classdef App < handle
             app.syncOrderEnable();
             % Remember the last real selection so a cancelled or rejected
             % Custom function... pick has somewhere to fall back to. Without
-            % this a user who had chosen 'interleaved-ramp', then opened the
+            % this a user who had chosen 'interleaved', then opened the
             % picker and cancelled, would land back on 'conventional' -- their
             % strategy silently changed by a dialog they dismissed.
             if ~strcmp(app.StrategyDrop.Value,mabr.ui.App.StrategyPickSentinel)
@@ -2565,13 +2575,14 @@ classdef App < handle
         end
 
         function syncOrderEnable(app)
-            % The order only means something to 'conventional'; the shuffled
-            % and interleaved strategies decide their own. Each control is
-            % live only once the one before it has something to say. Called
-            % from transport() too (configControls switches all four on
-            % wholesale), so it must not touch the status line.
+            % The order only means something to 'conventional' and
+            % 'interleaved' (Schedule.strategyTakesOrder); the shuffled
+            % strategies and a custom function decide their own. Each
+            % control is live only once the one before it has something to
+            % say. Called from transport() too (configControls switches all
+            % four on wholesale), so it must not touch the status line.
             none  = mabr.ui.App.OrderBankSentinel;
-            on    = strcmp(app.strategySetting(),'conventional') ...
+            on    = mabr.stim.Schedule.strategyTakesOrder(app.strategySetting()) ...
                 && numel(app.OrderDrop.Items) > 1;
             first = on && ~strcmp(app.OrderDrop.Value,none);
             then  = first && numel(app.ThenDrop.Items) > 1;
@@ -3323,8 +3334,9 @@ classdef App < handle
                 app.PlanLabel.Text = ['plan error: ' me.message];
                 return
             end
-            % The one place a run order chosen above can be read back before
-            % Start: which stimulus each run presents, in the order they play.
+            % The one place an order chosen above can be read back before
+            % Start: which stimulus each run presents, or one cycle, in the
+            % order they play.
             app.PlanLabel.Tooltip = mabr.ui.App.runOrderText(sch);
             % The one place a custom plan's shape becomes known -- summary()
             % asks the built runs, not the strategy's name. Recorded so
@@ -4113,7 +4125,7 @@ classdef App < handle
             if ~running
                 app.PauseButton.Text = 'Pause';
                 app.syncAdvanceEnables();     % re-derives the Advance/Corr enables
-                app.syncOrderEnable();        % the order applies to 'conventional' only
+                app.syncOrderEnable();        % only some strategies read the order
                 % Same reason: configControls just switched all five ISI
                 % controls back on, but only one pair of them is ever live.
                 app.syncISIFields();
@@ -4273,32 +4285,45 @@ classdef App < handle
         end
 
         function s = runOrderText(sch)
-            % The plan label's tooltip: the stimulus each run presents, in
-            % play order, headed by the order in words where one is in force.
+            % The plan label's tooltip: the stimuli in play order -- the one
+            % each run presents under 'conventional', one cycle under
+            % 'interleaved' -- headed by the order in words where one is in
+            % force.
             %
-            % 'conventional' only, because it is the one strategy whose order
-            % is the same every time it is built. This schedule is the
+            % Those two only, because they are the strategies whose order is
+            % the same every time it is built. This schedule is the
             % PREVIEW's; Start builds its own, so a shuffled order read off
             % this one would be a different shuffle from the one played --
             % and a list that looks like the plan and is not is worse than
             % no list.
             s = '';
-            if ~strcmpi(sch.Strategy,'conventional'), return; end
-            runs = sch.Runs(~cellfun(@isempty,sch.Runs));
-            if isempty(runs), return; end
+            switch lower(sch.Strategy)
+                case 'conventional'
+                    runs = sch.Runs(~cellfun(@isempty,sch.Runs));
+                    if isempty(runs), return; end
+                    order = cellfun(@(r) r(1),runs);
+                    what  = 'Run order';
+                case 'interleaved'
+                    if isempty(sch.Runs) || isempty(sch.Runs{1}), return; end
+                    % The first cycle holds every stimulus owed anything, so
+                    % the order each first appears in IS the cycle; later
+                    % cycles keep it, less whoever has had their count.
+                    order = unique(sch.Runs{1},'stable');
+                    what  = 'Cycle order';
+                otherwise
+                    return
+            end
             ids   = sch.Set.IDs();
-            first = cellfun(@(r) r(1),runs);
             most  = 24;                      % a tooltip, not a report
-            shown = first(1:min(most,numel(first)));
+            shown = order(1:min(most,numel(order)));
             lines = arrayfun(@(k) sprintf('%2d.  %s',k,char(string(ids{shown(k)}))), ...
                 1:numel(shown),'UniformOutput',false);
-            if numel(first) > most
-                lines{end+1} = sprintf('… and %d more',numel(first)-most);
+            if numel(order) > most
+                lines{end+1} = sprintf('… and %d more',numel(order)-most);
             end
-            head = 'Run order (bank order)';
-            by   = sch.orderLabel();
-            if ~isempty(by), head = ['Run order (' by ')']; end
-            s = strjoin([{[head ':']} lines],newline);
+            by = sch.orderLabel();
+            if isempty(by), by = 'bank order'; end
+            s = strjoin([{sprintf('%s (%s):',what,by)} lines],newline);
         end
 
         function s = launchStepLabel(acqName,useCompute)

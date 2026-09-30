@@ -140,7 +140,7 @@ bank = mabr.stim.demoStimuli(cfg,'Frequencies',[8 16],'Levels',[30 60]);
 ctrl.setStimuli(bank);
 ctrl.Session.Subject.ID = 'COMPUTE';
 ctrl.Session.OutputPath = '';            % record without saving
-ctrl.Schedule.Strategy    = 'interleaved-ramp';
+ctrl.Schedule.Strategy    = 'interleaved';
 ctrl.Schedule.Repetitions = 48;
 ctrl.Schedule.ISI         = 0.02;
 ctrl.Schedule.build();
@@ -364,7 +364,7 @@ fprintf('  PASS Part G: advance criterion fired through the worker at %d of 200 
 % The run still finalizes -- by the relaunched worker if it is back in time,
 % by this process from the intact ring if not -- and the schedule completes.
 ctrl.setStimuli(bank);
-ctrl.Schedule.Strategy    = 'interleaved-ramp';
+ctrl.Schedule.Strategy    = 'interleaved';
 ctrl.Schedule.Repetitions = 48;
 ctrl.Schedule.ISI         = 0.02;
 ctrl.Schedule.build();

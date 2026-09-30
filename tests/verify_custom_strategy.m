@@ -150,7 +150,7 @@ reps   = [7 6 5 4];
 
 % Replaying a built-in's own sequence through a custom strategy must give
 % back that built-in's own polarity, to the bit.
-for strat = {'conventional','interleaved-ramp','interleaved-plateau','interleaved-random'}
+for strat = {'conventional','interleaved','interleaved-random'}
     [Rb,Pb] = planWith(altSet,cfg,reps,strat{1},[]);
     [Rc,Pc] = planWith(altSet,cfg,reps,'custom',@(cc) Rb);
     assert(isequal(Rb,Rc),'%s: sequence changed under normalize',strat{1});

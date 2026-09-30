@@ -76,7 +76,7 @@ fprintf('  bank: %d conditions, %g/%g kHz x %g/%g dB, ADC rate %g kHz\n', ...
 
 %% ---- Part A: the plan agrees with itself ------------------------------
 sch = mabr.stim.Schedule(bank,cfg);
-sch.Strategy    = 'interleaved-ramp';
+sch.Strategy    = 'interleaved';
 sch.Repetitions = 12;
 sch.ISI         = 0.02;
 sch.build();
@@ -121,7 +121,7 @@ ctrl.waitUntilReady();
 % muddy the counts below.
 ctrl.Artifacts = mabr.ArtifactPolicy('none');
 
-R = run_bank(ctrl,bank,sch.Repetitions,sch.ISI,'interleaved-ramp',opt);
+R = run_bank(ctrl,bank,sch.Repetitions,sch.ISI,'interleaved',opt);
 fprintf('  run: %d presentations, %d recovered onsets, %d blocks\n', ...
     numel(R.seq),numel(R.onsets),numel(R.blocks));
 
@@ -363,7 +363,7 @@ wc.waitUntilReady();
 wc.Artifacts = mabr.ArtifactPolicy('none');
 assert(wc.usingWorkerDSP(),'the DSP worker did not come up; Part H would prove nothing');
 
-W = run_bank(wc,bank,sch.Repetitions,sch.ISI,'interleaved-ramp',opt);
+W = run_bank(wc,bank,sch.Repetitions,sch.ISI,'interleaved',opt);
 assert(numel(W.blocks) == bank.numStimuli, ...
     'the worker-served run produced %d blocks, not %d',numel(W.blocks),bank.numStimuli);
 for i = 1:numel(W.blocks)
