@@ -50,6 +50,11 @@ classdef ViewPolicy
         % continuously -- but a rig running long interleaved plans often wants
         % it up throughout, which is the whole reason this is a setting.
         ProgressMonitor (1,1) logical = false
+        % The order the plan presents its conditions in, the active one
+        % highlighted, with the switches for upcoming conditions
+        % (mabr.ui.PresentationOrder). Off by default, like the progress
+        % monitor it sits beside.
+        PresentationOrder (1,1) logical = false
         % One online-analysis window (mabr.ui.MetricPlot), opened only when
         % none is already up: the window is deliberately not a singleton, but
         % opening a NEW one at every Start would stack them up a session at a
@@ -117,13 +122,14 @@ classdef ViewPolicy
             % them (which is the toolbar's order, so the menu reads like the
             % row of buttons it is talking about).
             n = {'LivePlot','Analysis','TraceOrganizer','StimulusViewer', ...
-                 'ProgressMonitor','Notes'};
+                 'ProgressMonitor','PresentationOrder','Notes'};
         end
 
         function l = labels()
             % Human names for the same list, in the same order.
             l = {'Live plot','Online analysis','Trace organizer', ...
-                 'Stimulus viewer','Progress monitor','Session notes'};
+                 'Stimulus viewer','Progress monitor','Presentation order', ...
+                 'Session notes'};
         end
 
         function obj = loadPrefs()
