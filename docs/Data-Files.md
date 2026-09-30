@@ -20,6 +20,7 @@ Notes on the format:
 - Decimal points become underscores: 11.3 kHz → `Frequency_11_3kHz`.
 - Conditions that are not frequency/level pairs get a label-based name instead, built from the stimulus metadata.
 - The timestamp is when the condition started, so files sort chronologically within a subject.
+- **No file is ever overwritten.** The timestamp resolves whole seconds, so two runs of the same condition started within one second — short passes of a looped run, or a Repeat pressed straight after a run — would share a name. The later file is written as `…_260720T141530_2.abr` (then `_3`, …) and the log says so; the timestamp still says when the run started, and `ABR_Data.StartTime` inside the file is unchanged. The suffixed name does **not** match the strict pattern under *Developer notes* below, which ends at the timestamp — a script filtering on that pattern must allow `(_\d+)?` before `\.abr` to see such a file. `parseABRFiles`' default (`^SUBJ*`) and `mabr.analysis.Session`'s (`\.abr$`) see it as they are.
 
 ## Organizing folders
 

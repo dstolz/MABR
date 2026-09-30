@@ -158,6 +158,18 @@ classdef Schedule < handle
 %   make-up runs) cannot mistake one for the other; reset() drops both kinds
 %   alike, since neither belongs to the plan build() produced.
 %
+%   Loop
+%   ----
+%   loopRun inserts another pass of a run DIRECTLY AFTER it, so the next
+%   advance() lands on the pass instead of the run that was next --
+%   mabr.ui.AcqController calls it at the end of every run while its Loop is
+%   on, which holds the plan on one run until Loop is switched off and then
+%   lets it go on exactly where it was. Inserted rather than appended, unlike
+%   make-up and repeat runs: those must not jump the queue, whereas a loop is
+%   the queue waiting. A pass is flagged IsLoop, is never bounded (a loop ends
+%   when it is switched off), and is dropped by reset() along with make-up and
+%   repeat runs.
+%
 %   Typical walk (driven by mabr.ui.AcqController):
 %       sch = mabr.stim.Schedule(stimulusSet,cfg);
 %       sch.ISI = 0.0474; sch.Strategy = 'interleaved-random';
@@ -293,6 +305,7 @@ classdef Schedule < handle
         Polarities  (1,:) cell = {}    % each cell: +1/-1 per onset, same size
         IsMakeup    (1,:) logical = false(1,0)  % parallel to Runs; appended make-up?
         IsRepeat    (1,:) logical = false(1,0)  % parallel to Runs; user-requested repeat?
+        IsLoop      (1,:) logical = false(1,0)  % parallel to Runs; inserted loop pass?
         CurrentRun  (1,1) double = 0   % 0 = not started / complete
         RunCounts   (1,:) double = []  % presentations actually recorded, per stimulus
         MakeupUsed  (1,:) double = []  % make-up presentations appended, per stimulus
@@ -454,6 +467,7 @@ classdef Schedule < handle
             obj.Polarities = {};
             obj.IsMakeup   = false(1,0);
             obj.IsRepeat   = false(1,0);
+            obj.IsLoop     = false(1,0);
             if n == 0 || ~any(reps > 0), obj.CurrentRun = 0; return; end
 
             rs  = obj.stream();
@@ -493,21 +507,23 @@ classdef Schedule < handle
 
             obj.IsMakeup = false(1,numel(obj.Runs));
             obj.IsRepeat = false(1,numel(obj.Runs));
+            obj.IsLoop   = false(1,numel(obj.Runs));
             obj.reset();
         end
 
         function reset(obj)
-            % Make-up runs and user-requested repeat runs (see repeatRun)
-            % belong to the acquisition that produced them, not to the plan, so
-            % re-starting drops both: reset() returns the schedule to exactly
-            % the state build() left it in, and the make-up budget starts over
-            % with it.
-            m = obj.IsMakeup | obj.IsRepeat;
+            % Make-up runs, user-requested repeat runs (see repeatRun) and
+            % loop passes (see loopRun) belong to the acquisition that
+            % produced them, not to the plan, so re-starting drops all three:
+            % reset() returns the schedule to exactly the state build() left
+            % it in, and the make-up budget starts over with it.
+            m = obj.IsMakeup | obj.IsRepeat | obj.IsLoop;
             if any(m)
                 obj.Runs(m)       = [];
                 obj.Polarities(m) = [];
                 obj.IsMakeup(m)   = [];
                 obj.IsRepeat(m)   = [];
+                obj.IsLoop(m)     = [];
             end
             obj.RunCounts(:)  = 0;
             obj.MakeupUsed(:) = 0;
@@ -596,6 +612,7 @@ classdef Schedule < handle
                 obj.Polarities{end+1} = mabr.stim.Schedule.polaritySeries(k,alt(i));
                 obj.IsMakeup(end+1)   = true;
                 obj.IsRepeat(end+1)   = false;
+                obj.IsLoop(end+1)     = false;
                 obj.MakeupUsed(i)     = obj.MakeupUsed(i) + k;
                 added(i)              = k;
 
@@ -635,6 +652,7 @@ classdef Schedule < handle
             obj.Polarities(m) = [];
             obj.IsMakeup(m)   = [];
             obj.IsRepeat(m)   = [];
+            obj.IsLoop(m)     = [];
             dropped           = sum(m);
 
             mabr.log.vprintf(1,'Dropped %d pending artifact make-up run(s).',dropped);
@@ -664,9 +682,60 @@ classdef Schedule < handle
             obj.Polarities{end+1} = mabr.stim.Schedule.polaritySeries(n,alt(stimIndex));
             obj.IsMakeup(end+1)   = false;
             obj.IsRepeat(end+1)   = true;
+            obj.IsLoop(end+1)     = false;
 
             mabr.log.vprintf(1,'Appended repeat run %d: %d x stimulus %d (user requested).', ...
                 numel(obj.Runs),n,stimIndex);
+        end
+
+        function k = loopRun(obj,r)
+            % Insert another pass of run r directly after it, and return the
+            % index the pass went to (r+1).
+            %
+            %   What mabr.ui.AcqController calls at the end of a run while its
+            %   Loop is on, before it advances the plan: the advance() that
+            %   follows then lands on the pass rather than on the run that was
+            %   next, and that run -- with the rest of the plan behind it --
+            %   is still there, one place later, for when Loop is switched
+            %   off. Only runs not yet reached move; run r keeps its index and
+            %   the counts already credited to it.
+            %
+            %   The pass is run r again, presentation for presentation and
+            %   sign for sign: one condition's full train under a conventional
+            %   strategy, the same order of the same conditions under an
+            %   intermixed one. The exception is a make-up run, which holds
+            %   only what an artifact cost its stimulus rather than the
+            %   condition's run: its pass is a full run of that stimulus at
+            %   its scheduled repetition count -- the run repeatRun appends --
+            %   and is not charged to the make-up budget.
+            %
+            %   Unbounded, unlike appendMakeup: a loop ends when it is switched
+            %   off, which is the whole point of it. Flagged IsLoop, and
+            %   dropped by reset() with the make-up and repeat runs.
+            if nargin < 2 || isempty(r), r = obj.CurrentRun; end
+            assert(r >= 1 && r <= obj.NumRuns,'mabr:stim:Schedule:runRange', ...
+                'Run index %d out of range (1..%d).',r,obj.NumRuns);
+            seq = obj.Runs{r};
+            pol = obj.Polarities{r};
+            if obj.IsMakeup(r)
+                i    = seq(1);                  % a make-up run holds one stimulus
+                reps = obj.normalizedRepetitions();
+                if reps(i) > 0
+                    alt = obj.Set.alternatesPolarity();
+                    seq = repmat(i,1,reps(i));
+                    pol = mabr.stim.Schedule.polaritySeries(reps(i),alt(i));
+                end
+            end
+
+            k = r + 1;
+            obj.Runs       = [obj.Runs(1:r),       {seq}, obj.Runs(k:end)];
+            obj.Polarities = [obj.Polarities(1:r), {pol}, obj.Polarities(k:end)];
+            obj.IsMakeup   = [obj.IsMakeup(1:r),   false, obj.IsMakeup(k:end)];
+            obj.IsRepeat   = [obj.IsRepeat(1:r),   false, obj.IsRepeat(k:end)];
+            obj.IsLoop     = [obj.IsLoop(1:r),     true,  obj.IsLoop(k:end)];
+
+            mabr.log.vprintf(1,'Loop: run %d presented again as run %d (%d presentations).', ...
+                r,k,numel(seq));
         end
 
         function resumeAt(obj,r)

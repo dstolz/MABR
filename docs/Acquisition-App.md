@@ -35,7 +35,7 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
  └───────────────────────────────────────────────────┘
  ┌ Run ─────────────────────────────────────────────┐
  │  (o) Acquire   Sweeps: 128   r = 0.42  rejected: 3 │
- │  [ Start ] [ Preview ] [ Repeat ] [ Pause ] [ Advance ] [ Abort ] │
+ │  [ Start ] [ Preview ] [ Repeat ] [Loop] [ Pause ] [ Advance ] [ Abort ] │
  └───────────────────────────────────────────────────┘
  Saved SUBJ_ID_001_Frequency_8kHz_Level_30dB_....abr
 ```
@@ -232,6 +232,7 @@ The toolbar is never disabled — raising a viewer is safe at any time, includin
 |--------|--------|
 | **Start** | Begin the schedule from the first run |
 | **Repeat** | Queue one more full block of the stimulus that just finished |
+| **Loop** | Present the run in progress again when it ends, and again after that, until Loop is switched off |
 | **Pause** / **Resume** | Suspend playback in place, keeping the audio device open |
 | **Advance** | End the current run now, save it, continue to the next |
 | **Abort** | End the current run now, save it, halt the schedule |
@@ -239,6 +240,17 @@ The toolbar is never disabled — raising a viewer is safe at any time, includin
 Advance and Abort both save what was recorded. Neither discards data. Stopping an intermixed run early is allowed but leaves the conditions unbalanced — the stimuli late in the sequence will have fewer sweeps than the rest.
 
 **Repeat** appends one more run of whichever stimulus the most recently completed block presented, at its originally scheduled repetition count, to the end of the plan — the same "append to the end" mechanism artifact make-up uses, just triggered by you instead of a rejected sweep. It is **available only for blocked strategies** (Blocked, or Blocked with shuffled run order): an intermixed run has no single stimulus to point at, so the button stays disabled for the whole run in that case. It lights up as soon as the first eligible block lands and stays available for the rest of the schedule — including after everything has finished, to add one more block before you move on — and it works whether or not the schedule is still running, exactly like the artifact and filter controls beside it.
+
+**Loop** is a toggle, tinted amber while it is on. While it is on, the run in progress is presented again when it ends — and again after that, pass after pass — instead of the schedule moving on; switch it off and the pass that is playing finishes, then the schedule continues from the run that was next, exactly where it would have been. It can be switched on and off at any time: before Start (the first run is held), or mid-run (the run playing is held). It works under every strategy — for a blocked run that is one condition, for an intermixed run the whole intermixed run in the same order — and in stimulation-only mode, Test Mode and Preview.
+
+- **Each pass is a run of its own**: finalized, saved as its own `.abr` file(s) (or `.stimlog`), credited to the schedule, and sent to the viewers, exactly like any other run. Repeats of a condition accumulate in the online analysis window rather than replacing each other.
+- **The advance criterion still ends each pass** (a pass that reaches its sweep count or correlation threshold stops there) — and the pass is then presented again. It decides when a pass has enough, not when to leave the condition.
+- **Advance still means advance**: it ends the pass and moves on to the next run — which, with Loop still on, is then held in its turn. **Abort** still halts the schedule.
+- A pass of an artifact make-up run is a full run of that stimulus at its scheduled count, not another make-up-sized one.
+- The progress window says `looping` and names each inserted pass `(loop)`; while Loop is on it quotes no time left or finish time, because a looping schedule has no end of its own.
+- Loop is not saved in a configuration or between sessions: MABR always opens with it off.
+
+Short passes of one condition can start within the same second — the resolution of the timestamp in a file name. No file is ever overwritten: a second file of an existing name is written as `…_2.abr` (then `_3`, …), and the log says so. See [Data Files](Data-Files.md#filenames).
 
 ## Closing
 

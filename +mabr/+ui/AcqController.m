@@ -40,6 +40,15 @@ classdef AcqController < handle
 %   LastRunStimulus track the stimulus of the most recently completed
 %   single-stimulus run, and stay unset across an intermixed one.
 %
+%   Loop (the GUI's Loop toggle) holds the plan on the run in progress: while
+%   it is set, every run that ends by itself -- played out, or stopped by the
+%   advance criterion -- is presented again, pass after pass, and the plan
+%   goes on to the next run only once Loop is cleared. It works for any run,
+%   blocked or intermixed, recorded or stimulation-only; each pass is a run
+%   of its own, finalized, saved and credited like any other (see loop_run).
+%   Advance (stopBlock) still means advance: it ends the pass and moves on,
+%   and the next run is then held in its turn. Abort still halts.
+%
 %   A run may contain more than one stimulus. At finalization the recorded
 %   sweeps are de-interleaved by mabr.stim.Schedule's per-onset stimulus
 %   index, so each stimulus ID still becomes its own mabr.data.Block and its
@@ -202,6 +211,14 @@ classdef AcqController < handle
         % whole block, and a slow reply is worth waiting for where a dead
         % worker is not -- the ring still holds the block either way.
         FinalizeTimeout (1,1) double {mustBePositive} = 30;
+        % Hold the plan on the run in progress (mabr.ui.App's Loop toggle).
+        % Read when a run ENDS, not when it starts, so it may be set or
+        % cleared at any time, mid-run included: set, the run that is
+        % playing is presented again when it ends, and again after that;
+        % cleared, the pass playing finishes and the plan goes on from the
+        % run that was next. Never cleared by the controller itself -- only
+        % whoever set it can decide the loop is over. See loop_run.
+        Loop (1,1) logical = false;
     end
 
     properties (Constant)
@@ -287,6 +304,12 @@ classdef AcqController < handle
         CurParams  (1,1) struct = struct('Names',{{}},'Values',zeros(0,0), ...
                                          'Varying',false(1,0),'Units',{{}});
         HaltAfterBlock (1,1) logical = false;
+        % The user pressed Advance (stopBlock) during the run in progress: an
+        % instruction to move on, so loop_run does not hold the plan on this
+        % run whatever Loop says. One-shot -- cleared as each run begins --
+        % and deliberately NOT set by the advance criterion, which only
+        % decides when a pass has enough (see loop_run).
+        AdvanceRequested (1,1) logical = false;
         % Stimulus index of the most recently completed run, for the GUI's
         % Repeat button -- 0 until one exists. Only ever set for a BLOCKED
         % run (see on_block_completed): an intermixed run has no single
@@ -572,8 +595,11 @@ classdef AcqController < handle
         function resumeAcq(obj), obj.Engine.resume(); end
 
         function stopBlock(obj)
-            % Finish the current block early and advance to the next.
-            obj.HaltAfterBlock = false;
+            % Finish the current block early and advance to the next -- with
+            % Loop set too: the user asked to move on, and the next run is
+            % then the one held (see loop_run).
+            obj.HaltAfterBlock   = false;
+            obj.AdvanceRequested = true;
             obj.Engine.stop();
         end
 
@@ -727,6 +753,11 @@ classdef AcqController < handle
     methods (Access = private)
         % --- Program flow ---------------------------------------------------
         function begin_current_run(obj)
+            % An Advance belongs to the run it was pressed in. Cleared first,
+            % before set_state below hands the event queue a chance to run
+            % (the App's state handler flushes it), so a press landing then
+            % is kept for this run rather than wiped.
+            obj.AdvanceRequested = false;
             r = obj.Schedule.current();
             if isempty(r) || r == 0
                 obj.set_state(mabr.ui.ProgState.SchedComplete);
@@ -926,6 +957,7 @@ classdef AcqController < handle
                 catch me
                     mabr.log.vprintf(0,1,'Stimulation log failed: %s',me.message);
                 end
+                obj.loop_run(obj.CurRun);
                 obj.after_finalize();
                 return
             end
@@ -991,6 +1023,10 @@ classdef AcqController < handle
                 end
                 obj.credit_run(F,ctx);
             end
+            % Before the plan is asked whether it is complete: a looped run
+            % is never the last one, so its next pass streams while this
+            % pass's blocks are assembled, like any other next run.
+            obj.loop_run(ctx.CurRun);
             goOn = ~obj.HaltAfterBlock && ~obj.Schedule.isComplete();
             if goOn, obj.after_finalize(); end
             if ~isempty(F)
@@ -1060,6 +1096,31 @@ classdef AcqController < handle
             % came from even when the next run is already streaming.
             if nargin >= 4 && ~isempty(R)
                 obj.alignment_announce(R);
+            end
+        end
+
+        function loop_run(obj,r)
+            % Hold the plan on run r, which has just ended, while Loop is set:
+            % insert another pass of it directly after it (mabr.stim.Schedule.
+            % loopRun), so the advance() that follows lands on the pass and
+            % the rest of the plan waits behind it. Called at the end of every
+            % run, recorded or stimulation-only, after the run is credited and
+            % BEFORE the plan is advanced.
+            %
+            % A run the advance criterion stopped is looped: the criterion
+            % decides when a pass has enough, not when to leave the run. A
+            % run the user ended with Advance is not -- that is an instruction
+            % to move on, and with Loop still set the next run is held in its
+            % turn -- and neither is one ended by Abort.
+            %
+            % Never fatal: a loop that cannot be extended leaves the plan to
+            % go on as though Loop were clear, rather than stalling it.
+            if ~obj.Loop || obj.HaltAfterBlock || obj.AdvanceRequested, return; end
+            if isempty(obj.Schedule) || r < 1 || r > obj.Schedule.NumRuns, return; end
+            try
+                obj.Schedule.loopRun(r);
+            catch me
+                mabr.log.vprintf(0,1,'Could not loop run %d: %s',r,me.message);
             end
         end
 

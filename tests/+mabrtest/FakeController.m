@@ -22,6 +22,11 @@ classdef FakeController < handle
         Stimuli
         State (1,1) mabr.ui.ProgState = mabr.ui.ProgState.Idle
         Engine
+        % As mabr.ui.AcqController's: whether the plan is being held on the
+        % run in progress. Nothing here acts on it -- a test inserts the
+        % passes itself (mabr.stim.Schedule.loopRun) -- it is only what a
+        % viewer reads to say the session is looping.
+        Loop  (1,1) logical = false
     end
 
     events

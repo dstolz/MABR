@@ -1160,6 +1160,21 @@ classdef ProgressMonitor < handle
             tf = obj.Phase.run;
         end
 
+        function tf = looping(obj)
+            % Whether the followed controller is holding its plan on one run
+            % (mabr.ui.AcqController.Loop). Read, not listened for: nothing
+            % announces the switch, and the header is repainted at least once
+            % a second while a schedule is in flight. False with no controller
+            % or one that has no such switch (a plan attached directly, a
+            % test's stand-in).
+            tf = false;
+            c = obj.Controller;
+            try
+                tf = ~isempty(c) && isvalid(c) && isprop(c,'Loop') && logical(c.Loop);
+            catch
+            end
+        end
+
         function tf = countsInFlight(obj,sch)
             % Whether the current run holds presentations Schedule.RunCounts
             % does not have yet: while it is being prepared or streamed, and
@@ -1207,6 +1222,8 @@ classdef ProgressMonitor < handle
                 kind = 'make-up';
             elseif r <= numel(sch.IsRepeat) && sch.IsRepeat(r)
                 kind = 'repeat';
+            elseif r <= numel(sch.IsLoop) && sch.IsLoop(r)
+                kind = 'loop';
             end
             R = struct('key',key,'run',r,'seq',seq,'active',active, ...
                        'label',label,'kind',kind,'k',0,'cum',zeros(1,n));
@@ -1442,6 +1459,11 @@ classdef ProgressMonitor < handle
                 % matters enough to say every time.
                 bits{end+1} = 'stimulation only';
             end
+            % Only while a schedule is in flight: at rest the switch describes
+            % the NEXT Start, which the time line says instead.
+            if ~obj.Phase.rest && obj.looping()
+                bits{end+1} = 'looping';
+            end
             txt = joinBits(bits);
         end
 
@@ -1485,7 +1507,11 @@ classdef ProgressMonitor < handle
                 % Not a session this window has watched: the plan's own
                 % estimate is all there is.
                 eta = obj.remaining(D,T,sch);
-                if ~isnan(eta), when{end+1} = ['~' clockText(eta) ' to run']; end
+                if obj.looping()
+                    when{end+1} = 'runs until Loop is off';
+                elseif ~isnan(eta)
+                    when{end+1} = ['~' clockText(eta) ' to run'];
+                end
             elseif ~isnan(obj.Frozen)
                 finished = obj.Phase.complete || (T > 0 && D >= T);
                 if finished
@@ -1504,7 +1530,13 @@ classdef ProgressMonitor < handle
                     when{end+1} = ['paused ' clockText(toc(obj.PauseT0))];
                 end
                 eta = obj.remaining(D,T,sch);
-                if ~isnan(eta)
+                if obj.looping()
+                    % A loop puts another pass behind every pass until it is
+                    % switched off, so the plan has no end to count down to:
+                    % a time left or a finish time read off it would be a
+                    % promise the session will not keep.
+                    when{end+1} = 'until Loop is off';
+                elseif ~isnan(eta)
                     when{end+1} = ['~' clockText(eta) ' left'];
                     % A clock time is worth reading once there is time to
                     % plan around; under a minute it is just noise.
