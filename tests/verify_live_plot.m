@@ -14,9 +14,12 @@ function verify_live_plot()
 %          clamped to what was actually recorded;
 %       6. amplitude scaling: each / shared / manual, plus the latest
 %          sweep's own limit -- quantized to 1-2-5 rungs, stepping up at
-%          once and down only after the smaller rung has held;
+%          once and down only after the smaller rung has held -- and the
+%          means' limits on the same ladder, held off for longer, but
+%          rescaled at once by a setting change;
 %       7. the control strip drives exactly those properties;
-%       8. a call with no stimulus info still behaves as a single-mean view;
+%       8. a call with no stimulus info still behaves as a single-mean view,
+%          with Means and Group greyed since one mean has nothing to arrange;
 %       9. stimulus PARAMETERS: conditions labelled by the parameters that
 %          vary, ordered by them rather than by presentation order, and each
 %          mean still holding exactly its own stimulus's sweeps after the
@@ -111,7 +114,7 @@ assert(max(abs(means(2,:) - want)) < 1e-9, ...
 assert(max(abs(means(1,:) - mean(Y(stimIdx == 1,:),1)*mult)) < 1e-9, ...
     'rejecting a sweep of one stimulus disturbed another''s mean');
 txt = findobj(lp.axLatest,'Type','text');
-assert(any(contains({txt.String},'rejected')), ...
+assert(any(contains(string({txt.String}),'Artifacts: 1')), ...
     'the rejection was not reported on the view');
 lp.update(Y,t,0.42,numel(stimIdx),bad,info);
 fprintf('  PASS: artifact sweeps excluded from the means and reported\n');
@@ -152,26 +155,28 @@ lp.TimeBase = [-2 10];
 fprintf('  PASS: time base defaults to [-2 10] ms, follows TimeBase, clamps\n');
 
 % --- 6. amplitude scaling ------------------------------------------------
+% 'each' and 'common' stand on the 1-2-5 ladder (see 6c): the limit is the
+% rung at or above the peak it frames, not the peak itself.
 lp.AmpMode = 'each';
 lim = arrayfun(@(a) a.YLim(2),lp.axMean);
 assert(all(diff(lim) > 0), ...
     'individual scaling did not give each stimulus its own limit: %s',mat2str(lim));
 for k = 1:nStim
-    assert(abs(lim(k)/(max(abs(means(k,:)))*1.1) - 1) < 1e-6, ...
-        'panel %d is not scaled to its own peak',k);
+    assert(abs(lim(k) - rung(max(abs(means(k,:))))) < 1e-9, ...
+        'panel %d is not scaled to the rung over its own peak',k);
 end
 
 lp.AmpMode = 'common';
 lim = arrayfun(@(a) a.YLim(2),lp.axMean);
 assert(max(abs(diff(lim))) < 1e-9,'shared scaling left the panels on different limits');
-assert(abs(lim(1)/(max(abs(means(:)))*1.1) - 1) < 1e-6, ...
-    'the shared limit is not the largest response');
+assert(abs(lim(1) - rung(max(abs(means(:))))) < 1e-9, ...
+    'the shared limit is not the rung over the largest response');
 
 lp.AmpMode     = 'manual';
 lp.ManualLimit = 2e-6;                        % 2 uV
 lim = arrayfun(@(a) a.YLim(2),lp.axMean);
-assert(max(abs(lim - 1.1*2)) < 1e-9, ...
-    'manual scaling did not pin the panels to +/-2 uV: %s',mat2str(lim));
+assert(max(abs(lim - 2)) < 1e-9, ...
+    'manual scaling did not pin the panels to exactly +/-2 uV: %s',mat2str(lim));
 lp.update(Y*4,t,0.42,numel(stimIdx),bad,info);   % data grows...
 lim2 = arrayfun(@(a) a.YLim(2),lp.axMean);
 assert(isequal(lim,lim2),'a manual limit moved when the data changed');
@@ -229,10 +234,48 @@ qUpd(0.3e-6);
 assert(abs(lp.axLatest.YLim(2) - 0.5) < 1e-9, ...
     'reset did not clear the rung the run before had reached: %s', ...
     mat2str(lp.axLatest.YLim));
-
-lp.ManualLimit = 2e-6;              % leave section 7 the state section 6 left
-lp.update(Y,t,0.42,numel(stimIdx),bad,info);
 fprintf('  PASS: latest sweep scales in rungs, %d refreshes before shrinking\n',nHold);
+
+% --- 6c. ... and so do the means -----------------------------------------
+% A mean is watched for a response EMERGING out of the noise, which is
+% invisible on an axes that rescales to it at every refresh. Under 'each' and
+% 'common' the mean axes stand on the same ladder -- held off for longer, since
+% a mean moves more slowly than one sweep -- while a SETTING change rescales
+% at once: the hold is for data arriving, and between runs nothing arrives to
+% count it down. The mean of qUpd's identical sweeps IS the sweep, so its peak
+% is exactly the one asked for.
+lp.AmpMode = 'common';
+lp.reset();
+mLim = @() lp.axMean(1).YLim(2);
+qUpd(1.2e-6);
+assert(abs(mLim() - 2) < 1e-9 && abs(lp.axMean(1).YLim(1) + 2) < 1e-9, ...
+    'the mean axes did not snap to the 2 uV rung: %s',mat2str(lp.axMean(1).YLim));
+qUpd(1.9e-6);
+assert(abs(mLim() - 2) < 1e-9, ...
+    'the mean axes moved for a peak inside its own rung: %g',mLim());
+qUpd(3.0e-6);
+assert(abs(mLim() - 5) < 1e-9,'the mean axes did not step UP at once: %g',mLim());
+nMean = 0;
+while abs(mLim() - 5) < 1e-9 && nMean < 200
+    qUpd(0.3e-6); nMean = nMean + 1;
+end
+assert(abs(mLim() - 0.5) < 1e-9, ...
+    'the mean axes never stepped down to the 0.5 uV rung: %g',mLim());
+assert(nMean > nHold, ...
+    'the means were held off no longer than a single sweep (%d vs %d refreshes)', ...
+    nMean,nHold);
+
+qUpd(3.0e-6);                       % up again ...
+qUpd(0.3e-6);                       % ... one quiet refresh: held
+assert(abs(mLim() - 5) < 1e-9,'the mean axes shrank on the first quiet refresh');
+lp.TimeBase = [-2 10];              % ... but a setting change is not held off
+assert(abs(mLim() - 0.5) < 1e-9, ...
+    'a setting change waited out the hold instead of rescaling: %g',mLim());
+fprintf('  PASS: mean axes scale in rungs, %d refreshes before shrinking\n',nMean);
+
+lp.AmpMode     = 'manual';          % leave section 7 the state section 6 left
+lp.ManualLimit = 2e-6;
+lp.update(Y,t,0.42,numel(stimIdx),bad,info);
 
 % --- 7. the control strip drives the same settings ----------------------
 c = live_controls(lp);
@@ -252,10 +295,10 @@ lp.TimeBase = [-2 10];
 set_control(c.amp,1); assert(strcmp(lp.AmpMode,'each'),  'amplitude control (each)');
 set_control(c.amp,2); assert(strcmp(lp.AmpMode,'common'),'amplitude control (shared)');
 set_control(c.amp,3); assert(strcmp(lp.AmpMode,'manual'),'amplitude control (manual)');
-% Switching into Manual seeds the limit from what is on screen rather than
-% jumping to a remembered number.
-assert(abs(lp.ManualLimit - max(abs(means(:)))/1e6) < 1e-12, ...
-    'Manual did not seed its limit from the current view');
+% Switching into Manual seeds the limit from what is on screen -- the rung the
+% shared scale was standing on -- rather than jumping to a remembered number.
+assert(abs(lp.ManualLimit - rung(max(abs(means(:))))/1e6) < 1e-12, ...
+    'Manual did not seed its limit from the current view (%g V)',lp.ManualLimit);
 c.manual.String = '3';                        % 3 uV, in the displayed unit
 set_control(c.manual,[]);
 assert(abs(lp.ManualLimit - 3e-6) < 1e-12, ...
@@ -270,6 +313,15 @@ lp.Layout = 'separate';
 lp.AmpMode = 'common';
 lp.update(Y,t,0.3,numel(stimIdx),bad);
 assert(isscalar(lp.axMean),'without stimulus info the view should hold one mean axes');
+% One mean is one axes under every arrangement, so Means and Group have
+% nothing to change: greyed, and the tooltip says why, rather than a live
+% control that alters a setting and nothing on screen.
+c = live_controls(lp);
+assert(strcmp(c.layout.Enable,'off') && strcmp(c.group.Enable,'off'), ...
+    'Means/Group are live for a single condition, where they can change nothing');
+assert(contains(c.layout.TooltipString,'ONE condition'), ...
+    'the greyed Means control does not say why');
+assert(strcmp(lp.Layout,'separate'),'greying Means changed the setting it holds');
 means = mean_ydata(lp);
 assert(max(abs(means - mean(Y,1)*mult)) < 1e-9, ...
     'the single mean is not the average of every sweep');
@@ -305,6 +357,11 @@ lp.GroupBy = '';
 lp.update(Yp,tp,0.4,numel(pIdx),pbad,pinfo);
 
 assert(numel(lp.axMean) == nP,'expected %d panels, got %d',nP,numel(lp.axMean));
+c = live_controls(lp);
+assert(strcmp(c.layout.Enable,'on') && strcmp(c.group.Enable,'on'), ...
+    'Means/Group stayed greyed once the run had several conditions');
+assert(~contains(c.layout.TooltipString,'ONE condition'), ...
+    'the Means tooltip still says the run has one condition');
 for k = 1:nP
     ttl = lp.axMean(k).Title.String;
     lbl = sprintf('%g kHz, %g dB',pFreq(want(k)),pLevel(want(k)));
@@ -337,6 +394,10 @@ one.Params = struct('Names',{{'Frequency','Level','Polarity'}}, ...
     'Units',  {{'kHz','dB',''}});
 lp.update(Yp(sel1,:),tp,0.3,nnz(sel1),false(1,nnz(sel1)),one);
 assert(isscalar(lp.axMean),'a single condition should still be one axes');
+% ... and it greys Means/Group even though the BANK varies two parameters:
+% what there is to arrange is a property of the run on screen.
+assert(strcmp(c.layout.Enable,'off') && strcmp(c.group.Enable,'off'), ...
+    'Means/Group are live during a blocked run, where they can change nothing');
 ttl = lp.axMean(1).Title.String;
 assert(contains(ttl,sprintf('%g kHz, %g dB',pFreq(kOne),pLevel(kOne))), ...
     'a blocked run''s mean is not named by its parameters: %s',ttl);
@@ -508,7 +569,7 @@ assert(contains(lp.axMean(1).YLabel.String,'SD'), ...
     lp.axMean(1).YLabel.String);
 
 % A SEM band DOES describe the mean, so it is framed rather than clipped: the
-% shared limit is the outermost edge of the widest one.
+% shared limit is the rung over the outermost edge of the widest one.
 lp.ErrorBand = 'sem';
 Aall = 0;
 for k = 1:nP
@@ -516,9 +577,10 @@ for k = 1:nP
     Aall = max(Aall,max(abs(mean(Ysel,1)) + std(Ysel,0,1)/sqrt(nSw)));
 end
 lim = arrayfun(@(a) a.YLim(2),lp.axMean);
-assert(max(abs(lim - 1.1*Aall*mult)) < 1e-9, ...
+assert(max(abs(lim - rung(Aall*mult))) < 1e-9, ...
     'the axes are scaled to the means, not to the outside of their SEM bands');
-assert(lim(1) > limNone,'the SEM band did not widen the axes at all');
+assert(lim(1) >= Aall*mult && lim(1) >= limNone, ...
+    'the SEM band is clipped by the axes (%g < %g)',lim(1),Aall*mult);
 
 lp.ErrorBand = 'none';
 assert(all(arrayfun(@(h) all(isnan(h.YData(:))),band_patches(lp))), ...
@@ -579,10 +641,12 @@ lp3 = mabr.ui.LivePlot();
 clean3 = onCleanup(@() delete(lp3));
 oneInfo = struct('StimIndex',ones(1,repsPer),'Stimuli',1,'Labels',{{'8kHz_30dB'}});
 lp3.update(Y(stimIdx == 1,:),t,0.42,repsPer,false(1,repsPer),oneInfo);
-assert(abs(sum(lp3.axLatest.Position([1 3])) - lp3.LatestRightWide) < 1e-9, ...
-    'the latest-sweep axes does not fill the top row');
-fprintf('  PASS: latest-sweep axes fills the top row
-');
+% Its right edge is LivePlot's private LatestRightWide (0.97); asserted as
+% "reaches the panel's right edge" so the constant can move a little.
+assert(sum(lp3.axLatest.Position([1 3])) > 0.95, ...
+    'the latest-sweep axes does not fill the top row (right edge %.3f)', ...
+    sum(lp3.axLatest.Position([1 3])));
+fprintf('  PASS: latest-sweep axes fills the top row\n');
 
 % --- 16. the y axis labels always have room ------------------------------
 % The widest thing on a y axis is a three-digit microvolt number in most
@@ -598,6 +662,7 @@ for layout = {'overlay','separate','grid','stacked'}
     lp.Layout = layout{1};
     lp.update(Yp,tp,0.4,numel(pIdx),pbad,pinfo);
     assert_labels_fit(lp,layout{1});
+    assert_rows_clear(lp,layout{1});
 end
 
 % ... and under 'each', where every tile is on its own scale and therefore
@@ -618,6 +683,7 @@ for w = [560 1400 700]
     drawnow;
     lp.update(Yp,tp,0.4,numel(pIdx),pbad,pinfo);
     assert_labels_fit(lp,sprintf('stacked at %d px',w));
+    assert_rows_clear(lp,sprintf('stacked at %d px',w));
 end
 fprintf('  PASS: y axis labels have room in every layout, at any width\n');
 
@@ -698,6 +764,13 @@ for i = 1:numel(stimIdx)
 end
 end
 
+function v = rung(x)
+% The 1-2-5 step at or above x, worked out here rather than asked of the
+% view: the smallest of 1, 2, 5, 10 times x's decade that holds it.
+c = [1 2 5 10] * 10^floor(log10(x));
+v = c(find(c >= x*(1 - 1e-9),1));
+end
+
 function Y = flat_sweeps(t,pk,n)
 % n identical sweeps whose peak is EXACTLY pk, so the rung the view lands on
 % is arithmetic rather than an approximation.
@@ -733,6 +806,44 @@ for i = 1:numel(ax)
          '%.3f of room -- they are drawn over what is to their left'], ...
         what,i,ti(1),room);
 end
+end
+
+function assert_rows_clear(lp,what)
+% The vertical half of "labels have room": between two tiles of one column,
+% the upper tile's bottom labels (tick labels, "Time (ms)") and the lower
+% tile's title fit in the gap -- TightInset(2) and (4) are exactly those --
+% and the top row's titles clear the latest-sweep axes' tick labels. Stacked
+% used to fail this: every stack carried "Time (ms)" and a fixed 3% gap put
+% it on top of the next row's title.
+drawnow;
+ax = lp.axMean(isgraphics(lp.axMean));
+if numel(ax) < 2, return; end
+n   = numel(ax);
+pos = zeros(n,4); ti = zeros(n,4);
+for k = 1:n
+    pos(k,:) = ax(k).Position; ti(k,:) = ax(k).TightInset;
+end
+for k = 1:n
+    for j = 1:n
+        if j == k || abs(pos(j,1)-pos(k,1)) > 1e-6, continue; end
+        if pos(j,2)+pos(j,4) > pos(k,2)+1e-9, continue; end   % j is not below k
+        room = pos(k,2) - (pos(j,2)+pos(j,4));
+        need = ti(k,4) + ti(j,2);        % k's title against j's bottom labels
+        assert(room >= need - 1e-6, ...
+            ['%s: the labels between tiles %d and %d need %.3f of the ' ...
+             'panel height and have %.3f -- title and x label overlap'], ...
+            what,k,j,need,room);
+    end
+end
+[~,top] = max(pos(:,2)+pos(:,4));
+latB = lp.axLatest.Position(2);
+room = latB - (pos(top,2)+pos(top,4));
+need = lp.axLatest.TightInset(2) + ti(top,4);
+assert(room >= need - 1e-6, ...
+    '%s: the top row''s titles need %.3f under the latest sweep and have %.3f', ...
+    what,need,room);
+assert(min(pos(:,2)) >= max(ti(pos(:,2) == min(pos(:,2)),2)) - 1e-6, ...
+    '%s: the bottom row''s labels run off the panel',what);
 end
 
 function live_tick(lp,Y,t,bad,info)

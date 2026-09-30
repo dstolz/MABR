@@ -111,12 +111,19 @@ classdef LivePlot < handle
 %   visible; 'manual' pins the scale so it stops moving between refreshes.
 %   Overlaid means share one axes and therefore one scale, so 'each' behaves as
 %   'common' there; in 'stacked' the mode sets the offset between traces the
-%   same way, per group or shared.
+%   same way, per group or shared. Under 'each' and 'common' the limit moves in
+%   DISCRETE STEPS rather than tracking the data -- up at once, down only after
+%   a smaller step has sufficed for a while (MeanShrinkHold) -- so the means
+%   hold still while they settle. A setting change rescales at once.
 %
 %   The latest sweep keeps its own scale under every one of those modes -- a
 %   single sweep is tens of times a mean, and a limit chosen to frame the
-%   averages would clip it off the axes -- but that scale moves in DISCRETE
-%   STEPS rather than tracking the peak. See LatestLadder.
+%   averages would clip it off the axes -- and it moves in the same discrete
+%   steps. See LatestLadder.
+%
+%   Means and Group are greyed while the run on screen presents a single
+%   condition (every run of a blocked strategy): one mean is one axes under
+%   every arrangement, so there is nothing for them to change.
 %
 %   Sweeps flagged in `bad` are EXCLUDED from the running means -- one electrode
 %   pop otherwise smears across the whole average and the view stops reflecting
@@ -178,6 +185,26 @@ classdef LivePlot < handle
         % behind it. The rungs are also where MATLAB puts readable ticks.
         LatestLadder     = [1 2 5 10];
         LatestShrinkHold = 15;   % refreshes (~0.75 s at the 20 Hz live tick)
+        % The MEANS stand on the same ladder under 'each' and 'common' (a
+        % limit tracking the data rescaled every mean at every refresh, so
+        % the one thing the view is watched for -- a response emerging --
+        % was drawn at a size that kept changing). A mean moves far more
+        % slowly than a single sweep, so it holds a smaller rung off for
+        % longer. A SETTING change is not held off (afterSettingChange):
+        % between runs there is no refresh to count, and a band switched off
+        % would otherwise leave the axes wide for good.
+        MeanShrinkHold   = 40;   % refreshes (~2 s at the 20 Hz live tick)
+        % Means and Group arrange SEVERAL conditions; with one there is
+        % nothing to arrange (see syncArrangeControls).
+        LayoutTip = ['One axes for every stimulus mean, one axes each, a grid ' ...
+                     'arranged by stimulus parameter, or one offset stack per ' ...
+                     'group.  Right-click the means for an error band.']
+        GroupTip  = ['The stimulus parameter the conditions are grouped by: it ' ...
+                     'colours each group as a series and forms the columns of ' ...
+                     'Grid and Stacked.']
+        OneConditionTip = ['  This run presents ONE condition, so there is ' ...
+                           'nothing to arrange: the setting is kept and applies ' ...
+                           'to the next intermixed run.']
     end
 
     properties
@@ -252,6 +279,15 @@ classdef LivePlot < handle
         % rung than it. See LatestLadder.
         LatestLim    (1,1) double = 0
         LatestShrink (1,1) double = 0
+        % The same for the mean axes: one rung per axes under 'each', per
+        % stack under 'stacked', a single one under 'common'. Emptied
+        % whenever what they describe changes (reset, a setting, a rebuild),
+        % which makes the next render choose afresh from the data.
+        MeanLim    = zeros(1,0)
+        MeanShrink = zeros(1,0)
+        % Whether the run on screen presents more than one condition -- the
+        % only case in which Means and Group can change anything.
+        MultiCondition (1,1) logical = true
         % Room reserved for the y axis labels, in fractions of the plot panel:
         % left of the first column of means, between columns, and left of the
         % latest-sweep axes. All three are MEASURED from what is actually on
@@ -262,6 +298,14 @@ classdef LivePlot < handle
         ColGutter    (1,1) double = 0
         LatestGutter (1,1) double = 0.09
         GutterKey    (1,:) char   = ''     % what those were last measured for
+        % The vertical counterparts, also measured (measureVertical), as
+        % fractions of the plot panel's HEIGHT: the room under the bottom
+        % row for its tick labels and x label, between one row and the next
+        % for the upper tile's x labels plus the lower tile's title, and
+        % from the latest-sweep axes down to the top row's titles.
+        FootGutter   (1,1) double = 0.10
+        RowGutter    (1,1) double = 0.03
+        HeadGutter   (1,1) double = 0.13
         % render() is NOT re-entrant: legend() and drawnow both process the
         % event queue, so a live tick can land inside a render started by a
         % control callback (or the other way about) -- and the inner call
@@ -276,6 +320,7 @@ classdef LivePlot < handle
         Rendering     (1,1) logical = false
         RenderPending (1,1) logical = false
         PanelPx      (1,1) double = 0      % plot panel width, px (see relayout)
+        PanelHPx     (1,1) double = 0      % ... and its height
         LastGroup    = []      % last resolved grouping, for a re-fit on resize
     end
 
@@ -315,6 +360,7 @@ classdef LivePlot < handle
             % against an amplitude nothing here has shown.
             obj.LatestLim    = 0;
             obj.LatestShrink = 0;
+            obj.clearMeanRungs();
             if ~obj.isvalidView(), return; end
             set(obj.meanLines(isgraphics(obj.meanLines)),'XData',nan,'YData',nan);
             set(obj.bandPatches(isgraphics(obj.bandPatches)), ...
@@ -669,6 +715,7 @@ classdef LivePlot < handle
             obj.meanLines   = gobjects(1,0);
             obj.bandPatches = gobjects(1,0);
             obj.legendHandle = [];
+            obj.clearMeanRungs();     % new axes: nothing to hold on to
             % Belt and braces over the re-entrancy guard above: whatever the
             % cause, an axes on this panel that is not one of ours is one an
             % earlier build lost track of, and it would otherwise sit there
@@ -708,10 +755,15 @@ classdef LivePlot < handle
                     % One axes per group; the group's conditions are offset
                     % into it at render, so the lines belong to the group's
                     % axes but stay indexed by stimulus like every other mode.
-                    [pos,isLeft] = obj.stackPositions(G.nGroups);
+                    [pos,isLeft,isBottom] = obj.stackPositions(G.nGroups);
                     obj.TileIsLeft = isLeft;
                     for g = 1:G.nGroups
-                        obj.axMean(g) = obj.newTile(p,pos(g,:),true,true,false);
+                        % Every stack keeps its y labels (they are the
+                        % condition names), but the time axis is labelled
+                        % only where nothing sits below: the time base is
+                        % shared, and a "Time (ms)" under every row is what
+                        % ran into the next row's titles.
+                        obj.axMean(g) = obj.newTile(p,pos(g,:),isBottom(g),true,false);
                     end
                     for k = 1:n
                         g  = 1;
@@ -802,8 +854,7 @@ classdef LivePlot < handle
             cols = max(1,ceil(n/obj.TilesPerCol));
             rows = ceil(n/cols);
             [pos,isBottom,isLeft] = deal(zeros(n,4),false(1,n),false(1,n));
-            [x0,y1,wGap,hGap,w,h] = mabr.ui.LivePlot.tileGeometry( ...
-                cols,rows,1-obj.TopFrac-0.05,obj.LeftGutter,obj.ColGutter);
+            [x0,y1,wGap,hGap,w,h] = obj.tileGrid(cols,rows);
             for k = 1:n
                 c = floor((k-1)/rows);          % fill top-to-bottom, then across
                 r = mod(k-1,rows);
@@ -823,10 +874,9 @@ classdef LivePlot < handle
             n    = numel(G.stimList);
             cols = max(1,G.nGroups);
             rows = max(1,max(G.within));
-            % A little extra headroom: the top tile of each column carries the
-            % group name above its own title.
-            [x0,y1,wGap,hGap,w,h] = mabr.ui.LivePlot.tileGeometry( ...
-                cols,rows,1-obj.TopFrac-0.085,obj.LeftGutter,obj.ColGutter);
+            % The top tile of each column carries the group name above its
+            % own title; the headroom for that is measured like the rest.
+            [x0,y1,wGap,hGap,w,h] = obj.tileGrid(cols,rows);
             [pos,isBottom,isLeft] = deal(zeros(n,4),false(1,n),false(1,n));
             for k = 1:n
                 c = G.group(k) - 1;
@@ -907,12 +957,21 @@ classdef LivePlot < handle
             l   = obj.pickGutter(obj.LeftGutter,l);
             c   = obj.pickGutter(obj.ColGutter,c);
             lat = obj.pickGutter(obj.LatestGutter,lat);
-            if isequal([l c lat],[obj.LeftGutter obj.ColGutter obj.LatestGutter])
+            [foot,gap,head] = obj.measureVertical(G);
+            foot = obj.pickGutter(obj.FootGutter,foot);
+            gap  = obj.pickGutter(obj.RowGutter,gap);
+            head = obj.pickGutter(obj.HeadGutter,head);
+            if isequal([l c lat foot gap head], ...
+                    [obj.LeftGutter obj.ColGutter obj.LatestGutter ...
+                     obj.FootGutter obj.RowGutter obj.HeadGutter])
                 return
             end
             obj.LeftGutter   = l;
             obj.ColGutter    = c;
             obj.LatestGutter = lat;
+            obj.FootGutter   = foot;
+            obj.RowGutter    = gap;
+            obj.HeadGutter   = head;
             obj.applyMeanPositions(G);
             obj.applyLatestPosition();
         end
@@ -940,7 +999,9 @@ classdef LivePlot < handle
             % latest-sweep axes. TightInset(1) IS that width -- the tick
             % labels plus the y label where there is one -- and the pad is the
             % gap between a label and whatever sits to its left.
-            pad = 0.006;
+            % About 10 px at the default window: enough that a label is not
+            % read as belonging to the tile beside it.
+            pad = 0.012;
             l = obj.MinGutter; c = 0; lat = obj.MinGutter;
             for k = 1:numel(obj.axMean)
                 ti = obj.leftInset(obj.axMean(k));
@@ -956,6 +1017,64 @@ classdef LivePlot < handle
             l   = min(l,obj.MaxGutter);
             c   = min(c,obj.MaxGutter);
             lat = min(lat,obj.MaxGutter);
+        end
+
+        function [foot,gap,head] = measureVertical(obj,G)
+            % What the labels now drawn need vertically, in fractions of the
+            % plot panel's height (TightInset is [left bottom right top] in
+            % the axes' own normalized units):
+            %
+            %   foot  under the bottom row: tick labels plus the x label
+            %   gap   between rows: the UPPER tile's bottom labels plus the
+            %         LOWER tile's title -- the two that collided when this
+            %         was a fixed 3%
+            %   head  from the latest-sweep axes' bottom edge to the top
+            %         row's edge: that axes' tick labels plus the top row's
+            %         titles (the group name makes a grid's two lines)
+            %
+            % Which tile has a neighbour above or below is read off the
+            % positions themselves, so this needs no knowledge of the layout;
+            % a quantity with nothing to measure keeps the value in force.
+            foot = obj.FootGutter; gap = obj.RowGutter; head = obj.HeadGutter;
+            ax = obj.axMean(isgraphics(obj.axMean));
+            if numel(ax) < 1 || numel(obj.axMean) ~= numel(ax) ...
+                    || strcmp(G.mode,'overlay')
+                return
+            end
+            if obj.PanelHPx <= 0, obj.measurePanelPx(); end
+            pad = 8 / max(1,obj.PanelHPx);
+
+            n   = numel(ax);
+            pos = zeros(n,4); ti = zeros(n,4);
+            for k = 1:n
+                pos(k,:) = ax(k).Position;
+                ti(k,:)  = ax(k).TightInset;
+            end
+            below = false(1,n); above = false(1,n);
+            for k = 1:n
+                for j = 1:n
+                    if j == k || abs(pos(j,1)-pos(k,1)) > 1e-6, continue; end
+                    if pos(j,2)+pos(j,4) <= pos(k,2)+1e-9, below(k) = true; end
+                    if pos(k,2)+pos(k,4) <= pos(j,2)+1e-9, above(k) = true; end
+                end
+            end
+
+            if any(~below)
+                foot = max(ti(~below,2)) + pad;
+            end
+            if any(below)
+                gap = max(ti(below,2)) + max(ti(above,4)) + pad;
+            end
+            latBelow = 0;
+            if isgraphics(obj.axLatest)
+                latBelow = obj.axLatest.TightInset(2);
+            end
+            if any(~above)
+                head = latBelow + max(ti(~above,4)) + pad;
+            end
+            foot = min(max(foot,0.04),0.25);
+            gap  = min(max(gap,0.01),0.15);
+            head = min(max(head,0.05),0.30);
         end
 
         function v = leftInset(~,ax)
@@ -986,7 +1105,8 @@ classdef LivePlot < handle
                 n(i) = mabr.ui.LivePlot.labelWidthChars(ax(i));
             end
             if obj.PanelPx <= 0, obj.measurePanelPx(); end
-            k = sprintf('%s|%d|%s',G.mode,round(obj.PanelPx),mat2str(n));
+            k = sprintf('%s|%d|%d|%s',G.mode,round(obj.PanelPx), ...
+                round(obj.PanelHPx),mat2str(n));
         end
 
         function measurePanelPx(obj)
@@ -997,11 +1117,22 @@ classdef LivePlot < handle
             % twenty times a second for an answer that has not moved.
             p = obj.PlotPanel;
             oldU = p.Units; p.Units = 'pixels';
-            obj.PanelPx = max(1,p.Position(3));
+            obj.PanelPx  = max(1,p.Position(3));
+            obj.PanelHPx = max(1,p.Position(4));
             p.Units = oldU;
         end
 
-        function [pos,isLeft] = stackPositions(obj,nG)
+        function [x0,y1,wGap,hGap,w,h] = tileGrid(obj,cols,rows)
+            % tileGeometry over this view's measured margins. The tiles hang
+            % from the latest-sweep axes' bottom edge by HeadGutter, so the
+            % room its tick labels and the top row's titles need comes out
+            % of the gap between them rather than out of a fixed fraction.
+            top = (1 - obj.TopFrac + 0.06) - obj.HeadGutter;
+            [x0,y1,wGap,hGap,w,h] = mabr.ui.LivePlot.tileGeometry(cols,rows, ...
+                top,obj.LeftGutter,obj.ColGutter,obj.FootGutter,obj.RowGutter);
+        end
+
+        function [pos,isLeft,isBottom] = stackPositions(obj,nG)
             % Stacks are tall: keep the groups on one row for as long as they
             % fit, and only then wrap.
             %
@@ -1014,14 +1145,14 @@ classdef LivePlot < handle
             nG   = max(1,nG);
             cols = min(nG,obj.StackCols);
             rows = ceil(nG/cols);
-            [x0,y1,wGap,hGap,w,h] = mabr.ui.LivePlot.tileGeometry( ...
-                cols,rows,1-obj.TopFrac-0.05,obj.LeftGutter,obj.ColGutter);
-            pos = zeros(nG,4); isLeft = false(1,nG);
+            [x0,y1,wGap,hGap,w,h] = obj.tileGrid(cols,rows);
+            pos = zeros(nG,4); isLeft = false(1,nG); isBottom = false(1,nG);
             for g = 1:nG
                 c = mod(g-1,cols);              % fill across, then down
                 r = floor((g-1)/cols);
                 pos(g,:) = [x0 + c*(w+wGap), y1 - (r+1)*h - r*hGap, w, h];
-                isLeft(g) = (c == 0);
+                isLeft(g)   = (c == 0);
+                isBottom(g) = (g + cols > nG);  % no stack directly below
             end
         end
 
@@ -1109,18 +1240,12 @@ classdef LivePlot < handle
             [~,x] = obj.addText(p,'Means:',x,40);
             [obj.Ctrl.layout,x] = obj.addPopup(p, ...
                 {'Overlaid','Separate','Grid','Stacked'},x,88, ...
-                @() obj.onLayoutControl(), ...
-                ['One axes for every stimulus mean, one axes each, a grid ' ...
-                 'arranged by stimulus parameter, or one offset stack per ' ...
-                 'group.  Right-click the means for an error band.']);
+                @() obj.onLayoutControl(),obj.LayoutTip);
 
             x = x + 10;
             [~,x] = obj.addText(p,'Group:',x,40);
             [obj.Ctrl.group,x] = obj.addPopup(p,{'Auto','None'},x,92, ...
-                @() obj.onGroupControl(), ...
-                ['The stimulus parameter the conditions are grouped by: it ' ...
-                 'colours each group as a series and forms the columns of ' ...
-                 'Grid and Stacked.']);
+                @() obj.onGroupControl(),obj.GroupTip);
 
             x = x + 10;
             [~,x] = obj.addText(p,'Time (ms):',x,62);
@@ -1252,6 +1377,7 @@ classdef LivePlot < handle
             if ~isfield(obj.Ctrl,'layout') || ~isgraphics(obj.Ctrl.layout), return; end
             obj.Ctrl.layout.Value = find(strcmp(obj.Layout, ...
                 {'overlay','separate','grid','stacked'}),1);
+            obj.syncArrangeControls();
             obj.Ctrl.amp.Value    = find(strcmp(obj.AmpMode,{'each','common','manual'}),1);
             obj.Ctrl.t0.String    = num2str(obj.TimeBase(1),'%g');
             obj.Ctrl.t1.String    = num2str(obj.TimeBase(2),'%g');
@@ -1287,8 +1413,29 @@ classdef LivePlot < handle
                 h.String = items;
             end
             if h.Value ~= v, h.Value = v; end
-            newEnable = onOff(~isempty(choices));
+            newEnable = onOff(~isempty(choices) && obj.MultiCondition);
             if ~strcmp(h.Enable,newEnable), h.Enable = newEnable; end
+            tip = obj.GroupTip;
+            if ~obj.MultiCondition, tip = [tip obj.OneConditionTip]; end
+            if ~strcmp(h.TooltipString,tip), h.TooltipString = tip; end
+        end
+
+        function syncArrangeControls(obj)
+            % Means (and Group, in syncGroupControl) arrange SEVERAL
+            % conditions. A run presenting one -- every run of a blocked
+            % strategy -- has a single mean, which every arrangement draws
+            % as the same one axes (resolveGrouping), so a live control there
+            % would change a setting and nothing on screen. Greyed instead,
+            % with the tooltip saying why; the setting itself is kept for the
+            % next run that has something to arrange. Written only on a
+            % change, since this runs behind the 20 Hz live tick.
+            if ~isfield(obj.Ctrl,'layout') || ~isgraphics(obj.Ctrl.layout), return; end
+            h = obj.Ctrl.layout;
+            e = onOff(obj.MultiCondition);
+            if ~strcmp(h.Enable,e), h.Enable = e; end
+            tip = obj.LayoutTip;
+            if ~obj.MultiCondition, tip = [tip obj.OneConditionTip]; end
+            if ~strcmp(h.TooltipString,tip), h.TooltipString = tip; end
         end
 
         function afterSettingChange(obj)
@@ -1297,6 +1444,10 @@ classdef LivePlot < handle
             if ~obj.isvalidView(), return; end
             obj.syncControls();
             obj.syncBandMenu();
+            % A deliberate change rescales at once rather than waiting out
+            % MeanShrinkHold: that hold is for data arriving, and between runs
+            % no data arrives to count it down.
+            obj.clearMeanRungs();
             if ~isempty(obj.Last), obj.render(); end
         end
 
@@ -1338,28 +1489,34 @@ classdef LivePlot < handle
                 obj.applyFilterText();
                 obj.addRenderTiming('Rebuilds',1);
             end
+            obj.MultiCondition = numel(G.stimList) > 1;
+            obj.syncArrangeControls();
             obj.syncGroupControl(G.paramChoices);
 
             D      = obj.stimulusMeans(S,G);
             latest = S.latest;
-            % D.A is what the mean axes have to fit -- the traces plus any
-            % band that speaks for them -- so switching a SEM or CI band on
-            % frames it instead of clipping it.
-            scale  = obj.pickScale(max([D.A(:); abs(latest(:)); 0]));
+            % Both limits in VOLTS, and both on the 1-2-5 ladder. The latest
+            % sweep scales on its own even under AmpMode 'manual': it is a
+            % single sweep, tens of times the size of a mean, and a limit
+            % chosen to frame the averages would clip it off the axes. The
+            % means are framed from D.A -- the traces plus any band that
+            % speaks for them -- so switching a SEM or CI band on frames it
+            % instead of clipping it.
+            latLim  = obj.latestLimit(max(abs(latest)));
+            meanLim = obj.meanLimits(D.A,G);
+            % The unit follows the LIMITS, not the data: picked from the data
+            % it flipped between uV and mV every time a peak crossed 100 uV,
+            % relabelling an axes whose rung had not moved at all.
+            scale   = obj.pickScale(max([latLim meanLim 0]));
 
             % --- latest sweep ------------------------------------------------
             set(obj.latestLine,'XData',S.t,'YData',latest*scale.mult);
             if S.latestBad, obj.latestLine.Color = obj.ArtifactColor;
             else,           obj.latestLine.Color = obj.RecentColor;
             end
-            % The latest sweep scales on its own even under AmpMode 'manual':
-            % it is a single sweep, tens of times the size of a mean, and a
-            % limit chosen to frame the averages would clip it off the axes
-            % entirely. It scales in RUNGS (latestLimit) rather than to the
-            % peak, and the rung already stands at or above that peak, so it
-            % is applied unpadded -- a pad would only push the ticks off it.
-            obj.setLimits(obj.axLatest,S.t, ...
-                obj.latestLimit(max(abs(latest)))*scale.mult,1);
+            % The rung already stands at or above the peak, so it is applied
+            % unpadded -- a pad would only push the ticks off it.
+            obj.setLimits(obj.axLatest,S.t,latLim*scale.mult);
             ylabel(obj.axLatest,sprintf('Amplitude (%s)',scale.unit));
             % Interpreter 'none' wherever a stimulus ID can appear: an ID like
             % 8kHz_30dB is not TeX, and the default interpreter renders the
@@ -1369,9 +1526,9 @@ classdef LivePlot < handle
 
             % --- per-stimulus means ------------------------------------------
             if strcmp(G.mode,'stacked')
-                obj.renderStacked(S,G,D,scale);
+                obj.renderStacked(S,G,D,meanLim,scale);
             else
-                obj.renderPanels(S,G,D,scale);
+                obj.renderPanels(S,G,D,meanLim,scale);
             end
             obj.addRenderTiming('Prep',toc(tPrep));
 
@@ -1399,16 +1556,18 @@ classdef LivePlot < handle
             end
         end
 
-        function renderPanels(obj,S,G,D,scale)
+        function renderPanels(obj,S,G,D,lim,scale)
             % Overlay / Separate / Grid: one line per stimulus on its own axes
             % or on the shared one. Only the titling differs between them.
-            yl = obj.meanLimits(D.A,scale);
             for k = 1:numel(obj.meanLines)
                 set(obj.meanLines(k),'XData',S.t,'YData',D.M(k,:)*scale.mult);
                 obj.setBand(obj.bandPatches(k),S.t,D.M(k,:),D.E(k,:),scale.mult,0);
             end
+            % Unpadded: a rung already stands clear of its data, and a manual
+            % limit is the number the operator typed -- the axes should read
+            % exactly that, not a tenth more.
             for a = 1:numel(obj.axMean)
-                obj.setLimits(obj.axMean(a),S.t,yl(min(a,numel(yl))));
+                obj.setLimits(obj.axMean(a),S.t,lim(min(a,numel(lim)))*scale.mult);
             end
 
             if numel(obj.axMean) > 1
@@ -1520,12 +1679,11 @@ classdef LivePlot < handle
             end
         end
 
-        function renderStacked(obj,S,G,D,scale)
+        function renderStacked(obj,S,G,D,lim,scale)
             % One axes per group, its conditions offset into a stack and named
             % on the y axis -- the y ticks ARE the labels, so a series needs no
             % legend and no per-trace annotation to read.
             Md = D.M*scale.mult;
-            Ad = D.A*scale.mult;      % mean + band: what has to clear the gap
             for g = 1:numel(obj.axMean)
                 ax  = obj.axMean(g);
                 sel = find(G.group == g);
@@ -1534,7 +1692,7 @@ classdef LivePlot < handle
                 end
                 [~,ord] = sort(G.within(sel));
                 sel  = sel(ord);
-                step = obj.stackStep(Ad,G,g,scale.mult);
+                step = obj.stackStep(lim(min(g,numel(lim))),scale.mult);
                 offs = (0:numel(sel)-1)*step;
 
                 lbl = cell(1,numel(sel));
@@ -1563,22 +1721,15 @@ classdef LivePlot < handle
             end
         end
 
-        function step = stackStep(obj,Ad,G,g,mult)
+        function step = stackStep(~,lim,mult)
             % The vertical offset between the traces of one stack, in DISPLAY
-            % units, measured against the mean PLUS its band (Ad) so that
-            % switching a band on widens the stack instead of overlapping it.
-            % AmpMode decides the scope, exactly as it decides an axis limit
-            % elsewhere: the group's own largest response ('each'), the largest
-            % anywhere ('common'), or the fixed limit. 2.2x it, so neighbouring
-            % traces have somewhere to go before they collide.
-            switch obj.AmpMode
-                case 'manual'
-                    step = 2.2*obj.ManualLimit*mult;
-                case 'each'
-                    step = 2.2*max(Ad(G.group == g,:),[],'all');
-                otherwise
-                    step = 2.2*max(Ad,[],'all');
-            end
+            % units, from that stack's limit (meanLimits: a rung measured
+            % against the mean PLUS its band, so switching a band on widens
+            % the stack instead of overlapping it -- or the manual limit).
+            % 2.2x it, so neighbouring traces have somewhere to go before they
+            % collide. Being a rung, it also holds still while the means
+            % settle, instead of breathing with every refresh.
+            step = 2.2*lim*mult;
             % Nothing averaged yet (every mean still NaN), or a dead channel:
             % any positive step will do -- the labels still have to sit apart.
             if isempty(step) || ~isfinite(step) || step <= 0, step = 1; end
@@ -1662,26 +1813,58 @@ classdef LivePlot < handle
             end
         end
 
-        function yl = meanLimits(obj,A,scale)
-            % One limit per mean axes, in display units, from A -- the mean
-            % plus its band, so a band is framed rather than clipped. Overlaid
-            % means share an axes and so cannot be scaled individually --
-            % 'each' collapses to 'common' there rather than silently picking
-            % one stimulus.
-            n = size(A,1);
-            switch obj.AmpMode
-                case 'manual'
-                    yl = repmat(obj.ManualLimit*scale.mult,1,n);
-                case 'each'
-                    if numel(obj.axMean) > 1
-                        yl = max(A,[],2).'*scale.mult;
-                    else
-                        yl = repmat(max(A(:))*scale.mult,1,n);
-                    end
-                otherwise
-                    yl = repmat(max(A(:))*scale.mult,1,n);
+        function lim = meanLimits(obj,A,G)
+            % One +/- limit per mean axes -- per STACK under 'stacked', where
+            % it sets the offset between traces instead -- in VOLTS, from A:
+            % the mean plus its band, so a band is framed rather than
+            % clipped. 'manual' is the fixed limit. 'each' and 'common' are
+            % rungs of the 1-2-5 ladder, held the way the latest sweep's are
+            % (holdMeanRungs): a mean is watched for a response EMERGING, and
+            % that is invisible on an axes that rescales to it at every
+            % refresh. Overlaid means share one axes and so cannot be scaled
+            % individually -- 'each' collapses to 'common' there rather than
+            % silently picking one stimulus. 0 = nothing averaged yet.
+            nAx = max(1,numel(obj.axMean));
+            if strcmp(obj.AmpMode,'manual')
+                lim = repmat(obj.ManualLimit,1,nAx);
+                return
             end
-            yl(~isfinite(yl) | yl == 0) = 1;
+            peaks = max([A(:); NaN]);                 % 'common': one ruler
+            if strcmp(obj.AmpMode,'each') && nAx > 1
+                peaks = nan(1,nAx);
+                for a = 1:nAx
+                    if strcmp(G.mode,'stacked'), rows = G.group == a;
+                    elseif a <= size(A,1),        rows = a;
+                    else,                         continue
+                    end
+                    v = A(rows,:);
+                    if ~isempty(v), peaks(a) = max(v,[],'all'); end
+                end
+            end
+            lim = obj.holdMeanRungs(peaks);
+            if isscalar(lim), lim = repmat(lim,1,nAx); end
+        end
+
+        function lim = holdMeanRungs(obj,peaks)
+            % Advance each mean rung one refresh (climbLadder), starting over
+            % whenever the number of rulers changed -- a new arrangement, or
+            % 'each' <-> 'common', neither of which reaches here without a
+            % clearMeanRungs anyway; this is the guard, not the mechanism.
+            n = numel(peaks);
+            if numel(obj.MeanLim) ~= n
+                obj.MeanLim    = zeros(1,n);
+                obj.MeanShrink = zeros(1,n);
+            end
+            for i = 1:n
+                [obj.MeanLim(i),obj.MeanShrink(i)] = mabr.ui.LivePlot.climbLadder( ...
+                    peaks(i),obj.MeanLim(i),obj.MeanShrink(i),obj.MeanShrinkHold);
+            end
+            lim = obj.MeanLim;
+        end
+
+        function clearMeanRungs(obj)
+            obj.MeanLim    = zeros(1,0);
+            obj.MeanShrink = zeros(1,0);
         end
 
         function setXLim(obj,ax,t)
@@ -1695,15 +1878,13 @@ classdef LivePlot < handle
             ax.XLim = xl;
         end
 
-        function setLimits(obj,ax,t,ylim_,pad)
-            % pad defaults to 1.1 -- headroom above a limit taken straight
-            % from the data, so a peak is not drawn on the axes edge. A caller
-            % passing a limit that already stands clear of its data
-            % (latestLimit) passes 1.
-            if nargin < 5, pad = 1.1; end
+        function setLimits(obj,ax,t,ylim_)
+            % ylim_ is applied as it stands: every limit here is a ladder
+            % rung, which already clears its data, or the operator's own
+            % manual number -- no pad, which would only push the ticks off it.
             obj.setXLim(ax,t);
             if ~isfinite(ylim_) || ylim_ == 0, ylim_ = 1; end
-            ax.YLim = [-pad pad]*ylim_;
+            ax.YLim = [-1 1]*ylim_;
         end
 
         function lim = latestLimit(obj,peak)
@@ -1711,33 +1892,19 @@ classdef LivePlot < handle
             % the LatestLadder rungs and hysteretic on the way down. Called
             % once per render and the only thing that moves that axis --
             % nothing else writes LatestLim.
-            if ~isfinite(peak) || peak <= 0
-                % Nothing to scale to (an empty or all-NaN sweep). Leave the
-                % ruler where it is rather than collapsing it: the next real
-                % sweep is about to be measured against it.
-                lim = obj.LatestLim; return
-            end
-            want = mabr.ui.LivePlot.ladderStep(peak);
-            if want > obj.LatestLim
-                obj.LatestLim    = want;   % never clip: step up at once
-                obj.LatestShrink = 0;
-            elseif want < obj.LatestLim
-                obj.LatestShrink = obj.LatestShrink + 1;
-                if obj.LatestShrink >= obj.LatestShrinkHold
-                    obj.LatestLim    = want;
-                    obj.LatestShrink = 0;
-                end
-            else
-                obj.LatestShrink = 0;      % the rung still fits: start over
-            end
+            if isempty(peak), peak = NaN; end
+            [obj.LatestLim,obj.LatestShrink] = mabr.ui.LivePlot.climbLadder( ...
+                peak,obj.LatestLim,obj.LatestShrink,obj.LatestShrinkHold);
             lim = obj.LatestLim;
         end
 
         function lim = dataLimit(obj)
             % The +/- limit the mean axes are currently using, in VOLTS -- what
-            % "Manual" seeds itself from.
-            lim = 0;
-            if isempty(obj.Last), return; end
+            % "Manual" seeds itself from, so switching to it holds the view
+            % still. The largest rung in force; before one has been chosen,
+            % the data itself.
+            lim = max([obj.MeanLim 0]);
+            if lim > 0 || isempty(obj.Last), return; end
             D   = obj.stimulusMeans(obj.Last,obj.resolveGrouping(obj.Last));
             lim = max(D.A(:));
             if ~isfinite(lim) || lim == 0, lim = obj.ManualLimit; end
@@ -2111,7 +2278,7 @@ classdef LivePlot < handle
             end
         end
 
-        function [x0,y1,wGap,hGap,w,h] = tileGeometry(cols,rows,yTop,lGut,cGut)
+        function [x0,y1,wGap,hGap,w,h] = tileGeometry(cols,rows,yTop,lGut,cGut,foot,rGap)
             % One tile grid, shared by every multi-axes layout: the left edge,
             % the top edge, the gaps, and a tile size. The GAPS shrink as the
             % grid deepens rather than the tiles vanishing -- a cramped grid is
@@ -2125,7 +2292,12 @@ classdef LivePlot < handle
             % for it: labels that need no room must still not touch.
             if nargin < 4 || isempty(lGut), lGut = 0.075; end
             if nargin < 5 || isempty(cGut), cGut = 0;     end
-            x1 = 0.985; y0 = 0.10; y1 = yTop;
+            % foot is the room under the bottom row for its tick labels and
+            % x label, rGap the room between rows: both measured (see
+            % measureVertical), with the old fixed values as the defaults.
+            if nargin < 6 || isempty(foot), foot = 0.10;  end
+            if nargin < 7 || isempty(rGap), rGap = 0.030; end
+            x1 = 0.985; y0 = foot; y1 = yTop;
             cols = max(1,cols); rows = max(1,rows);
             x0   = min(max(lGut,mabr.ui.LivePlot.MinGutter), ...
                        mabr.ui.LivePlot.MaxGutter);
@@ -2134,7 +2306,7 @@ classdef LivePlot < handle
             % ask for: a gutter that has eaten the plot has answered the wrong
             % question.
             wGap = min(wGap,0.5*(x1-x0)/cols);
-            hGap = min(0.030,(y1-y0)/(2*rows));
+            hGap = min(rGap,(y1-y0)/(2*rows));
             % The columns tile the whole width, the gaps sitting BETWEEN them,
             % so the last column still ends at x1 however wide a gutter the
             % labels turned out to need.
@@ -2180,8 +2352,8 @@ classdef LivePlot < handle
 
         function v = ladderStep(x)
             % The smallest 1-2-5-decade value at or above x -- the rungs the
-            % latest-sweep axes is allowed to stand on. x is assumed finite
-            % and positive; latestLimit is the only caller and checks.
+            % latest-sweep and mean axes are allowed to stand on. x is assumed finite
+            % and positive; climbLadder is the only caller and checks.
             rungs = mabr.ui.LivePlot.LatestLadder;
             d = floor(log10(x));
             m = x / 10^d;                     % in [1,10)
@@ -2191,6 +2363,30 @@ classdef LivePlot < handle
             k = find(rungs >= m - 1e-9,1);
             if isempty(k), k = numel(rungs); end
             v = rungs(k) * 10^d;
+        end
+
+        function [lim,shrink] = climbLadder(peak,lim,shrink,nHold)
+            % One refresh of a rung-holding limit, in volts: UP to the rung
+            % over `peak` the instant it would not fit (clipping the signal is
+            % never the better trade), DOWN only once a smaller rung has been
+            % enough for `nHold` refreshes running. `shrink` counts those; a
+            % peak back on the current rung starts the count over. The latest
+            % sweep and every mean ruler step through here.
+            if ~isfinite(peak) || peak <= 0
+                % Nothing to scale to (an empty or all-NaN trace). Leave the
+                % ruler where it is rather than collapsing it: the next real
+                % data is about to be measured against it.
+                return
+            end
+            want = mabr.ui.LivePlot.ladderStep(peak);
+            if want > lim
+                lim = want; shrink = 0;
+            elseif want < lim
+                shrink = shrink + 1;
+                if shrink >= nHold, lim = want; shrink = 0; end
+            else
+                shrink = 0;
+            end
         end
 
         function s = pickScale(maxAbs)
