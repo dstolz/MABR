@@ -322,6 +322,32 @@ classdef LivePlot < handle
         PanelPx      (1,1) double = 0      % plot panel width, px (see relayout)
         PanelHPx     (1,1) double = 0      % ... and its height
         LastGroup    = []      % last resolved grouping, for a re-fit on resize
+        % What the frame on screen was drawn from, and what each object in it
+        % last had written to it. A frame whose statistics are the ones
+        % already on screen is skipped (updateStats), and one that moved a
+        % few conditions rewrites only those. At 54 conditions every line,
+        % band, title and limit rewritten every frame made drawnow lay every
+        % axes out again, for the two or three means that had changed.
+        LastIn      = []       % updateStats' last (stats, info)
+        GroupIn     = {}       % what LastGroup was resolved from
+        LineCache   = struct('x',{},'y',{})   % per mean line: X/YData written
+        BandCache   = struct('x',{},'y',{})   % per band patch
+        TitleCache  = {}       % per mean axes: the title and its options
+        StackCache  = struct('ticks',{},'lbl',{},'done',{})   % per stack: y ticks, labels
+        TickShown   = []       % which tiles show y tick labels
+        LatestX     = []       % the latest-sweep line's XData
+        LatestColor = []       % ... and its colour
+        LatestTitle = {}       % the latest-sweep axes' title and its options
+        LimCache    = zeros(0,4)   % per axes [XLim YLim]: row 1 latest, 1+k mean k
+        YLabelCache = {}       % per axes y label, same rows
+        ArtState    = []       % what showArtifacts last wrote
+        ArtTotal    (1,1) double = 0       % ... and the sweep count behind it
+        % The inputs gutterKey reads: values this view wrote itself, so the
+        % key costs no graphics query (see gutterKey).
+        KeyLims     = []       % limits written, display units: latest, then means
+        KeyXLim     = []       % the time axis written
+        KeyUnit     (1,:) char = ''
+        KeyStackLab = []       % stacked: each stack's longest label, characters
     end
 
     methods
@@ -354,7 +380,8 @@ classdef LivePlot < handle
             % Forget the run just finished. The axes stay as they are: the
             % next run rebuilds them for its own stimulus list on the first
             % update, and rebuilding here would flash an empty grid in between.
-            obj.Last = [];
+            obj.Last   = [];
+            obj.LastIn = [];
             % The next run is scaled on its own evidence: a rung held over
             % from the run before would frame the first sweeps of this one
             % against an amplitude nothing here has shown.
@@ -368,6 +395,9 @@ classdef LivePlot < handle
             if isgraphics(obj.latestLine)
                 set(obj.latestLine,'XData',nan,'YData',nan,'Color',obj.RecentColor);
             end
+            % Written behind the caches' backs just now, so they are
+            % forgotten: the next frame writes everything afresh.
+            obj.forgetWritten();
             obj.ArtifactSeen   = 0;
             obj.ArtifactFlashT = [];
             obj.showArtifacts(0,0);
@@ -447,7 +477,8 @@ classdef LivePlot < handle
             S.nTotal     = numel(S.bad);
             S.nBad       = nnz(S.bad);
 
-            obj.Last = S;
+            obj.Last   = S;
+            obj.LastIn = [];          % drawn from sweeps: nothing for updateStats to match
             obj.render();
         end
 
@@ -469,6 +500,21 @@ classdef LivePlot < handle
             if isempty(stats) || ~isstruct(stats) || stats.NumSweeps < 1
                 obj.reset(); return
             end
+
+            % The statistics already on screen, handed over again: a DSP
+            % worker publishes every cycle whether or not a sweep arrived, and
+            % the in-process pipeline returns its last answer when nothing is
+            % new. Drawing them again changes nothing on screen and was the
+            % whole cost of such a frame (160 ms at 54 conditions), so it is
+            % skipped. Only the artifact flash moves without data, on its
+            % clock. A setting change never comes through here: it redraws
+            % from obj.Last directly (afterSettingChange).
+            if ~isempty(obj.LastIn) && isequaln(obj.LastIn.stats,stats) ...
+                    && isequaln(obj.LastIn.info,info)
+                obj.expireFlash();
+                return
+            end
+            obj.LastIn = struct('stats',stats,'info',info);
 
             S         = struct();
             S.stats   = stats;
@@ -706,6 +752,22 @@ classdef LivePlot < handle
             mabr.ui.hideAxesToolbar(obj.axLatest);
         end
 
+        function forgetWritten(obj)
+            % Drop every record of what was last written, so the next frame
+            % writes each object in full: after the objects were rebuilt, or
+            % written by something that bypassed the records.
+            obj.LineCache  = struct('x',{},'y',{});
+            obj.BandCache  = struct('x',{},'y',{});
+            obj.TitleCache = {};
+            obj.StackCache = struct('ticks',{},'lbl',{},'done',{});
+            obj.TickShown  = [];
+            obj.LatestX    = [];
+            obj.LatestColor = [];
+            obj.LatestTitle = {};
+            obj.LimCache    = zeros(0,4);
+            obj.YLabelCache = {};
+        end
+
         function buildMeanAxes(obj,G)
             % (Re)build the lower region for exactly the stimuli this run
             % presents, in the arrangement `G` resolved for them. Called only
@@ -716,6 +778,7 @@ classdef LivePlot < handle
             obj.bandPatches = gobjects(1,0);
             obj.legendHandle = [];
             obj.clearMeanRungs();     % new axes: nothing to hold on to
+            obj.forgetWritten();      % ... and nothing written to them yet
             % Belt and braces over the re-entrancy guard above: whatever the
             % cause, an axes on this panel that is not one of ours is one an
             % earlier build lost track of, and it would otherwise sit there
@@ -944,9 +1007,10 @@ classdef LivePlot < handle
             % tiles are re-tiled around them.
             %
             % Measuring costs a graphics query, so it is done only when the
-            % answer could have changed: a new arrangement, a label that
-            % gained a character, or a resized window -- the margins are
-            % fractions of the panel, so its width is part of the question.
+            % answer could have changed: a new arrangement, a limit, unit or
+            % stack label that could make the labels longer, or a resized
+            % window -- the margins are fractions of the panel, so its size is
+            % part of the question (see gutterKey, which asks without a query).
             if ~obj.isvalidView() || isempty(G), return; end
             key = obj.gutterKey(G);
             if strcmp(key,obj.GutterKey), return; end
@@ -1093,20 +1157,28 @@ classdef LivePlot < handle
         end
 
         function k = gutterKey(obj,G)
-            % What a measured gutter depends on: the arrangement, the panel's
-            % width (the gutters are fractions of it), and how LONG the labels
-            % are. Their length rather than their text, deliberately -- a
-            % sweep count ticking from 136 to 137 is not a new question, and
-            % asking it twenty times a second would put a graphics query in
-            % the live tick for nothing.
-            ax = [obj.axMean(:).' obj.axLatest];
-            n  = zeros(1,numel(ax));
-            for i = 1:numel(ax)
-                n(i) = mabr.ui.LivePlot.labelWidthChars(ax(i));
-            end
+            % What a measured gutter depends on, built entirely from values
+            % this view wrote itself, so asking costs no graphics query. It
+            % used to read every axes' tick labels back to see whether they
+            % had grown, and a tick label cannot be read until MATLAB has laid
+            % its axes out: that readback was most of a live frame, twenty
+            % times a second, for an answer that changes a few times a run.
+            %
+            % The labels are a function of what is here: the limits written
+            % (rungs of the 1-2-5 ladder, or the manual one, so they move in
+            % whole steps), the unit and band the y labels name, which tiles
+            % show numbers (the amplitude mode and the column), the stacks'
+            % own label text (its length -- a count ticking from 136 to 137 is
+            % not a new question), the time axis, the arrangement, and the
+            % room the axes have: the panel, and the gutters themselves, so a
+            % fit that moved the tiles is checked once more.
             if obj.PanelPx <= 0, obj.measurePanelPx(); end
-            k = sprintf('%s|%d|%d|%s',G.mode,round(obj.PanelPx), ...
-                round(obj.PanelHPx),mat2str(n));
+            gut = [obj.LeftGutter obj.ColGutter obj.LatestGutter ...
+                   obj.FootGutter obj.RowGutter obj.HeadGutter];
+            k = sprintf('%s|%s|%d|%d|%s|%s|%s|%s|%s|%s|%s|%s',G.mode,obj.LayoutKey, ...
+                round(obj.PanelPx),round(obj.PanelHPx),mat2str(gut,6), ...
+                mat2str(obj.KeyXLim,6),obj.AmpMode,mat2str(obj.TileIsLeft), ...
+                obj.KeyUnit,obj.bandLabel(),mat2str(obj.KeyLims,6),mat2str(obj.KeyStackLab));
         end
 
         function measurePanelPx(obj)
@@ -1481,17 +1553,27 @@ classdef LivePlot < handle
             tPrep = tic;
             obj.addRenderTiming('Passes',1);
 
-            G   = obj.resolveGrouping(S);
-            obj.LastGroup = G;
-            key = mabr.ui.LivePlot.layoutKey(G);
-            if ~strcmp(key,obj.LayoutKey)
-                obj.buildMeanAxes(G);
-                obj.applyFilterText();
-                obj.addRenderTiming('Rebuilds',1);
+            % The grouping is a function of the run's stimuli and two
+            % settings, none of which a new sweep changes: resolved once per
+            % run (or setting), not once per frame -- and with it the
+            % controls it drives.
+            gIn = {S.stimList,S.labels,S.params,obj.GroupBy,obj.Layout};
+            if isempty(obj.LastGroup) || ~isequal(gIn,obj.GroupIn)
+                G = obj.resolveGrouping(S);
+                obj.LastGroup = G;
+                obj.GroupIn   = gIn;
+                key = mabr.ui.LivePlot.layoutKey(G);
+                if ~strcmp(key,obj.LayoutKey)
+                    obj.buildMeanAxes(G);
+                    obj.applyFilterText();
+                    obj.addRenderTiming('Rebuilds',1);
+                end
+                obj.MultiCondition = numel(G.stimList) > 1;
+                obj.syncArrangeControls();
+                obj.syncGroupControl(G.paramChoices);
+            else
+                G = obj.LastGroup;
             end
-            obj.MultiCondition = numel(G.stimList) > 1;
-            obj.syncArrangeControls();
-            obj.syncGroupControl(G.paramChoices);
 
             D      = obj.stimulusMeans(S,G);
             latest = S.latest;
@@ -1509,19 +1591,36 @@ classdef LivePlot < handle
             % relabelling an axes whose rung had not moved at all.
             scale   = obj.pickScale(max([latLim meanLim 0]));
 
+            % What the label gutters depend on, recorded as it is written (see
+            % gutterKey): the limits in display units, the time axis, the unit.
+            obj.KeyLims = round([latLim meanLim(:).']*scale.mult,6,'significant');
+            obj.KeyUnit = scale.unit;
+            obj.KeyXLim = obj.clampTime(S.t);
+
             % --- latest sweep ------------------------------------------------
-            set(obj.latestLine,'XData',S.t,'YData',latest*scale.mult);
-            if S.latestBad, obj.latestLine.Color = obj.ArtifactColor;
-            else,           obj.latestLine.Color = obj.RecentColor;
+            % Every property below is written only when it changed. Writing a
+            % graphics property marks its axes for another layout even when
+            % the value is the one already there.
+            y = latest*scale.mult;
+            if isequal(obj.LatestX,S.t)
+                obj.latestLine.YData = y;
+            else
+                set(obj.latestLine,'XData',S.t,'YData',y);
+                obj.LatestX = S.t;
+            end
+            if S.latestBad, c = obj.ArtifactColor; else, c = obj.RecentColor; end
+            if ~isequal(obj.LatestColor,c)
+                obj.latestLine.Color = c;
+                obj.LatestColor = c;
             end
             % The rung already stands at or above the peak, so it is applied
             % unpadded -- a pad would only push the ticks off it.
-            obj.setLimits(obj.axLatest,S.t,latLim*scale.mult);
-            ylabel(obj.axLatest,sprintf('Amplitude (%s)',scale.unit));
+            obj.setLimits(0,obj.axLatest,S.t,latLim*scale.mult);
+            obj.setYLabel(0,obj.axLatest,sprintf('Amplitude (%s)',scale.unit));
             % Interpreter 'none' wherever a stimulus ID can appear: an ID like
             % 8kHz_30dB is not TeX, and the default interpreter renders the
             % underscore as a subscript.
-            title(obj.axLatest,obj.latestTitle(S,G,D.counts),'Interpreter','none');
+            obj.setLatestTitle(obj.latestTitle(S,G,D.counts),'Interpreter','none');
             obj.showArtifacts(S.nBad,S.nTotal);
 
             % --- per-stimulus means ------------------------------------------
@@ -1559,87 +1658,81 @@ classdef LivePlot < handle
         function renderPanels(obj,S,G,D,lim,scale)
             % Overlay / Separate / Grid: one line per stimulus on its own axes
             % or on the shared one. Only the titling differs between them.
+            % Only the means that moved are written (setLine): a frame adds a
+            % sweep to two or three conditions, not to all of them.
+            obj.KeyStackLab = [];       % no stack labels here (gutterKey)
             for k = 1:numel(obj.meanLines)
-                set(obj.meanLines(k),'XData',S.t,'YData',D.M(k,:)*scale.mult);
-                obj.setBand(obj.bandPatches(k),S.t,D.M(k,:),D.E(k,:),scale.mult,0);
+                obj.setLine(k,S.t,D.M(k,:)*scale.mult);
+                obj.setBand(k,S.t,D.M(k,:),D.E(k,:),scale.mult,0);
             end
             % Unpadded: a rung already stands clear of its data, and a manual
             % limit is the number the operator typed -- the axes should read
             % exactly that, not a tenth more.
             for a = 1:numel(obj.axMean)
-                obj.setLimits(obj.axMean(a),S.t,lim(min(a,numel(lim)))*scale.mult);
+                obj.setLimits(a,obj.axMean(a),S.t,lim(min(a,numel(lim)))*scale.mult);
             end
 
-            if numel(obj.axMean) > 1
+            nAx = numel(obj.axMean);
+            if nAx > 1
                 isTop = mabr.ui.LivePlot.gridTopMask(G);
                 % A tile away from the left edge is normally left unlabelled --
                 % it repeats its neighbour's scale. Under 'each' it does not:
                 % every tile is on its own scale, and hiding the numbers would
                 % leave a column of traces with no way to tell how big they are.
-                showAll = strcmp(obj.AmpMode,'each');
-                for k = 1:numel(obj.axMean)
-                    ax = obj.axMean(k);
-                    leftTile = k > numel(obj.TileIsLeft) || obj.TileIsLeft(k);
-                    if showAll || leftTile
-                        if ~strcmp(ax.YTickLabelMode,'auto')
-                            ax.YTickLabelMode = 'auto';
+                % Which tiles show numbers changes with the arrangement and the
+                % amplitude mode, never with the data, so it is applied only
+                % when that answer changes.
+                left = true(1,nAx);
+                m    = min(nAx,numel(obj.TileIsLeft));
+                left(1:m) = obj.TileIsLeft(1:m);
+                shown = strcmp(obj.AmpMode,'each') | left;
+                if ~isequal(shown,obj.TickShown)
+                    for k = 1:nAx
+                        if shown(k), obj.axMean(k).YTickLabelMode = 'auto';
+                        else,        obj.axMean(k).YTickLabel = [];
                         end
-                    elseif ~isempty(ax.YTickLabel)
-                        ax.YTickLabel = [];
                     end
+                    obj.TickShown = shown;
+                end
+                for k = 1:nAx
                     nEff = D.counts(k) - D.rejected(k);
                     if strcmp(G.mode,'grid')
                         txt = sprintf('%s  (n=%d)',G.shortLabels{k},nEff);
                         gl  = G.groupLabels{G.group(k)};
                         if isTop(k) && ~isempty(gl), txt = {gl; txt}; end
-                        obj.setTitle(ax,txt,'FontSize',7, ...
+                        obj.setTileTitle(k,txt,'FontSize',7, ...
                             'FontWeight','normal','Interpreter','none');
                     else
-                        obj.setTitle(ax,sprintf('%s  (n=%d)',G.labels{k},nEff), ...
+                        obj.setTileTitle(k,sprintf('%s  (n=%d)',G.labels{k},nEff), ...
                             'FontSize',8,'FontWeight','normal','Interpreter','none');
                     end
                 end
-                ylabel(obj.axMean(1),obj.meanYLabel(scale));
+                obj.setYLabel(1,obj.axMean(1),obj.meanYLabel(scale));
             else
-                ylabel(obj.axMean(1),obj.meanYLabel(scale));
-                title(obj.axMean(1),obj.overlayTitle(G,D.counts,D.rejected), ...
+                obj.setYLabel(1,obj.axMean(1),obj.meanYLabel(scale));
+                obj.setTileTitle(1,obj.overlayTitle(G,D.counts,D.rejected), ...
                     'Interpreter','none');
             end
         end
 
-        function setTitle(~,ax,txt,varargin)
-            % A title is rewritten on every refresh and hardly any refresh
-            % changes it. Writing the same string back is not free: a title is
-            % CENTRED, so it is re-laid out and moved whenever its width
-            % changes -- and at the live tick rate under `drawnow limitrate`
-            % a caption that keeps shifting is drawn again before the last one
-            % has been erased, which is what reads as doubled text.
-            h = get(ax,'Title');
-            same = isequal(h.String,txt);
-            for i = 1:2:numel(varargin)
-                if ~same, break; end
-                same = isequal(h.(varargin{i}),varargin{i+1});
+        function setLine(obj,k,t,y)
+            % Mean line k's data, written only when it changed -- compared
+            % with what this view last wrote, not read back.
+            c = [];
+            if k <= numel(obj.LineCache), c = obj.LineCache(k); end
+            if isempty(c) || ~isequal(c.x,t)
+                set(obj.meanLines(k),'XData',t,'YData',y);
+            elseif ~isequaln(c.y,y)
+                obj.meanLines(k).YData = y;
+            else
+                return
             end
-            if ~same, title(ax,txt,varargin{:}); end
+            obj.LineCache(k).x = t;
+            obj.LineCache(k).y = y;
         end
 
-        function setYTicks(~,ax,ticks,lbl)
-            % The same reasoning as setTitle, for the tick labels that ARE the
-            % condition names in a stack: they carry a sweep count that
-            % changes far less often than the refresh does. YTick goes first
-            % because setting it puts the labels back on 'auto', so a tick
-            % that moved forces its label to be rewritten with it.
-            moved = ~isequal(ax.YTick,ticks);
-            if moved, ax.YTick = ticks; end
-            cur = ax.YTickLabel;
-            if ischar(cur), cur = cellstr(cur); end
-            if moved || ~isequal(cur(:).',lbl(:).')
-                ax.YTickLabel = lbl;
-            end
-        end
-
-        function setBand(~,h,t,m,e,mult,offset)
-            % One condition's band as a closed polygon: the lower edge left to
+        function setBand(obj,k,t,m,e,mult,offset)
+            % Mean k's band as one closed polygon: the lower edge left to
             % right, the upper edge back again. All three statistics are
             % symmetric about the mean, so one half-width draws both edges.
             %
@@ -1649,15 +1742,53 @@ classdef LivePlot < handle
             % is undefined. e is all-NaN exactly when there is no band to draw
             % (band off, or fewer than two clean sweeps), so this is
             % all-or-nothing by construction.
-            if isempty(h) || ~isgraphics(h), return; end
+            %
+            % Written only when the polygon changed. With no band that is
+            % once, where it used to be a NaN patch every frame.
             lo = (m - e)*mult + offset;
             hi = (m + e)*mult + offset;
             if ~all(isfinite(lo)) || ~all(isfinite(hi))
-                set(h,'XData',nan(3,1),'YData',nan(3,1));
+                xd = nan(3,1); yd = nan(3,1);
+            else
+                t  = t(:);
+                xd = [t; flipud(t)];
+                yd = [lo(:); flipud(hi(:))];
+            end
+            if k <= numel(obj.BandCache) && isequaln(obj.BandCache(k).x,xd) ...
+                    && isequaln(obj.BandCache(k).y,yd)
                 return
             end
-            t = t(:);
-            set(h,'XData',[t; flipud(t)],'YData',[lo(:); flipud(hi(:))]);
+            h = obj.bandPatches(k);
+            if isempty(h) || ~isgraphics(h), return; end
+            set(h,'XData',xd,'YData',yd);
+            obj.BandCache(k).x = xd;
+            obj.BandCache(k).y = yd;
+        end
+
+        function setTileTitle(obj,k,txt,varargin)
+            % Mean axes k's title, written only when it changed. A title is
+            % rewritten on every refresh and hardly any refresh changes it,
+            % and writing the same string back is not free: a title is
+            % CENTRED, so it is re-laid out and moved whenever its width
+            % changes -- and at the live tick rate under `drawnow limitrate`
+            % a caption that keeps shifting is drawn again before the last one
+            % has been erased, which is what reads as doubled text. Compared
+            % with what this view last wrote rather than read back, since a
+            % read on an axes with changes pending makes MATLAB lay it out on
+            % the spot (see setAxisLims).
+            want = [{txt} varargin];
+            if k <= numel(obj.TitleCache) && isequal(obj.TitleCache{k},want), return; end
+            title(obj.axMean(k),txt,varargin{:});
+            obj.TitleCache{k} = want;
+        end
+
+        function setLatestTitle(obj,txt,varargin)
+            % The latest-sweep axes' title, written only when it changed (see
+            % setTileTitle).
+            want = [{txt} varargin];
+            if isequal(obj.LatestTitle,want), return; end
+            title(obj.axLatest,txt,varargin{:});
+            obj.LatestTitle = want;
         end
 
         function s = meanYLabel(obj,scale)
@@ -1683,12 +1814,14 @@ classdef LivePlot < handle
             % One axes per group, its conditions offset into a stack and named
             % on the y axis -- the y ticks ARE the labels, so a series needs no
             % legend and no per-trace annotation to read.
-            Md = D.M*scale.mult;
-            for g = 1:numel(obj.axMean)
+            Md  = D.M*scale.mult;
+            nAx = numel(obj.axMean);
+            labLen = zeros(1,nAx);
+            for g = 1:nAx
                 ax  = obj.axMean(g);
                 sel = find(G.group == g);
                 if isempty(sel)
-                    ax.YTick = []; continue
+                    obj.setStackTicks(g,ax,[],{}); continue
                 end
                 [~,ord] = sort(G.within(sel));
                 sel  = sel(ord);
@@ -1698,27 +1831,53 @@ classdef LivePlot < handle
                 lbl = cell(1,numel(sel));
                 for j = 1:numel(sel)
                     k = sel(j);
-                    set(obj.meanLines(k),'XData',S.t,'YData',Md(k,:)+offs(j));
-                    obj.setBand(obj.bandPatches(k),S.t,D.M(k,:),D.E(k,:), ...
-                        scale.mult,offs(j));
+                    obj.setLine(k,S.t,Md(k,:)+offs(j));
+                    obj.setBand(k,S.t,D.M(k,:),D.E(k,:),scale.mult,offs(j));
                     lbl{j} = sprintf('%s (%d)',G.shortLabels{k}, ...
                         D.counts(k)-D.rejected(k));
                 end
+                labLen(g) = max(cellfun(@numel,lbl));
 
-                obj.setXLim(ax,S.t);
-                ax.YLim     = [offs(1)-0.75*step, offs(end)+0.75*step];
-                ax.FontSize = 8;
-                obj.setYTicks(ax,offs,lbl);
+                % Written only when they moved (see setAxisLims). FontSize is
+                % the tile's own from when it was built (newTile).
+                obj.setAxisLims(g,ax,obj.clampTime(S.t), ...
+                    [offs(1)-0.75*step, offs(end)+0.75*step]);
+                obj.setStackTicks(g,ax,offs,lbl);
                 head = G.groupLabels{g};
                 if isempty(head), head = 'Means'; end
                 % No y label here -- the y axis carries the condition names --
                 % so the band is named in the same parenthetical as the step.
                 tail = obj.bandLabel();
                 if ~isempty(tail), tail = [', ' tail]; end
-                obj.setTitle(ax,sprintf('%s   (step %.3g %s%s)', ...
+                obj.setTileTitle(g,sprintf('%s   (step %.3g %s%s)', ...
                     head,step,scale.plain,tail), ...
                     'FontSize',8,'FontWeight','normal','Interpreter','none');
             end
+            obj.KeyStackLab = labLen;
+        end
+
+        function setStackTicks(obj,g,ax,ticks,lbl)
+            % A stack's y ticks ARE its condition names, each with a sweep
+            % count, so they change when a condition gains a sweep and at no
+            % other time. Compared with what this view last wrote, never read
+            % back: reading tick labels makes MATLAB lay the axes out first.
+            % YTick goes first because setting it puts the labels back on
+            % 'auto', so a tick that moved forces its labels to be rewritten.
+            % (`done` tells a slot this view wrote from one MATLAB created
+            % while growing the array, whose empty ticks would otherwise read
+            % as "no ticks already written".)
+            c = [];
+            if g <= numel(obj.StackCache) && isequal(obj.StackCache(g).done,true)
+                c = obj.StackCache(g);
+            end
+            moved = isempty(c) || ~isequal(c.ticks,ticks);
+            if moved, ax.YTick = ticks; end
+            if ~isempty(ticks) && (moved || ~isequal(c.lbl,lbl))
+                ax.YTickLabel = lbl;
+            end
+            obj.StackCache(g).ticks = ticks;
+            obj.StackCache(g).lbl   = lbl;
+            obj.StackCache(g).done  = true;
         end
 
         function step = stackStep(~,lim,mult)
@@ -1867,24 +2026,48 @@ classdef LivePlot < handle
             obj.MeanShrink = zeros(1,0);
         end
 
-        function setXLim(obj,ax,t)
-            % Clamp the requested time base to what was actually recorded: the
-            % window can be widened past the extracted sweep, and an axis
-            % showing empty space either side reads as missing data.
+        function xl = clampTime(obj,t)
+            % The time axis: the requested time base clamped to what was
+            % actually recorded. The window can be widened past the extracted
+            % sweep, and an axis showing empty space either side reads as
+            % missing data.
             xl = obj.TimeBase;
             xl(1) = max(xl(1),t(1));
             xl(2) = min(xl(2),t(end));
             if ~(xl(2) > xl(1)), xl = [t(1) t(end)]; end
-            ax.XLim = xl;
         end
 
-        function setLimits(obj,ax,t,ylim_)
+        function setLimits(obj,slot,ax,t,ylim_)
             % ylim_ is applied as it stands: every limit here is a ladder
             % rung, which already clears its data, or the operator's own
             % manual number -- no pad, which would only push the ticks off it.
-            obj.setXLim(ax,t);
             if ~isfinite(ylim_) || ylim_ == 0, ylim_ = 1; end
-            ax.YLim = [-1 1]*ylim_;
+            obj.setAxisLims(slot,ax,obj.clampTime(t),[-1 1]*ylim_);
+        end
+
+        function setAxisLims(obj,slot,ax,xl,yl)
+            % Axes `slot`'s limits -- 0 the latest sweep's, k mean axes k --
+            % written only when they moved. The limits are rungs, so most
+            % frames ask for the ones already there, and writing even an
+            % unchanged limit sends the axes back through layout. Compared
+            % with what this view last wrote, never read back: a property read
+            % on an axes with changes pending makes MATLAB lay it out on the
+            % spot, which put the previous frame's update into this one.
+            i   = slot + 1;
+            old = nan(1,4);
+            if i <= size(obj.LimCache,1), old = obj.LimCache(i,:); end
+            if ~isequal(old(1:2),xl), ax.XLim = xl; end
+            if ~isequal(old(3:4),yl), ax.YLim = yl; end
+            obj.LimCache(i,:) = [xl yl];
+        end
+
+        function setYLabel(obj,slot,ax,txt)
+            % As setAxisLims, for a y label: rewritten every frame, changed
+            % only when the unit or the band does.
+            i = slot + 1;
+            if i <= numel(obj.YLabelCache) && isequal(obj.YLabelCache{i},txt), return; end
+            ylabel(ax,txt);
+            obj.YLabelCache{i} = txt;
         end
 
         function lim = latestLimit(obj,peak)
@@ -1960,27 +2143,42 @@ classdef LivePlot < handle
             % that arrived between two refreshes as well as the latest sweep
             % being bad -- flashes the axes tint and an ARTIFACT tag for
             % ArtifactFlash seconds.
+            % Each property is written only when it changed (see setAxisLims).
             if ~isgraphics(obj.artifactText), return; end
             if nBad > obj.ArtifactSeen
                 obj.ArtifactFlashT = tic;
             end
             obj.ArtifactSeen = nBad;
+            obj.ArtTotal     = nTotal;
             flash = ~isempty(obj.ArtifactFlashT) && toc(obj.ArtifactFlashT) < 1;
             if nBad < 1
-                obj.artifactText.String = 'Artifacts: 0';
-                obj.artifactText.Color  = [0.4 0.4 0.4];
-                obj.artifactText.FontWeight = 'normal';
+                s = struct('str','Artifacts: 0','col',[0.4 0.4 0.4],'fw','normal');
             else
-                obj.artifactText.String = sprintf('Artifacts: %d (%.0f%%)', ...
-                    nBad,100*nBad/max(1,nTotal));
-                obj.artifactText.Color  = obj.ArtifactColor;
-                obj.artifactText.FontWeight = 'bold';
+                s = struct('str',sprintf('Artifacts: %d (%.0f%%)',nBad,100*nBad/max(1,nTotal)), ...
+                    'col',obj.ArtifactColor,'fw','bold');
             end
+            s.bg = [1 1 1];
             if flash
-                obj.artifactText.String = ['ARTIFACT  ' obj.artifactText.String];
-                obj.axLatest.Color = [1 0.9 0.88];
-            else
-                obj.axLatest.Color = [1 1 1];
+                s.str = ['ARTIFACT  ' s.str];
+                s.bg  = [1 0.9 0.88];
+            end
+            old = obj.ArtState;
+            if isempty(old) || ~strcmp(old.str,s.str), obj.artifactText.String = s.str; end
+            if isempty(old) || ~isequal(old.col,s.col), obj.artifactText.Color = s.col; end
+            if isempty(old) || ~strcmp(old.fw,s.fw), obj.artifactText.FontWeight = s.fw; end
+            if isempty(old) || ~isequal(old.bg,s.bg), obj.axLatest.Color = s.bg; end
+            obj.ArtState = s;
+        end
+
+        function expireFlash(obj)
+            % The ARTIFACT flash ends on a clock rather than on data, so a
+            % frame skipped for having nothing new (updateStats) still ends
+            % one that is due -- or a run's last artifact would leave the
+            % axes tinted until the next sweep.
+            s = obj.ArtState;
+            if isempty(s) || isequal(s.bg,[1 1 1]) || isempty(obj.ArtifactFlashT), return; end
+            if toc(obj.ArtifactFlashT) >= 1
+                obj.showArtifacts(obj.ArtifactSeen,obj.ArtTotal);
             end
         end
 
@@ -1994,9 +2192,10 @@ classdef LivePlot < handle
         function G = resolveGrouping(obj,S)
             % Work out, from this run's stimuli and their parameters, the order
             % to lay the means out in, what to call each, which group it
-            % belongs to, and what colour it gets. Recomputed on every render
-            % rather than cached at update(): GroupBy and Layout can change
-            % between sweeps, and the answer depends on both.
+            % belongs to, and what colour it gets. renderOnce calls it again
+            % whenever anything it reads changes -- the run's stimuli, their
+            % labels and parameters, GroupBy, Layout -- and reuses the answer
+            % otherwise, since none of those move while a run streams.
             G    = mabr.ui.LivePlot.emptyGroup();
             list = S.stimList(:)';
             n    = numel(list);
@@ -2220,20 +2419,6 @@ classdef LivePlot < handle
                 'labels',{{}},'shortLabels',{{}},'named',false(1,0), ...
                 'group',[],'within',[],'nGroups',1,'groupLabels',{{''}}, ...
                 'groupName','','colors',zeros(0,3),'paramChoices',{{}});
-        end
-
-        function n = labelWidthChars(ax)
-            % How long an axes' longest y tick label is, in characters. The
-            % change detector behind gutterKey, and deliberately not a width
-            % in pixels: the point is to notice when a label could no longer
-            % fit the room it has, not to measure it -- measuring is what
-            % TightInset is for, and it costs a graphics query.
-            n = 0;
-            if isempty(ax) || ~isgraphics(ax), return; end
-            lab = ax.YTickLabel;
-            if isempty(lab), return; end
-            if ischar(lab), lab = cellstr(lab); end
-            n = max(cellfun(@numel,lab));
         end
 
         function k = layoutKey(G)

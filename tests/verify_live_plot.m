@@ -42,7 +42,13 @@ function verify_live_plot()
 %          drawn over the tile beside it;
 %      17. the arrangement can be changed WHILE sweeps are arriving without
 %          leaving the old axes behind: render() is not re-entrant, and a
-%          rebuild sweeps up anything on the panel it is not holding.
+%          rebuild sweeps up anything on the panel it is not holding;
+%      18. a view that writes only what changed -- judged against a record
+%          of its own writes, never read back -- ends up showing exactly what
+%          a view drawn once from the same frame shows, through every
+%          arrangement, scale, band, grouping, time base and a reset; skips a
+%          frame whose statistics are already on screen; and still ends an
+%          artifact flash on its clock when it does.
 %
 %   Run:  >> verify_live_plot
 %
@@ -731,6 +737,56 @@ assert(worst == 0 && stray_axes(lp) == 0, ...
     'changing the arrangement under a live timer left %d axes behind',worst);
 fprintf('  PASS: %d arrangement changes under a live timer, nothing left behind\n',i);
 
+% --- 18. writing only what changed draws what a fresh view draws ---------
+% A frame writes a line, a band, a limit, a label or a title only where it
+% differs from what the view last wrote there -- judged against a record of
+% its own writes and never read back, since reading any property of an axes
+% with changes pending makes MATLAB lay it out on the spot. The risk in that
+% is a record that outlives what it describes (an axes rebuilt, or a reset
+% that blanked the traces behind its back), after which the next frame skips
+% a write the screen needed. So a view brought here a frame at a time,
+% through every arrangement, scale, band, grouping and time base, must show
+% exactly what a view drawn ONCE from the last frame shows.
+[F,finfo] = stats_frames(40);
+inc = mabr.ui.LivePlot();
+cleanInc = onCleanup(@() delete(inc));
+changes = {{'Layout','grid'},{'Layout','stacked'},{'AmpMode','each'}, ...
+           {'ErrorBand','sem'},{'GroupBy','Level'},{'TimeBase',[-1 8]}, ...
+           {'Layout','separate'},{'GroupBy',''},{'Layout','overlay'}};
+f = 0;
+for s = 1:numel(changes)
+    inc.(changes{s}{1}) = changes{s}{2};
+    for j = 1:4
+        f = f + 1;
+        inc.updateStats(F(f),finfo);
+    end
+    v = changes{s}{2};
+    if ischar(v), v = ['''' v '''']; else, v = mat2str(v); end
+    assert_same_view(inc,F(f),finfo,sprintf('after %s = %s',changes{s}{1},v));
+end
+
+% The statistics already on screen handed over again -- a worker that has
+% published nothing new -- are not drawn at all ...
+rt = inc.RenderTiming;
+inc.updateStats(F(f),finfo);
+assert(isequal(inc.RenderTiming,rt),'statistics already on screen were drawn again');
+% ... but after a reset, which blanks every trace behind the record's back,
+% the very same frame is drawn in full.
+inc.reset();
+inc.updateStats(F(f),finfo);
+assert_same_view(inc,F(f),finfo,'after a reset');
+
+% An artifact flash ends on its clock even when nothing new arrives to draw:
+% the frame is skipped, the flash is not left on.
+A = F(f); A.NumArtifacts = 1; A.LatestBad = true;
+inc.updateStats(A,finfo);
+assert(~isequal(inc.axLatest.Color,[1 1 1]),'a new artifact did not flash the axes');
+pause(1.2);
+inc.updateStats(A,finfo);
+assert(isequal(inc.axLatest.Color,[1 1 1]), ...
+    'a frame skipped for having nothing new left the artifact flash on');
+fprintf('  PASS: writing only what changed draws what a fresh view draws\n');
+
 fprintf('== verify_live_plot PASSED ==\n');
 end
 
@@ -844,6 +900,111 @@ assert(room >= need - 1e-6, ...
     what,need,room);
 assert(min(pos(:,2)) >= max(ti(pos(:,2) == min(pos(:,2)),2)) - 1e-6, ...
     '%s: the bottom row''s labels run off the panel',what);
+end
+
+function [F,info] = stats_frames(nFrames)
+% A 2 x 3 Frequency x Level run's live statistics, frame by frame, shaped as
+% mabr.compute.Pipeline.step publishes them: a running mean and SD per
+% condition, two conditions gaining a sweep a frame. Each condition's peak
+% sits mid-rung on the 1-2-5 ladder and the latest sweep's peak never moves,
+% so every limit is a function of the data alone -- the rung hysteresis a view
+% carries from frame to frame has nothing to hold on to, and two views that
+% differ only in history must land on the same rungs.
+Fs = 12000;
+t  = (-round(0.01*Fs):round(0.01*Fs))/Fs;
+w  = sin(2*pi*700*t).*exp(-t/0.004);
+w(t < 0) = 0;
+w  = w/max(abs(w));
+[Fq,Lv] = ndgrid([8 16],[30 50 70]);
+V   = [Fq(:) Lv(:)];
+nC  = size(V,1);
+amp = [1.4 1.4 3.3 3.3 7 7]*1e-7;            % rungs 2, 5 and 10 x 1e-7
+info = struct('Stimuli',1:nC, ...
+    'Labels',{arrayfun(@(f,L) sprintf('%gkHz_%gdB',f,L),V(:,1)',V(:,2)', ...
+        'UniformOutput',false)}, ...
+    'Params',struct('Names',{{'Frequency','Level'}},'Values',V, ...
+        'Units',{{'kHz','dB'}}), ...
+    'target',64*nC);
+M = zeros(nC,numel(t)); SD = zeros(nC,numel(t)); cnt = zeros(nC,3);
+F = repmat(struct('RunId',1,'Time',t,'NumSamples',numel(t),'Latest',3e-7*w, ...
+    'LatestBad',false,'LatestStim',1,'Corr',0.1,'NumSweeps',0,'NumClean',0, ...
+    'NumArtifacts',0,'Stimuli',1:nC,'Mean',M,'SD',SD,'CondCounts',cnt),1,nFrames);
+n = 0;
+for f = 1:nFrames
+    add = 2;
+    if f == 1, add = nC; end                  % every condition has a sweep to start
+    for j = 1:add
+        c = mod(n,nC) + 1; n = n + 1;
+        k = cnt(c,1) + 1;
+        y = amp(c)*w + 1e-9*sin(2*pi*37*(1:numel(t))/Fs + n);
+        if k == 1
+            M(c,:) = y;
+        else
+            d = y - M(c,:);
+            M(c,:)  = M(c,:) + d/k;
+            SD(c,:) = sqrt(max(0,SD(c,:).^2*(k-2)/(k-1) + d.^2/k));
+        end
+        cnt(c,:) = [k k 0];
+    end
+    F(f).LatestStim = c;
+    F(f).NumSweeps  = n;
+    F(f).NumClean   = n;
+    F(f).Mean = M; F(f).SD = SD; F(f).CondCounts = cnt;
+end
+end
+
+function assert_same_view(v,stats,info,what)
+% Everything a frame writes, read back off `v` and off a view drawn ONCE from
+% the same statistics under the same settings, which must match exactly: the
+% two ran the same arithmetic, so any difference is a write `v` skipped.
+% Positions and automatic ticks are left out -- the label gutters settle with
+% a hysteresis of their own, which is history rather than a missed write.
+ref = mabr.ui.LivePlot();
+cleanRef = onCleanup(@() delete(ref));
+ref.Layout    = v.Layout;
+ref.GroupBy   = v.GroupBy;
+ref.AmpMode   = v.AmpMode;
+ref.ErrorBand = v.ErrorBand;
+ref.TimeBase  = v.TimeBase;
+ref.updateStats(stats,info);
+drawnow;
+same(numel(v.axMean),numel(ref.axMean),what,'number of mean axes');
+axV = [v.axLatest v.axMean(:).'];
+axR = [ref.axLatest ref.axMean(:).'];
+for i = 1:numel(axV)
+    a  = axV(i); b = axR(i);
+    at = sprintf('%s, axes %d',what,i);
+    same(a.XLim,b.XLim,at,'x limits');
+    same(a.YLim,b.YLim,at,'y limits');
+    same(a.YLabel.String,b.YLabel.String,at,'y label');
+    same(a.Title.String,b.Title.String,at,'title');
+    same(char(a.YTickLabelMode),char(b.YTickLabelMode),at,'tick label mode');
+    same(a.Color,b.Color,at,'background');
+    if strcmp(v.Layout,'stacked') && i > 1
+        same(a.YTick,b.YTick,at,'stack offsets');
+        same(cellstr(a.YTickLabel),cellstr(b.YTickLabel),at,'stack labels');
+    end
+    la = findobj(a,'Type','line'); lb = findobj(b,'Type','line');
+    same(numel(la),numel(lb),at,'number of traces');
+    for k = 1:numel(la)
+        same(la(k).XData,lb(k).XData,at,sprintf('trace %d time base',k));
+        same(la(k).YData,lb(k).YData,at,sprintf('trace %d',k));
+        same(la(k).Color,lb(k).Color,at,sprintf('trace %d colour',k));
+    end
+    pa = findobj(a,'Type','patch'); pb = findobj(b,'Type','patch');
+    same(numel(pa),numel(pb),at,'number of bands');
+    for k = 1:numel(pa)
+        same(pa(k).XData,pb(k).XData,at,sprintf('band %d time base',k));
+        same(pa(k).YData,pb(k).YData,at,sprintf('band %d',k));
+    end
+end
+same(get(findobj(v.axLatest,'Type','text'),'String'), ...
+     get(findobj(ref.axLatest,'Type','text'),'String'),what,'artifact counter');
+end
+
+function same(a,b,where,what)
+assert(isequaln(a,b), ...
+    '%s: the %s differs from a view drawn once from the same frame',where,what);
 end
 
 function live_tick(lp,Y,t,bad,info)
