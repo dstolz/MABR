@@ -57,8 +57,8 @@ h = h.add(b);
 assert(isequal(h.Files,{b,a,c}), ...
     'a file already listed moves to the front; it must not appear twice');
 
-h = h.add('C:\BANKS\C.mat');
-assert(h.count() == 3 && strcmp(h.Files{1},'C:\BANKS\C.mat') && h.has(c), ...
+h = h.add(upper(c));                          % D:\MORE\C.MAT -- c, in capitals
+assert(h.count() == 3 && strcmp(h.Files{1},upper(c)) && h.has(c), ...
     'the same path in another case is the same file (MABR is Windows-only)');
 assert(h.has('c:\banks\A.SPL'),'has() should compare case-insensitively too');
 
