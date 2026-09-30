@@ -208,6 +208,8 @@ Each button is drawn as what its window shows; hover for the tooltip if the pict
 | a stack of traces | Raises the Trace Organizer, refreshed with the conditions completed so far. |
 | a loudspeaker | Opens the Stimulus Viewer on the loaded bank. |
 | three part-filled bars | Opens the [Progress Monitor](Viewing-Data.md#progressmonitor) — how much of the schedule is done, and which conditions are still short. |
+| three cascaded windows | Raises every open MABR window, the main window last. |
+| four tiled windows | **Arranges** every open MABR window: the main window stays put and the others are tiled in a grid over the wider strip of its display beside it, without overlapping it or each other, then all are raised. Pressing again gives the same layout. |
 | **?** | Opens the [MABR wiki](https://github.com/dstolz/MABR/wiki) in a browser (same as **Help ▸ MABR Wiki**). |
 
 All three viewers are described in [Viewing Data](Viewing-Data.md). Under **Stimulation only** the live-plot and analysis buttons are disabled along with the whole Acquisition panel: nothing is recorded, so there is nothing for either to show.
