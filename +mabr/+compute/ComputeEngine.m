@@ -14,6 +14,7 @@ classdef ComputeEngine < handle
 %       ce = mabr.compute.ComputeEngine(cfg,progressFcn);
 %       ce.waitUntilReady();                 % DSP handshake, never throws
 %       ce.configure(fs,window,filters,artifacts);
+%       ce.waitConfigured();                 % ... and its first design done
 %       ce.runStart(info); ...; [stats,fresh] = ce.live(); ...; ce.runEnd(id);
 %       slot = ce.acquireSlot(); ce.setJob(slot,metricIdx,window); V = ce.values(slot);
 %
@@ -163,6 +164,40 @@ classdef ComputeEngine < handle
                 obj.report('DSP worker ready (PID %d).',obj.DSP.PID);
             elseif ~obj.DSP.Dead
                 mabr.log.vprintf(1,1,'DSP worker handshake timed out; computing in-process.');
+            end
+        end
+
+        function tf = waitConfigured(obj,timeout)
+            % Bounded wait, after a Configure has been sent, for the DSP
+            % worker to have acted on it: the moment it reports anything but
+            % Idle. Its FIRST Configure designs the filter chain in a process
+            % that has never run designfilt, which takes a fresh worker 3-6 s.
+            % Left to the first run, those seconds are a live view with
+            % nothing in it and an advance criterion with nothing to judge --
+            % hasDSP() is already true, so the controller does not step its
+            % own pipeline -- and past 5 s the watchdog would take the busy
+            % worker for a wedged one and relaunch it, into the same cost.
+            % Never throws, like waitUntilReady: a worker slower than the
+            % timeout costs the first run its live view, nothing more.
+            if nargin < 2 || isempty(timeout), timeout = 30; end
+            t0 = tic; lastReport = -Inf;
+            while obj.hasDSP() && obj.DSP.State == mabr.compute.State.Idle ...
+                    && toc(t0) < timeout
+                if ~isempty(obj.DSP.Future) && strcmp(obj.DSP.Future.State,'finished')
+                    break                          % the loop has exited
+                end
+                if toc(t0) - lastReport >= 1
+                    lastReport = toc(t0);
+                    obj.report('Waiting for the DSP worker to design its filters… (%.0f s)', ...
+                        lastReport);
+                end
+                pause(0.05);
+            end
+            tf = obj.hasDSP() && any(obj.DSP.State == [mabr.compute.State.Ready, ...
+                mabr.compute.State.Working, mabr.compute.State.Finalizing]);
+            if ~tf && obj.hasDSP()
+                mabr.log.vprintf(1,['The DSP worker had not finished configuring after ' ...
+                    '%.0f s; the first run may start without its live statistics.'],toc(t0));
             end
         end
 

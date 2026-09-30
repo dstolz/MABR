@@ -437,6 +437,11 @@ classdef AcqController < handle
             if ~isempty(obj.Compute)
                 obj.Compute.waitUntilReady(min(timeout,60));
                 obj.configure_pipeline();     % the worker gets the policies
+                % ... and has designed its chain before any run needs it: a
+                % fresh worker's first design takes seconds, which the first
+                % run's live view would otherwise spend empty (see
+                % mabr.compute.ComputeEngine.waitConfigured).
+                obj.Compute.waitConfigured(min(timeout,30));
             end
         end
 

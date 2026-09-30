@@ -139,6 +139,12 @@ ctrl.waitUntilReady();
 assert(~isempty(ctrl.Compute),'no ComputeEngine was built');
 assert(ctrl.Compute.hasDSP(),'the DSP worker did not handshake');
 assert(ctrl.usingWorkerDSP(),'the controller does not report the DSP worker');
+% A fresh worker's first Configure designs its filters, which takes seconds.
+% waitUntilReady waits for it, so the run below is served from its first
+% sweep -- not from whenever that design happened to finish, which on a cold
+% pool left this run's live view one slow step from empty.
+assert(ctrl.Compute.DSP.State ~= mabr.compute.State.Idle, ...
+    'waitUntilReady returned before the DSP worker had acted on its Configure');
 
 bank = mabr.stim.demoStimuli(cfg,'Frequencies',[8 16],'Levels',[30 60]);
 ctrl.setStimuli(bank);
