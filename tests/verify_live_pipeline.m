@@ -21,6 +21,9 @@ function verify_live_pipeline()
 %           where a pipeline that had it from the start does.
 %   Part E: a new gain or filter chain mid-run rewinds extraction and ends
 %           where a pipeline configured that way from the start does.
+%   Part F: a dropout inside a timing pulse is part of that pulse -- not a
+%           new onset -- in the detector, the live pipeline however the run
+%           arrives, and finalization.
 %
 %   No hardware, no pool. Run:  >> verify_live_pipeline
 %
@@ -137,6 +140,67 @@ for f = {'Mean','SD','Corr','CondCounts'}
     assert(isequaln(Sl.(f{1}),Sm.(f{1})),'after a filter change the %s differs',f{1});
 end
 fprintf('  PASS Part E: a new gain or chain rewinds extraction and matches a fresh pipeline\n');
+
+% ---- Part F: a dropout inside a pulse is not a new onset ---------------------
+% On hardware a timing pulse can fall below threshold for a moment in the
+% middle -- a lost USB microframe is 24 samples at 192 kHz -- and once the 2 ms
+% shadow had passed, the far side of that dropout used to be read as a new
+% onset: one sweep too many, and every later sweep paired with the wrong
+% presentation. The rig showed it 4 ms into a 5 ms pulse. The detector now
+% re-arms only once the channel has been low for mabr.Config.OnsetRearm.
+sh = round(mabr.Config.OnsetShadow*fs);
+th = mabr.Config.OnsetThreshold;
+ra = round(mabr.Config.OnsetRearm*fs);
+pw   = round(0.005*fs);                       % 5 ms pulses, as on the rig
+onF  = round((0.02:0.02:1.96)*fs);            % 20 ms apart
+timF = zeros(N,1);
+for k = 1:numel(onF), timF(onF(k):onF(k)+pw-1) = 0.55; end   % the rig's loop-back height
+at   = [100 400 769 900];                     % samples into the pulse; 769 is the rig's
+hit  = 5:7:numel(onF);
+drop = zeros(1,numel(hit));
+for j = 1:numel(hit)
+    drop(j) = onF(hit(j)) + at(mod(j-1,numel(at)) + 1);
+    timF(drop(j):drop(j)+23) = 0;             % one microframe
+end
+old = mabr.metrics.find_timing_onsets(timF,sh,th);        % no re-arm: the old rule
+new = mabr.metrics.find_timing_onsets(timF,sh,th,ra);
+assert(isequal(new(:)',onF),'with re-arm the onsets should be exactly the pulses');
+assert(numel(old) > numel(onF), ...
+    'the old rule should read the far side of a late dropout as an onset (the rig''s fault)');
+assert(isequal(mabr.metrics.find_timing_onsets(single(timF),sh,th,ra),new), ...
+    'the single and double paths disagree under re-arm');
+% The boundary: a low run of exactly the re-arm length ends a pulse; one sample
+% shorter does not. Past it a gap is indistinguishable from a real one, which is
+% why a gap between presentations must be at least that long.
+edge = [zeros(50,1); 0.55*ones(500,1); zeros(ra,1); 0.55*ones(500,1); zeros(50,1)];
+assert(numel(mabr.metrics.find_timing_onsets(edge,1,th,ra)) == 2, ...
+    'a low run of exactly OnsetRearm samples should end the pulse');
+edge(550+ra) = 0.55;
+assert(numel(mabr.metrics.find_timing_onsets(edge,1,th,ra)) == 1, ...
+    'a low run one sample short of OnsetRearm should not end the pulse');
+
+infoF = struct('RunId',3,'StimIndex',ones(1,numel(onF)),'Stimuli',1);
+a = make(cfg,win,filt,mabr.ArtifactPolicy,infoF);
+Sall = run_slices(a,sig,timF,N);                          % one call
+assert(Sall.NumSweeps == numel(onF), ...
+    'the live pipeline counted %d sweeps for %d pulses',Sall.NumSweeps,numel(onF));
+% Slices that end INSIDE a dropout, just after one, and at random: the far side
+% of a dropout then begins a slice, and only the look-back can tell.
+cutsF = sort(unique([drop + 5, drop + 24, randperm(N-1,40)]));
+b = make(cfg,win,filt,mabr.ArtifactPolicy,infoF);
+Scut = run_slices(b,sig,timF,[cutsF N]);
+for f = {'Mean','SD','Corr','CondCounts','NumSweeps'}
+    assert(isequaln(Sall.(f{1}),Scut.(f{1})), ...
+        'with dropouts, the %s depends on how the run was sliced',f{1});
+end
+gF = mabrtest.GrowingRing(sig,timF);
+gF.Head = N;
+F = a.finalize(gF,infoF.StimIndex);
+assert(isequal(F.OnsetsAll(:)',onF),'finalization found %d onsets for %d pulses', ...
+    numel(F.OnsetsAll),numel(onF));
+fprintf(['  PASS Part F: %d microframe dropouts inside 5 ms pulses are not onsets ' ...
+    '(the old rule read %d); live slices and finalization agree\n'], ...
+    numel(hit),numel(old) - numel(onF));
 
 fprintf('== verify_live_pipeline PASSED ==\n');
 end

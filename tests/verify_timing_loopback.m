@@ -203,7 +203,11 @@ fprintf('  streamed %d of %d samples (%.3f s)\n',head,N,head/Fs);
 % shadow tracks the commanded period instead: wide enough to reject a ringing
 % edge, never wide enough to swallow the next pulse.
 shadow = max(1,round(0.4*period));
-det    = mabr.metrics.find_timing_onsets(recTim,shadow,opts.Threshold);
+% And the pipeline's re-arm (mabr.Config.OnsetRearm), so a dropout inside a
+% pulse is read here as the pipeline reads it -- capped at half the gap between
+% pulses, which only binds at rates far above any ISI a session uses.
+rearm  = min(round(mabr.Config.OnsetRearm*Fs),max(1,floor((period - pulseLen)/2)));
+det    = mabr.metrics.find_timing_onsets(recTim,shadow,opts.Threshold,rearm);
 
 % ---- Match detections to commanded onsets ---------------------------------
 % Matched by proximity rather than by ordinal position: with a dropped pulse in
@@ -293,6 +297,30 @@ if isempty(base), base = 0; end
 baseMax = max(abs(base));
 baseRMS = rms_(base);
 
+% ---- Dropouts inside a pulse ---------------------------------------------
+% The detector reads a brief fall below threshold inside a pulse as part of
+% that pulse (the re-arm above), so its counts no longer SHOW one. The trace
+% still does: a pulse long enough to have an inside is checked here for any
+% stretch below threshold between its edges. A presentation's own timing
+% pulse is 5-8 ms, so PulseWidth 0.005 is the case that matters on a rig.
+edgeM       = 16;                             % ringing at either edge
+dropN       = 0;
+dropLongest = 0;
+dropAt      = zeros(0,1);                     % ring sample where each began
+canDrop     = pulseLen > 4*edgeM;
+if canDrop
+    for k = 1:numel(onsAll)
+        idx = onsAll(k) + (edgeM:pulseLen-1-edgeM);
+        idx = idx(idx >= 1 & idx <= numel(recTim));
+        b   = recTim(idx) < opts.Threshold;
+        if ~any(b), continue; end
+        d = diff([false; b(:); false]);
+        dropN       = dropN + 1;
+        dropLongest = max(dropLongest,max(find(d == -1) - find(d == 1)));
+        dropAt(end+1,1) = idx(find(b,1)); %#ok<AGROW>
+    end
+end
+
 % ---- Threshold robustness sweep --------------------------------------------
 % The width of the plateau over which the count stays right is the honest
 % measure of headroom: a knife-edge plateau means the next slightly noisier
@@ -306,7 +334,7 @@ refPeak = median(peaks);
 sweepTop = max(abs(recTim));
 if isempty(sweepTop) || ~isfinite(sweepTop) || sweepTop <= 0, sweepTop = 1; end
 thrSweep = linspace(0.02,1.05,60)'*sweepTop;
-counts   = arrayfun(@(th) numel(mabr.metrics.find_timing_onsets(recTim,shadow,th)),thrSweep);
+counts   = arrayfun(@(th) numel(mabr.metrics.find_timing_onsets(recTim,shadow,th,rearm)),thrSweep);
 good     = counts == nPulses;
 if any(good)
     plateau = [min(thrSweep(good)) max(thrSweep(good))];
@@ -351,6 +379,13 @@ fprintf('    pulse width med      : %.1f us commanded, %.1f us returned\n', ...
     us(pulseLen),us(median(widths)));
 fprintf('    baseline max / RMS   : %.5f / %.5f  (headroom %.4f)\n', ...
     baseMax,baseRMS,min(peaks)-baseMax);
+if canDrop
+    fprintf(['    dropouts in a pulse  : %d of %d pulses, longest %d samples (%.1f us); ' ...
+             'the re-arm spans %d\n'],dropN,numel(onsAll),dropLongest,us(dropLongest),rearm);
+else
+    fprintf(['    dropouts in a pulse  : n/a -- a %d-sample pulse has no inside to drop ' ...
+             'out of (PulseWidth 0.005 is a presentation''s)\n'],pulseLen);
+end
 if any(good)
     fprintf('    threshold plateau    : %.3f to %.3f  (%.0f%% to %.0f%% of channel max %.4f)\n', ...
         plateau(1),plateau(2),100*plateau(1)/sweepTop,100*plateau(2)/sweepTop,sweepTop);
@@ -391,7 +426,8 @@ results = struct( ...
     'ThresholdPlateau',plateau,'ThresholdSweep',thrSweep,'SweepCounts',counts, ...
     'SignalRMS',sigRMS,'SignalPeakHz',sigPeakHz, ...
     'CommandedOnsets',expIdx,'DetectedOnsets',det,'OnsetError',err, ...
-    'Figure',gobjects(1));
+    'RearmSamples',rearm,'NumDropouts',dropN,'DropoutLongest',dropLongest, ...
+    'DropoutAt',dropAt,'Figure',gobjects(1));
 
 % ---- Plot -------------------------------------------------------------------
 if opts.Plot
@@ -411,6 +447,12 @@ if opts.Assert
     assert(min(peaks) > opts.Threshold,'mabr:test:timing:noMargin', ...
         'Weakest pulse peaked at %.4f, at or below the %.3f detection threshold.', ...
         min(peaks),opts.Threshold);
+    % A dropout the re-arm cannot span is one the pipeline reads as a new
+    % onset -- the fault the re-arm exists to absorb.
+    assert(dropLongest < rearm,'mabr:test:timing:longDropout', ...
+        ['A pulse fell below threshold for %d samples, longer than the %d-sample ' ...
+         're-arm: the pipeline would read its far side as a new onset.'], ...
+        dropLongest,rearm);
     assert(us(jitterRMS) <= opts.MaxJitter,'mabr:test:timing:jitter', ...
         'Onset jitter %.2f us RMS exceeds the %.1f us tolerance.', ...
         us(jitterRMS),opts.MaxJitter);

@@ -221,9 +221,12 @@ classdef Pipeline < handle
             assert(obj.Configured,'mabr:compute:Pipeline:notConfigured', ...
                 'configure() must be called before step().');
 
+            % The detection rule finalize uses too (mabr.Config.Onset*), so the
+            % live sweeps and the saved blocks are paired by the same onsets.
             params = struct('SampleRate',obj.Config.DACSampleRate, ...
                 'window',obj.Window,'decimation',obj.Config.decimationFactor, ...
-                'threshold',0.1,'shadow',0.002);
+                'threshold',mabr.Config.OnsetThreshold, ...
+                'shadow',mabr.Config.OnsetShadow,'rearm',mabr.Config.OnsetRearm);
             [pre,post,~,obj.SweepState,tw] = ...
                 mabr.metrics.extract_sweeps(rb,params,obj.SweepState);
             obj.StepCount = obj.StepCount + 1;
@@ -359,7 +362,9 @@ classdef Pipeline < handle
             df    = cfg.decimationFactor;
             adcFs = cfg.ADCSampleRate;         % analysis/storage rate
 
-            onsetsRaw = mabr.metrics.find_timing_onsets(rawTiming,round(0.002*Fs),0.1);
+            onsetsRaw = mabr.metrics.find_timing_onsets(rawTiming, ...
+                round(mabr.Config.OnsetShadow*Fs),mabr.Config.OnsetThreshold, ...
+                round(mabr.Config.OnsetRearm*Fs));
             % The timing channel has said all it will: let it go before the
             % resample below makes its double copy of the signal (a full ring
             % is 256 MB a channel as single, 512 MB as double).

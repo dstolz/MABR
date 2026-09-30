@@ -445,8 +445,11 @@ R.seq      = spec.StimulusIndex(:)';
 R.pol      = spec.Polarity(:)';
 R.stimList = unique(R.seq,'stable');
 [~,tim]    = R.rb.readBlock();
-R.onsets   = mabr.metrics.find_timing_onsets(tim, ...
-    round(0.002*ctrl.Config.DACSampleRate),0.1);
+% The pipeline's own rule (mabr.Config.Onset*), so on the rig a dropout inside
+% a pulse is read here exactly as the saved blocks were paired.
+fsR        = ctrl.Config.DACSampleRate;
+R.onsets   = mabr.metrics.find_timing_onsets(tim,round(mabr.Config.OnsetShadow*fsR), ...
+    mabr.Config.OnsetThreshold,round(mabr.Config.OnsetRearm*fsR));
 R.onsets   = R.onsets(:)';
 R.blocks   = ctrl.Session.Blocks(nBefore+1:end);
 end

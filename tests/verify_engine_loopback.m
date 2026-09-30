@@ -112,6 +112,13 @@ for thr = [0.1 0.3 1/3 0.7 0.95]
     a = mabr.metrics.find_timing_onsets(tim,5,thr);
     b = mabr.metrics.find_timing_onsets(double(tim),5,thr);
     assert(isequal(a,b),'single and double onset detection disagree at threshold %g',thr);
+    % ... and with the re-arm and a look-back, which read the same comparison
+    for rc = [8 0; 40 100; 200 7]'
+        a = mabr.metrics.find_timing_onsets(tim,5,thr,rc(1),rc(2));
+        b = mabr.metrics.find_timing_onsets(double(tim),5,thr,rc(1),rc(2));
+        assert(isequal(a,b),['single and double onset detection disagree at ' ...
+            'threshold %g, re-arm %d, look-back %d'],thr,rc(1),rc(2));
+    end
 end
 fprintf('  PASS test 1c: onsets found on single samples match the double path exactly\n');
 

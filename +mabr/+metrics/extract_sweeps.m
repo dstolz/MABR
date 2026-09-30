@@ -24,6 +24,9 @@ function [preSweep,postSweep,onsets,state,tvec] = extract_sweeps(rb,params,state
 %               decimation  positive integer stride applied to windows
 %               threshold   (optional) onset detection threshold (default 0.1)
 %               shadow      (optional) min onset spacing, seconds (default 2 ms)
+%               rearm       (optional) seconds the timing channel must stay
+%                           below threshold before a new onset (default 0;
+%                           see mabr.metrics.find_timing_onsets)
 %     state   struct carried across calls (pass [] or struct() to reset).
 %
 %   Outputs
@@ -77,38 +80,41 @@ if isfield(params,'shadow') && ~isempty(params.shadow)
 else
     shadowSamples = round(0.002*Fs);      % 2 ms
 end
+if isfield(params,'rearm') && ~isempty(params.rearm)
+    rearmSamples = round(params.rearm*Fs);
+else
+    rearmSamples = 0;
+end
 
 % --- detect new onsets in the freshly arrived region ---------------------
 if head > state.lastHead
     LB = max(1,state.lastHead+1);
-    timingSlice = rb.readTiming(LB,head);
-    rel = mabr.metrics.find_timing_onsets(timingSlice,shadowSamples,thr);
 
-    % A pulse that began in the PREVIOUS slice is not a new onset.
-    % find_timing_onsets reports sample 1 of a vector that starts above
-    % threshold, which is right for a vector read on its own and wrong here:
-    % what it found is the middle of a pulse whose start was counted last
-    % time. The shadow interval below cannot be relied on to remove it -- a
-    % timing pulse spans its whole presentation (5 ms for the demo bank),
-    % which is routinely LONGER than the shadow (2 ms), so a boundary landing
-    % more than shadowSamples into a pulse leaves the duplicate standing.
-    % That inflates the sweep count and, because the k-th onset is paired
-    % with the k-th planned presentation, shifts the attribution of every
-    % sweep after it.
-    %
-    % The sample immediately before this slice settles it. It is always still
-    % retained: it was inside the previous slice, and the ring holds minutes.
-    if ~isempty(rel) && rel(1) == 1 && LB > 1
-        prev = rb.readTiming(LB-1,LB-1);
-        if ~isempty(prev) && double(prev(1)) >= thr, rel(1) = []; end
-    end
+    % A pulse that began in the PREVIOUS slice is not a new onset, and
+    % neither is the far side of a dropout that began there. Read on its
+    % own, a slice starting inside a pulse reports its sample 1, and one
+    % starting just after a dropout reports the recovery as a crossing with
+    % nothing before it to be the far side of -- the middle of a pulse whose
+    % start was counted last time. The shadow interval cannot be relied on to
+    % remove either: a timing pulse spans its whole presentation (5 ms for the
+    % demo bank), routinely LONGER than the shadow (2 ms). A duplicate
+    % inflates the sweep count and, because the k-th onset is paired with the
+    % k-th planned presentation, shifts the attribution of every sweep after
+    % it. So the samples before the slice are read too, as look-back
+    % (find_timing_onsets' context): at least the one before it, and as far
+    % back as the re-arm rule looks. They are always still retained -- they
+    % were inside earlier slices, and the ring holds minutes.
+    ctx = min(LB-1,max(1,rearmSamples));
+    timingSlice = rb.readTiming(LB-ctx,head);
+    rel = mabr.metrics.find_timing_onsets(timingSlice,shadowSamples,thr, ...
+        rearmSamples,ctx);
 
     % Every new onset lies after every old one, and find_timing_onsets has
     % already merged those within the shadow of each other -- so the one
     % pair that can still be closer than the shadow is the last old onset
     % and the first new one. (The whole list used to be re-sorted and
     % re-merged on every call to reach the same answer.)
-    newOnsets = LB + rel(:) - 1;              % absolute indices
+    newOnsets = LB - ctx + rel(:) - 1;        % absolute indices
     if ~isempty(newOnsets) && ~isempty(state.onsets) ...
             && newOnsets(1) - state.onsets(end) < shadowSamples
         newOnsets(1) = [];

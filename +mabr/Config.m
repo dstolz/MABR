@@ -59,6 +59,19 @@ classdef Config
         MaxComputeSamples    (1,1) double = 2048;     % ~85 ms at 12 kHz
         MaxComputeConditions (1,1) double = 256;
         MaxComputeJobs       (1,1) double = 8;
+        % --- Timing-channel onset detection --------------------------------
+        % One rule wherever the onsets a run is paired by are recovered: the
+        % live pipeline, finalization and the start-up self-test. The k-th
+        % onset is paired with the k-th planned presentation, so two readings
+        % of one timing channel that differ by a single onset attribute every
+        % later sweep differently (see mabr.metrics.find_timing_onsets).
+        OnsetThreshold       (1,1) double = 0.1;      % converter units
+        OnsetShadow          (1,1) double = 0.002;    % s, minimum onset spacing
+        % s the channel must stay below threshold before a rising crossing
+        % is a NEW onset -- the lockout lasts until the pulse is over, however
+        % long it is. A dropout inside a pulse is shorter; a gap between two
+        % presentations must be at least this long.
+        OnsetRearm           (1,1) double = 0.0005;
 
         % --- Release metadata -----------------------------------------------
         SoftwareVersion = '23A';

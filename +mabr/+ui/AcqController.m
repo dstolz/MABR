@@ -835,7 +835,9 @@ classdef AcqController < handle
                 return
             end
             [~,recTiming] = obj.Engine.RingBuffer.readBlock();
-            onsets = mabr.metrics.find_timing_onsets(recTiming,round(0.002*fs),0.1);
+            onsets = mabr.metrics.find_timing_onsets(recTiming, ...
+                round(mabr.Config.OnsetShadow*fs),mabr.Config.OnsetThreshold, ...
+                round(mabr.Config.OnsetRearm*fs));
             ok = ~isempty(onsets);
         end
 
