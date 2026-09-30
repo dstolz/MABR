@@ -20,7 +20,8 @@ function verify_test_mode()
 %   a run that recovered nothing at all.
 %   Part A2 (the wording): what a MISALIGNED verdict says -- where the offset
 %   stepped and by how much, that the run ended early, and what the audio
-%   device reported (an underrun, an overrun) beside the step it explains.
+%   device reported (an underrun, an overrun) beside the step it explains --
+%   and that a rig's one-microframe latency step is reported, not flagged.
 %   Part B (the copy): drive a whole schedule through the real
 %   mabr.ui.AcqController and confirm the ring buffer holds the run's rendered
 %   play matrix -- the timing channel bit-for-bit, the signal channel to
@@ -150,7 +151,43 @@ R = mabr.metrics.alignment_report(planned,planned - [0 0 0 512 512 512 512 512],
     struct('Overruns',512,'OverrunAt',[2500 6100]));
 assert(contains(R.Summary,'overran 2 times (512 samples of input dropped), first near presentation 4'), ...
     'overruns should be named as dropped input, with where the first was: %s',R.Summary);
-fprintf('  PASS Part A2: the verdict says where the offset stepped, that the run ended early, and what the device reported\n');
+
+% A latency step is not a fault on a rig. A USB audio device slips its output
+% by one microframe (125 us, 24 samples at 192 kHz) now and then; every later
+% onset moves together with its response, so every sweep is still its own
+% presentation's. With the rig's step allowance one clean step -- or several
+% -- reads as aligned and says where the latency moved; with none (Test
+% Mode's) it is misaligned as before. Nothing else loosens with it.
+dev0  = struct('SampleRate',192000);
+tolR  = 10;                                   % the rig's 50 us at 192 kHz
+stepR = 24 + tolR;                            % one microframe, give or take that
+micro = planned + 4832 + [0 0 0 24 24 24 24 24];
+R = mabr.metrics.alignment_report(planned,micro,tolR,dev0,stepR);
+assert(R.Aligned && R.NumSteps == 1 && ~contains(R.Summary,'MISALIGNED'), ...
+    'one clean microframe step should read as aligned on a rig: %s',R.Summary);
+assert(contains(R.Summary,'latency stepped +24 samples') && contains(R.Summary,'at presentation 4'), ...
+    'an aligned run with a step should still say where the latency moved: %s',R.Summary);
+R = mabr.metrics.alignment_report(planned,micro,tolR,dev0);
+assert(~R.Aligned && R.NumSteps == 0, ...
+    'with no step allowance (Test Mode''s) a step is still misaligned: %s',R.Summary);
+R = mabr.metrics.alignment_report(planned,planned + 4832 + [0 24 24 24 0 0 0 0],tolR,dev0,stepR);
+assert(R.Aligned && R.NumSteps == 2 && contains(R.Summary,'and 1 more time'), ...
+    'two microframe steps are two latency steps, still aligned: %s',R.Summary);
+R = mabr.metrics.alignment_report(planned,played,10,dev,stepR);   % the underrun's +1023
+assert(~R.Aligned && startsWith(R.Summary,'MISALIGNED: offset jumped +1023 samples'), ...
+    'an underrun''s whole audio frame is not a latency step: %s',R.Summary);
+R = mabr.metrics.alignment_report(planned,[micro micro(end)+1000],tolR,dev0,stepR);
+assert(~R.Aligned && R.Extra == 1 && contains(R.Summary,'more than the plan rendered'), ...
+    'a spurious pulse is a fault with or without a latency step: %s',R.Summary);
+R = mabr.metrics.alignment_report(planned,planned + 4832 + [0 0 0 24 28 32 36 40],tolR,dev0,stepR);
+assert(~R.Aligned && contains(R.Summary,'crept'), ...
+    'a creep after a step is still a creep: %s',R.Summary);
+R = mabr.metrics.alignment_report(planned,planned + 4832 + [0 24 24 24 1047 1047 1047 1047],tolR,dev0,stepR);
+assert(~R.Aligned && startsWith(R.Summary,'MISALIGNED: offset jumped +1023 samples') ...
+    && contains(R.Summary,'at presentation 5'), ...
+    'the verdict should lead with the jump a latency step cannot explain: %s',R.Summary);
+fprintf(['  PASS Part A2: the verdict says where the offset stepped, that the run ended early, ' ...
+    'and what the device reported; a microframe latency step on a rig is not a fault\n']);
 
 %% ---- Parts B-E: one schedule, in Test Mode -----------------------------
 outDir = fullfile(tempdir, ...

@@ -69,6 +69,8 @@ On a real rig this comparison is skipped rather than failed — what comes back 
 
 The tolerance differs by mode, and only there. Test Mode allows **zero** samples of jitter: nothing is being measured, so one sample of drift is a defect. On a rig it allows **50 µs**, deliberately the same line `verify_timing_loopback` draws, so MABR and its own rig diagnostic cannot disagree about whether a rig is healthy — and because a red warning that fires on every ordinary run is one you learn to ignore, along with the run that genuinely is misaligned.
 
+On a rig the offset may also *step* by up to one USB microframe (125 µs, 24 samples at 192 kHz), give or take that jitter. A USB audio interface slips its output by exactly that now and then. Every later pulse moves together with its response, so every sweep still belongs to its own presentation. The run reads as aligned, and its summary says where the latency stepped (`the latency stepped +24 samples (+0.12 ms) at presentation 42`). A bigger step is still reported as a misalignment, and so is any pulse gained or lost. An underrun's whole audio frame is one such bigger step.
+
 ### What "aligned" is worth
 
 A clean Test Mode run means the schedule, the render, the timing channel, the ring buffer, onset recovery and sweep attribution all agree with each other. It says nothing about your electrodes, your amplifier, your speaker or your subject — no signal ever left the computer. What it establishes is that when real signal *does* arrive, MABR will file it against the right condition.

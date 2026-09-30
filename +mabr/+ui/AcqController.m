@@ -1466,13 +1466,26 @@ classdef AcqController < handle
             % all: a red warning that fires on every ordinary run is one the
             % operator learns to ignore, which is exactly how the run that
             % genuinely is misaligned gets ignored with it.
+            %
+            % For the same reason a rig may also STEP its offset by up to one
+            % USB microframe (125 us: 24 samples at 192 kHz), give or take
+            % that jitter. A USB audio device slips its output by exactly that
+            % now and then mid-stream, moving every later onset AND its
+            % response together, so every sweep is still paired with its own
+            % presentation. It used to be flagged MISALIGNED all the same.
+            % Anything bigger -- an underrun's audio frame, or the whole
+            % interval a spurious or missing pulse shifts the pairing by --
+            % still is. Test Mode allows no step at all.
             if obj.Testing
-                tol = 0;
+                tol     = 0;
+                stepTol = 0;
             else
-                tol = max(1,round(50e-6*obj.Config.DACSampleRate));
+                fs      = obj.Config.DACSampleRate;
+                tol     = max(1,round(50e-6*fs));
+                stepTol = round(125e-6*fs) + tol;
             end
             R = mabr.metrics.alignment_report(obj.CurOnsets,recovered,tol, ...
-                obj.deviceReport());
+                obj.deviceReport(),stepTol);
             R.Tolerance = tol;
             % The waveform fields exist in EVERY report, Test Mode or not, so
             % a consumer reads one shape of struct rather than testing for

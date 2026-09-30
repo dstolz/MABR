@@ -1,4 +1,4 @@
-function R = alignment_report(expected,recovered,tolerance,device)
+function R = alignment_report(expected,recovered,tolerance,device,stepTolerance)
 % mabr.metrics.alignment_report  Compare recovered sweep onsets with the plan.
 %
 %   R = alignment_report(expected,recovered) holds the onsets a run RENDERED
@@ -35,6 +35,18 @@ function R = alignment_report(expected,recovered,tolerance,device)
 %   onsets alone decide whether a run is aligned, and a device that reports
 %   trouble whose effect the timing channel does not show is not a fault here.
 %
+%   R = alignment_report(expected,recovered,tolerance,device,stepTolerance)
+%   also lets the offset STEP by up to stepTolerance samples (default 0: no
+%   step is allowed) as long as it holds, within `tolerance`, on either side
+%   of each step and no pulse was spurious. That is a latency step: a USB
+%   audio device can slip its output by one microframe (125 us, 24 samples at
+%   192 kHz) mid-stream, which moves every later onset and its response
+%   together. Sweeps are cut at the recovered onsets, so each is still paired
+%   with its own presentation. The run is then Aligned, and its summary says
+%   where the latency stepped. A step bigger than stepTolerance -- an
+%   underrun's whole audio frame, or the whole interval a spurious or
+%   missing pulse shifts the pairing by -- is still a fault.
+%
 %   Fields:
 %       NumExpected   presentations the plan rendered
 %       NumRecovered  timing pulses recovered
@@ -67,11 +79,15 @@ function R = alignment_report(expected,recovered,tolerance,device)
 %                     minus one inter-stimulus interval is a dropped pulse
 %       Extra         onsets recovered beyond the plan (spurious pulses), a
 %                     fault however small -- they shift the pairing.
+%       NumSteps      how many of the jumps were tolerated latency steps (0
+%                     unless the run is Aligned only because of them)
+%       StepTolerance the stepTolerance the report was made with
 %       Underruns, Overruns, UnderrunAt, OverrunAt
 %                     the `device` fields above, always present (0 / empty
 %                     when none were given) so a consumer reads one shape
-%       Aligned       Jitter <= tolerance, Extra == 0, and at least one
-%                     presentation recovered.
+%       Aligned       at least one presentation recovered, Extra == 0, and
+%                     either Jitter <= tolerance or every jump a latency step
+%                     (see stepTolerance).
 %       Summary       one line, for a status bar or a log. A misaligned one
 %                     leads with what happened to the offset and where, then
 %                     says whether the run ended early (so "3602 of 9216" is
@@ -91,6 +107,7 @@ function R = alignment_report(expected,recovered,tolerance,device)
 
 if nargin < 3 || isempty(tolerance), tolerance = 0; end
 if nargin < 4 || ~isstruct(device),  device    = struct(); end
+if nargin < 5 || isempty(stepTolerance), stepTolerance = 0; end
 
 expected  = double(expected(:)');
 recovered = double(recovered(:)');
@@ -98,7 +115,7 @@ recovered = double(recovered(:)');
 R = struct('NumExpected',numel(expected),'NumRecovered',numel(recovered), ...
            'NumCompared',0,'Truncated',false,'Offset',NaN,'Jitter',NaN, ...
            'NumJumps',0,'JumpAt',zeros(1,0),'JumpSize',zeros(1,0), ...
-           'Extra',0, ...
+           'Extra',0,'NumSteps',0,'StepTolerance',stepTolerance, ...
            'Underruns',  double(getf(device,'Underruns',0)), ...
            'Overruns',   double(getf(device,'Overruns',0)), ...
            'UnderrunAt', double(getf(device,'UnderrunAt',zeros(1,0))), ...
@@ -140,11 +157,37 @@ R.NumJumps = numel(j);
 R.JumpAt   = reshape(j + 1,1,[]);
 R.JumpSize = reshape(step(j),1,[]);
 
+% Latency steps (see stepTolerance): every jump small, AND the offset holding
+% within tolerance on either side of each -- so a creep inside a stretch
+% counts against the run exactly as it would with no step at all.
+edges = [1 R.JumpAt n+1];
+held  = true;
+for q = 1:numel(edges)-1
+    seg = d(edges(q):edges(q+1)-1);
+    if max(abs(seg - mode(seg))) > tolerance, held = false; break; end
+end
+stepped = R.NumJumps > 0 && stepTolerance > tolerance && held ...
+    && all(abs(R.JumpSize) <= stepTolerance);
+if ~R.Aligned && R.Extra == 0 && stepped
+    R.Aligned  = true;
+    R.NumSteps = R.NumJumps;
+end
+
 fs = getf(device,'SampleRate',[]);
 
 if R.Aligned
     R.Summary = sprintf('%d/%d presentations aligned (offset %d samples)', ...
         n,R.NumExpected,R.Offset);
+    if R.NumSteps > 0
+        % Said, not alarmed about: every sweep is still paired with its own
+        % presentation, but a latency that moves is a fact about the device
+        % worth its line in the log.
+        R.Summary = sprintf('%s; the latency stepped %+d samples%s at presentation %d', ...
+            R.Summary,R.JumpSize(1),inMs(R.JumpSize(1),fs),R.JumpAt(1));
+        if R.NumSteps > 1
+            R.Summary = sprintf('%s and %d more time(s)',R.Summary,R.NumSteps-1);
+        end
+    end
     if R.Truncated
         R.Summary = sprintf('%s — run ended early, %d of %d played', ...
             R.Summary,n,R.NumExpected);
@@ -152,7 +195,12 @@ if R.Aligned
     return
 end
 
-if R.Extra > 0 && R.Jitter <= tolerance
+% The jumps a latency step cannot explain -- with no stepTolerance, all of
+% them. The verdict leads with the first of these, not with a harmless step
+% that happened to come before it.
+big = find(abs(R.JumpSize) > max(stepTolerance,tolerance));
+
+if R.Extra > 0 && (R.Jitter <= tolerance || stepped)
     % Every planned onset landed where it should have, and then some. Said
     % separately because "6 of 5 presentations recovered" reads as nonsense,
     % and because the remedy is a different one: a pulse nobody rendered
@@ -167,9 +215,10 @@ else
     % "3602 of 9216 presentations recovered" read as 5614 lost pulses when it
     % was a run somebody stopped, and "drifting by up to 1023" hid that
     % nothing had drifted -- the offset had stepped once, by an audio frame.
-    if R.NumJumps > 0
+    if ~isempty(big)
+        k = big(1);
         s = sprintf('MISALIGNED: offset jumped %+d samples%s at presentation %d', ...
-            R.JumpSize(1),inMs(R.JumpSize(1),fs),R.JumpAt(1));
+            R.JumpSize(k),inMs(R.JumpSize(k),fs),R.JumpAt(k));
         if R.NumJumps > 1
             s = sprintf('%s, and moved %d more time(s)',s,R.NumJumps-1);
         end
