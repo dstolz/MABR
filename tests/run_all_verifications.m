@@ -103,6 +103,9 @@ function run_all_verifications()
 %                                  Start (mabr.ViewPolicy), the whole window
 %                                  layout as one snapshot, and the live and
 %                                  analysis views' look
+%       verify_window_arrange    - the Arrange windows button's layout: the
+%                                  strip beside the main window, cut into
+%                                  non-overlapping cells
 %       verify_recent_banks      - the recent stimulus banks list behind the
 %                                  Stimulus panel's Bank dropdown
 %                                  (mabr.stim.BankHistory): newest first,
@@ -153,7 +156,7 @@ function run_all_verifications()
 %   verify_isi_jitter, verify_strategies, verify_analysis, verify_filters, verify_live_plot,
 %   verify_progress_monitor, verify_metric_plot, verify_trace_organizer,
 %   verify_trace_inspector, verify_audio_settings, verify_view_prefs,
-%   verify_recent_banks, verify_stimgen_launcher, and verify_calibration_latency).
+%   verify_window_arrange, verify_recent_banks, verify_stimgen_launcher, and verify_calibration_latency).
 %   None require audio hardware.
 %
 % Daniel Stolzberg (c) 2026
@@ -170,7 +173,7 @@ tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_p
          @verify_progress_monitor, @verify_metric_plot, ...
          @verify_trace_organizer, @verify_trace_inspector, ...
          @verify_notes, @verify_audio_settings, @verify_view_prefs, ...
-         @verify_recent_banks, ...
+         @verify_window_arrange, @verify_recent_banks, ...
          @verify_stimgen_import, @verify_stimgen_launcher, @verify_calibration_latency, ...
          @verify_stimulation_only, ...
          @verify_timing_selftest, @verify_timing_loopback, @verify_test_runner, ...

@@ -482,6 +482,50 @@ classdef App < handle
             figs = addFig(figs,app.UIFigure);
         end
 
+        function n = arrangeWindows(app)
+            % Tile every open viewer beside the main window, then raise them
+            % all. The main window stays exactly where it is -- it is the
+            % anchor the layout is built around -- and the rest are cut into
+            % a grid over the wider strip of its display beside it
+            % (mabr.ui.WindowPos.arrangeRegion/tile), in windows() order, so
+            % the live plot lands top left and pressing again reproduces the
+            % same layout. Cells are OUTER rectangles (title bar, menus and
+            % toolbar included), so neighbouring windows cannot overlap
+            % through their chrome. A window that cannot be resized keeps its
+            % size and takes its cell's top-left corner; the progress monitor
+            % is handed its height back afterwards, since that is decided by
+            % the view it is showing (see ProgressMonitor.fitToView). Nothing
+            % is remembered here: positions are saved as windows close, as
+            % always. Returns how many windows were raised (see bringToFront).
+            figs = app.windows();
+            figs = figs(figs ~= app.UIFigure);
+            for i = 1:numel(figs)
+                % A minimized, maximized or full-screen window ignores a
+                % Position assignment, so it is put back to normal first.
+                try %#ok<TRYNC>
+                    if ~strcmp(figs(i).WindowState,'normal'), figs(i).WindowState = 'normal'; end
+                end
+            end
+            if ~isempty(figs)
+                anchor = outerPosition(app.UIFigure);
+                cells  = mabr.ui.WindowPos.tile( ...
+                    mabr.ui.WindowPos.arrangeRegion(anchor),numel(figs));
+                for i = 1:numel(figs)
+                    try
+                        placeOuter(figs(i),cells(i,:));
+                    catch me
+                        mabr.log.vprintf(2,'App: could not arrange "%s" (%s).', ...
+                            get(figs(i),'Name'),me.message);
+                    end
+                end
+                pm = viewerFigure(app.ProgressMon);
+                if ~isempty(pm) && any(figs == pm)
+                    try, app.ProgressMon.fitToView(); end %#ok<TRYNC>
+                end
+            end
+            n = app.bringToFront();
+        end
+
         function n = bringToFront(app)
             % Raise every open MABR window above whatever else is on the
             % desktop. The main window goes last (see windows) so the press
@@ -1091,6 +1135,9 @@ classdef App < handle
             app.toolButton('front',ink, ...
                 'Bring all MABR windows to the front', ...
                 @() app.onBringToFront(),true);
+            app.toolButton('arrange',ink, ...
+                'Arrange MABR windows beside this one and bring them to the front', ...
+                @() app.onArrangeWindows());
 
             onTop = strcmp(app.UIFigure.WindowStyle,'alwaysontop');
             app.AlwaysOnTopTool = uitoggletool(app.Toolbar,'Separator','off', ...
@@ -1122,6 +1169,15 @@ classdef App < handle
                 app.setStatus('No other MABR windows are open.');
             else
                 app.setStatus(sprintf('Raised %d MABR windows.',n));
+            end
+        end
+
+        function onArrangeWindows(app)
+            n = app.arrangeWindows();
+            if n <= 1
+                app.setStatus('No other MABR windows are open.');
+            else
+                app.setStatus(sprintf('Arranged %d MABR windows.',n-1));
             end
         end
 
@@ -4491,6 +4547,23 @@ classdef App < handle
                             '......XXXXXXXXXX'
                             '................'
                             '................'};
+                case 'arrange'   % four tiled windows, title bars solid
+                    rows = {'................'
+                            '.XXXXXX..XXXXXX.'
+                            '.XXXXXX..XXXXXX.'
+                            '.X....X..X....X.'
+                            '.X....X..X....X.'
+                            '.X....X..X....X.'
+                            '.XXXXXX..XXXXXX.'
+                            '................'
+                            '................'
+                            '.XXXXXX..XXXXXX.'
+                            '.XXXXXX..XXXXXX.'
+                            '.X....X..X....X.'
+                            '.X....X..X....X.'
+                            '.X....X..X....X.'
+                            '.XXXXXX..XXXXXX.'
+                            '................'};
                 case 'pin'       % pushpin: keep window on top
                     rows = {'................'
                             '.......XXXX....'
@@ -4577,6 +4650,37 @@ if nargin < 2, prop = 'Figure'; end
 f = [];
 if isempty(obj) || ~isscalar(obj) || ~isvalid(obj) || ~isprop(obj,prop), return; end
 try, f = obj.(prop); end %#ok<TRYNC>
+end
+
+function p = outerPosition(f)
+% A figure's rectangle including its title bar, menus and toolbar. Read, not
+% assumed, since the chrome differs between a uifigure and a classic figure
+% and between platforms; a figure that will not say is taken as its drawable
+% area plus a title bar.
+try
+    p = f.OuterPosition;
+    if numel(p) ~= 4 || any(~isfinite(p)) || any(p(3:4) <= 0), error('bad'); end
+catch
+    p = f.Position + [0 0 0 32];
+end
+end
+
+function placeOuter(f,rect)
+% Put figure F's OUTER rectangle on RECT by setting its Position -- the one
+% position property that is settable on both a uifigure and a classic figure
+% -- less the chrome measured off the window itself. A window that cannot be
+% resized keeps its size and is pinned to the rectangle's top-left corner.
+inner = f.Position;
+outer = outerPosition(f);
+dl = inner(1) - outer(1);                              % left border
+db = inner(2) - outer(2);                              % bottom border
+dw = outer(3) - inner(3);                              % both side borders
+dh = outer(4) - inner(4);                              % title bar, menus, bottom
+w = max(rect(3) - dw,1);
+h = max(rect(4) - dh,1);
+if strcmp(f.Resize,'off'), w = inner(3); h = inner(4); end
+top = rect(2) + rect(4);                               % outer top edge
+f.Position = [rect(1) + dl, top - (dh - db) - h, w, h];
 end
 
 function setEnable(controls,tf)
