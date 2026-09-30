@@ -274,8 +274,16 @@ ctrl.Schedule.TestingFrameDelay = 0.002;
 
 % Take a note the moment the run reaches Acquire, which is the whole point of
 % the component: the operator writes while it is happening.
-tookOne = false;
-lst = addlistener(ctrl,'StateChanged',@(~,e) noteOnAcquire(e));
+%
+% The callback is a LOCAL function over a handle store, deliberately not a
+% NESTED one. A nested callback makes this file's workspace a shared object
+% that ctrl's own listener list keeps alive, so on return nothing in it is
+% destroyed: cleanCtrl never deletes ctrl, its worker holds a pool process
+% forever, and the next test to build an Engine hangs in pctRunOnAll -- which
+% is how run_all_verifications came to stall in verify_stimulation_only. See
+% verify_artifact_rejection, where the same cycle had to be broken by hand.
+took = containers.Map({'note'},{false});
+lst = addlistener(ctrl,'StateChanged',@(~,e) note_on_acquire(e,took,live2));
 cleanLst = onCleanup(@() delete(lst));
 
 ctrl.start();
@@ -284,7 +292,7 @@ while ctrl.State ~= mabr.ui.ProgState.SchedComplete && toc(t0) < 90
     pause(0.05);
 end
 assert(ctrl.State == mabr.ui.ProgState.SchedComplete,'the schedule did not complete');
-assert(tookOne,'never reached Acquire, so no note was taken mid-run');
+assert(took('note'),'never reached Acquire, so no note was taken mid-run');
 
 assert(ctrl.Session.NumBlocks == 1,'expected one finalized block');
 blkNotes = ctrl.Session.Blocks(1).Notes;
@@ -310,12 +318,15 @@ fprintf('  PASS: a note taken mid-run reaches the block and the saved .abr\n');
 delete(abrFile); delete(bareFile); delete(torgFile); delete(old);
 if isfile(jf), delete(jf); end
 fprintf('== verify_notes PASSED ==\n');
+end
 
-    function noteOnAcquire(e)
-        if tookOne || e.State ~= mabr.ui.ProgState.Acquire, return; end
-        tookOne = true;
-        live2.add('ear plug slipped, mid-run');
-    end
+
+% =====================================================================
+function note_on_acquire(e,took,notes)
+% Write one note the moment the run reaches Acquire (the listener above).
+if took('note') || e.State ~= mabr.ui.ProgState.Acquire, return; end
+took('note') = true;
+notes.add('ear plug slipped, mid-run');
 end
 
 
