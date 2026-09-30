@@ -14,8 +14,10 @@ function run_all_verifications()
 %       verify_isi_jitter        - presentation timing: fixed grid vs uniformly
 %                                  randomized ISI, and what still reads it back
 %       verify_strategies        - the built-in strategies present the designs
-%                                  they are named for (conventional, ramp,
-%                                  plateau, random), and old names still load
+%                                  they are named for (conventional,
+%                                  interleaved, random), both ordered ones
+%                                  follow Order by / then by, and old names
+%                                  still load with the order they stood for
 %       verify_play_plan         - mabr.stim.PlayPlan: frames synthesized on
 %                                  demand are bit-identical to a whole-matrix
 %                                  render, and the worker streams from one

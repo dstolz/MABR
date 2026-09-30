@@ -96,13 +96,12 @@ The strategies:
 |----------|------|-------|
 | `conventional` | one per stimulus | `A A A … / B B B … / C C C …`, in array order — or sorted by stimulus parameter, see `OrderBy` below |
 | `conventional-shuffled` | one per stimulus | same, but the order of the runs is shuffled |
-| `interleaved-ramp` | one | repeated cycles; each walks one frequency at a time with its levels **ascending** — `8k·10 8k·20 8k·30 16k·10 16k·20 …` |
-| `interleaved-plateau` | one | repeated cycles; each climbs the levels with every frequency at each — `8k·10 16k·10 32k·10 8k·20 16k·20 …` |
+| `interleaved` | one | repeated cycles, every cycle in the same order — array order, or sorted by stimulus parameter, see `OrderBy` below |
 | `interleaved-random` | one | repeated cycles, each cycle's order shuffled independently |
 | `shuffled` | one | the whole multiset shuffled uniformly, no cycle structure |
 | `custom` | as many as you return | whatever your own function decides — see [Ordering presentations yourself](#ordering-presentations-yourself) |
 
-`conventional` alone takes a run order of its own. `OrderBy` names the stimulus parameter(s) to sort the runs by, most significant first, and `OrderDirection` the way each goes — `'ascending'`, `'descending'`, or `'listed'` (grouped by value, the groups in the order the bank first lists them):
+`conventional` and `interleaved` take their order from `OrderBy` — the order the runs play in for one, the order every cycle walks the bank in for the other. `OrderBy` names the stimulus parameter(s) to sort by, most significant first, and `OrderDirection` the way each goes — `'ascending'`, `'descending'`, or `'listed'` (grouped by value, the groups in the order the bank first lists them, which keeps a frequency order that was chosen on purpose):
 
 ```matlab
 sch.OrderBy = 'Level';  sch.OrderDirection = 'descending';     % loudest level first, every frequency at each
@@ -111,13 +110,18 @@ sch.OrderDirection = {'listed','descending'};                  % loudest first w
 sch.build();
 ```
 
-Entries tied on every parameter named keep their array order in either direction, a parameter the bank does not vary is skipped rather than refused, and no other strategy reads the pair. `sch.orderLabel()` says the order in force in words.
+Entries tied on every parameter named keep their array order in either direction, a parameter the bank does not vary is skipped rather than refused, and the shuffled strategies do not read the pair. `sch.orderLabel()` says the order in force in words.
 
-The names are those of the acquisition designs they implement: conventional, and the three interleaved designs (ramp, plateau, random). Ramp and plateau only sort the **level** — the parameter named `Level` — and keep every other parameter in the order the bank first lists it, since frequencies are often listed non-adjacently on purpose; a bank that does not vary a `Level` is cycled in bank order under either name.
+The two classic interleaved designs are orders of `interleaved`:
 
-The six built-ins are permutations of a **fixed multiset**, never probabilistic sampling — every entry is presented exactly its repetition count under any of them. `interleaved-random` included: its randomness is the order within each cycle, not what gets presented.
+| Design | `OrderBy` | `OrderDirection` | One cycle |
+|--------|-----------|------------------|-----------|
+| ramp — levels within each frequency | `{'Frequency','Level'}` | `{'listed','ascending'}` | `8k·10 8k·20 8k·30 16k·10 16k·20 …` |
+| plateau — frequencies within each level | `'Level'` | `'ascending'` | `8k·10 16k·10 32k·10 8k·20 16k·20 …` |
 
-The names used before the rename (`blocked`, `shuffled-blocks`, `interleaved`, `shuffled-cycles`) are still accepted and translated on assignment, so configuration files saved with them keep loading. `interleaved` becomes `interleaved-ramp`, which is the order it always gave for a bank listed frequency by frequency with ascending levels. A `custom` strategy is expected to hold to the same invariant and is warned when it does not, but is not refused.
+The five built-ins are permutations of a **fixed multiset**, never probabilistic sampling — every entry is presented exactly its repetition count under any of them. `interleaved-random` included: its randomness is the order within each cycle, not what gets presented.
+
+Retired names are still accepted and translated on assignment, so scripts and configuration files saved with them keep working: `blocked`, `shuffled-blocks` and `shuffled-cycles` become `conventional`, `conventional-shuffled` and `interleaved-random`, and `interleaved-ramp` / `interleaved-plateau` become `interleaved` **with the order in the table above** — assigning one sets `OrderBy` and `OrderDirection` too (an order assigned afterwards still wins). A `custom` strategy is expected to hold to the same invariant and is warned when it does not, but is not refused.
 
 The last four **intermix** different stimuli inside one continuous acquisition run. MABR records which stimulus fired at each onset (`spec.StimulusIndex`) and de-interleaves the recorded sweeps at save time, so **each stimulus ID still gets its own `.abr` file** regardless of presentation order. An entry that has met its repetition count drops out of later cycles, so unequal counts stay spread out instead of clumping at the end.
 

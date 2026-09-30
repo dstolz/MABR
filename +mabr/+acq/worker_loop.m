@@ -156,136 +156,145 @@ try
         end
         if ~ok, continue; end
 
-        switch msg.cmd
-            case mabr.acq.Cmd.Prep
-                % A Prep that fails leaves nothing open and nothing prepared,
-                % whatever becomes of the loop after it. prepare_device
-                % releases the old device before building the new one, and a
-                % throw leaves apr/aprSig here as they were: a released
-                % device under a signature that still matches, which the
-                % next Prep would take back and the idle loop would clock.
-                try
+        % A command that fails fails THAT command, not the worker. Before this
+        % catch existed, any error here (a device that would not open, most
+        % often) ended the loop through the outer catch below, and the client
+        % had no way to tell: its command queue still existed, so the next
+        % Start was sent to a queue nothing read and sat in PrepBlock until
+        % MABR was restarted. Here the error is reported, the block is
+        % un-prepared (so a Run cannot stream against a half-built device),
+        % and the loop goes back to waiting for the next Prep.
+        try
+            switch msg.cmd
+                case mabr.acq.Cmd.Prep
                     [apr,aprSig,opened] = prepare_device(apr,aprSig,msg.data,testing);
-                catch me
-                    if ~isempty(apr), try, release(apr); end, end %#ok<TRYNC>
-                    apr = []; aprSig = ''; idle.clocking = false; prepared = [];
-                    rethrow(me);
-                end
-                prepared = msg.data;
-                if opened
-                    % A new device starts its stream at the first frame, and
-                    % what the old one's idle stream went through is not
-                    % this device's history.
-                    nOpened = nOpened + 1;
-                    idle.clocking = false;
-                    idle.frames = 0; idle.under = 0; idle.over = 0;
-                end
-                idle.limit  = getdef(prepared,'IdleClockSeconds',10);
-                idle.duplex = ~getdef(prepared,'StimulationOnly',false);
-                % Every run writes the ring from its start, so these are
-                % the pages it is about to write: touch them here, between
-                % runs, rather than one at a time inside the frame loop
-                % (resident pages cost microseconds; see the start-up call).
-                plan = mabr.stim.PlayPlan.fromSpec(prepared);
-                rb.prefault(1,plan.N);
-                % And the render: the first frame of a fresh worker's first
-                % real run took ~3 ms of a 5.3 ms frame to render, and so
-                % did its first frame holding a presentation -- first-call
-                % setup that the self-test's block, an explicit matrix,
-                % never reaches. Harmless to repeat on a warm worker.
-                prime_render(plan,cfg.frameLength);
-                % The Prep work above was time the idle stream went unfed;
-                % one more frame now takes whatever the device has to say
-                % about it, so it is not reported as the run's first frame.
-                if idle.clocking, [idle,apr] = idle_frame(apr,idle,cfg.frameLength); end
-                send_state(resultQueue,mabr.acq.State.Ready);
+                    prepared = msg.data;
+                    if opened
+                        % A new device starts its stream at the first frame, and
+                        % what the old one's idle stream went through is not
+                        % this device's history.
+                        nOpened = nOpened + 1;
+                        idle.clocking = false;
+                        idle.frames = 0; idle.under = 0; idle.over = 0;
+                    end
+                    idle.limit  = getdef(prepared,'IdleClockSeconds',10);
+                    idle.duplex = ~getdef(prepared,'StimulationOnly',false);
+                    % Every run writes the ring from its start, so these are
+                    % the pages it is about to write: touch them here, between
+                    % runs, rather than one at a time inside the frame loop
+                    % (resident pages cost microseconds; see the start-up call).
+                    plan = mabr.stim.PlayPlan.fromSpec(prepared);
+                    rb.prefault(1,plan.N);
+                    % And the render: the first frame of a fresh worker's first
+                    % real run took ~3 ms of a 5.3 ms frame to render, and so
+                    % did its first frame holding a presentation -- first-call
+                    % setup that the self-test's block, an explicit matrix,
+                    % never reaches. Harmless to repeat on a warm worker.
+                    prime_render(plan,cfg.frameLength);
+                    % The Prep work above was time the idle stream went unfed;
+                    % one more frame now takes whatever the device has to say
+                    % about it, so it is not reported as the run's first frame.
+                    if idle.clocking, [idle,apr] = idle_frame(apr,idle,cfg.frameLength); end
+                    send_state(resultQueue,mabr.acq.State.Ready);
 
-            case mabr.acq.Cmd.Run
-                if isempty(prepared)
-                    send_error(resultQueue,'mabr:acq:worker:notPrepared', ...
-                        'Received Run before Prep.');
-                    continue
-                end
-                % What the idle stream went through since the last run is
-                % the stream's business, not this run's.
-                idleFrames = idle.frames;
-                if idle.under > 0 || idle.over > 0
-                    mabr.log.vprintf(2,'Between runs (%d idle frames): %d samples of underrun, %d of overrun.', ...
-                        idle.frames,idle.under,idle.over);
-                end
-                idle.frames = 0; idle.under = 0; idle.over = 0;
-                % A device not already streaming -- just opened, or stopped
-                % after an idle spell -- starts on silence nobody records,
-                % so its start-up lands there and not in the run.
-                if ~isempty(apr) && ~idle.clocking
-                    [idle,apr] = warm_up(apr,idle,prepared,cfg.frameLength);
-                    if isempty(apr)
-                        send_error(resultQueue,'mabr:acq:worker:deviceFailed', ...
-                            'The audio device failed while starting; the run was not streamed.');
-                        send_state(resultQueue,mabr.acq.State.Idle);
-                        prepared = [];
+                case mabr.acq.Cmd.Run
+                    if isempty(prepared)
+                        send_error(resultQueue,'mabr:acq:worker:notPrepared', ...
+                            'Received Run before Prep.');
                         continue
                     end
-                end
-                [reason,nStreamed,xr,timing] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
-                % Keep the device clocked until the next run, so that run
-                % starts on the next frame of a stream already running
-                % rather than paying the device's start-up (a quarter to
-                % half a second a run on the reference rig) -- and with the
-                % same round-trip latency as this one.
-                if ~isempty(apr) && ~strcmp(reason,'killed')
-                    idle.clocking = true;
-                    idle.since    = tic;
-                end
-                % How much of the play matrix actually went out, why the
-                % block ended, and what the device said about it (underruns
-                % and overruns, with where in the block each was reported).
-                % Sent BEFORE the Completed state, so the client's
-                % BlockCompleted handler already has it: with nothing recorded
-                % (stimulation only) this is the only evidence of how far
-                % through the planned sequence a stopped run got, and for a
-                % recorded run it is what lets a misaligned verdict name its
-                % likeliest cause (mabr.ui.AcqController.alignmentCheck).
-                % `timing` is where the frame loop's own time went (see
-                % summarize_frames).
-                send(resultQueue,struct('type','streamed', ...
-                    'samples',nStreamed,'reason',reason, ...
-                    'underruns',xr.underruns,'overruns',xr.overruns, ...
-                    'underrunAt',xr.underrunAt,'overrunAt',xr.overrunAt, ...
-                    'timing',timing,'deviceOpens',nOpened,'idleFrames',idleFrames));
-                if strcmp(reason,'killed')
+                    % What the idle stream went through since the last run is
+                    % the stream's business, not this run's.
+                    idleFrames = idle.frames;
+                    if idle.under > 0 || idle.over > 0
+                        mabr.log.vprintf(2,'Between runs (%d idle frames): %d samples of underrun, %d of overrun.', ...
+                            idle.frames,idle.under,idle.over);
+                    end
+                    idle.frames = 0; idle.under = 0; idle.over = 0;
+                    % A device not already streaming -- just opened, or stopped
+                    % after an idle spell -- starts on silence nobody records,
+                    % so its start-up lands there and not in the run.
+                    if ~isempty(apr) && ~idle.clocking
+                        [idle,apr] = warm_up(apr,idle,prepared,cfg.frameLength);
+                        if isempty(apr)
+                            send_error(resultQueue,'mabr:acq:worker:deviceFailed', ...
+                                'The audio device failed while starting; the run was not streamed.');
+                            send_state(resultQueue,mabr.acq.State.Idle);
+                            prepared = [];
+                            continue
+                        end
+                    end
+                    [reason,nStreamed,xr,timing] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
+                    % Keep the device clocked until the next run, so that run
+                    % starts on the next frame of a stream already running
+                    % rather than paying the device's start-up (a quarter to
+                    % half a second a run on the reference rig) -- and with the
+                    % same round-trip latency as this one.
+                    if ~isempty(apr) && ~strcmp(reason,'killed')
+                        idle.clocking = true;
+                        idle.since    = tic;
+                    end
+                    % How much of the play matrix actually went out, why the
+                    % block ended, and what the device said about it (underruns
+                    % and overruns, with where in the block each was reported).
+                    % Sent BEFORE the Completed state, so the client's
+                    % BlockCompleted handler already has it: with nothing recorded
+                    % (stimulation only) this is the only evidence of how far
+                    % through the planned sequence a stopped run got, and for a
+                    % recorded run it is what lets a misaligned verdict name its
+                    % likeliest cause (mabr.ui.AcqController.alignmentCheck).
+                    % `timing` is where the frame loop's own time went (see
+                    % summarize_frames).
+                    send(resultQueue,struct('type','streamed', ...
+                        'samples',nStreamed,'reason',reason, ...
+                        'underruns',xr.underruns,'overruns',xr.overruns, ...
+                        'underrunAt',xr.underrunAt,'overrunAt',xr.overrunAt, ...
+                        'timing',timing,'deviceOpens',nOpened,'idleFrames',idleFrames));
+                    if strcmp(reason,'killed')
+                        running = false;
+                    else
+                        send_state(resultQueue,mabr.acq.State.Completed);
+                    end
+
+                case mabr.acq.Cmd.Pause
+                    % No effect while idle.
+
+                case mabr.acq.Cmd.Resume
+                    % No effect while idle: a Resume can only unpause a running
+                    % block (handled inside stream_block), never re-run one.
+
+                case mabr.acq.Cmd.Stop
+                    send_state(resultQueue,mabr.acq.State.Ready);
+
+                case mabr.acq.Cmd.Release
+                    % Hand the ASIO device back without tearing down the worker.
+                    % Clearing `prepared` too, so a later Run cannot stream against
+                    % a device that is no longer open -- it must Prep again, which
+                    % is what reopens it.
+                    if ~isempty(apr)
+                        try, release(apr); end %#ok<TRYNC>
+                        apr = [];
+                    end
+                    aprSig = '';
+                    idle.clocking = false;
+                    prepared = [];
+                    mabr.log.vprintf(1,'Worker released the audio device.');
+                    send_state(resultQueue,mabr.acq.State.Idle);
+
+                case mabr.acq.Cmd.Kill
                     running = false;
-                else
-                    send_state(resultQueue,mabr.acq.State.Completed);
-                end
-
-            case mabr.acq.Cmd.Pause
-                % No effect while idle.
-
-            case mabr.acq.Cmd.Resume
-                % No effect while idle: a Resume can only unpause a running
-                % block (handled inside stream_block), never re-run one.
-
-            case mabr.acq.Cmd.Stop
-                send_state(resultQueue,mabr.acq.State.Ready);
-
-            case mabr.acq.Cmd.Release
-                % Hand the ASIO device back without tearing down the worker.
-                % Clearing `prepared` too, so a later Run cannot stream against
-                % a device that is no longer open -- it must Prep again, which
-                % is what reopens it.
-                if ~isempty(apr)
-                    try, release(apr); end %#ok<TRYNC>
-                    apr = [];
-                end
-                aprSig = '';
-                idle.clocking = false;
-                prepared = [];
-                mabr.log.vprintf(1,'Worker released the audio device.');
-                send_state(resultQueue,mabr.acq.State.Idle);
-
-            case mabr.acq.Cmd.Kill
-                running = false;
+            end
+        catch me
+            % ...and nothing is left open. Whatever state a failed command
+            % left the device in is unknown, and a released device under a
+            % signature that still matches would be taken back by the next
+            % Prep (prepare_device) and clocked by the idle loop.
+            if ~isempty(apr), try, release(apr); end, end %#ok<TRYNC>
+            apr = []; aprSig = ''; idle.clocking = false;
+            prepared = [];
+            send_error(resultQueue,me.identifier,me.message);
+            mabr.log.vprintf(0,1,me);
+            send_state(resultQueue,mabr.acq.State.Idle);
         end
     end
 
@@ -626,7 +635,7 @@ if ~isempty(apr) && isvalid(apr) && strcmp(newSig,sig)
 end
 if ~isempty(apr) && isvalid(apr), release(apr); end
 
-apr    = ctor(args{:});
+apr    = open_device(ctor,args);
 sig    = newSig;
 opened = true;
 if stimOnly
@@ -718,6 +727,38 @@ end
 
 
 % =====================================================================
+function apr = open_device(ctor,args)
+% Construct the device, retrying a read of the preferences file that landed
+% in the middle of somebody else's write.
+%
+% Opening an audio device reads matlabprefs.mat -- the DSP System Toolbox's
+% device lookup (dspAudioDeviceInfo) asks for dsp/portaudioHostApi -- and
+% every worker in a local pool shares that one file with the GUI process.
+% MATLAB's preference functions take no lock: a setpref in the GUI (a window
+% closed, an analysis setting changed) rewrites the whole file, and a read
+% that lands inside the rewrite sees a truncated MAT-file and throws
+% MATLAB:load:notBinaryFile out of the constructor. The device is built at
+% the first Prep and again whenever its settings change, and each build is
+% one chance. The write takes milliseconds; waiting it out is the whole fix.
+% Anything else, or a file still unreadable after the last try, is the
+% caller's error as before.
+tries = 5;
+for k = 1:tries
+    try
+        apr = ctor(args{:});
+        return
+    catch me
+        if k == tries || ~startsWith(me.identifier,'MATLAB:load:')
+            rethrow(me);
+        end
+        mabr.log.vprintf(1,1,['Opening the audio device could not read the ' ...
+            'preferences file (%s); another MATLAB process was probably ' ...
+            'writing it. Retrying (%d of %d).'],me.message,k,tries-1);
+        pause(0.1*k);
+    end
+end
+end
+
 function v = getdef(s,f,d)
 if isfield(s,f) && ~isempty(s.(f)), v = s.(f); else, v = d; end
 end

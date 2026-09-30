@@ -31,24 +31,22 @@ classdef Schedule < handle
 %
 %   Strategies
 %   ----------
-%   Named for the four acquisition designs they implement -- conventional,
-%   and the three interleaved ones (ramp, plateau, random) -- plus two
-%   variants and the user's own:
+%   Named for the acquisition designs they implement -- conventional and
+%   interleaved, each in a fixed order or a shuffled one -- plus a fully
+%   shuffled order and the user's own:
 %
 %     'conventional'          one run per stimulus, each the full repetition
 %                             train. Entries play in bank order, or in the
-%                             order OrderBy asks for -- see "Run order" below.
+%                             order OrderBy asks for -- see "Order" below.
 %     'conventional-shuffled' as 'conventional', but the order of the runs is
 %                             shuffled.
-%     'interleaved-ramp'      ONE run of repeated cycles through the bank. Each
-%                             cycle walks one frequency at a time, its levels
-%                             ascending, before moving to the next -- level is
-%                             the INNER loop, so every cycle is a series of
-%                             level ramps.
-%     'interleaved-plateau'   as the ramp, with the loops swapped: every
-%                             frequency at the lowest level, then every
-%                             frequency at the next, so every cycle climbs
-%                             through a series of level plateaus.
+%     'interleaved'           ONE run of repeated cycles through the bank,
+%                             every cycle in the same order: bank order, or the
+%                             order OrderBy asks for. Frequency as listed then
+%                             Level ascending walks one frequency at a time,
+%                             its levels climbing (a series of level ramps);
+%                             Level ascending alone takes every frequency at
+%                             each level in turn (a series of plateaus).
 %     'interleaved-random'    ONE run of repeated cycles, each cycle's order
 %                             shuffled independently -- every entry still gets
 %                             exactly its repetition count, with no long runs
@@ -64,15 +62,15 @@ classdef Schedule < handle
 %                             rather than falling back to a built-in order.
 %
 %   In every cycled strategy an entry drops out of later cycles once it has
-%   hit its repetition count. Ramp and plateau need to know which parameter is
-%   the level: they read the one named Level (see cycleOrder), keep every
-%   other parameter in the order the bank first lists it, and fall back to
-%   plain bank order when the bank does not vary a Level.
+%   hit its repetition count; the entries still due keep the cycle's order
+%   among themselves.
 %
-%   Run order ('conventional')
-%   --------------------------
-%   OrderBy names the stimulus parameter(s) the runs are sorted by, most
-%   significant first, and OrderDirection says which way each one goes:
+%   Order ('conventional' and 'interleaved')
+%   ----------------------------------------
+%   OrderBy names the stimulus parameter(s) the bank is sorted by, most
+%   significant first, and OrderDirection says which way each one goes.
+%   Under 'conventional' that is the order the runs play in; under
+%   'interleaved', the order every cycle walks the bank in:
 %
 %     'ascending'   low to high
 %     'descending'  high to low
@@ -91,10 +89,10 @@ classdef Schedule < handle
 %   Entries tied on every parameter named keep their bank order, in either
 %   direction, so reversing a direction reverses that parameter and nothing
 %   else. A name the bank does not vary is skipped, never refused. Only
-%   'conventional' reads the pair: the shuffled and interleaved strategies
-%   decide their own order, and so does a 'custom' one.
+%   'conventional' and 'interleaved' read the pair (strategyTakesOrder): the
+%   shuffled strategies decide their own order, and so does a 'custom' one.
 %
-%   The first six are permutations of a FIXED multiset, never probabilistic
+%   The first five are permutations of a FIXED multiset, never probabilistic
 %   sampling: each entry is presented exactly its repetition count in all of
 %   them -- 'interleaved-random' included, whose "random" is the order within
 %   a cycle, not what gets presented. A 'custom' strategy is EXPECTED to hold
@@ -102,14 +100,20 @@ classdef Schedule < handle
 %   normalize), but is not refused -- departing on purpose is a legitimate
 %   reason to write one.
 %
-%   The names before this scheme -- 'blocked', 'shuffled-blocks',
-%   'interleaved', 'shuffled-cycles' -- are still accepted and translated on
-%   assignment (see canonicalStrategy), because configuration files and
-%   last-session prefs saved before the rename carry them. 'interleaved'
-%   translates to 'interleaved-ramp', which is the same order it always gave
-%   for a bank listed frequency by frequency with levels ascending (the demo
-%   bank, for one); a bank listed any other way is now cycled in ramp order
-%   rather than in its own.
+%   Retired names are still accepted and translated on assignment (see
+%   canonicalStrategy), because configuration files and last-session prefs
+%   saved with them carry them: 'blocked', 'shuffled-blocks' and
+%   'shuffled-cycles' from before the strategies were named for their
+%   designs, and 'interleaved-ramp' / 'interleaved-plateau' from before the
+%   interleaved cycle took its order from OrderBy. Those two become
+%   'interleaved' AND set the order they stood for (LegacyOrders) -- ramp is
+%   Frequency as listed then Level ascending, plateau Level ascending -- so a
+%   script or a file naming one still presents what it did. (For a bank that
+%   varies Level and something other than Frequency, the old ramp grouped by
+%   that other parameter; the translation names Frequency, and such a bank
+%   now gets the plateau.) 'interleaved' itself is the original name of the
+%   interleaved design, whose cycles followed the bank's own order -- which
+%   is what it means again with no OrderBy.
 %
 %   Alternating polarity
 %   -------------------
@@ -121,7 +125,7 @@ classdef Schedule < handle
 %   inverted presentations land in shuffled positions too. renderSpec reports
 %   the sign used at each onset in the spec's Polarity field.
 %
-%   The three 'interleaved-*' strategies and 'shuffled' INTERMIX different stimuli
+%   The two 'interleaved' strategies and 'shuffled' INTERMIX different stimuli
 %   inside one continuous acquisition run (isIntermixed is true), and so may a
 %   'custom' one -- which is why isIntermixed asks a built custom plan whether
 %   any of its runs actually holds more than one stimulus, rather than
@@ -169,8 +173,8 @@ classdef Schedule < handle
 % Daniel Stolzberg (c) 2019-2026
 
     properties (Constant)
-        Strategies = {'conventional','conventional-shuffled','interleaved-ramp', ...
-                      'interleaved-plateau','interleaved-random','shuffled','custom'};
+        Strategies = {'conventional','conventional-shuffled','interleaved', ...
+                      'interleaved-random','shuffled','custom'};
         ISIModes   = {'fixed','random'};
 
         % The ways a parameter named in OrderBy can be ordered.
@@ -180,14 +184,25 @@ classdef Schedule < handle
         % run's closing silence: twice the reference rig's (~25 ms).
         LatencyAllowance = 0.05;
 
-        % Names from before the strategies were named for the designs they
-        % implement, [old new] per row. Still accepted (canonicalStrategy)
+        % The strategies that play in the order OrderBy asks for; every other
+        % one decides its own (see strategyTakesOrder).
+        OrderedStrategies = {'conventional','interleaved'};
+
+        % Retired names, [old new] per row. Still accepted (canonicalStrategy)
         % because .mabrcfg files and last-session prefs carry them.
         LegacyStrategies = { ...
-            'blocked',         'conventional'; ...
-            'shuffled-blocks', 'conventional-shuffled'; ...
-            'interleaved',     'interleaved-ramp'; ...
-            'shuffled-cycles', 'interleaved-random'};
+            'blocked',             'conventional'; ...
+            'shuffled-blocks',     'conventional-shuffled'; ...
+            'shuffled-cycles',     'interleaved-random'; ...
+            'interleaved-ramp',    'interleaved'; ...
+            'interleaved-plateau', 'interleaved'};
+
+        % The order a retired name stood for, [old OrderBy OrderDirection]
+        % per row: the two interleaved designs that had an order built in
+        % before the cycle took its order from OrderBy (see legacyOrder).
+        LegacyOrders = { ...
+            'interleaved-ramp',    {'Frequency','Level'}, {'listed','ascending'}; ...
+            'interleaved-plateau', {'Level'},             {'ascending'}};
     end
 
     properties
@@ -210,9 +225,10 @@ classdef Schedule < handle
         % strategy under its own field name.
         StrategyParams   (1,1) struct = struct()
 
-        % The parameter(s) 'conventional' plays its runs in the order of, most
-        % significant first, and which way each goes (OrderDirections). Both
-        % are held as cellstr rows and take a char for the one-parameter case;
+        % The parameter(s) the bank is ordered by, most significant first, and
+        % which way each goes (OrderDirections) -- the order 'conventional'
+        % plays its runs in and 'interleaved' walks each cycle in. Both are
+        % held as cellstr rows and take a char for the one-parameter case;
         % {} = the bank's own order. OrderDirection is read in parallel with
         % OrderBy: a single direction applies to every parameter, and a
         % parameter with none of its own is 'ascending'.
@@ -220,8 +236,8 @@ classdef Schedule < handle
         % A name the bank does not vary (unknown, or constant across entries)
         % is skipped rather than refused: the setting outlives the bank it was
         % chosen for, and a configuration naming Level must still load against
-        % a bank without one. Read by 'conventional' only -- the shuffled and
-        % interleaved strategies decide their own order.
+        % a bank without one. Read by OrderedStrategies only -- the shuffled
+        % strategies decide their own order.
         OrderBy                       = {}
         OrderDirection                = {'ascending'}
 
@@ -328,7 +344,16 @@ classdef Schedule < handle
             % Translated on the way in, so a plan built from an old name and
             % one built from its new name are the same plan with the same
             % label -- nothing downstream has to know there were two names.
+            % A retired name that stood for an order sets that order too:
+            % 'interleaved-plateau' is 'interleaved' AND Level ascending, and
+            % translating only the name would present something else. An
+            % OrderBy assigned afterwards still wins, as any later one does.
             obj.Strategy = mabr.stim.Schedule.canonicalStrategy(v);
+            [by,way] = mabr.stim.Schedule.legacyOrder(v);
+            if ~isempty(by)
+                obj.OrderBy        = by;    %#ok<MCSUP>
+                obj.OrderDirection = way;   %#ok<MCSUP>
+            end
         end
 
         function set.OrderBy(obj,v)
@@ -366,7 +391,7 @@ classdef Schedule < handle
         function tf = isIntermixed(obj)
             % True when a single run mixes more than one stimulus.
             %
-            % For the six built-in strategies the name settles it. For
+            % For the five built-in strategies the name settles it. For
             % 'custom' it cannot -- whether a user's plan intermixes is a
             % property of the runs it produced, not of the fact that a
             % function produced them -- so the built plan is asked directly.
@@ -388,8 +413,9 @@ classdef Schedule < handle
             % 'custom' alone does not say which custom, and a file recording
             % only that the order was "custom" cannot be reproduced from.
             %
-            % The same goes for a conventional plan played in an order of its
-            % own: 'conventional (Frequency as listed, Level descending)'.
+            % The same goes for a plan played in an order of its own:
+            % 'conventional (Frequency as listed, Level descending)',
+            % 'interleaved (Level ascending)'.
             s = obj.Strategy;
             if strcmpi(s,'custom') && ~isempty(obj.StrategyFcn)
                 s = ['custom: ' mabr.stim.Schedule.fcnName(obj.StrategyFcn)];
@@ -400,13 +426,13 @@ classdef Schedule < handle
         end
 
         function s = orderLabel(obj)
-            % The run order in force, in words -- 'Level descending',
+            % The order in force, in words -- 'Level descending',
             % 'Frequency as listed, Level descending' -- and '' for the bank's
             % own order. In force, not merely asked for: a parameter this bank
-            % does not vary is left out, and any strategy but 'conventional'
-            % answers '', since none of the others reads OrderBy.
+            % does not vary is left out, and a strategy that does not read
+            % OrderBy (strategyTakesOrder) answers ''.
             s = '';
-            if ~strcmpi(obj.Strategy,'conventional'), return, end
+            if ~mabr.stim.Schedule.strategyTakesOrder(obj.Strategy), return, end
             K = obj.orderKeys();
             if isempty(K), return, end
             words = strrep({K.Direction},'listed','as listed');
@@ -417,8 +443,8 @@ classdef Schedule < handle
         % --- Plan construction ----------------------------------------------
         function build(obj)
             % (Re)build the run list from Repetitions + Strategy (and, under
-            % 'conventional', OrderBy + OrderDirection). Call after changing
-            % any of them; reset() alone does not rebuild.
+            % 'conventional' or 'interleaved', OrderBy + OrderDirection). Call
+            % after changing any of them; reset() alone does not rebuild.
             n    = obj.Set.numStimuli;
             reps = obj.normalizedRepetitions();
 
@@ -440,12 +466,8 @@ classdef Schedule < handle
                 case 'conventional-shuffled'
                     [obj.Runs,obj.Polarities] = obj.blockRuns(randperm(rs,n),reps,alt);
 
-                case 'interleaved-ramp'
-                    [seq,pol] = obj.cycleSequence(reps,alt,obj.cycleOrder('ramp'),false,rs);
-                    obj.Runs = {seq}; obj.Polarities = {pol};
-
-                case 'interleaved-plateau'
-                    [seq,pol] = obj.cycleSequence(reps,alt,obj.cycleOrder('plateau'),false,rs);
+                case 'interleaved'
+                    [seq,pol] = obj.cycleSequence(reps,alt,obj.parameterOrder(),false,rs);
                     obj.Runs = {seq}; obj.Polarities = {pol};
 
                 case 'interleaved-random'
@@ -937,52 +959,6 @@ classdef Schedule < handle
             end
         end
 
-        function order = cycleOrder(obj,kind)
-            % The order one cycle of 'interleaved-ramp' / '-plateau' walks the
-            % bank in, as a permutation of 1:n.
-            %
-            %   'ramp'     grouped by the rest of the condition (frequency, in
-            %              the ordinary grid), level ascending inside each group
-            %   'plateau'  level ascending, the rest of the condition inside
-            %              each level
-            %
-            % Only the LEVEL is sorted. Groups, and the entries sharing a level,
-            % keep the order the bank first lists them in: that order is the
-            % bank author's, and it is often deliberate -- frequencies are
-            % commonly listed non-adjacently (32, 16, 8, 22.6, 11.3 kHz) so that
-            % successive presentations excite different places on the cochlea.
-            % Sorting them ascending would undo exactly that.
-            %
-            % The level is the parameter named Level -- the name the toolbox
-            % already fixes end to end (fromStimgen maps stimgen's SoundLevel
-            % onto it, and io.buildFilename reads it). A bank that does not
-            % VARY one has no ramp or plateau to form, and is cycled in bank
-            % order under either name rather than regrouped by guesswork.
-            n     = obj.Set.numStimuli;
-            order = 1:n;
-            P     = obj.Set.paramTable();
-            j     = find(strcmpi(P.Names,'Level') & P.Varying,1);
-            if isempty(j), return; end
-
-            L   = P.Values(:,j);
-            idx = (1:n)';                          % tiebreak: bank order
-            switch kind
-                case 'ramp'
-                    rest = P.Varying; rest(j) = false;
-                    if any(rest)
-                        % Groups numbered by first appearance, so sorting on
-                        % the number keeps the bank's order of the groups.
-                        [~,~,g] = unique(P.Values(:,rest),'rows','stable');
-                    else
-                        g = ones(n,1);
-                    end
-                    [~,order] = sortrows([g L idx]);
-                case 'plateau'
-                    [~,order] = sortrows([L idx]);
-            end
-            order = order(:)';
-        end
-
         function [seq,pol] = cycleSequence(~,reps,alt,order,shuffleWithin,rs)
             % Walk cycles of the still-owed stimuli, each cycle in `order`. An
             % entry leaves the cycle once it has been scheduled its full
@@ -1017,13 +993,35 @@ classdef Schedule < handle
             % see the isIntermixed METHOD, which is the authority once a plan
             % exists.
             tf = ismember(mabr.stim.Schedule.canonicalStrategy(strategy), ...
-                {'interleaved-ramp','interleaved-plateau','interleaved-random', ...
-                 'shuffled','custom'});
+                {'interleaved','interleaved-random','shuffled','custom'});
+        end
+
+        function tf = strategyTakesOrder(strategy)
+            % Whether a strategy plays in the order OrderBy asks for -- the
+            % runs of 'conventional', each cycle of 'interleaved'. The rest
+            % decide their own order, so OrderBy means nothing to them: the
+            % GUI greys the order rows and orderLabel names none.
+            tf = ismember(mabr.stim.Schedule.canonicalStrategy(strategy), ...
+                mabr.stim.Schedule.OrderedStrategies);
+        end
+
+        function [by,way] = legacyOrder(strategy)
+            % The OrderBy / OrderDirection a retired strategy name stood for
+            % (LegacyOrders), or both {} for any other name. Read wherever an
+            % old name is translated and the order has to come with it: the
+            % Strategy setter, and mabr.ui.App restoring a configuration,
+            % whose own saved order was never read under that strategy.
+            by = {}; way = {};
+            map = mabr.stim.Schedule.LegacyOrders;
+            k = find(strcmpi(char(strategy),map(:,1)),1);
+            if isempty(k), return, end
+            by = map{k,2}; way = map{k,3};
         end
 
         function s = canonicalStrategy(s)
-            % A strategy name as the plan uses it: lower case, and a name from
-            % before the rename (LegacyStrategies) translated to its successor.
+            % A strategy name as the plan uses it: lower case, and a retired
+            % name (LegacyStrategies) translated to its successor -- the name
+            % only; legacyOrder is the order that came with it.
             % Anything else passes through unchanged, so an unknown name still
             % reaches build()'s refusal naming the valid ones.
             s = lower(char(s));
