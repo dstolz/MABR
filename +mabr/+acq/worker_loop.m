@@ -118,7 +118,13 @@ try
     % did). Prep repeats this over the run's own range.
     t0 = tic;
     rb.prefault();
-    mabr.log.vprintf(2,'Ring buffer prefaulted (%.0f MiB) in %.2f s', ...
+    % The frame loop's first ring writes on a fresh worker cost 4-13 ms
+    % apiece on the rig -- first-call setup, gone by the fourth frame -- and
+    % a frame is 5.3 ms, so the device ran dry on the first frames of the
+    % worker's first block. They are paid here instead, while nothing
+    % streams; every block then writes the ring from its start regardless.
+    prime_ring(rb,cfg.frameLength);
+    mabr.log.vprintf(2,'Ring buffer prefaulted (%.0f MiB) and primed in %.2f s', ...
         2*rb.MaxLength*4/2^20,toc(t0));
     send_state(resultQueue,mabr.acq.State.Idle);
     if testing
@@ -180,7 +186,14 @@ try
                 % the pages it is about to write: touch them here, between
                 % runs, rather than one at a time inside the frame loop
                 % (resident pages cost microseconds; see the start-up call).
-                rb.prefault(1,mabr.stim.PlayPlan.fromSpec(prepared).N);
+                plan = mabr.stim.PlayPlan.fromSpec(prepared);
+                rb.prefault(1,plan.N);
+                % And the render: the first frame of a fresh worker's first
+                % real run took ~3 ms of a 5.3 ms frame to render, and so
+                % did its first frame holding a presentation -- first-call
+                % setup that the self-test's block, an explicit matrix,
+                % never reaches. Harmless to repeat on a warm worker.
+                prime_render(plan,cfg.frameLength);
                 % The Prep work above was time the idle stream went unfed;
                 % one more frame now takes whatever the device has to say
                 % about it, so it is not reported as the run's first frame.
@@ -622,6 +635,31 @@ if stimOnly
 else
     mabr.log.vprintf(1,'Opened a full-duplex device: play [%d %d], record [%d %d].', ...
         player,recorder);
+end
+end
+
+
+% =====================================================================
+function prime_ring(rb,fl)
+% Write three frames of zeros and clear the head again: the first calls of
+% the ring-write path pay their setup here rather than in a block.
+z = zeros(fl,1,'single');
+for k = 1:3, rb.writeFrame(z,z); end
+rb.reset();
+end
+
+
+% =====================================================================
+function prime_render(plan,fl)
+% Render, and throw away, the run's first frame and its first frame holding a
+% presentation: the two paths through PlayPlan.range. The block's own first
+% range() call starts at sample 1, which rewinds the plan's cursor, so this
+% leaves no trace.
+if plan.N < 1, return; end
+plan.range(1,min(fl,plan.N));
+if ~isempty(plan.Onsets)
+    o = plan.Onsets(1);
+    plan.range(o,min(o+fl-1,plan.N));
 end
 end
 
