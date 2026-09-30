@@ -152,8 +152,20 @@ try
 
         switch msg.cmd
             case mabr.acq.Cmd.Prep
+                % A Prep that fails leaves nothing open and nothing prepared,
+                % whatever becomes of the loop after it. prepare_device
+                % releases the old device before building the new one, and a
+                % throw leaves apr/aprSig here as they were: a released
+                % device under a signature that still matches, which the
+                % next Prep would take back and the idle loop would clock.
+                try
+                    [apr,aprSig,opened] = prepare_device(apr,aprSig,msg.data,testing);
+                catch me
+                    if ~isempty(apr), try, release(apr); end, end %#ok<TRYNC>
+                    apr = []; aprSig = ''; idle.clocking = false; prepared = [];
+                    rethrow(me);
+                end
                 prepared = msg.data;
-                [apr,aprSig,opened] = prepare_device(apr,aprSig,prepared,testing);
                 if opened
                     % A new device starts its stream at the first frame, and
                     % what the old one's idle stream went through is not
