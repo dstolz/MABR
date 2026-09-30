@@ -83,6 +83,10 @@ function run_all_verifications()
 %       verify_progress_monitor  - acquisition progress window: the tally,
 %                                  simple/bar/heat-map views, counts vs
 %                                  percent, and the mid-run attribution
+%       verify_presentation_order- presentation-order window: the active
+%                                  condition highlighted where the live count
+%                                  says, and switching upcoming conditions
+%                                  off (Schedule.setEnabled)
 %       verify_metric_plot       - online analysis: the metric library and its
 %                                  contract, per-condition values, the plot
 %                                  adapting to 0/1/2 parameters (lines, bars,
@@ -151,7 +155,8 @@ function run_all_verifications()
 %
 %   Requires the Parallel Computing Toolbox (all but verify_logging,
 %   verify_isi_jitter, verify_strategies, verify_analysis, verify_filters, verify_live_plot,
-%   verify_progress_monitor, verify_metric_plot, verify_trace_organizer,
+%   verify_progress_monitor, verify_presentation_order, verify_metric_plot,
+%   verify_trace_organizer,
 %   verify_trace_inspector, verify_audio_settings, verify_view_prefs,
 %   verify_recent_banks, verify_stimgen_launcher, and verify_calibration_latency).
 %   None require audio hardware.
@@ -167,7 +172,7 @@ tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_p
          @verify_live_plot, @verify_live_refresh, ...
          @verify_live_pipeline, @verify_compute_worker, @verify_stimulus_alignment, ...
          @verify_test_mode, ...
-         @verify_progress_monitor, @verify_metric_plot, ...
+         @verify_progress_monitor, @verify_presentation_order, @verify_metric_plot, ...
          @verify_trace_organizer, @verify_trace_inspector, ...
          @verify_notes, @verify_audio_settings, @verify_view_prefs, ...
          @verify_recent_banks, ...
