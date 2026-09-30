@@ -8,7 +8,8 @@ function verify_loop_mode()
 %   waits behind it unchanged; the pass is flagged IsLoop and nothing else;
 %   a make-up run's pass is a full run of its stimulus and is not charged to
 %   the make-up budget; dropPendingMakeup leaves passes alone; reset() drops
-%   them; an index off the plan is refused.
+%   them; the Disabled mask drops a pass of a condition switched off; an
+%   index off the plan is refused.
 %
 %   Part B (pure): no .abr is ever overwritten. Loop passes of one condition
 %   are short enough to start within the same second, which is all the
@@ -111,6 +112,17 @@ sch.reset();
 assert(isequal(sch.Runs,built) && isequal(sch.Polarities,builtPol) ...
     && isequal(sch.IsLoop,false(1,3)) && sch.current() == 1, ...
     'reset() must return the plan build() produced, with no loop pass left');
+
+% A pass is a run not yet started, so the Disabled mask (setEnabled, the
+% presentation-order window) applies to it: switching the looped condition
+% off ends the loop on it, and the plan goes on.
+sch.loopRun(1);
+sch.setEnabled(1,false);
+assert(~sch.isComplete(),'the rest of the plan is still to come');
+assert(sch.advance() == 2 && all(sch.runSequence() == 2) && sch.NumRuns == 3 ...
+    && isequal(sch.IsLoop,false(1,3)), ...
+    'a pass of a disabled condition should be dropped, and the plan go on');
+sch.reset();
 
 assert_throws(@() sch.loopRun(99),'mabr:stim:Schedule:runRange');
 assert_throws(@() sch.loopRun(0), 'mabr:stim:Schedule:runRange');

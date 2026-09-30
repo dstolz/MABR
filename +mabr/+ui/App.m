@@ -186,6 +186,7 @@ classdef App < handle
         TraceOrg    mabr.ui.TraceOrganizer
         StimViewer  mabr.ui.StimulusViewer
         ProgressMon mabr.ui.ProgressMonitor
+        OrderView   mabr.ui.PresentationOrder
         TestRunner  mabr.ui.TestRunner
         Listeners
     end
@@ -441,6 +442,7 @@ classdef App < handle
             try, delete(app.MetricPlots); end %#ok<TRYNC>
             try, delete(app.StimViewer); end %#ok<TRYNC>
             try, delete(app.ProgressMon); end %#ok<TRYNC>
+            try, delete(app.OrderView);  end %#ok<TRYNC>
             try, delete(app.TestRunner); end %#ok<TRYNC>
             try, delete(app.Launcher);   end %#ok<TRYNC>
             try, delete(app.UIFigure);   end %#ok<TRYNC>
@@ -476,6 +478,7 @@ classdef App < handle
             figs = addFig(figs,viewerFigure(app.TraceOrg));
             figs = addFig(figs,viewerFigure(app.StimViewer));
             figs = addFig(figs,viewerFigure(app.ProgressMon));
+            figs = addFig(figs,viewerFigure(app.OrderView));
             figs = addFig(figs,viewerFigure(app.NotesView));
             figs = addFig(figs,viewerFigure(app.TestRunner,'UIFigure'));
 
@@ -486,6 +489,50 @@ classdef App < handle
                 end
             end
             figs = addFig(figs,app.UIFigure);
+        end
+
+        function n = arrangeWindows(app)
+            % Tile every open viewer beside the main window, then raise them
+            % all. The main window stays exactly where it is -- it is the
+            % anchor the layout is built around -- and the rest are cut into
+            % a grid over the wider strip of its display beside it
+            % (mabr.ui.WindowPos.arrangeRegion/tile), in windows() order, so
+            % the live plot lands top left and pressing again reproduces the
+            % same layout. Cells are OUTER rectangles (title bar, menus and
+            % toolbar included), so neighbouring windows cannot overlap
+            % through their chrome. A window that cannot be resized keeps its
+            % size and takes its cell's top-left corner; the progress monitor
+            % is handed its height back afterwards, since that is decided by
+            % the view it is showing (see ProgressMonitor.fitToView). Nothing
+            % is remembered here: positions are saved as windows close, as
+            % always. Returns how many windows were raised (see bringToFront).
+            figs = app.windows();
+            figs = figs(figs ~= app.UIFigure);
+            for i = 1:numel(figs)
+                % A minimized, maximized or full-screen window ignores a
+                % Position assignment, so it is put back to normal first.
+                try %#ok<TRYNC>
+                    if ~strcmp(figs(i).WindowState,'normal'), figs(i).WindowState = 'normal'; end
+                end
+            end
+            if ~isempty(figs)
+                anchor = outerPosition(app.UIFigure);
+                cells  = mabr.ui.WindowPos.tile( ...
+                    mabr.ui.WindowPos.arrangeRegion(anchor),numel(figs));
+                for i = 1:numel(figs)
+                    try
+                        placeOuter(figs(i),cells(i,:));
+                    catch me
+                        mabr.log.vprintf(2,'App: could not arrange "%s" (%s).', ...
+                            get(figs(i),'Name'),me.message);
+                    end
+                end
+                pm = viewerFigure(app.ProgressMon);
+                if ~isempty(pm) && any(figs == pm)
+                    try, app.ProgressMon.fitToView(); end %#ok<TRYNC>
+                end
+            end
+            n = app.bringToFront();
         end
 
         function n = bringToFront(app)
@@ -1099,6 +1146,12 @@ classdef App < handle
             % that fills (see onStart), which is why it is here rather than
             % beside the live view in syncAcquisitionEnables' disable list.
             app.toolButton('progress',ink,'Acquisition progress', @() app.onProgress());
+            % The order the plan presents its conditions in, the one on now
+            % highlighted -- and where upcoming conditions are switched off.
+            % Useful in every mode, stimulation-only included, like progress.
+            app.toolButton('order',ink, ...
+                'Presentation order — the condition on now, and switching upcoming ones off', ...
+                @() app.onOrder());
             % The notebook. Deliberately a toolbar button rather than a panel
             % row: the main window is already five panels deep and a log needs
             % height the layout does not have, while what the operator actually
@@ -1118,6 +1171,9 @@ classdef App < handle
             app.toolButton('front',ink, ...
                 'Bring all MABR windows to the front', ...
                 @() app.onBringToFront(),true);
+            app.toolButton('arrange',ink, ...
+                'Arrange MABR windows beside this one and bring them to the front', ...
+                @() app.onArrangeWindows());
 
             onTop = strcmp(app.UIFigure.WindowStyle,'alwaysontop');
             app.AlwaysOnTopTool = uitoggletool(app.Toolbar,'Separator','off', ...
@@ -1149,6 +1205,15 @@ classdef App < handle
                 app.setStatus('No other MABR windows are open.');
             else
                 app.setStatus(sprintf('Raised %d MABR windows.',n));
+            end
+        end
+
+        function onArrangeWindows(app)
+            n = app.arrangeWindows();
+            if n <= 1
+                app.setStatus('No other MABR windows are open.');
+            else
+                app.setStatus(sprintf('Arranged %d MABR windows.',n-1));
             end
         end
 
@@ -2135,6 +2200,7 @@ classdef App < handle
             % leave it unattached, if the transfer preference is off.
             app.bindTraceOrg();
             app.bindProgress();
+            app.bindOrder();
             % Same for every open analysis window: attach() replaces its
             % listeners rather than adding a second set, and backfills the new
             % session's blocks, so one left open across a mode change keeps
@@ -3559,6 +3625,7 @@ classdef App < handle
                 % the plan that is actually about to run rather than the one
                 % the previous Start left behind.
                 app.bindProgress();
+                app.bindOrder();
                 % These settings have now been used to acquire with, which is
                 % the point at which they are worth reopening on -- and saving
                 % them here rather than only in delete() is what makes the
@@ -3652,7 +3719,7 @@ classdef App < handle
         % subject. WHICH of them open is the user's (mabr.ViewPolicy, edited
         % from Settings > Windows to open at Start) -- the live view and the
         % trace organizer by default, which is what MABR always did, and any
-        % of the six for a rig that works another way. The toolbar buttons
+        % of the seven for a rig that works another way. The toolbar buttons
         % still open every one of them on demand at any time, and each
         % remembers where it was last left (mabr.ui.WindowPos).
         function n = openViewers(app)
@@ -3688,6 +3755,10 @@ classdef App < handle
             if app.Views.opens('ProgressMonitor') && (isempty(app.ProgressMon) ...
                     || ~isvalid(app.ProgressMon))
                 app.onProgress();    n = n + 1;
+            end
+            if app.Views.opens('PresentationOrder') && (isempty(app.OrderView) ...
+                    || ~isvalid(app.OrderView))
+                app.onOrder();       n = n + 1;
             end
             if app.Views.opens('Notes') && ~isempty(app.NotesView) ...
                     && isvalid(app.NotesView) && ~app.NotesView.isopen()
@@ -3912,6 +3983,37 @@ classdef App < handle
             delete(app.ProgressMon);
         end
 
+        function onOrder(app)
+            % The order of the presentations, the active condition
+            % highlighted, and the switches for the ones still to come. On
+            % demand; a singleton, raised if already open.
+            if isempty(app.OrderView) || ~isvalid(app.OrderView)
+                app.OrderView = mabr.ui.PresentationOrder();
+                f = app.OrderView.Figure;
+                mabr.ui.WindowPos.restore(f,'PresentationOrder', ...
+                    app.defaultViewerPos('PresentationOrder'),[560 320]);
+                f.CloseRequestFcn = @(~,~) app.closeOrder();
+            end
+            app.bindOrder();
+            figure(app.OrderView.Figure);
+        end
+
+        function bindOrder(app)
+            % Point an open order window at the current controller, the way
+            % bindProgress does the monitor. A no-op with no window open.
+            if isempty(app.OrderView) || ~isvalid(app.OrderView), return; end
+            if ~isempty(app.Controller) && isvalid(app.Controller)
+                app.OrderView.listenTo(app.Controller);
+            else
+                app.OrderView.attach([],[]);
+            end
+        end
+
+        function closeOrder(app)
+            mabr.ui.WindowPos.remember(app.OrderView.Figure,'PresentationOrder');
+            delete(app.OrderView);
+        end
+
         function rememberViewerPositions(app)
             % Analysis windows cascade past one another, so only a lone one is
             % worth storing -- see closeMetricPlot for why remembering a
@@ -3924,6 +4026,7 @@ classdef App < handle
             try, mabr.ui.WindowPos.remember(app.TraceOrg.Figure,'TraceOrganizer'); end %#ok<TRYNC>
             try, mabr.ui.WindowPos.remember(app.StimViewer.Figure,'StimulusViewer'); end %#ok<TRYNC>
             try, mabr.ui.WindowPos.remember(app.ProgressMon.Figure,'ProgressMonitor'); end %#ok<TRYNC>
+            try, mabr.ui.WindowPos.remember(app.OrderView.Figure,'PresentationOrder'); end %#ok<TRYNC>
         end
 
         function applyWindowPositions(app,s)
@@ -3941,6 +4044,7 @@ classdef App < handle
             placeIf(viewerFigure(app.TraceOrg),   'TraceOrganizer');
             placeIf(viewerFigure(app.StimViewer), 'StimulusViewer');
             placeIf(viewerFigure(app.ProgressMon),'ProgressMonitor');
+            placeIf(viewerFigure(app.OrderView),  'PresentationOrder');
             app.pruneMetricPlots();
             if isscalar(app.MetricPlots)
                 % Only a lone one, for the same reason only a lone one is
@@ -3988,6 +4092,11 @@ classdef App < handle
                     % The height here is only a placeholder: fitToView sets it
                     % from the view the window actually opens in.
                     pos = [a(1)+60, a(2)-60, 520, 500];
+                case 'PresentationOrder'
+                    % Cascades off the main window like the progress monitor,
+                    % one step further so the two do not open on top of
+                    % each other.
+                    pos = [a(1)+100, a(2)-100, 760, 480];
                 otherwise   % live plot, top-aligned with the main window
                     % Tall enough for the latest sweep AND the per-stimulus
                     % means stacked beneath it (the old 280 px only ever held
@@ -4538,6 +4647,23 @@ classdef App < handle
                             '................'
                             '................'
                             '................'};
+                case 'order'     % marks stepping across rows, one per condition
+                    rows = {'................'
+                            '................'
+                            '.X..............'
+                            '.X.XX...........'
+                            '.X..............'
+                            '.X......XX......'
+                            '.X..............'
+                            '.X...........XX.'
+                            '.X..............'
+                            '.X....XX........'
+                            '.X..............'
+                            '.X..........XX..'
+                            '.X..............'
+                            '.XXXXXXXXXXXXXX.'
+                            '................'
+                            '................'};
                 case 'progress'  % three bars of a progress chart, part-filled
                     rows = {'................'
                             '................'
@@ -4571,6 +4697,23 @@ classdef App < handle
                             '......X........X'
                             '......XXXXXXXXXX'
                             '................'
+                            '................'};
+                case 'arrange'   % four tiled windows, title bars solid
+                    rows = {'................'
+                            '.XXXXXX..XXXXXX.'
+                            '.XXXXXX..XXXXXX.'
+                            '.X....X..X....X.'
+                            '.X....X..X....X.'
+                            '.X....X..X....X.'
+                            '.XXXXXX..XXXXXX.'
+                            '................'
+                            '................'
+                            '.XXXXXX..XXXXXX.'
+                            '.XXXXXX..XXXXXX.'
+                            '.X....X..X....X.'
+                            '.X....X..X....X.'
+                            '.X....X..X....X.'
+                            '.XXXXXX..XXXXXX.'
                             '................'};
                 case 'pin'       % pushpin: keep window on top
                     rows = {'................'
@@ -4658,6 +4801,37 @@ if nargin < 2, prop = 'Figure'; end
 f = [];
 if isempty(obj) || ~isscalar(obj) || ~isvalid(obj) || ~isprop(obj,prop), return; end
 try, f = obj.(prop); end %#ok<TRYNC>
+end
+
+function p = outerPosition(f)
+% A figure's rectangle including its title bar, menus and toolbar. Read, not
+% assumed, since the chrome differs between a uifigure and a classic figure
+% and between platforms; a figure that will not say is taken as its drawable
+% area plus a title bar.
+try
+    p = f.OuterPosition;
+    if numel(p) ~= 4 || any(~isfinite(p)) || any(p(3:4) <= 0), error('bad'); end
+catch
+    p = f.Position + [0 0 0 32];
+end
+end
+
+function placeOuter(f,rect)
+% Put figure F's OUTER rectangle on RECT by setting its Position -- the one
+% position property that is settable on both a uifigure and a classic figure
+% -- less the chrome measured off the window itself. A window that cannot be
+% resized keeps its size and is pinned to the rectangle's top-left corner.
+inner = f.Position;
+outer = outerPosition(f);
+dl = inner(1) - outer(1);                              % left border
+db = inner(2) - outer(2);                              % bottom border
+dw = outer(3) - inner(3);                              % both side borders
+dh = outer(4) - inner(4);                              % title bar, menus, bottom
+w = max(rect(3) - dw,1);
+h = max(rect(4) - dh,1);
+if strcmp(f.Resize,'off'), w = inner(3); h = inner(4); end
+top = rect(2) + rect(4);                               % outer top edge
+f.Position = [rect(1) + dl, top - (dh - db) - h, w, h];
 end
 
 function setEnable(controls,tf)

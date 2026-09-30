@@ -168,7 +168,31 @@ classdef Schedule < handle
 %   make-up and repeat runs: those must not jump the queue, whereas a loop is
 %   the queue waiting. A pass is flagged IsLoop, is never bounded (a loop ends
 %   when it is switched off), and is dropped by reset() along with make-up and
-%   repeat runs.
+%   repeat runs. A pass is a run not yet started like any other, so the
+%   Disabled mask below applies to it when advance() reaches it: switching
+%   the looped condition off ends the loop on it (the emptied pass is
+%   dropped and the plan goes on), and a disabled stimulus drops out of an
+%   intermixed pass.
+%
+%   Disabling upcoming conditions
+%   -----------------------------
+%   setEnabled(idx,false) takes stimuli out of every run that has not started
+%   yet (mabr.ui.PresentationOrder is the GUI for it). The mask is applied to
+%   a run at the moment advance() makes it current -- before the controller
+%   renders it -- by removing the disabled stimuli's presentations from that
+%   run (with their polarities), and a run left with nothing is removed from
+%   the plan altogether. Applying it then, rather than when the box is
+%   unticked, is what keeps the run that is rendered and the runSequence the
+%   controller later pairs its onsets with the same thing: a run already
+%   current is never touched, so the run in progress always plays as it was
+%   rendered, and a condition can be switched back on at any time before its
+%   run is reached. isComplete() answers with the mask in force, so a plan
+%   whose remaining runs are all disabled is complete now rather than one run
+%   later. Skipped counts what was removed, per stimulus. A disabled
+%   stimulus gets no artifact make-up; a make-up run it already had is
+%   refunded to the budget when it is dropped; and repeatRun switches the
+%   stimulus back on, since asking for a run of it is asking for it. build()
+%   and reset() clear the mask and restore the runs build() produced.
 %
 %   Typical walk (driven by mabr.ui.AcqController):
 %       sch = mabr.stim.Schedule(stimulusSet,cfg);
@@ -309,6 +333,16 @@ classdef Schedule < handle
         CurrentRun  (1,1) double = 0   % 0 = not started / complete
         RunCounts   (1,:) double = []  % presentations actually recorded, per stimulus
         MakeupUsed  (1,:) double = []  % make-up presentations appended, per stimulus
+        Disabled    (1,:) logical = false(1,0) % per stimulus: left out of runs not yet started
+        Skipped     (1,:) double = []  % presentations removed by Disabled, per stimulus
+    end
+
+    properties (Access = private)
+        % The runs build() produced, which reset() returns to: applying
+        % Disabled edits Runs in place, so dropping appended runs alone would
+        % no longer get back to the plan.
+        BuiltRuns       (1,:) cell = {}
+        BuiltPolarities (1,:) cell = {}
     end
 
     properties (Dependent)
@@ -463,11 +497,15 @@ classdef Schedule < handle
 
             obj.RunCounts  = zeros(1,n);
             obj.MakeupUsed = zeros(1,n);
+            obj.Disabled   = false(1,n);
+            obj.Skipped    = zeros(1,n);
             obj.Runs       = {};
             obj.Polarities = {};
             obj.IsMakeup   = false(1,0);
             obj.IsRepeat   = false(1,0);
             obj.IsLoop     = false(1,0);
+            obj.BuiltRuns       = {};
+            obj.BuiltPolarities = {};
             if n == 0 || ~any(reps > 0), obj.CurrentRun = 0; return; end
 
             rs  = obj.stream();
@@ -508,6 +546,8 @@ classdef Schedule < handle
             obj.IsMakeup = false(1,numel(obj.Runs));
             obj.IsRepeat = false(1,numel(obj.Runs));
             obj.IsLoop   = false(1,numel(obj.Runs));
+            obj.BuiltRuns       = obj.Runs;
+            obj.BuiltPolarities = obj.Polarities;
             obj.reset();
         end
 
@@ -516,31 +556,108 @@ classdef Schedule < handle
             % loop passes (see loopRun) belong to the acquisition that
             % produced them, not to the plan, so re-starting drops all three:
             % reset() returns the schedule to exactly the state build() left
-            % it in, and the make-up budget starts over with it.
-            m = obj.IsMakeup | obj.IsRepeat | obj.IsLoop;
-            if any(m)
-                obj.Runs(m)       = [];
-                obj.Polarities(m) = [];
-                obj.IsMakeup(m)   = [];
-                obj.IsRepeat(m)   = [];
-                obj.IsLoop(m)     = [];
-            end
-            obj.RunCounts(:)  = 0;
-            obj.MakeupUsed(:) = 0;
+            % it in, and the make-up budget starts over with it. So does the
+            % Disabled mask, and the built runs it may have edited are put
+            % back.
+            obj.Runs       = obj.BuiltRuns;
+            obj.Polarities = obj.BuiltPolarities;
+            obj.IsMakeup   = false(1,numel(obj.Runs));
+            obj.IsRepeat   = false(1,numel(obj.Runs));
+            obj.IsLoop     = false(1,numel(obj.Runs));
+            n = obj.Set.numStimuli;
+            obj.RunCounts  = zeros(1,n);
+            obj.MakeupUsed = zeros(1,n);
+            obj.Disabled   = false(1,n);
+            obj.Skipped    = zeros(1,n);
             if isempty(obj.Runs), obj.CurrentRun = 0; else, obj.CurrentRun = 1; end
         end
 
         function r = current(obj), r = obj.CurrentRun; end
 
         function tf = isComplete(obj)
-            tf = obj.CurrentRun == 0 || obj.CurrentRun >= obj.NumRuns;
+            % True when nothing is left to present after the current run --
+            % with the Disabled mask in force, so a plan whose remaining runs
+            % hold only disabled stimuli is complete now.
+            tf = obj.CurrentRun == 0 || isempty(obj.nextRun());
         end
 
         function r = advance(obj)
+            % Move to the next run, applying the Disabled mask to it first
+            % (see setEnabled); runs the mask empties are dropped on the way.
             if obj.CurrentRun == 0 || obj.CurrentRun >= obj.NumRuns
                 obj.CurrentRun = 0; r = [];
+                return
+            end
+            k = obj.CurrentRun + 1;
+            while k <= obj.NumRuns
+                obj.applyDisabled(k);
+                if ~isempty(obj.Runs{k}), break; end
+                obj.Runs(k)       = [];
+                obj.Polarities(k) = [];
+                obj.IsMakeup(k)   = [];
+                obj.IsRepeat(k)   = [];
+                obj.IsLoop(k)     = [];
+            end
+            if k > obj.NumRuns
+                obj.CurrentRun = 0; r = [];
             else
-                obj.CurrentRun = obj.CurrentRun + 1; r = obj.CurrentRun;
+                obj.CurrentRun = k; r = k;
+            end
+        end
+
+        % --- Disabling upcoming conditions ---------------------------------
+        function setEnabled(obj,idx,tf)
+            % Switch stimuli on or off for every run not yet started.
+            %
+            %   setEnabled(idx,tf) -- idx are stimulus indices, tf a scalar
+            %   or one logical per index. Takes effect at the next advance();
+            %   the current run is never changed (see the class help).
+            n   = obj.Set.numStimuli;
+            idx = double(idx(:)');
+            assert(all(idx >= 1 & idx <= n & idx == round(idx)), ...
+                'mabr:stim:Schedule:enableRange', ...
+                'Stimulus index out of range (1..%d).',n);
+            tf = logical(tf(:)');
+            if isscalar(tf), tf = repmat(tf,1,numel(idx)); end
+            assert(numel(tf) == numel(idx),'mabr:stim:Schedule:enableSize', ...
+                'setEnabled needs one value, or one per stimulus index.');
+            if numel(obj.Disabled) < n, obj.Disabled(end+1:n) = false; end
+            was = obj.Disabled(idx);
+            obj.Disabled(idx) = ~tf;
+            changed = idx(was ~= ~tf);
+            if isempty(changed), return; end
+            on  = changed(tf(was ~= ~tf));
+            off = changed(~tf(was ~= ~tf));
+            if ~isempty(off)
+                mabr.log.vprintf(1,'Disabled stimulus %s for the runs not yet started.', ...
+                    mat2str(off));
+            end
+            if ~isempty(on)
+                mabr.log.vprintf(1,'Re-enabled stimulus %s.',mat2str(on));
+            end
+        end
+
+        function tf = isEnabled(obj,idx)
+            % Whether each stimulus in idx (default: all) will be presented
+            % in the runs not yet started.
+            n = obj.Set.numStimuli;
+            if nargin < 2, idx = 1:n; end
+            d = false(1,n);
+            d(1:min(n,numel(obj.Disabled))) = obj.Disabled(1:min(n,numel(obj.Disabled)));
+            tf = ~d(idx);
+        end
+
+        function c = upcomingCounts(obj)
+            % Presentations per stimulus in the runs after the current one --
+            % the ones setEnabled can still reach -- counted as planned,
+            % disabled stimuli included.
+            n = obj.Set.numStimuli;
+            c = zeros(1,n);
+            if obj.CurrentRun == 0, return; end
+            for r = obj.CurrentRun+1:obj.NumRuns
+                s = obj.Runs{r};
+                s = s(s >= 1 & s <= n);
+                c = c + accumarray(s(:),1,[n 1]).';
             end
         end
 
@@ -592,6 +709,10 @@ classdef Schedule < handle
             counts = max(0,round(counts(:)'));
             if numel(counts) < numel(added), counts(end+1:numel(added)) = 0; end
             counts = counts(1:numel(added));
+            % A condition the user has switched off is not made up: the
+            % make-up run would only be dropped when it was reached.
+            counts(~obj.isEnabled()) = 0;
+            if ~any(counts > 0), return; end
 
             reps   = obj.normalizedRepetitions();
             alt    = obj.Set.alternatesPolarity();
@@ -676,6 +797,10 @@ classdef Schedule < handle
             n    = reps(stimIndex);
             assert(n > 0,'mabr:stim:Schedule:repeatZero', ...
                 'Stimulus %d has 0 scheduled repetitions -- nothing to repeat.',stimIndex);
+
+            % Asking for a run of it is asking for it: a disabled stimulus
+            % is switched back on, or advance() would drop the run.
+            if ~obj.isEnabled(stimIndex), obj.setEnabled(stimIndex,true); end
 
             alt = obj.Set.alternatesPolarity();
             obj.Runs{end+1}       = repmat(stimIndex,1,n);
@@ -911,6 +1036,43 @@ classdef Schedule < handle
     end
 
     methods (Access = private)
+        function k = nextRun(obj)
+            % The first run after the current one that the Disabled mask
+            % leaves anything in; [] if none. Does not change the plan.
+            k = [];
+            d = obj.Disabled;
+            for r = obj.CurrentRun+1:obj.NumRuns
+                s = obj.Runs{r};
+                if isempty(d)
+                    on = ~isempty(s);
+                else
+                    on = any(s > numel(d) | ~d(min(s,numel(d))));
+                end
+                if on, k = r; return; end
+            end
+        end
+
+        function applyDisabled(obj,r)
+            % Remove the disabled stimuli's presentations from run r, which
+            % is about to become current. A make-up run's removed
+            % presentations go back to the make-up budget.
+            s = obj.Runs{r};
+            d = obj.Disabled;
+            if isempty(s) || ~any(d), return; end
+            n    = numel(d);
+            drop = s <= n & d(min(max(s,1),n));
+            if ~any(drop), return; end
+            c = accumarray(reshape(s(drop),[],1),1,[n 1]).';
+            obj.Skipped = obj.Skipped + c;
+            if obj.IsMakeup(r)
+                obj.MakeupUsed = max(0,obj.MakeupUsed - c);
+            end
+            obj.Runs{r}       = s(~drop);
+            obj.Polarities{r} = obj.Polarities{r}(~drop);
+            mabr.log.vprintf(1,'Run %d: skipped %d presentation(s) of disabled stimulus %s.', ...
+                r,sum(drop),mat2str(find(c)));
+        end
+
         function p = onsetPeriods(obj,nPres,Fs)
             % The nPres-1 onset-to-onset intervals of a run, in samples.
             if obj.isRandomISI()

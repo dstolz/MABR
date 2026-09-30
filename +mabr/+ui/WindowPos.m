@@ -15,12 +15,22 @@ classdef WindowPos
 %   not just the settings. Positions stay in prefs either way -- a
 %   configuration overwrites them, it is not a second place they live.
 %
+%   arrangeRegion/tile are the arithmetic behind mabr.ui.App's Arrange
+%   windows button: the strip of the display beside the main window, cut
+%   into one cell per open viewer. Pure functions of rectangles, so they are
+%   tested without a window (tests/verify_window_arrange.m).
+%
 %   A remembered position is only honoured if it still lands on the current
 %   display -- monitors get unplugged, and a window restored onto a screen
 %   that no longer exists is unreachable. Everything is clamped into the
 %   visible screen area before being applied.
 %
 % Daniel Stolzberg (c) 2019-2026
+
+    properties (Constant)
+        ArrangeGap      = 8     % px between windows the Arrange button tiles
+        MinArrangeWidth = 400   % px; narrower than this beside the main window, tile the whole display
+    end
 
     methods (Static)
         function restore(fig,name,defaultPos,minSize)
@@ -122,6 +132,79 @@ classdef WindowPos
             end
             if strcmp(fig.Resize,'off'), pos(3:4) = fig.Position(3:4); end
             fig.Position = mabr.ui.WindowPos.clampToScreen(pos);
+        end
+
+        function region = arrangeRegion(anchor,monitors,margin)
+            % The screen area the Arrange button tiles the viewers into: the
+            % wider of the two strips beside the ANCHOR window (the main
+            % window, in OUTER coordinates) on the display holding its centre,
+            % so the tiled windows never cover it. Falls back to the whole
+            % display when neither strip is at least MinArrangeWidth wide
+            % (the main window parked mid-screen on a small display). MARGIN
+            % is kept clear at the bottom for a taskbar. Pure arithmetic, so
+            % it is tested without a window (verify_window_arrange).
+            if nargin < 2 || isempty(monitors), monitors = get(0,'MonitorPositions'); end
+            if nargin < 3, margin = 40; end
+            gap = mabr.ui.WindowPos.ArrangeGap;
+            scr = mabr.ui.WindowPos.monitorOf(anchor,monitors);
+            y0  = scr(2) + margin;
+            h   = scr(4) - margin;
+            rightX = anchor(1) + anchor(3) + gap;
+            rightW = scr(1) + scr(3) - rightX;
+            leftX  = scr(1);
+            leftW  = anchor(1) - gap - scr(1);
+            if max(rightW,leftW) < mabr.ui.WindowPos.MinArrangeWidth
+                region = [scr(1) y0 scr(3) h];
+            elseif rightW >= leftW
+                region = [rightX y0 rightW h];
+            else
+                region = [leftX y0 leftW h];
+            end
+        end
+
+        function rects = tile(region,n)
+            % Split REGION ([x y w h]) into N non-overlapping cells, ArrangeGap
+            % apart, filled row by row from the top left. The column count is
+            % the one whose cells hold the largest 4:3 box -- the viewers are
+            % landscape windows, and a column of slivers or a row of them
+            % would suit none of them -- with fewer empty cells breaking a tie.
+            % Returns N rows of [x y w h].
+            rects = zeros(n,4);
+            if n < 1, return; end
+            gap  = mabr.ui.WindowPos.ArrangeGap;
+            best = -Inf; cols = 1;
+            for c = 1:n
+                r  = ceil(n/c);
+                cw = (region(3) - (c-1)*gap)/c;
+                ch = (region(4) - (r-1)*gap)/r;
+                score = min(cw/4,ch/3) - 1e-6*(r*c - n);
+                if score > best, best = score; cols = c; end
+            end
+            rows = ceil(n/cols);
+            cw = floor((region(3) - (cols-1)*gap)/cols);
+            ch = floor((region(4) - (rows-1)*gap)/rows);
+            top = region(2) + region(4);
+            for k = 1:n
+                i = floor((k-1)/cols);          % row, 0 = top
+                j = mod(k-1,cols);              % column, 0 = left
+                rects(k,:) = [region(1) + j*(cw+gap), top - (i+1)*ch - i*gap, cw, ch];
+            end
+        end
+
+        function scr = monitorOf(pos,monitors)
+            % The display whose bounds contain POS's centre, or the primary
+            % one when none does (see clampToScreen).
+            if nargin < 2 || isempty(monitors), monitors = get(0,'MonitorPositions'); end
+            cx = pos(1) + pos(3)/2;
+            cy = pos(2) + pos(4)/2;
+            in = cx >= monitors(:,1) & cx < monitors(:,1)+monitors(:,3) & ...
+                 cy >= monitors(:,2) & cy < monitors(:,2)+monitors(:,4);
+            row = find(in,1);
+            if isempty(row)
+                row = find(monitors(:,1) == 1 & monitors(:,2) == 1,1);
+                if isempty(row), row = 1; end
+            end
+            scr = monitors(row,:);
         end
 
         function pos = clampToScreen(pos)

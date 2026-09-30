@@ -208,6 +208,8 @@ Each button is drawn as what its window shows; hover for the tooltip if the pict
 | a stack of traces | Raises the Trace Organizer, refreshed with the conditions completed so far. |
 | a loudspeaker | Opens the Stimulus Viewer on the loaded bank. |
 | three part-filled bars | Opens the [Progress Monitor](Viewing-Data.md#progressmonitor) — how much of the schedule is done, and which conditions are still short. |
+| three cascaded windows | Raises every open MABR window, the main window last. |
+| four tiled windows | **Arranges** every open MABR window: the main window stays put and the others are tiled in a grid over the wider strip of its display beside it, without overlapping it or each other, then all are raised. Pressing again gives the same layout. |
 | **?** | Opens the [MABR wiki](https://github.com/dstolz/MABR/wiki) in a browser (same as **Help ▸ MABR Wiki**). |
 
 All three viewers are described in [Viewing Data](Viewing-Data.md). Under **Stimulation only** the live-plot and analysis buttons are disabled along with the whole Acquisition panel: nothing is recorded, so there is nothing for either to show.
@@ -247,6 +249,7 @@ Advance and Abort both save what was recorded. Neither discards data. Stopping a
 - **The advance criterion still ends each pass** (a pass that reaches its sweep count or correlation threshold stops there) — and the pass is then presented again. It decides when a pass has enough, not when to leave the condition.
 - **Advance still means advance**: it ends the pass and moves on to the next run — which, with Loop still on, is then held in its turn. **Abort** still halts the schedule.
 - A pass of an artifact make-up run is a full run of that stimulus at its scheduled count, not another make-up-sized one.
+- Switching the looped condition off in the presentation-order window ends the loop on it: its next pass is dropped and the schedule goes on.
 - The progress window says `looping` and names each inserted pass `(loop)`; while Loop is on it quotes no time left or finish time, because a looping schedule has no end of its own.
 - Loop is not saved in a configuration or between sessions: MABR always opens with it off.
 
