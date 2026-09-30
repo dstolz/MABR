@@ -9,7 +9,10 @@ function [vals,errs,done] = evaluateJobs(C,jobs,budget,memo)
 %       jobs   struct array, one metric each: .Fcn (v = Fcn(ctx), see
 %              mabr.metrics.online.context), .Window ([t0 t1] ms, or [] for
 %              all), .Name (for the error report), and optionally .Sig -- a
-%              string naming the metric itself (see memo)
+%              string naming the metric itself (see memo) -- and
+%              .WhileAcquiring (default true): false leaves every LIVE
+%              condition NaN without calling the metric, or even building
+%              its context (see mabr.metrics.online.catalog)
 %       vals   [nJobs x nConds] double, NaN wherever there is nothing to
 %              report -- no sweeps yet, a metric that threw, or one that was
 %              not reached (see budget)
@@ -66,12 +69,14 @@ done = false(nJ,nC);
 if nJ == 0 || nC == 0, return; end
 
 if useMemo && memo.Count > MaxMemo, remove(memo,keys(memo)); end
-sig = cell(1,nJ);
+sig    = cell(1,nJ);
+onLive = true(1,nJ);                % evaluated over live conditions too
 for j = 1:nJ
     sig{j} = '';
     if useMemo && isfield(jobs(j),'Sig') && ~isempty(jobs(j).Sig)
         sig{j} = [char(jobs(j).Sig) '|' windowKey(getf(jobs(j),'Window',[]))];
     end
+    onLive(j) = logical(getf(jobs(j),'WhileAcquiring',true));
 end
 
 live  = logical([C.Live]);
@@ -91,6 +96,7 @@ for i = order
         if toc(t0) > budget, return; end
         done(j,i) = true;
         if n < 1, continue; end             % NaN: nothing to measure yet
+        if c.Live && ~onLive(j), continue; end  % NaN: measured once it finishes
 
         key = '';
         if ~isempty(base) && ~isempty(sig{j})

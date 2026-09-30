@@ -18,6 +18,9 @@ function compute_loop(rootPath,resultQueue,role)
 %                which the live surface deliberately does not carry), keeps
 %                the session's condition table, evaluates the requested
 %                metrics and publishes them to mabr.compute.MetricBuffer.
+%                The run in progress becomes live conditions only while
+%                some window has a job here, since that copies every sweep
+%                of it.
 %                This is the process user-supplied metric functions run in,
 %                so a hung one costs the analysis windows and nothing else.
 %
@@ -222,15 +225,27 @@ function [rosterId,rosterKeys] = metric_cycle(pipe,rb,run,store,jobs,custom, ...
     customGen,catalog,out,resultQueue,rosterId,rosterKeys,reqSeq,budget,cfg,memo)
 % One pass of the metrics worker: the run in progress as live conditions
 % over the finalized table, then every requested metric over the result.
+nSlots = cfg.MaxComputeJobs;
+J = build_jobs(jobs,custom,customGen,catalog,nSlots);
+active = find(~cellfun(@isempty,{J.Fcn}));
+
+% The pipeline follows the run whatever is asked of it -- a step costs only
+% the sweeps that arrived since the last one. Splitting the run into live
+% conditions copies every sweep of it, so that waits for a window with a job
+% here: this worker outlives the analysis window that launched it. The
+% sweeps come as columns, the orientation the pipeline caches them in and a
+% condition holds them in; as rows they were transposed there and back.
 L = mabr.compute.ConditionStore.empty();
 if ~isempty(run)
     pipe.step(rb);
-    S = pipe.sweeps();
-    if S.n > 0
-        snap = struct('Sweeps',S.Y,'Time',S.t,'StimIndex',S.stimIdx,'Bad',S.bad, ...
-            'Stimuli',run.Stimuli,'Labels',{getf(run,'Labels',{})}, ...
-            'SampleRate',cfg.ADCSampleRate);
-        L = mabr.compute.ConditionStore.fromLive(snap,getf(run,'Meta',[]));
+    if ~isempty(active)
+        S = pipe.columns();
+        if S.n > 0
+            snap = struct('Columns',S.Y,'Time',S.t,'StimIndex',S.stimIdx,'Bad',S.bad, ...
+                'Stimuli',run.Stimuli,'Labels',{getf(run,'Labels',{})}, ...
+                'SampleRate',cfg.ADCSampleRate);
+            L = mabr.compute.ConditionStore.fromLive(snap,getf(run,'Meta',[]));
+        end
     end
 end
 C    = mabr.compute.ConditionStore.conditions(store,L);
@@ -245,9 +260,6 @@ if ~isequal(keys,rosterKeys)
         'params',{{C.Params}}));
 end
 
-nSlots = cfg.MaxComputeJobs;
-J = build_jobs(jobs,custom,customGen,catalog,nSlots);
-active = find(~cellfun(@isempty,{J.Fcn}));
 vals   = nan(nSlots,numel(C));
 incomplete = 0;
 if ~isempty(active) && ~isempty(C)
@@ -269,7 +281,9 @@ function J = build_jobs(jobs,custom,customGen,catalog,nSlots)
 % for evaluateJobs' memo: a catalog entry by name, a custom function by its
 % slot and the generation of that slot's function, so one replaced by
 % another -- even with the same text -- is never answered from the last.
-J = repmat(struct('Name','','Fcn',[],'Window',[],'Sig',''),1,nSlots);
+% WhileAcquiring is the catalog entry's (a custom metric is evaluated live).
+J = repmat(struct('Name','','Fcn',[],'Window',[],'Sig','','WhileAcquiring',true), ...
+           1,nSlots);
 for i = 1:min(nSlots,size(jobs,1))
     row = jobs(i,:);
     if row(1) <= 0, continue; end
@@ -283,6 +297,7 @@ for i = 1:min(nSlots,size(jobs,1))
         J(i).Fcn  = catalog(idx).Fcn;
         J(i).Name = catalog(idx).Name;
         J(i).Sig  = ['catalog:' catalog(idx).Key];
+        J(i).WhileAcquiring = catalog(idx).WhileAcquiring;
     else
         continue
     end

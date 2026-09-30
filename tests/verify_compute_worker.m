@@ -22,7 +22,9 @@ function verify_compute_worker()
 %           the values match the same window evaluating in-process; a window
 %           opened with every slot taken falls back; a hung custom metric
 %           costs its window and not the live path, and the worker comes
-%           back without it.
+%           back without it. And the run in progress, on the worker: a live
+%           condition is evaluated like any other, except by the sweep
+%           correlation, which leaves it blank until its block lands.
 %   Part G: the online advance criterion still stops a run early when the
 %           correlation it judges is the worker's.
 %   Part H: a run reaches the compute workers only at its Acquire, once
@@ -331,6 +333,57 @@ fprintf('    (worker back after %.1f s)\n',toc(t0));
 assert(ctrl.Compute.hasMetrics() && mp.ServedByWorker, ...
     'the relaunched metrics worker did not come back to serve the window');
 fprintf('  PASS Part E: metrics worker matches in-process; slots run out gracefully; a hung metric is contained\n');
+
+% The run in progress, on the worker. It reaches the metrics worker's table
+% as columns, copied only while a window has a job there, and a live
+% condition is evaluated like any other -- except by the sweep correlation,
+% which compares every pair of sweeps: a condition gaining sweeps every cycle
+% would pay for that again and again, so its point stays blank until the
+% block lands. A stimulus of its own keeps Part B's finished conditions on
+% the plot beside it, still with their correlations.
+solo = mabr.stim.demoStimuli(cfg,'Frequencies',4,'Levels',40);
+ctrl.setStimuli(solo);
+ctrl.Schedule.Strategy    = 'conventional';
+ctrl.Schedule.Repetitions = 600;              % ~12 s; aborted once checked
+ctrl.Schedule.ISI         = 0.02;
+ctrl.Schedule.build();
+ctrl.Schedule.TestingFrameDelay = 1024/cfg.DACSampleRate;
+ctrl.AdvanceFcn    = @mabr.stim.advance.num_sweeps;
+ctrl.AdvanceParams = struct('targetSweeps',Inf,'corrThreshold',1,'minSweeps',Inf, ...
+                            'maxSweeps',Inf);
+liveVals = @(V) [V([V.Live]).Value];
+doneVals = @(V) [V(~[V.Live]).Value];
+mp.Metric = 'rms';
+ctrl.start();
+V = []; t0 = tic;
+while toc(t0) < 30
+    pause(0.3);
+    V = mp.values();
+    if mp.ServedByWorker && any([V.Live]) && all(isfinite(liveVals(V))), break; end
+end
+assert(mp.ServedByWorker && any([V.Live]) && all(isfinite(liveVals(V))), ...
+    'the metrics worker did not evaluate the run in progress');
+mp.Metric = 'corr';
+t0 = tic;
+while toc(t0) < 30
+    pause(0.3);
+    V = mp.values();
+    if mp.ServedByWorker && any([V.Live]) && ~isempty(doneVals(V)) ...
+            && all(isfinite(doneVals(V)))
+        break
+    end
+end
+assert(mp.ServedByWorker && any([V.Live]) && ~isempty(doneVals(V)), ...
+    'the worker lost the run in progress, or the finished conditions, under the sweep correlation');
+assert(all(isnan(liveVals(V))), ...
+    'the worker computed the sweep correlation over a condition still acquiring');
+assert(all(isfinite(doneVals(V))), ...
+    'the finished conditions lost their sweep correlation on the worker');
+ctrl.abort();
+wait_until(@() ctrl.State == mabr.ui.ProgState.Idle,60);
+assert(ctrl.State == mabr.ui.ProgState.Idle, ...
+    'the aborted run did not come to rest (state %s)',string(ctrl.State));
+fprintf('  PASS Part E: the run in progress is evaluated on the worker; the sweep correlation waits for it to finish\n');
 
 %% ---- Part G: the advance criterion through the worker ------------------
 % The correlation the criterion judges is the worker's: a blocked run with a

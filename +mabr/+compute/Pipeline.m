@@ -16,7 +16,7 @@ classdef Pipeline < handle
 %       p.configure(window,filters,artifacts);   % designs the chain at the ADC rate
 %       p.beginRun(runInfo);                     % what the onsets belong to
 %       stats = p.step(ringBuffer);              % one cycle, [] until a sweep exists
-%       S     = p.sweeps();                      % the filtered sweeps behind it
+%       S     = p.columns();                     % the filtered sweeps behind it
 %       F     = p.finalize(ringBuffer,seq);      % the DSP half of finalization
 %       p.endRun();
 %
@@ -48,9 +48,13 @@ classdef Pipeline < handle
 %   standard deviation and the counts. Every band the live view can draw is a
 %   function of (mean, SD, n) -- see mabr.metrics.band_from_stats -- so this
 %   is all a view needs, and it is small enough to publish through a memory
-%   map twenty times a second. sweeps() is there for the consumers that do
+%   map twenty times a second. columns() is there for the consumers that do
 %   need the matrix (the in-process snapshot the analysis windows read, and
-%   the metrics worker's condition table).
+%   the metrics worker's condition table), in the cache's own orientation,
+%   one sweep per column -- the one a condition holds its sweeps in, so
+%   nothing between here and a metric transposes the run. It is a copy of
+%   every sweep so far, so it is made only when asked for, and CopyCount
+%   says how often that was. sweeps() is the same with rows as sweeps.
 %
 %   PREVIEW, NOT VERDICT
 %   The artifact flags step() reports are a preview: the authoritative call
@@ -90,6 +94,10 @@ classdef Pipeline < handle
         % a controller served by a worker never steps its own pipeline, and
         % a test can read that off this number.
         StepCount (1,1) double = 0
+        % Copies of the sweep matrix handed out (columns / sweeps) since
+        % construction -- the same kind of detector: a controller whose live
+        % snapshot no analysis window pulls never makes one.
+        CopyCount (1,1) double = 0
     end
 
     properties (Access = private)
@@ -286,16 +294,31 @@ classdef Pipeline < handle
             obj.LastStats = stats;
         end
 
-        function S = sweeps(obj)
-            % The filtered sweeps behind the last step(): Y [nSweeps x 2L]
-            % (rows = sweeps, the orientation the live path uses), t [1 x 2L]
-            % s re onset, bad [1 x nSweeps], stimIdx [1 x nSweeps] the
-            % stimulus behind each, n. What a consumer that needs the matrix
-            % rather than its statistics reads -- a COPY of the part in use,
-            % built on request: the analysis snapshot asks at most twice a
-            % second and the metrics worker once, and neither may hold the
-            % cache itself (the next step writes into it in place).
+        function S = columns(obj)
+            % The filtered sweeps behind the last step(): Y [2L x nSweeps],
+            % ONE SWEEP PER COLUMN, t [1 x 2L] s re onset, bad [1 x nSweeps],
+            % stimIdx [1 x nSweeps] the stimulus behind each, n. What a
+            % consumer that needs the matrix rather than its statistics
+            % reads -- a COPY of the part in use, built on request: the
+            % analysis snapshot is made at most twice a second, and only
+            % while a window pulls it, and the metrics worker asks once a
+            % cycle, and only while a window has a job there. Neither may
+            % hold the cache itself (the next step writes into it in place).
+            % Columns, because that is how the cache holds them and how a
+            % condition does (mabr.compute.ConditionStore): handed over as
+            % rows, the run was transposed here and straight back there,
+            % each time a full copy of it.
             n = obj.NumFiltered;
+            obj.CopyCount = obj.CopyCount + 1;
+            S = struct('Y',obj.Filt(:,1:n),'t',obj.Time,'bad',obj.Bad(1:n), ...
+                       'stimIdx',obj.Idx(1:n),'n',n);
+        end
+
+        function S = sweeps(obj)
+            % columns() with ROWS as sweeps: Y [nSweeps x 2L], the orientation
+            % a caller holding the sweeps as a list of traces wants.
+            n = obj.NumFiltered;
+            obj.CopyCount = obj.CopyCount + 1;
             S = struct('Y',obj.Filt(:,1:n).','t',obj.Time,'bad',obj.Bad(1:n), ...
                        'stimIdx',obj.Idx(1:n),'n',n);
         end

@@ -57,7 +57,7 @@ Pick the metric from the control strip. The built-ins are all computed from the 
 | Peak-to-peak | µV | Largest positive minus largest negative excursion of the average |
 | Peak amplitude | µV | Largest absolute excursion |
 | Peak latency | ms | Time of the **most prominent** peak — the same ranking the Trace Inspector's auto-detect uses |
-| Sweep correlation | *r* (Fisher z) | Mean pairwise correlation across sweeps: response reliability |
+| Sweep correlation | *r* (Fisher z) | Mean pairwise correlation across sweeps: response reliability. Shown once a condition finishes (see below) |
 | Split-half correlation | *r* | Odd-sweep average against even-sweep average |
 | SNR | dB | Plus/minus averaging (`mabr.metrics.snr`) |
 | Residual noise | µV | RMS of the odd-minus-even difference: what averaging has not removed yet |
@@ -74,7 +74,7 @@ Pick the metric from the control strip. The built-ins are all computed from the 
 Two sources, merged by stimulus ID:
 
 - **Finished conditions** — each block as it is finalized, plus a backfill of everything already done when the window opens. These are authoritative.
-- **The condition being acquired right now** — pulled from the live path on this window's own clock, so a point appears and firms up as the sweeps arrive. It is drawn with a **hollow ring**, and the subtitle says how many conditions are still filling, because a number from 40 sweeps is not the number the block will report.
+- **The condition being acquired right now** — pulled from the live path on this window's own clock, so a point appears and firms up as the sweeps arrive. It is drawn with a **hollow ring**, and the subtitle says how many conditions are still filling, because a number from 40 sweeps is not the number the block will report. The sweep correlation is the exception: it compares every pair of sweeps, which a condition gaining sweeps every refresh would pay for again and again (seconds per refresh by a few thousand sweeps), so a condition being acquired has no point under it until its block is finished, and the subtitle says *acquiring (shown when finished)*.
 
 Repeats and make-up runs of the same stimulus **accumulate**: the condition's point is computed from all of its sweeps, not just the newest run's.
 

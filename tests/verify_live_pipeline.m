@@ -11,10 +11,13 @@ function verify_live_pipeline()
 %   the sweeps each call windowed.
 %
 %   Part A: the statistics are those of the sweeps -- mean, std and
-%           partition_corr computed directly from sweeps() -- to rounding.
+%           partition_corr computed directly from sweeps() -- to rounding;
+%           columns() is the same matrix one sweep per column; and every copy
+%           of it handed out is counted (CopyCount).
 %   Part B: they do not depend on how the run arrives: one call, random
 %           slices, and one sweep at a time give BIT-IDENTICAL results (what
-%           keeps a DSP worker and this process in agreement).
+%           keeps a DSP worker and this process in agreement) -- and stepping
+%           copies the sweep matrix out not once.
 %   Part C: one condition, reached a sweep at a time, passes through exactly
 %           one clean sweep (SD 0) without tripping over its own masks.
 %   Part D: a new artifact policy mid-run re-judges and rebuilds, and ends
@@ -77,6 +80,14 @@ Rref  = mabr.metrics.partition_corr(X.Y(clean,1:L),X.Y(clean,L+1:end));
 assert(abs(S.Corr - Rref) < 1e-10,'Corr %.15g is not partition_corr''s %.15g',S.Corr,Rref);
 assert(S.NumArtifacts == nnz(X.bad) && S.NumArtifacts > 0, ...
     'the loud condition should have been judged artifact');
+% columns() is the same matrix in the cache's own orientation -- what the
+% analysis snapshot and the metrics worker read, so nothing between the
+% cache and a metric transposes the run -- and each copy handed out counts.
+Xc = p.columns();
+assert(isequal(Xc.Y,X.Y.') && isequal(Xc.t,X.t) && isequal(Xc.bad,X.bad) ...
+    && isequal(Xc.stimIdx,X.stimIdx) && Xc.n == X.n, ...
+    'columns() is not sweeps() with one sweep per column');
+assert(p.CopyCount == 2,'expected 2 copies handed out (sweeps, columns), counted %d',p.CopyCount);
 fprintf('  PASS Part A: means, SDs, counts and Corr are those of the sweeps (%d sweeps, %d rejected)\n', ...
     S.NumSweeps,S.NumArtifacts);
 
@@ -90,6 +101,10 @@ for f = {'Mean','SD','Corr','CondCounts','Latest','NumSweeps','NumClean','NumArt
     assert(isequaln(S.(f{1}),Srand.(f{1})) && isequaln(S.(f{1}),Sone.(f{1})), ...
         'the %s depends on how the run was sliced',f{1});
 end
+% A step returns statistics; the sweep matrix leaves the pipeline only when
+% somebody asks for it.
+assert(q.CopyCount == 0 && r.CopyCount == 0, ...
+    'stepping copied the sweep matrix out (%d and %d copies)',q.CopyCount,r.CopyCount);
 fprintf('  PASS Part B: one call, 40 random slices and one sweep at a time agree bit for bit\n');
 
 % ---- Part C: one condition, one sweep at a time ----------------------------

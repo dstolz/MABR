@@ -16,6 +16,8 @@ function verify_metric_plot()
 %          when there is no grid to draw);
 %       5. the run in progress: a live snapshot appears as a hollow point,
 %          overrides the finalized value for the same stimulus, and clears;
+%          the sweep correlation leaves it blank until it finishes; and a
+%          snapshot's sweeps as columns or as rows build the same table;
 %       6. repeats of one stimulus ACCUMULATE rather than replace;
 %       7. aesthetics: the right-click menu drives marker, grid, palette,
 %          legend, theme, point labels and plot type, and the menu is on the
@@ -97,6 +99,14 @@ assert(abs(p2p - (max(ctx.Mean)-min(ctx.Mean))*1e6) < 1e-9, ...
 eLat = mabr.metrics.online.catalog('latency');
 lat  = eLat.Fcn(ctx);
 assert(lat >= 0 && lat <= 10,'the peak latency (%g ms) is outside the window',lat);
+% Every entry says whether it is evaluated over a condition still being
+% acquired, and only the sweep correlation -- every PAIR of sweeps, re-paid
+% every refresh as a live condition grows -- waits for the condition to finish.
+assert(all(arrayfun(@(e) islogical(e.WhileAcquiring) && isscalar(e.WhileAcquiring),C)), ...
+    'a catalog entry does not say whether it is evaluated while acquiring');
+assert(isequal({C(~[C.WhileAcquiring]).Key},{'corr'}), ...
+    'only the sweep correlation should wait for a condition to finish (got: %s)', ...
+    strjoin({C(~[C.WhileAcquiring]).Key},', '));
 
 % The pairwise correlation is taken a tile at a time instead of through the
 % whole nSweeps x nSweeps corrcoef matrix (435 MB at 7,374 sweeps). It must
@@ -231,6 +241,40 @@ assert(isscalar(liveOne),'the live condition did not merge onto its stimulus ID'
 assert(liveOne.NumSweeps == nSweeps/2, ...
     'the live condition reports %d sweeps, expected %d',liveOne.NumSweeps,nSweeps/2);
 
+% The sweep correlation is not evaluated over a condition still acquiring: its
+% point is blank (not a stale or partial number) and the subtitle says why,
+% while every finished condition keeps its value.
+mp.Metric = 'corr';
+Vc = mp.values();
+assert(all(isnan([Vc([Vc.Live]).Value])), ...
+    'the sweep correlation was computed over a condition still acquiring');
+assert(all(isfinite([Vc(~[Vc.Live]).Value])), ...
+    'a finished condition lost its sweep correlation');
+assert(contains(mp.Axes.Subtitle.String,'shown when finished'), ...
+    'the subtitle does not say why the acquiring points are blank: %s', ...
+    mp.Axes.Subtitle.String);
+mp.Metric = 'rms';
+
+% The live path hands its sweeps over as COLUMNS -- the orientation the
+% pipeline caches them in and a condition holds them in -- where a snapshot
+% built by hand may carry rows. The two must build the same table, rejected
+% sweeps and all, and a condition that owns every sweep shares the matrix.
+snapB = snap; snapB.Bad(2:3:end) = true;
+for s = {snap,snapB}
+    rows = s{1};
+    cols = rmfield(rows,'Sweeps'); cols.Columns = rows.Sweeps.';
+    assert(isequal(mabr.compute.ConditionStore.fromLive(rows,stimuli), ...
+                    mabr.compute.ConditionStore.fromLive(cols,stimuli)), ...
+        'a snapshot''s sweeps as columns and as rows build different tables');
+end
+one = snap; one.StimIndex(:) = 1; one.Stimuli = 1; one.Labels = one.Labels(1);
+oneC = rmfield(one,'Sweeps'); oneC.Columns = one.Sweeps.';
+L1 = mabr.compute.ConditionStore.fromLive(oneC,stimuli);
+assert(isscalar(L1) && isequal(L1.Sweeps,oneC.Columns), ...
+    'a condition holding every sweep of the run does not hold them as handed over');
+assert(isequal(L1,mabr.compute.ConditionStore.fromLive(one,stimuli)), ...
+    'one condition as columns and as rows builds different tables');
+
 % A refresh that only moves the numbers moves the lines: the same objects,
 % new YData -- not the axes cleared and every series, the legend and the menus
 % rebuilt, once a second per window.
@@ -273,6 +317,15 @@ mabr.compute.evaluateJobs(C,job,[],memo);
 assert(calls('n') == 6,'a finished condition that gained sweeps must be evaluated again');
 mabr.compute.evaluateJobs(C,rmfield(job,'Sig'),[],memo);
 assert(calls('n') == 9,'a job with no signature is never remembered');
+% A job not evaluated while acquiring never calls its metric for the live
+% condition -- a NaN, and decided, not a cell the budget left unreached --
+% and still evaluates every finished one.
+calls('n') = 0;
+jobF = job; jobF.WhileAcquiring = false;
+[vF,~,doneF] = mabr.compute.evaluateJobs(C,jobF);
+assert(calls('n') == 2,'the metric was called %d times; the 2 finished conditions only',calls('n'));
+assert(isnan(vF(end)) && all(isfinite(vF(1:end-1))) && all(doneF), ...
+    'a job not evaluated while acquiring should leave the live condition NaN, done');
 % ...and under a budget, the live condition is reached first.
 slow = struct('Name','slow','Fcn',@(ctx) slow_metric(ctx),'Window',[],'Sig','');
 [~,~,done] = mabr.compute.evaluateJobs(C,slow,0.01);

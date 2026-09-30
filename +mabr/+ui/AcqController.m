@@ -11,19 +11,21 @@ classdef AcqController < handle
 %   trace and the advance criterion depend on: step the mabr.compute.Pipeline
 %   -- which extracts the new sweeps, filters them, previews the artifact
 %   verdict and correlates; the DSP lives there, not here -- then draw and
-%   decide. AuxTimer (~2 Hz, see
-%   AuxPeriod) does everything else drawn from a running block -- the snapshot
-%   the online analysis windows pull from, and the MetricsUpdated event the
-%   progress tally and the Run panel's readouts ride. The aux timer is
+%   decide. AuxTimer (~2 Hz, see AuxPeriod) raises the MetricsUpdated event
+%   the progress tally and the Run panel's readouts ride. The aux timer is
 %   'fixedSpacing'; the live one polls every LivePoll (10 ms) and draws a
 %   frame once LivePeriod (50 ms) has passed since the last one BEGAN
 %   (on_live_tick) -- so it holds 20 Hz while a frame costs less than about
 %   40 ms, and work in it still comes straight off the frame rate beyond
-%   that, which is the whole reason the slow half is not in it. Nothing on the
-%   aux timer recomputes anything -- the fast tick leaves a note in
-%   PendingLive that a run's sweeps are in this process, and the aux tick
-%   asks the pipeline for them (a copy of the run so far, built at most twice
-%   a second rather than on every live tick).
+%   that, which is the whole reason the slow half is not in it.
+%
+%   The snapshot the online analysis windows pull (liveSnapshot) is built by
+%   neither timer: it is a copy of every sweep of the run so far, so it is
+%   made when a window asks for it -- at most once per AuxPeriod however
+%   many ask, and only while the run's sweeps are in this process
+%   (LiveLocal). It used to be built on every aux tick, read or not: ~10 ms
+%   of the GUI thread twice a second at 9,000 sweeps, with nothing open to
+%   look at it.
 %
 %   Because the worker polls commands every frame, an online advance criterion
 %   (e.g. mabr.stim.advance.corr_threshold) can stop a run early the moment a
@@ -181,7 +183,8 @@ classdef AcqController < handle
         AmplifierGain (1,1) double {mustBePositive,mustBeFinite} = 1;
         % How often the LOW-priority views are served (s). The live trace is
         % fixed at 20 Hz and is not negotiable -- this is the other timer, the
-        % one carrying the progress tally and the online analysis snapshot.
+        % one carrying the progress tally -- and the most often the online
+        % analysis snapshot is rebuilt, however many windows pull it.
         % Raise it on a slow machine or with several analysis windows open:
         % nothing on it is time-critical, and every tick it does not take is a
         % tick the live view gets. Applied on assignment, mid-run included.
@@ -228,12 +231,13 @@ classdef AcqController < handle
         % costs more than that (less the poll) it drags the whole view down
         % with it. Moving the slow work here buys the trace back.
         AuxTimer
-        % What the fast tick leaves for the slow one: [] when there is no
-        % sweep matrix in this process (a worker does the DSP, or no run),
-        % else a note that the in-process pipeline holds the run's sweeps --
-        % the aux tick asks it for them (Pipeline.sweeps) when it builds the
-        % snapshot, so the copy is made at the aux rate, not the live one.
-        PendingLive = []
+        % Whether the run streaming has its sweeps in THIS process: set by
+        % a live tick whose statistics came from this controller's own
+        % pipeline, cleared by one served by the DSP worker (which leaves
+        % no sweep matrix here), when a run begins, and when it ends
+        % (stop_timer). liveSnapshot builds only while it is set, so a
+        % finished run cannot be served to a puller after the fact.
+        LiveLocal (1,1) logical = false
         % Frame pacing (on_live_tick): when the last frame began, in seconds
         % on LiveClock (a tic taken at construction). -Inf = the next poll
         % draws.
@@ -310,14 +314,13 @@ classdef AcqController < handle
         FinalizeTimer   = []
         FinalizePending (1,1) logical = false
         FinalizeRunId   (1,1) double = 0
-        % The most recent live tick's sweeps, kept so a window that refreshes
-        % on its OWN clock can see the run in progress without re-reading the
-        % ring buffer or forcing the 20 Hz tick to push at them (see
-        % liveSnapshot). [] whenever no run is streaming: it is cleared when a
-        % run begins and again the moment one completes, so a puller can never
-        % double-count the sweeps a finished run is about to be finalized
-        % into. Costs a copy of arrays the tick has already computed.
+        % The last snapshot a window pulled (see liveSnapshot), and when it
+        % was made (s on LiveClock), so several windows asking within one
+        % AuxPeriod share one copy. Cleared when a run begins and again the
+        % moment one completes, so a puller can never double-count the
+        % sweeps a finished run is about to be finalized into.
         LiveSnap = []
+        LiveSnapAt (1,1) double = -Inf
         % Per-tick timing of the run in progress (mabr.ui.LiveTiming): reset
         % at begin_current_run, fed by on_live_tick/on_aux_tick, summarized
         % into LastLiveTiming when the run completes.
@@ -615,15 +618,25 @@ classdef AcqController < handle
             % they read this when they are ready rather than being handed
             % copies twenty times a second.
             %
+            % BUILT WHEN ASKED FOR. The snapshot is a copy of every sweep of
+            % the run so far, so it is made here rather than on a timer, and
+            % kept: a pull within AuxPeriod of the last one made -- or with
+            % no sweep since -- gets that one, so however many windows ask,
+            % the run is copied at most once per AuxPeriod. Only while the
+            % run's sweeps are in this process (LiveLocal); with the DSP
+            % worker doing the signal processing there are none here, this
+            % is [], and the metrics worker serves the analysis windows.
+            %
             % Fields:
             %   Run         index of the run in the schedule
             %   SampleRate  Hz of the sweeps (the ADC rate)
             %   Time        [1 x nSamples] seconds re onset; STARTS NEGATIVE,
             %               because the live path carries the pre-onset
             %               baseline as part of one contiguous segment
-            %   Sweeps      [nSweeps x nSamples] volts, filtered by the
-            %               display chain in force -- rows are sweeps, the
-            %               orientation the live path uses
+            %   Columns     [nSamples x nSweeps] volts, filtered by the
+            %               display chain in force -- ONE SWEEP PER COLUMN,
+            %               the orientation the pipeline caches them in and
+            %               mabr.compute.ConditionStore.fromLive holds them in
             %   StimIndex   [1 x nSweeps] which stimulus evoked each sweep
             %   Bad         [1 x nSweeps] the artifact PREVIEW for each
             %   Stimuli     [1 x nStim] stimulus indices this run presents
@@ -633,6 +646,12 @@ classdef AcqController < handle
             % filtering are previews of what finalization will decide (see
             % live_tick_body), which is exactly what makes them the right
             % thing to watch WHILE it happens.
+            snap = [];
+            if ~obj.LiveLocal, return; end
+            stale = isempty(obj.LiveSnap) ...
+                || (size(obj.LiveSnap.Columns,2) ~= obj.CurMetrics.numSweeps ...
+                    && toc(obj.LiveClock) - obj.LiveSnapAt >= obj.AuxPeriod);
+            if stale, obj.build_live_snapshot(); end
             snap = obj.LiveSnap;
         end
 
@@ -718,8 +737,8 @@ classdef AcqController < handle
 
             obj.CurMetrics = struct('numSweeps',0,'numArtifacts',0, ...
                                     'numClean',0,'corr',0);
-            obj.LiveSnap    = [];
-            obj.PendingLive = [];   % the aux tick must not serve the last run
+            obj.LiveSnap  = [];
+            obj.LiveLocal = false;  % liveSnapshot must not serve the last run
             obj.BlockStart = char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss'));
             obj.RunStartTic = tic;
             if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot), obj.LivePlot.reset(); end
@@ -1173,20 +1192,25 @@ classdef AcqController < handle
             %
             % fresh = false when there was nothing to draw from, which is
             % what tells on_live_tick the poll was not a frame.
+            %
+            % LiveLocal says which it was, for liveSnapshot: the sweeps are
+            % in this process only while its own pipeline is being stepped.
+            % With the worker doing the DSP there is no sweep matrix here --
+            % the metrics worker serves the analysis windows then.
             fresh  = false;
             tStats = tic;
             if obj.usingWorkerDSP()
+                obj.LiveLocal = false;
                 [stats,changed] = obj.Compute.live();
                 obj.Timing.stats(toc(tStats),'worker');
                 % Nothing new since the last tick is nothing to do: the
                 % whole tick then costs one word read from the memory map.
                 if isempty(stats) || ~changed || stats.NumSweeps < 1, return; end
-                S = [];
             else
                 stats = obj.Pipeline.step(obj.Engine.RingBuffer);
                 obj.Timing.stats(toc(tStats),'local');
                 if isempty(stats), return; end
-                S = true;     % the sweeps are in this process (see below)
+                obj.LiveLocal = true;
             end
             fresh = true;
             R = stats.Corr;
@@ -1209,20 +1233,6 @@ classdef AcqController < handle
                 obj.Timing.render(toc(tRender),obj.LivePlot.RenderTiming);
             end
 
-            % Where the aux tick finds the sweeps for liveSnapshot: this
-            % process's pipeline, which it asks itself -- the sweep matrix is
-            % a copy of the run so far, built only when a snapshot is taken
-            % (at most twice a second), never on this 20 Hz path. With a
-            % worker doing the DSP there is no sweep matrix in this process,
-            % and liveSnapshot stays empty -- the metrics worker serves the
-            % analysis windows then.
-            if isempty(S)
-                obj.PendingLive = [];
-            else
-                obj.PendingLive = struct('fromPipeline',true, ...
-                    'metrics',obj.CurMetrics,'state',obj.State);
-            end
-
             % Online advance: stop the run early if the criterion is met. Only
             % meaningful when the run holds a single stimulus — pooling an
             % intermixed run's sweeps would compare different conditions, and
@@ -1237,11 +1247,11 @@ classdef AcqController < handle
         end
 
         function on_aux_tick(obj)
-            % The low-priority half of the live path: build the snapshot the
-            % analysis windows pull from, and tell everyone whose numbers just
-            % moved. Nothing here is recomputed -- the fast tick already did
-            % the sweep extraction, filtering and artifact preview, and left
-            % the result in PendingLive.
+            % The low-priority half of the live path: tell everyone whose
+            % numbers just moved. Nothing here is recomputed -- the fast tick
+            % already did the sweep extraction, filtering and artifact
+            % preview -- and nothing is copied: the analysis windows' snapshot
+            % is built when one of them asks (liveSnapshot).
             tAux = tic;
             try
                 obj.aux_tick_body();
@@ -1283,23 +1293,25 @@ classdef AcqController < handle
         end
 
         function aux_tick_body(obj)
-            % Cache what a slow puller needs (see liveSnapshot) -- only when
-            % the sweeps are in this process; a worker-served run leaves none.
-            P = obj.PendingLive;
-            if ~isempty(P)
-                S = obj.Pipeline.sweeps();
-                obj.LiveSnap = struct('Run',obj.CurRun, ...
-                    'SampleRate',obj.Config.ADCSampleRate, ...
-                    'Time',S.t,'Sweeps',S.Y, ...
-                    'StimIndex',obj.CurSeq(1:min(S.n,numel(obj.CurSeq))), ...
-                    'Bad',S.bad(:)','Stimuli',obj.CurStim,'Labels',{obj.CurLabels});
-            end
-
             % The tally and the Run panel ride this whichever process did
             % the DSP: nothing to say until the first sweep has been counted.
             if obj.CurMetrics.numSweeps < 1, return; end
             notify(obj,'MetricsUpdated', ...
                 mabr.ui.ProgStateEventData(obj.State,obj.CurMetrics));
+        end
+
+        function build_live_snapshot(obj)
+            % The run so far as liveSnapshot hands it over: the pipeline's
+            % sweeps as they are cached, one per column (see
+            % mabr.compute.Pipeline.columns), with the stimulus the plan put
+            % behind each -- the same pairing finalization de-interleaves by.
+            S = obj.Pipeline.columns();
+            obj.LiveSnap = struct('Run',obj.CurRun, ...
+                'SampleRate',obj.Config.ADCSampleRate, ...
+                'Time',S.t,'Columns',S.Y, ...
+                'StimIndex',obj.CurSeq(1:min(S.n,numel(obj.CurSeq))), ...
+                'Bad',S.bad(:)','Stimuli',obj.CurStim,'Labels',{obj.CurLabels});
+            obj.LiveSnapAt = toc(obj.LiveClock);
         end
 
         function apply_aux_period(obj)
@@ -1817,9 +1829,8 @@ classdef AcqController < handle
             catch %#ok<CTCH>
             end
             % The run is over: nothing should be able to pull a snapshot of it
-            % out of the aux tick after the fact, and the pipeline stops
-            % attributing sweeps to it.
-            obj.PendingLive = [];
+            % after the fact, and the pipeline stops attributing sweeps to it.
+            obj.LiveLocal = false;
             obj.PendingRunStart = [];   % a run over before it streamed never starts
             if ~isempty(obj.Pipeline), obj.Pipeline.endRun(); end
             if ~isempty(obj.Compute) && obj.Compute.InRun

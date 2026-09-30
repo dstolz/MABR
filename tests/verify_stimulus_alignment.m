@@ -29,7 +29,10 @@ function verify_stimulus_alignment(varargin)
 %               walked through every phase of a timing pulse
 %       Part G  polarity: an alternating condition's sweeps carry the signs
 %               the plan assigned, in that order
-%       Part H  the compute workers: the same run through the worker gives the
+%       Part H  the snapshot an analysis window pulls mid-run: made only when
+%               pulled, at most once however many windows ask, and each of
+%               its conditions is its own
+%       Part I  the compute workers: the same run through the worker gives the
 %               same alignment and the same numbers
 %
 %   In TESTING loopback the DAC frame IS the ADC frame (plus ~1e-6 of noise),
@@ -45,7 +48,7 @@ function verify_stimulus_alignment(varargin)
 %   amount, so Part B asserts a CONSTANT offset (and reports it) rather than
 %   zero, and Part B's sample-exact waveform comparison is skipped -- what
 %   comes back through a real converter is not bit-identical to what went out.
-%   Everything else is asserted identically. Part H needs a three-worker pool
+%   Everything else is asserted identically. Part I needs a three-worker pool
 %   and skips where the machine cannot provide one.
 %
 %   See also verify_timing_loopback (pulse recovery, jitter and drift as a rig
@@ -346,12 +349,61 @@ if opt.Testing
 end
 fprintf('  PASS Part G: %d presentations alternate +1/-1 in the order the block records\n',numel(sp));
 
+%% ---- Part H: the snapshot an analysis window pulls ----------------------
+% The runs above had nothing pulling the live snapshot, so the controller
+% never copied its sweeps out: the copy of the run so far is made when an
+% analysis window asks for it, not on every aux tick whether anyone reads it
+% or not (~10 ms of the GUI thread twice a second at 9,000 sweeps).
+assert(ctrl.Pipeline.CopyCount == 0, ...
+    'the controller copied its sweeps out %d times with no window to read them', ...
+    ctrl.Pipeline.CopyCount);
+
+% Now pull it the way several windows refreshing at once would -- back to
+% back, on every aux tick of a run -- and hold the last one against the plan.
+got = containers.Map('KeyType','char','ValueType','any');
+for k = {'events','snaps','worst','differ'}, got(k{1}) = 0; end
+got('last') = [];
+lh = addlistener(ctrl,'MetricsUpdated',@(~,~) pull_snapshots(ctrl,got));
+P  = run_bank(ctrl,bank,60,sch.ISI,'interleaved',opt);
+delete(lh);
+assert(got('snaps') > 0,'no snapshot was served during a run in this process');
+assert(got('worst') <= 1 && got('differ') == 0, ...
+    ['three back-to-back pulls copied the run %d times (%d times not the same ' ...
+     'snapshot); they should share one copy'],got('worst'),got('differ'));
+assert(isempty(ctrl.liveSnapshot()), ...
+    'a snapshot is still served after its run ended -- a window would count its sweeps twice');
+
+s = got('last');
+n = size(s.Columns,2);
+assert(n > 0 && size(s.Columns,1) == numel(s.Time) ...
+    && numel(s.StimIndex) == n && numel(s.Bad) == n, ...
+    'the snapshot is not one sweep per column with a stimulus and a verdict for each');
+assert(isequal(s.StimIndex,P.seq(1:n)), ...
+    'the snapshot attributes its %d sweeps differently from the plan',n);
+Lc = mabr.compute.ConditionStore.fromLive(s,bank);
+assert(numel(Lc) == bank.numStimuli, ...
+    'the snapshot split into %d conditions, not %d',numel(Lc),bank.numStimuli);
+for i = 1:numel(Lc)
+    u = find(strcmp(bank.IDs(),Lc(i).Key),1);
+    m = bank.meta(u);
+    assert(size(Lc(i).Sweeps,2) == nnz(s.StimIndex == u & ~s.Bad), ...
+        'the snapshot gives "%s" %d sweeps; the plan put %d of the first %d there', ...
+        m.ID,size(Lc(i).Sweeps,2),nnz(s.StimIndex == u),n);
+    fMeas = dominant_hz(mean(Lc(i).Sweeps(Lc(i).Time >= 0,:),2),adcFs);
+    assert(abs(fMeas - m.Frequency*1000) < 150, ...
+        ['the snapshot''s condition "%s" (%g kHz) peaks at %.0f Hz -- its sweeps ' ...
+         'belong to another condition'],m.ID,m.Frequency,fMeas);
+end
+fprintf(['  PASS Part H: no copy while nothing pulls; %d pulls served from %d copies; ' ...
+         'the last (%d sweeps) splits into its own conditions\n'], ...
+    3*got('events'),ctrl.Pipeline.CopyCount,n);
+
 delete(ctrl); clear cleaner
 
-%% ---- Part H: the same, through the compute workers ---------------------
+%% ---- Part I: the same, through the compute workers ---------------------
 [pool,ok] = mabr.pool(3);
 if ~ok
-    fprintf(['  SKIP Part H: the parallel pool cannot hold three workers on this ' ...
+    fprintf(['  SKIP Part I: the parallel pool cannot hold three workers on this ' ...
              'machine (it has %d).\n'],pool.NumWorkers);
     fprintf('== verify_stimulus_alignment PASSED ==\n');
     return
@@ -361,7 +413,7 @@ wc = mabr.ui.AcqController(cfg,opt.Testing,[],false,true);
 cleanW = onCleanup(@() delete(wc)); %#ok<NASGU>
 wc.waitUntilReady();
 wc.Artifacts = mabr.ArtifactPolicy('none');
-assert(wc.usingWorkerDSP(),'the DSP worker did not come up; Part H would prove nothing');
+assert(wc.usingWorkerDSP(),'the DSP worker did not come up; Part I would prove nothing');
 
 W = run_bank(wc,bank,sch.Repetitions,sch.ISI,'interleaved',opt);
 assert(numel(W.blocks) == bank.numStimuli, ...
@@ -401,7 +453,7 @@ for c = 1:numel(ws.Stimuli)
         'the worker gives "%s" %d sweeps; the plan presented it %d', ...
         m.ID,ws.CondCounts(c,2),nnz(W.seq == ws.Stimuli(c)));
 end
-fprintf('  PASS Part H: the worker-served run aligns and counts identically (%d blocks, %d live conditions)\n', ...
+fprintf('  PASS Part I: the worker-served run aligns and counts identically (%d blocks, %d live conditions)\n', ...
     numel(W.blocks),numel(ws.Stimuli));
 
 fprintf('== verify_stimulus_alignment PASSED ==\n');
@@ -452,6 +504,24 @@ R.onsets   = mabr.metrics.find_timing_onsets(tim,round(mabr.Config.OnsetShadow*f
     mabr.Config.OnsetThreshold,round(mabr.Config.OnsetRearm*fsR));
 R.onsets   = R.onsets(:)';
 R.blocks   = ctrl.Session.Blocks(nBefore+1:end);
+end
+
+
+function pull_snapshots(ctrl,got)
+% What several analysis windows refreshing at once do: pull the live snapshot
+% back to back. Only the first may copy the run; the others get that copy.
+c0   = ctrl.Pipeline.CopyCount;
+s    = ctrl.liveSnapshot();
+s2   = ctrl.liveSnapshot();
+s3   = ctrl.liveSnapshot();
+same = isequal(s2,s) && isequal(s3,s);
+got('events') = got('events') + 1;
+got('worst')  = max(got('worst'),ctrl.Pipeline.CopyCount - c0);
+got('differ') = got('differ') + ~same;
+if ~isempty(s)
+    got('snaps') = got('snaps') + 1;
+    got('last')  = s;
+end
 end
 
 

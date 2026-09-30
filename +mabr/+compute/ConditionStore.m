@@ -99,19 +99,31 @@ classdef ConditionStore
             % this builds a fresh table every time rather than accumulating:
             % the finalized block is where accumulation happens. `stimuli`
             % (a mabr.stim.StimulusSet, or []) supplies the parameters.
+            %
+            % The sweeps come as COLUMNS (snap.Columns, [nSamples x nSweeps])
+            % -- how mabr.compute.Pipeline caches them and how a condition
+            % holds them, so the only copy made here is each condition's
+            % share -- or, from a snapshot built by hand, as ROWS
+            % (snap.Sweeps, [nSweeps x nSamples]). The two give the same
+            % table to the bit; the live path hands over columns because rows
+            % cost a transpose there and another straight back here.
             L = mabr.compute.ConditionStore.empty();
-            if isempty(snap) || ~isstruct(snap) || ~isfield(snap,'Sweeps') ...
-                    || isempty(snap.Sweeps)
+            if isempty(snap) || ~isstruct(snap), return; end
+            if isfield(snap,'Columns') && ~isempty(snap.Columns)
+                S = double(snap.Columns);          % [nSamples x nSweeps]
+            elseif isfield(snap,'Sweeps') && ~isempty(snap.Sweeps)
+                S = double(snap.Sweeps).';
+            else
                 return
             end
 
-            S   = double(snap.Sweeps).';           % [nSamples x nSweeps]
             t   = double(snap.Time(:));            % s, may start negative
             idx = double(snap.StimIndex(:)).';
             bad = logical(snap.Bad(:)).';
             n   = min([size(S,2) numel(idx) numel(bad)]);
             if n < 1, return; end
-            S = S(:,1:n); idx = idx(1:n); bad = bad(1:n);
+            if size(S,2) > n, S = S(:,1:n); end
+            idx = idx(1:n); bad = bad(1:n);
 
             for k = 1:numel(snap.Stimuli)
                 u    = snap.Stimuli(k);
@@ -127,7 +139,9 @@ classdef ConditionStore
                 end
                 c.Label        = c.Key;
                 c.Params       = mabr.compute.ConditionStore.liveParams(stimuli,u);
-                c.Sweeps       = S(:,keep);
+                % A blocked run with nothing rejected is all one condition:
+                % it shares the matrix rather than copying it whole.
+                if all(keep), c.Sweeps = S; else, c.Sweeps = S(:,keep); end
                 c.Time         = t;
                 c.SampleRate   = snap.SampleRate;
                 c.NumTotal     = nnz(mine);

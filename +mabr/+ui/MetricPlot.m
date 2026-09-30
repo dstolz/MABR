@@ -33,6 +33,11 @@ classdef MetricPlot < handle
 %       of the run. A live condition is drawn with a HOLLOW marker and
 %       counted in the subtitle, because a number from 40 sweeps is not the
 %       number the block will report and the plot must not imply otherwise.
+%       The sweep correlation is the exception: it compares every pair of
+%       sweeps, which a condition gaining sweeps every refresh would pay for
+%       again and again, so a live condition stays blank until its block
+%       lands (mabr.metrics.online.catalog's WhileAcquiring), and the
+%       subtitle says so.
 %   A condition being acquired shows its live value; the finalized data takes
 %   over the moment the run finalizes, and repeats/make-up runs of the same
 %   stimulus ACCUMULATE (more sweeps for that condition, not a replacement).
@@ -819,7 +824,8 @@ classdef MetricPlot < handle
                 name = obj.CustomName;
                 if isempty(name), name = 'Custom metric'; end
                 e = struct('Key','custom','Name',name,'Units','', ...
-                    'Summary','User-supplied metric.','Fcn',obj.CustomFcn);
+                    'Summary','User-supplied metric.','Fcn',obj.CustomFcn, ...
+                    'WhileAcquiring',true);
                 return
             end
             try
@@ -852,7 +858,8 @@ classdef MetricPlot < handle
             if strcmp(e.Key,'custom'), sig = sprintf('custom.%d',obj.CustomGen);
             else,                      sig = ['catalog:' e.Key];
             end
-            job = struct('Name',e.Name,'Fcn',e.Fcn,'Window',obj.Window,'Sig',sig);
+            job = struct('Name',e.Name,'Fcn',e.Fcn,'Window',obj.Window,'Sig',sig, ...
+                         'WhileAcquiring',e.WhileAcquiring);
             [vals,errs] = mabr.compute.evaluateJobs(C,job,[],obj.Memo);
             % A metric that throws costs its own point, not the window, and
             % says so ONCE per metric rather than on every refresh -- this runs
@@ -1333,7 +1340,14 @@ classdef MetricPlot < handle
                         mabr.ui.MetricPlot.plural(numel(V))), ...
                      sprintf('%d sweeps',sum([V.NumSweeps]))};
             if nLive > 0
-                parts{end+1} = sprintf('%d acquiring (hollow)',nLive);
+                % A metric not evaluated while acquiring leaves those points
+                % blank, not hollow -- and a blank needs its reason.
+                e = obj.metricEntry();
+                if e.WhileAcquiring
+                    parts{end+1} = sprintf('%d acquiring (hollow)',nLive);
+                else
+                    parts{end+1} = sprintf('%d acquiring (shown when finished)',nLive);
+                end
             end
             if ~isempty(obj.Note),       parts{end+1} = obj.Note;       end
             if ~isempty(obj.WorkerNote), parts{end+1} = obj.WorkerNote; end
