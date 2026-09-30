@@ -102,63 +102,78 @@ try
         [msg,ok] = poll(cmdQueue,0.1);
         if ~ok, continue; end
 
-        switch msg.cmd
-            case mabr.acq.Cmd.Prep
-                prepared = msg.data;
-                apr = prepare_device(apr,prepared,testing);
-                send_state(resultQueue,mabr.acq.State.Ready);
+        % A command that fails fails THAT command, not the worker. Before this
+        % catch existed, any error here (a device that would not open, most
+        % often) ended the loop through the outer catch below, and the client
+        % had no way to tell: its command queue still existed, so the next
+        % Start was sent to a queue nothing read and sat in PrepBlock until
+        % MABR was restarted. Here the error is reported, the block is
+        % un-prepared (so a Run cannot stream against a half-built device),
+        % and the loop goes back to waiting for the next Prep.
+        try
+            switch msg.cmd
+                case mabr.acq.Cmd.Prep
+                    apr = prepare_device(apr,msg.data,testing);
+                    prepared = msg.data;
+                    send_state(resultQueue,mabr.acq.State.Ready);
 
-            case mabr.acq.Cmd.Run
-                if isempty(prepared)
-                    send_error(resultQueue,'mabr:acq:worker:notPrepared', ...
-                        'Received Run before Prep.');
-                    continue
-                end
-                [reason,nStreamed,xr] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
-                % How much of the play matrix actually went out, why the
-                % block ended, and what the device said about it (underruns
-                % and overruns, with where in the block each was reported).
-                % Sent BEFORE the Completed state, so the client's
-                % BlockCompleted handler already has it: with nothing recorded
-                % (stimulation only) this is the only evidence of how far
-                % through the planned sequence a stopped run got, and for a
-                % recorded run it is what lets a misaligned verdict name its
-                % likeliest cause (mabr.ui.AcqController.alignmentCheck).
-                send(resultQueue,struct('type','streamed', ...
-                    'samples',nStreamed,'reason',reason, ...
-                    'underruns',xr.underruns,'overruns',xr.overruns, ...
-                    'underrunAt',xr.underrunAt,'overrunAt',xr.overrunAt));
-                if strcmp(reason,'killed')
+                case mabr.acq.Cmd.Run
+                    if isempty(prepared)
+                        send_error(resultQueue,'mabr:acq:worker:notPrepared', ...
+                            'Received Run before Prep.');
+                        continue
+                    end
+                    [reason,nStreamed,xr] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
+                    % How much of the play matrix actually went out, why the
+                    % block ended, and what the device said about it (underruns
+                    % and overruns, with where in the block each was reported).
+                    % Sent BEFORE the Completed state, so the client's
+                    % BlockCompleted handler already has it: with nothing recorded
+                    % (stimulation only) this is the only evidence of how far
+                    % through the planned sequence a stopped run got, and for a
+                    % recorded run it is what lets a misaligned verdict name its
+                    % likeliest cause (mabr.ui.AcqController.alignmentCheck).
+                    send(resultQueue,struct('type','streamed', ...
+                        'samples',nStreamed,'reason',reason, ...
+                        'underruns',xr.underruns,'overruns',xr.overruns, ...
+                        'underrunAt',xr.underrunAt,'overrunAt',xr.overrunAt));
+                    if strcmp(reason,'killed')
+                        running = false;
+                    else
+                        send_state(resultQueue,mabr.acq.State.Completed);
+                    end
+
+                case mabr.acq.Cmd.Pause
+                    % No effect while idle.
+
+                case mabr.acq.Cmd.Resume
+                    % No effect while idle: a Resume can only unpause a running
+                    % block (handled inside stream_block), never re-run one.
+
+                case mabr.acq.Cmd.Stop
+                    send_state(resultQueue,mabr.acq.State.Ready);
+
+                case mabr.acq.Cmd.Release
+                    % Hand the ASIO device back without tearing down the worker.
+                    % Clearing `prepared` too, so a later Run cannot stream against
+                    % a device that is no longer open -- it must Prep again, which
+                    % is what reopens it.
+                    if ~isempty(apr)
+                        try, release(apr); end %#ok<TRYNC>
+                        apr = [];
+                    end
+                    prepared = [];
+                    mabr.log.vprintf(1,'Worker released the audio device.');
+                    send_state(resultQueue,mabr.acq.State.Idle);
+
+                case mabr.acq.Cmd.Kill
                     running = false;
-                else
-                    send_state(resultQueue,mabr.acq.State.Completed);
-                end
-
-            case mabr.acq.Cmd.Pause
-                % No effect while idle.
-
-            case mabr.acq.Cmd.Resume
-                % No effect while idle: a Resume can only unpause a running
-                % block (handled inside stream_block), never re-run one.
-
-            case mabr.acq.Cmd.Stop
-                send_state(resultQueue,mabr.acq.State.Ready);
-
-            case mabr.acq.Cmd.Release
-                % Hand the ASIO device back without tearing down the worker.
-                % Clearing `prepared` too, so a later Run cannot stream against
-                % a device that is no longer open -- it must Prep again, which
-                % is what reopens it.
-                if ~isempty(apr)
-                    try, release(apr); end %#ok<TRYNC>
-                    apr = [];
-                end
-                prepared = [];
-                mabr.log.vprintf(1,'Worker released the audio device.');
-                send_state(resultQueue,mabr.acq.State.Idle);
-
-            case mabr.acq.Cmd.Kill
-                running = false;
+            end
+        catch me
+            prepared = [];
+            send_error(resultQueue,me.identifier,me.message);
+            mabr.log.vprintf(0,1,me);
+            send_state(resultQueue,mabr.acq.State.Idle);
         end
     end
 
@@ -376,11 +391,11 @@ if isfield(spec,'Device') && ~isempty(spec.Device)
 end
 
 if stimOnly
-    apr = audioDeviceWriter(args{:});
+    apr = open_device(@audioDeviceWriter,args);
     mabr.log.vprintf(1,['Opened an OUTPUT-ONLY device (stimulation only): ' ...
         'play channels [%d %d], nothing recorded.'],player);
 else
-    apr = audioPlayerRecorder(args{:});
+    apr = open_device(@audioPlayerRecorder,args);
     mabr.log.vprintf(1,'Opened a full-duplex device: play [%d %d], record [%d %d].', ...
         player,recorder);
 end
@@ -388,6 +403,37 @@ end
 
 
 % =====================================================================
+function apr = open_device(ctor,args)
+% Construct the device, retrying a read of the preferences file that landed
+% in the middle of somebody else's write.
+%
+% Opening an audio device reads matlabprefs.mat -- the DSP System Toolbox's
+% device lookup (dspAudioDeviceInfo) asks for dsp/portaudioHostApi -- and
+% every worker in a local pool shares that one file with the GUI process.
+% MATLAB's preference functions take no lock: a setpref in the GUI (a window
+% closed, an analysis setting changed) rewrites the whole file, and a read
+% that lands inside the rewrite sees a truncated MAT-file and throws
+% MATLAB:load:notBinaryFile out of the constructor. Every Prep opens the
+% device afresh, so this is one chance per run. The write takes
+% milliseconds; waiting it out is the whole fix. Anything else, or a file
+% still unreadable after the last try, is the caller's error as before.
+tries = 5;
+for k = 1:tries
+    try
+        apr = ctor(args{:});
+        return
+    catch me
+        if k == tries || ~startsWith(me.identifier,'MATLAB:load:')
+            rethrow(me);
+        end
+        mabr.log.vprintf(1,1,['Opening the audio device could not read the ' ...
+            'preferences file (%s); another MATLAB process was probably ' ...
+            'writing it. Retrying (%d of %d).'],me.message,k,tries-1);
+        pause(0.1*k);
+    end
+end
+end
+
 function v = getdef(s,f,d)
 if isfield(s,f) && ~isempty(s.(f)), v = s.(f); else, v = d; end
 end

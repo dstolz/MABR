@@ -191,6 +191,20 @@ classdef Engine < handle
             tf = ~isempty(obj.CmdQueue);
         end
 
+        function tf = isAlive(obj)
+            % Whether the worker loop is still running. isReady cannot say:
+            % the command queue outlives the loop, so after the loop has
+            % exited (an error outside any one command, or a Kill) commands
+            % are still accepted and simply never read. A caller about to
+            % REUSE this engine rather than build a new one must ask this.
+            tf = false;
+            try
+                tf = ~isempty(obj.Future) && any(strcmp(obj.Future.State,{'queued','running'}));
+            catch
+                % A deleted pool takes the future's state with it: not alive.
+            end
+        end
+
         % --- Commands to the worker ----------------------------------------
         function prep(obj,blockSpec)
             % Arm the worker with a pre-rendered block (2-channel play matrix
