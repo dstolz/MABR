@@ -100,7 +100,8 @@ function run_all_verifications()
 %                                  heat map, contour, surface), live
 %                                  conditions, the right-click aesthetics, and
 %                                  two independent windows
-%       verify_trace_organizer   - TraceOrganizer scaling/spacing/save/load
+%       verify_trace_organizer   - TraceOrganizer scaling/spacing/save/load,
+%                                  split/order/label by stimulus parameter
 %       verify_trace_inspector   - TraceInspector peak picking, and the
 %                                  transfer of peaks back to the organizer
 %       verify_notes             - session notes: run/sweep stamping, the

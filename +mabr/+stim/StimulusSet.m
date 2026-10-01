@@ -316,21 +316,6 @@ classdef StimulusSet < handle
             names = names(:)';
             extra = extra(:)';
         end
-
-        function u = paramUnit(name)
-            % The unit a parameter is carried in. Only the two the toolbox
-            % fixes by name and unit end-to-end are claimed: Frequency in kHz
-            % and Level in dB, which mabr.stim.fromStimgen converts into and
-            % mabr.data.io.buildFilename writes back out. Everything else is
-            % left unitless rather than guessed at -- a label reading '5 ms'
-            % over a parameter that was actually seconds is worse than one
-            % reading 'Duration 0.005'.
-            switch lower(char(name))
-                case 'frequency', u = 'kHz';
-                case 'level',     u = 'dB';
-                otherwise,        u = '';
-            end
-        end
     end
 
     methods (Access = private)
@@ -342,6 +327,23 @@ classdef StimulusSet < handle
     end
 
     methods (Static)
+        function u = paramUnit(name)
+            % The unit a parameter is carried in. Only the two the toolbox
+            % fixes by name and unit end-to-end are claimed: Frequency in kHz
+            % and Level in dB, which mabr.stim.fromStimgen converts into and
+            % mabr.data.io.buildFilename writes back out. Everything else is
+            % left unitless rather than guessed at -- a label reading '5 ms'
+            % over a parameter that was actually seconds is worse than one
+            % reading 'Duration 0.005'. Public so that a view naming a
+            % parameter (mabr.ui.TraceOrganizer) states it in the units this
+            % table does.
+            switch lower(char(name))
+                case 'frequency', u = 'kHz';
+                case 'level',     u = 'dB';
+                otherwise,        u = '';
+            end
+        end
+
         function s = validate(s,idx,cfg)
             % Validate and normalize one stimulus entry against the contract.
             if nargin < 2 || isempty(idx), idx = 1; end

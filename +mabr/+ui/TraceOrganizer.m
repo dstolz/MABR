@@ -44,6 +44,29 @@ classdef TraceOrganizer < handle
 %   folding it into the scale would flatten the series it was switched on to
 %   help read. Use the spacing controls if the bands crowd each other.
 %
+%   The stack can be ORGANIZED BY STIMULUS PARAMETER -- each trace carries
+%   the parameters its block was recorded under (Frequency, Level, ...; see
+%   mabr.ui.Trace.parameters) -- from the Organize menu or by property:
+%
+%       to.SplitBy = 'Frequency';          % one panel per frequency
+%       to.setOrder('Level','descending'); % loudest at the top of each
+%       to.LabelBy = 'params';             % '60 dB' rather than the ID
+%
+%   SplitBy gives every value of one parameter a panel of its own, side by
+%   side (wrapping to more rows when the window is too narrow for one), all
+%   on one amplitude scale and one time axis, so a column compares with its
+%   neighbour as directly as two traces in one stack do. OrderBy (with
+%   OrderDirection, read in parallel the way mabr.stim.Schedule reads its
+%   pair) sorts every stack, top to bottom, most significant parameter
+%   first; ties keep the order they had. LabelBy = 'params' labels each
+%   trace with the parameters that vary across the traces held, less the
+%   one the panels are titled with. A name no trace carries is kept but does
+%   nothing, so a setting chosen for one session survives traces that lack
+%   it. While a split or an order is in force the stacks are kept even: a
+%   trace that arrives during a run goes straight to its place, and a trace
+%   dragged or moved by hand lands where it is dropped -- which makes the
+%   order manual (OrderBy is cleared, and the status line says so).
+%
 %     Up / Down            amplitude larger / smaller
 %     Shift+Up / Down      spacing wider / narrower
 %     Ctrl+Up / Down       move selected trace up / down the stack
@@ -54,6 +77,7 @@ classdef TraceOrganizer < handle
 %     l                    toggle stimulus ID labels
 %     p / c                mark peaks / clear markers
 %     b                    cycle the error band
+%     g                    cycle the split (none, then each parameter)
 %     i                    inspect the selected trace (or double-click it)
 %     h / Delete           hide / remove selected traces
 %     Ctrl+N               session notes
@@ -66,8 +90,8 @@ classdef TraceOrganizer < handle
 %
 %   saveView writes a .torg file holding the waveforms plus the complete
 %   display state -- gains, offsets, order, colours, markers, spacing,
-%   normalization mode, and axis limits -- so loadView reproduces the view
-%   exactly as it was saved.
+%   normalization mode, axis limits, and the split/order/label settings --
+%   so loadView reproduces the view exactly as it was saved.
 %
 % Daniel Stolzberg (c) 2019-2026
 
@@ -85,6 +109,19 @@ classdef TraceOrganizer < handle
         ErrorBand       (1,:) char   = 'none';
         ConfidenceLevel (1,1) double = 0.95;
         BootReps        (1,1) double = 1000;  % resamples for 'boot'
+
+        % Organizing by stimulus parameter (see the class help). SplitBy is
+        % one parameter name, '' for a single stack. OrderBy is a cellstr
+        % row, most significant first, {} for the order the traces were
+        % arranged in by hand; OrderDirection is read in parallel with it --
+        % one direction applies to every name, and a name with none of its
+        % own is 'ascending' (smallest at the top). LabelBy is 'id' (the
+        % stimulus ID, as always) or 'params'. Every setter re-arranges and
+        % redraws, so a script and the Organize menu do the same thing.
+        SplitBy         (1,:) char   = '';
+        OrderBy                      = {};
+        OrderDirection               = {'ascending'};
+        LabelBy         (1,:) char   = 'id';
     end
 
     properties (SetAccess = private)
@@ -107,20 +144,33 @@ classdef TraceOrganizer < handle
         % 3 adds View.Notes; 4 adds the error-band settings (and each trace's
         % Sweeps, so the statistic can be changed after a load). Older files
         % simply lack the fields and load as before -- loadView reads every
-        % optional field with isfield for exactly this reason.
-        FileVersion = 4;
+        % optional field with isfield for exactly this reason. 5 adds the
+        % SplitBy/OrderBy/OrderDirection/LabelBy settings and each trace's
+        % stimulus Params.
+        FileVersion = 5;
         CILevels    = [0.90 0.95 0.99];   % the levels the Band menu offers
+        OrderDirections = {'ascending','descending'};
+        % The narrowest a panel may be drawn before the panels wrap onto
+        % another row, and the least room left of one for its labels, in
+        % pixels.
+        MinPanelPx  = 110;
+        MinGutterPx = 30;
     end
 
     properties (SetAccess = private, Transient)
         Figure      % readable so callers can export or annotate the view
-        Axes
+        Axes        % the first panel (the only one, unless the view is split)
+        % One axes per panel, left to right then top to bottom; the first is
+        % always Axes. A single stack is one panel.
+        PanelAxes
     end
 
     properties (Access = private, Transient)
         Toolbar
         ContextMenu
-        dragIdx     = [];
+        StatusText      % the status line across the top of the figure
+        dragTrace   = [];   % the mabr.ui.Trace being dragged (a handle, not an
+                            % index: a block landing mid-drag may reorder)
         dragStartY  = 0;
         dragStartOffset = 0;
         dragMoved   = false;
@@ -135,6 +185,29 @@ classdef TraceOrganizer < handle
         % redraw would leave it. plotAll and fitLabelMargin refresh both.
         PlotScale    = zeros(1,0)
         LabelWidthPx = NaN
+
+        % Which traces were drawn where, with what offset and caption -- the
+        % rest of what lets plotAdded draw only what a new trace changed when
+        % the stack is organized and the trace lands in the middle of it.
+        % PlotScale is aligned with DrawnTraces.
+        DrawnTraces   = mabr.ui.Trace.empty
+        DrawnOffsets  = zeros(1,0)
+        DrawnCaptions = {}
+        DrawnPanels   = zeros(1,0)
+
+        % The arrangement in force (arrange): each trace's panel, aligned
+        % with Traces; each panel's title; the parameter table it came from
+        % (aligned with Traces too); the split and the order keys actually
+        % applied, which are the settings less any name no trace carries.
+        PanelIndex   = zeros(1,0)
+        PanelLabels  = {''}
+        PanelKey     = ''           % what PanelAxes were built for
+        ParamNames   = {}
+        ParamValues  = zeros(0,0)
+        SplitName    = ''
+        OrderKeys    = struct('Name',{},'Direction',{})
+        MenuParamKey = NaN          % the parameters the Organize menus list
+        Suspended (1,1) logical = false   % setters defer organize() while set
     end
 
     methods
@@ -205,6 +278,82 @@ classdef TraceOrganizer < handle
                     obj.bandDescription(),k,n));
             else
                 obj.status(sprintf('Error band: %s.',obj.bandDescription()));
+            end
+        end
+
+        % --- Organizing by stimulus parameter -------------------------------
+        function set.SplitBy(obj,v)
+            v = mabr.ui.TraceOrganizer.nameArg(v,'SplitBy');
+            if strcmpi(v,'none'), v = ''; end
+            obj.SplitBy = v;
+            obj.organize();
+        end
+
+        function set.OrderBy(obj,v)
+            obj.OrderBy = mabr.stim.Schedule.textList(v,'OrderBy');
+            obj.organize();
+        end
+
+        function set.OrderDirection(obj,v)
+            % Refused rather than read as 'ascending': a misspelt direction
+            % that quietly sorted the other way would put the series upside
+            % down without a word.
+            v = lower(mabr.stim.Schedule.textList(v,'OrderDirection'));
+            if isempty(v), v = {'ascending'}; end
+            bad = ~ismember(v,mabr.ui.TraceOrganizer.OrderDirections);
+            assert(~any(bad),'mabr:ui:TraceOrganizer:orderDirection', ...
+                'Unknown order direction "%s". Expected ascending or descending.', ...
+                strjoin(v(bad),'", "'));
+            obj.OrderDirection = v;
+            obj.organize();
+        end
+
+        function set.LabelBy(obj,v)
+            obj.LabelBy = validatestring(v,{'id','params'}, ...
+                'mabr.ui.TraceOrganizer','LabelBy');
+            obj.organize();
+        end
+
+        function setOrder(obj,by,way)
+            % Set OrderBy and OrderDirection together, arranging once:
+            %   to.setOrder('Level','descending')
+            %   to.setOrder({'Frequency','Level'},{'ascending','descending'})
+            %   to.setOrder({})                     % manual
+            if nargin < 3 || isempty(way), way = {'ascending'}; end
+            obj.Suspended = true;
+            try
+                obj.OrderDirection = way;
+                obj.OrderBy        = by;
+            catch me
+                obj.Suspended = false;
+                rethrow(me);
+            end
+            obj.Suspended = false;
+            obj.organize();
+        end
+
+        function organize(obj)
+            % Re-apply the organization settings to the traces held -- which
+            % panel each is in, the order of every stack, what each label
+            % reads -- and redraw. Every setter above comes here.
+            if obj.Suspended, return; end
+            obj.arrange(true);
+            if ~obj.isvalidView(), return; end
+            obj.syncOrganizeMenus();
+            obj.plotAll(false,true);
+        end
+
+        function tf = isOrganized(obj)
+            % True while a split or an order is set (whether or not any trace
+            % carries the parameter named).
+            tf = ~isempty(obj.SplitBy) || any(~cellfun(@isempty,obj.OrderBy));
+        end
+
+        function txt = statusText(obj)
+            % What the status line across the top of the view reads.
+            txt = '';
+            if ~isempty(obj.StatusText) && isgraphics(obj.StatusText)
+                txt = obj.StatusText.String;
             end
         end
 
@@ -296,15 +445,22 @@ classdef TraceOrganizer < handle
                 % No stimulus metadata (e.g. a hand-built Block) -- fall back
                 % to the descriptive label in Trace.DisplayName.
             end
-            obj.addTrace(m,t,lbl,sid,sweeps);
+            % The parameters it was recorded under, for organizing the view
+            % by -- exactly as the stimulus metadata states them.
+            obj.addTrace(m,t,lbl,sid,sweeps, ...
+                mabr.ui.TraceOrganizer.blockParams(block));
         end
 
-        function tr = addTrace(obj,data,time,label,stimID,sweeps)
+        function tr = addTrace(obj,data,time,label,stimID,sweeps,params)
+            % params: the stimulus parameters, a struct of numeric scalars
+            % (name -> value); see mabr.ui.Trace.Params.
             if nargin < 4, label  = ''; end
             if nargin < 5, stimID = ''; end
             if nargin < 6, sweeps = []; end
+            if nargin < 7, params = struct(); end
             tr = mabr.ui.Trace(data,time,label,stimID);
             tr.ID = numel(obj.Traces)+1;
+            tr.Params = mabr.ui.Trace.cleanParams(params);
             % [nSamples x nSweeps], one row per sample of Data -- anything else
             % is not this trace's sweeps and is dropped rather than banded.
             if ~isempty(sweeps) && size(sweeps,1) == numel(tr.Data)
@@ -318,15 +474,31 @@ classdef TraceOrganizer < handle
             tr.Color     = obj.Colors(mod(numel(obj.Traces),size(obj.Colors,1))+1,:);
             tr.ShowLabel = obj.ShowLabels;
             if isempty(obj.Traces), obj.Traces = tr; else, obj.Traces(end+1) = tr; end
+            % A newcomer ranks after every trace already placed, so in a
+            % stack kept in hand-made order it goes to the bottom of its
+            % panel; arrange then puts it wherever the settings say.
+            obj.PanelIndex(end+1) = max([obj.PanelIndex 0]) + 1;
             obj.computeBands(numel(obj.Traces));
-            if obj.isvalidView(), obj.plotAdded(); end
+            obj.arrange(true);
+            if obj.isvalidView()
+                obj.syncOrganizeMenus();
+                obj.plotAdded(tr);
+            end
         end
 
         function clear(obj)
             delete(obj.Traces);
-            obj.Traces = mabr.ui.Trace.empty;
+            obj.Traces        = mabr.ui.Trace.empty;
+            obj.PanelIndex    = zeros(1,0);
+            obj.DrawnTraces   = mabr.ui.Trace.empty;
+            obj.PlotScale     = zeros(1,0);
             obj.pruneInspector();
-            if obj.isvalidView(), cla(obj.Axes); obj.refreshStatus(); end
+            obj.arrange(true);
+            if obj.isvalidView()
+                cla(obj.Axes);
+                obj.syncOrganizeMenus();
+                obj.plotAll(false);   % collapses a split view to one panel
+            end
         end
 
         % --- View -----------------------------------------------------------
@@ -401,6 +573,14 @@ classdef TraceOrganizer < handle
         function restack(obj)
             % Space every trace evenly, top to bottom, in current visual order.
             if isempty(obj.Traces), return; end
+            if obj.isArranged()
+                % Each panel's stack, in the order the settings give it (or
+                % its visual order, when that order is manual).
+                obj.arrange(true);
+                obj.plotAll(false);
+                obj.refreshStatus();
+                return
+            end
             [~,ord] = sort([obj.Traces.YOffset],'descend');
             obj.Traces = obj.Traces(ord);
             for k = 1:numel(obj.Traces)
@@ -415,6 +595,25 @@ classdef TraceOrganizer < handle
             if numel(idx) ~= 1, obj.status('Select one trace to move.'); return; end
             j = idx + delta;
             if j < 1 || j > numel(obj.Traces), return; end
+            if obj.isArranged()
+                % Within its own panel only -- which panel a trace is in is
+                % its parameter's business, not its position's.
+                if obj.PanelIndex(j) ~= obj.PanelIndex(idx)
+                    if delta < 0, w = 'top'; else, w = 'bottom'; end
+                    obj.status(sprintf('"%s" is already at the %s of its panel.', ...
+                        obj.Traces(idx).DisplayName,w));
+                    return
+                end
+                note = obj.manualOrder();
+                y = obj.Traces(idx).YOffset;
+                obj.Traces(idx).YOffset = obj.Traces(j).YOffset;
+                obj.Traces(j).YOffset   = y;
+                obj.Traces([idx j]) = obj.Traces([j idx]);
+                obj.arrange(true);
+                obj.plotAll(false);
+                if ~isempty(note), obj.status(note); end
+                return
+            end
             obj.Traces([idx j]) = obj.Traces([j idx]);
             for k = 1:numel(obj.Traces)
                 obj.Traces(k).YOffset = -(k-1)*obj.YSpacing;
@@ -425,10 +624,16 @@ classdef TraceOrganizer < handle
         function removeTraces(obj,idx)
             if nargin < 2, idx = obj.selectedIndices(); end
             if isempty(idx), obj.status('Select a trace first.'); return; end
+            arranged = obj.isArranged();
             delete(obj.Traces(idx));
             obj.Traces(idx) = [];
+            if max(idx) <= numel(obj.PanelIndex), obj.PanelIndex(idx) = []; end
             obj.pruneInspector();
-            obj.plotAll(false);
+            % An organized stack closes the gap (and may lose a panel); a
+            % hand-placed one keeps every other trace where it was put.
+            obj.arrange(true);
+            obj.syncOrganizeMenus();
+            obj.plotAll(false,arranged);
             obj.refreshStatus();
         end
 
@@ -509,6 +714,10 @@ classdef TraceOrganizer < handle
             View.ErrorBand       = obj.ErrorBand;
             View.ConfidenceLevel = obj.ConfidenceLevel;
             View.BootReps        = obj.BootReps;
+            View.SplitBy         = obj.SplitBy;
+            View.OrderBy         = obj.OrderBy;
+            View.OrderDirection  = obj.OrderDirection;
+            View.LabelBy         = obj.LabelBy;
             View.XLim          = [];
             View.YLim          = [];
             % The rig notebook travels with the view, on the same terms as it
@@ -543,6 +752,33 @@ classdef TraceOrganizer < handle
             obj.clear();
             notesWarning = '';
 
+            % The organization the file was saved with -- and the defaults
+            % (one stack, the order as arranged, IDs) for a file from before
+            % there was any. Not the current settings: a view saved as one
+            % stack holds offsets for one stack, and splitting those across
+            % panels would show something that was never saved.
+            org = struct('SplitBy','','OrderBy',{{}},'OrderDirection',{{'ascending'}}, ...
+                'LabelBy','id');
+            % One at a time, each falling back to its default: a value a
+            % hand-edited file got wrong costs that setting, not the load.
+            def = org;
+            if isfield(L,'View')
+                f = fieldnames(org);
+                for i = 1:numel(f)
+                    if isfield(L.View,f{i}), org.(f{i}) = L.View.(f{i}); end
+                end
+            end
+            obj.Suspended = true;
+            for f = {'SplitBy','OrderDirection','OrderBy','LabelBy'}
+                try
+                    obj.(f{1}) = org.(f{1});
+                catch me
+                    mabr.log.vprintf(2,1,'Trace organizer: %s not restored: %s',f{1},me.message);
+                    obj.(f{1}) = def.(f{1});
+                end
+            end
+            obj.Suspended = false;
+
             if isfield(L,'View')
                 V = L.View;
                 obj.YSpacing      = V.YSpacing;
@@ -567,10 +803,13 @@ classdef TraceOrganizer < handle
                     if isempty(obj.Traces), obj.Traces = tr; else, obj.Traces(end+1) = tr; end
                 end
                 obj.computeBands();
+                % Panels and captions only: the order and offsets stand as
+                % they were saved.
+                obj.arrange(false);
                 obj.ensureFigure();
+                obj.syncOrganizeMenus();
                 obj.plotAll(true);
-                if ~isempty(V.XLim), obj.Axes.XLim = V.XLim; end
-                if ~isempty(V.YLim), obj.Axes.YLim = V.YLim; end
+                obj.setLimits(V.XLim,V.YLim);
                 obj.plotAll(false);   % relabel against the restored XLim
                 notesWarning = obj.restoreNotes(V);
             elseif isfield(L,'S')
@@ -674,13 +913,37 @@ classdef TraceOrganizer < handle
                 'WindowButtonUpFcn',@(~,~) obj.endDrag(), ...
                 'WindowKeyPressFcn',@(~,e) obj.onKey(e), ...
                 'SizeChangedFcn',@(~,~) obj.fitLabelMargin());
-            obj.Axes = axes('Parent',obj.Figure,'Box','on','NextPlot','add', ...
-                'YTick',[],'XGrid','on','YGrid','on','GridLineStyle',':');
-            mabr.ui.hideAxesToolbar(obj.Axes);
+            % The status line has a row of its own across the top, rather
+            % than being the axes' title as it once was: a split view titles
+            % each panel with its parameter value, and the status belongs to
+            % the view rather than to any one of them.
+            obj.StatusText = uicontrol(obj.Figure,'Style','text', ...
+                'Units','normalized','Position',[0.01 0.955 0.98 0.035], ...
+                'BackgroundColor','w','HorizontalAlignment','center', ...
+                'FontSize',9,'String','');
+            obj.Axes = obj.newAxes();
             xlabel(obj.Axes,'Time (ms)');
+            % Everything below describes graphics that went with the last
+            % figure, if there was one.
+            obj.PanelAxes     = obj.Axes;
+            obj.PanelKey      = '';
+            obj.MenuParamKey  = NaN;
+            obj.DrawnTraces   = mabr.ui.Trace.empty;
+            obj.PlotScale     = zeros(1,0);
+            obj.LabelWidthPx  = NaN;
             obj.buildToolbar();
             obj.buildMenus();
+            obj.syncOrganizeMenus();
             obj.refreshStatus();
+        end
+
+        function ax = newAxes(obj)
+            % One panel's axes. Interaction is the organizer's own (click,
+            % drag, the menus), so the axes toolbar is off as everywhere.
+            ax = axes('Parent',obj.Figure,'Box','on','NextPlot','add', ...
+                'YTick',[],'XGrid','on','YGrid','on','GridLineStyle',':');
+            mabr.ui.hideAxesToolbar(ax);
+            obj.attachContextMenu(ax);
         end
 
         function buildToolbar(obj)
@@ -743,6 +1006,12 @@ classdef TraceOrganizer < handle
         function menuItem(~,parent,it)
             % 'Label'/'Callback' rather than the newer 'Text'/'MenuSelectedFcn':
             % both work everywhere, these also work on the R2018b floor.
+            if isfield(it,'submenu')
+                % A parent whose children are built later, found by its Tag.
+                h = uimenu(parent,'Label',it.label,'Tag',it.submenu);
+                if isfield(it,'sep') && it.sep, h.Separator = 'on'; end
+                return
+            end
             h = uimenu(parent,'Label',it.label,'Callback',@(~,~) it.fcn());
             if isfield(it,'sep') && it.sep, h.Separator = 'on'; end
             if isfield(it,'tag'), h.Tag = it.tag; end
@@ -783,6 +1052,17 @@ classdef TraceOrganizer < handle
                 it('Hide/show selected'          ,@() obj.toggleVisible()) , ...
                 it('Remove selected'             ,@() obj.removeTraces(),'sep',true) , ...
                 it('Clear all'                   ,@() obj.clear()) };
+
+            % The three submenus list the stimulus parameters the traces
+            % held actually vary, so they are filled in later, and again
+            % whenever that list changes (syncOrganizeMenus).
+            spec(end+1).name = 'Organize';
+            spec(end).items  = { ...
+                it('Split by'                    ,[],'submenu','org_split') , ...
+                it('Order by'                    ,[],'submenu','org_order','sep',true) , ...
+                it('Then by'                     ,[],'submenu','org_then') , ...
+                it('Label by stimulus ID'        ,@() obj.pickLabel('id'),'sep',true,'tag','org_label_id') , ...
+                it('Label by parameters'         ,@() obj.pickLabel('params'),'tag','org_label_params') };
 
             % A flat radio list, as mabr.ui.LivePlot's band menu is: one click
             % reaches any answer, where a Statistic > Level nesting would cost
@@ -848,6 +1128,33 @@ classdef TraceOrganizer < handle
             for i = 1:numel(obj.CILevels)
                 obj.setChecks(tags{i},isCI && abs(lvl-obj.CILevels(i)) < 1e-9);
             end
+
+            % Organize: the label mode, and one tick in each submenu for the
+            % setting in force. Tags carry the parameter in lower case so a
+            % name typed in another case still ticks its item.
+            obj.setChecks('org_label_id'    ,strcmp(obj.LabelBy,'id'));
+            obj.setChecks('org_label_params',strcmp(obj.LabelBy,'params'));
+            [by,way] = obj.orderPair();
+            want = {};
+            if isempty(obj.SplitBy), want{end+1} = 'org_split_none';
+            else,                    want{end+1} = ['org_split_' lower(obj.SplitBy)];
+            end
+            if isempty(by)
+                want(end+1:end+2) = {'org_order_none','org_then_none'};
+            else
+                want{end+1} = sprintf('org_order_%s_%s',lower(by{1}),way{1});
+                if numel(by) >= 2
+                    want{end+1} = sprintf('org_then_%s_%s',lower(by{2}),way{2});
+                else
+                    want{end+1} = 'org_then_none';
+                end
+            end
+            h = findobj(obj.Figure,'-regexp','Tag','^org_(split|order|then)_');
+            for k = 1:numel(h)
+                h(k).Checked = mabr.ui.Trace.onoff(ismember(h(k).Tag,want));
+            end
+            % A second key means nothing without a first.
+            set(findobj(obj.Figure,'Tag','org_then'),'Enable',mabr.ui.Trace.onoff(~isempty(by)));
         end
 
         function setChecks(obj,tag,tf)
@@ -916,86 +1223,216 @@ classdef TraceOrganizer < handle
         end
 
         % --- Drawing ----------------------------------------------------------
-        function plotAll(obj,resetLimits)
+        function plotAll(obj,resetX,resetY)
+            % Draw every trace. resetX/resetY refit the time axis / the stack
+            % height to the traces; resetY defaults to resetX, so
+            % plotAll(true) and plotAll(false) mean what they always have.
             if ~obj.isvalidView(), return; end
-            if nargin < 2, resetLimits = false; end
-            if isempty(obj.Traces), obj.refreshStatus(); return; end
+            if nargin < 2, resetX = false; end
+            if nargin < 3, resetY = resetX; end
+            obj.syncPanels();
+            if isempty(obj.Traces)
+                obj.rememberDrawn(zeros(1,0));
+                obj.fitLabelMargin();
+                obj.refreshStatus();
+                return
+            end
 
             sc = obj.yscale();
 
-            if resetLimits
+            if resetX
                 tAll = arrayfun(@(t) reshape(t.Time([1 end]),1,2)*1000, ...
                     obj.Traces,'UniformOutput',false);
                 tAll = vertcat(tAll{:});
-                obj.Axes.XLim = [min(tAll(:,1)) max(tAll(:,2))];
+                obj.setLimits([min(tAll(:,1)) max(tAll(:,2))],[]);
             end
             labelX = obj.labelX();
 
             for k = 1:numel(obj.Traces)
-                tr = obj.Traces(k);
-                tr.ShowLabel = obj.ShowLabels;
-                tr.plot(obj.Axes,sc(k),labelX);
-                tr.LineHandle.ButtonDownFcn  = @(~,~) obj.onTraceClick(k);
-                tr.LabelHandle.ButtonDownFcn = @(~,~) obj.onTraceClick(k);
-                obj.attachContextMenu(tr.LineHandle);
-                obj.attachContextMenu(tr.LabelHandle);
+                obj.drawTrace(k,sc(k),labelX);
             end
 
-            if resetLimits
-                allY = [obj.Traces.YOffset];
-                obj.Axes.YLim = [min(allY)-obj.YSpacing, max(allY)+obj.YSpacing];
-            end
-            obj.PlotScale = sc(:).';
+            if resetY, obj.setLimits([],obj.stackYLim()); end
+            obj.rememberDrawn(sc);
             obj.fitLabelMargin();
             obj.refreshStatus();
         end
 
-        function plotAdded(obj)
-            % Draw the trace addTrace just appended, and only that one. A
-            % session adds a trace per finalized block, and redrawing EVERY
-            % trace each time (plotAll) -- a dozen graphics writes and a label
+        function plotAdded(obj,tr)
+            % Draw what adding trace tr changed, and only that. A session adds
+            % a trace per finalized block, and redrawing EVERY trace each
+            % time (plotAll) -- a dozen graphics writes and a label
             % measurement apiece -- made the end of each run cost more the
             % longer the session had run, for traces that had not changed.
-            % Anything that would change how the others are drawn falls back
-            % to plotAll: a new trace that moves the shared amplitude scale, or
-            % the time axis (the labels hang off its left end).
+            %
+            % In a single hand-arranged stack that is the new trace alone. In
+            % an organized one it is the new trace plus every trace it pushed
+            % down its panel, which are only moved. Anything that would change
+            % how the others are DRAWN falls back to plotAll: a new panel, a
+            % new trace that moves the shared amplitude scale, the time axis
+            % (the labels hang off its left end), or a label that now reads
+            % differently (LabelBy 'params': a new value can make a parameter
+            % vary that did not before).
             n = numel(obj.Traces);
-            if n < 2 || numel(obj.PlotScale) ~= n-1
+            if n < 2 || numel(obj.DrawnTraces) ~= n-1 || numel(obj.PlotScale) ~= n-1 ...
+                    || ~strcmp(mabr.ui.TraceOrganizer.panelKeyOf(obj.PanelLabels),obj.PanelKey)
                 obj.plotAll(true);
                 return
             end
-            sc = obj.yscale();
-            tr = obj.Traces(n);
+            sc  = obj.yscale();
+            redraw = false(1,n);
+            for k = 1:n
+                t = obj.Traces(k);
+                if t == tr, redraw(k) = true; continue; end
+                j = find(obj.DrawnTraces == t,1);
+                if isempty(j) || sc(k) ~= obj.PlotScale(j) ...
+                        || obj.PanelIndex(k) ~= obj.DrawnPanels(j) ...
+                        || ~strcmp(t.Caption,obj.DrawnCaptions{j})
+                    obj.plotAll(true);
+                    return
+                end
+                redraw(k) = t.YOffset ~= obj.DrawnOffsets(j);
+            end
             tl = reshape(tr.Time([1 end]),1,2)*1000;
             xl = obj.Axes.XLim;
-            if ~isequal(sc(1:n-1),obj.PlotScale) || tl(1) < xl(1) || tl(2) > xl(2)
+            if tl(1) < xl(1) || tl(2) > xl(2)
                 obj.plotAll(true);
                 return
             end
-            tr.ShowLabel = obj.ShowLabels;
-            tr.plot(obj.Axes,sc(n),obj.labelX());
-            tr.LineHandle.ButtonDownFcn  = @(~,~) obj.onTraceClick(n);
-            tr.LabelHandle.ButtonDownFcn = @(~,~) obj.onTraceClick(n);
-            obj.attachContextMenu(tr.LineHandle);
-            obj.attachContextMenu(tr.LabelHandle);
-            obj.PlotScale = sc(:).';
-            allY = [obj.Traces.YOffset];
-            obj.Axes.YLim = [min(allY)-obj.YSpacing, max(allY)+obj.YSpacing];
+            labelX = obj.labelX();
+            for k = find(redraw)
+                obj.drawTrace(k,sc(k),labelX);
+            end
+            obj.setLimits([],obj.stackYLim());
+            obj.rememberDrawn(sc);
             obj.fitLabelMargin(tr);
             obj.refreshStatus();
+        end
+
+        function drawTrace(obj,k,sc,labelX)
+            % Trace k into its panel. The click callbacks hold the Trace
+            % rather than its index: an organized stack is reordered as
+            % traces arrive, and an index captured here would then select
+            % somebody else.
+            tr = obj.Traces(k);
+            tr.ShowLabel = obj.ShowLabels;
+            tr.plot(obj.panelFor(k),sc,labelX);
+            if isempty(tr.LineHandle) || ~isgraphics(tr.LineHandle), return; end
+            tr.LineHandle.ButtonDownFcn  = @(~,~) obj.onTraceClick(tr);
+            tr.LabelHandle.ButtonDownFcn = @(~,~) obj.onTraceClick(tr);
+            obj.attachContextMenu(tr.LineHandle);
+            obj.attachContextMenu(tr.LabelHandle);
+        end
+
+        function rememberDrawn(obj,sc)
+            obj.PlotScale     = sc(:).';
+            obj.DrawnTraces   = obj.Traces;
+            obj.DrawnPanels   = obj.PanelIndex;
+            if isempty(obj.Traces)
+                obj.DrawnOffsets  = zeros(1,0);
+                obj.DrawnCaptions = {};
+            else
+                obj.DrawnOffsets  = [obj.Traces.YOffset];
+                obj.DrawnCaptions = {obj.Traces.Caption};
+            end
+        end
+
+        function ax = panelFor(obj,k)
+            % The axes trace k is drawn in.
+            ax = obj.Axes;
+            if k > numel(obj.PanelIndex), return; end
+            p = obj.PanelIndex(k);
+            if p >= 1 && p <= numel(obj.PanelAxes) && isgraphics(obj.PanelAxes(p))
+                ax = obj.PanelAxes(p);
+            end
+        end
+
+        function setLimits(obj,xl,yl)
+            % One time axis and one stack height for every panel: the panels
+            % share an amplitude scale, and a scale is only shared if a
+            % microvolt is the same height in each of them.
+            ax = obj.PanelAxes;
+            if isempty(ax), ax = obj.Axes; end
+            for k = 1:numel(ax)
+                if ~isgraphics(ax(k)), continue; end
+                if ~isempty(xl), ax(k).XLim = xl; end
+                if ~isempty(yl), ax(k).YLim = yl; end
+            end
+        end
+
+        function yl = stackYLim(obj)
+            allY = [obj.Traces.YOffset];
+            yl   = [min(allY)-obj.YSpacing, max(allY)+obj.YSpacing];
         end
 
         function x = labelX(obj)
             % Anchor for the right-aligned labels: just left of the y-axis, so
             % the text runs outward into the margin instead of over the traces.
+            % Every panel shares the time axis, so one anchor serves them all.
             x = obj.Axes.XLim(1) - 0.015*diff(obj.Axes.XLim);
         end
 
+        % --- Panels -----------------------------------------------------------
+        function syncPanels(obj)
+            % One axes per panel of the arrangement in force. Rebuilt only when
+            % the panels themselves change; the first is kept throughout (it
+            % is Axes, and the panels added beside it copy its limits). A
+            % trace drawn in an axes that goes is redrawn in its new one --
+            % see mabr.ui.Trace.adoptAxes.
+            if isempty(obj.Axes) || ~isgraphics(obj.Axes), return; end
+            labels = obj.PanelLabels;
+            N      = numel(labels);
+            key    = mabr.ui.TraceOrganizer.panelKeyOf(labels);
+            ax     = obj.PanelAxes;
+            if strcmp(key,obj.PanelKey) && numel(ax) == N && all(isgraphics(ax))
+                return
+            end
+            first = obj.Axes;
+            for k = 1:numel(ax)
+                if isgraphics(ax(k)) && ax(k) ~= first, delete(ax(k)); end
+            end
+            ax = gobjects(1,N);
+            ax(1) = first;
+            for k = 2:N
+                ax(k) = obj.newAxes();
+                ax(k).XLim = first.XLim;
+                ax(k).YLim = first.YLim;
+            end
+            for k = 1:N
+                title(ax(k),labels{k},'FontWeight','bold','FontSize',10, ...
+                    'Interpreter','none');
+            end
+            obj.PanelAxes = ax;
+            obj.PanelKey  = key;
+            % New axes, new label anchors: measure every label again.
+            obj.LabelWidthPx = NaN;
+        end
+
+        function layoutPanels(obj,labelPx)
+            % Place every panel for labels labelPx pixels wide (see
+            % panelRects), and put the time axis label under the bottom panel
+            % of each column only.
+            ax = obj.PanelAxes;
+            if isempty(ax), ax = obj.Axes; end
+            ax = ax(isgraphics(ax));
+            if isempty(ax), return; end
+            figPos = getpixelposition(obj.Figure);
+            titled = ~isempty(obj.SplitName);
+            [pos,isBottom] = mabr.ui.TraceOrganizer.panelRects(numel(ax), ...
+                figPos(3),figPos(4),labelPx,titled);
+            for k = 1:numel(ax)
+                ax(k).Position = pos(k,:);
+                if isBottom(k), want = 'Time (ms)'; else, want = ''; end
+                if ~strcmp(ax(k).XLabel.String,want), ax(k).XLabel.String = want; end
+            end
+        end
+
         function fitLabelMargin(obj,added)
-            % Widen the axes' left inset to whatever the longest label needs.
-            % Label pixel width depends only on the font, not on the axes size,
-            % so measuring and then resizing cannot chase its own tail.
-            % Also fires as a resize callback, possibly before the axes exists.
+            % Widen the room left of each panel to whatever the longest label
+            % needs, and lay the panels out around it (layoutPanels). Label
+            % pixel width depends only on the font, not on the axes size, so
+            % measuring and then resizing cannot chase its own tail. Also
+            % fires as a resize callback, possibly before the axes exists.
             %
             % fitLabelMargin(obj,added) is the incremental form plotAdded uses:
             % only the new trace's label is measured, against the widest one
@@ -1004,34 +1441,279 @@ classdef TraceOrganizer < handle
             if ~obj.isvalidView() || isempty(obj.Axes) || ~isgraphics(obj.Axes)
                 return
             end
-            ax        = obj.Axes;
-            rightEdge = 0.955;     % held fixed; only the left edge moves
-            minLeft   = 0.13;      % MATLAB's default inset
-            left      = minLeft;
 
             if nargin >= 2 && isfinite(obj.LabelWidthPx)
                 if ~obj.ShowLabels, return; end
                 w = max(obj.LabelWidthPx,mabr.ui.TraceOrganizer.labelWidth(added.LabelHandle));
-                if w == obj.LabelWidthPx, return; end   % no wider: the margin stands
+                if w == obj.LabelWidthPx, return; end   % no wider: the margins stand
                 obj.LabelWidthPx = w;
-                figPos = getpixelposition(obj.Figure);
-                left = min(0.5,max(minLeft,(w+16)/figPos(3)));
-                ax.Position = [left ax.Position(2) rightEdge-left ax.Position(4)];
+                obj.layoutPanels(w);
                 return
             end
 
             w = 0;
             if obj.ShowLabels && ~isempty(obj.Traces)
-                figPos = getpixelposition(obj.Figure);
                 for k = 1:numel(obj.Traces)
                     w = max(w,mabr.ui.TraceOrganizer.labelWidth(obj.Traces(k).LabelHandle));
                 end
-                if w > 0
-                    left = min(0.5,max(minLeft,(w+16)/figPos(3)));
-                end
             end
             obj.LabelWidthPx = w;
-            ax.Position = [left ax.Position(2) rightEdge-left ax.Position(4)];
+            obj.layoutPanels(w);
+        end
+
+        % --- Arrangement ------------------------------------------------------
+        function arrange(obj,reorder)
+            % Work out the arrangement the settings ask for: each trace's
+            % panel, the panels' titles, and -- with reorder true, whenever a
+            % split or an order is in force, or a split has just been lifted
+            % -- the order of every stack, which is then respaced evenly.
+            % reorder false (a view being loaded) classifies only, so the
+            % order and offsets stand exactly as saved. Labels follow
+            % LabelBy either way.
+            n = numel(obj.Traces);
+            params = cell(1,n);
+            for k = 1:n, params{k} = obj.Traces(k).parameters(); end
+            P = mabr.ui.TraceOrganizer.paramTable(params);
+            A = mabr.ui.TraceOrganizer.arrangement(P,obj.SplitBy,obj.OrderBy, ...
+                obj.OrderDirection,obj.visualRank());
+            wasSplit = numel(obj.PanelLabels) > 1;
+            if reorder && n > 0 && (obj.isOrganized() || wasSplit)
+                obj.Traces = obj.Traces(A.order);
+                P.Values   = P.Values(A.order,:);
+                panel      = A.panel;
+                for p = unique(panel)
+                    k = find(panel == p);
+                    for i = 1:numel(k)
+                        obj.Traces(k(i)).YOffset = -(i-1)*obj.YSpacing;
+                    end
+                end
+            else
+                panel = A.panelOf;
+            end
+            obj.PanelIndex  = panel;
+            obj.PanelLabels = A.panelLabels;
+            obj.ParamNames  = P.Names;
+            obj.ParamValues = P.Values;
+            obj.SplitName   = A.split;
+            obj.OrderKeys   = A.keys;
+            obj.applyCaptions(A.splitCol);
+        end
+
+        function rank = visualRank(obj)
+            % Where each trace stands now, top to bottom: panel by panel, and
+            % within one by height, ties going to the earlier trace. This is
+            % the order an arrangement keeps wherever the settings leave it
+            % free -- the whole of it, when the order is manual.
+            n    = numel(obj.Traces);
+            rank = zeros(1,n);
+            if n == 0, return; end
+            pan = obj.PanelIndex;
+            if numel(pan) < n, pan(end+1:n) = max([pan 0]) + 1; end
+            pan = pan(1:n);
+            [~,ord] = sortrows([pan(:), -[obj.Traces.YOffset].', (1:n).']);
+            rank(ord) = 1:n;
+        end
+
+        function applyCaptions(obj,splitCol)
+            % LabelBy 'params': each trace is named by the parameters that
+            % vary across the traces held -- a parameter every trace shares
+            % says nothing -- less the one the panels are titled with. A
+            % trace with none of them keeps its ID.
+            n = numel(obj.Traces);
+            if ~strcmp(obj.LabelBy,'params')
+                for k = 1:n, obj.Traces(k).Caption = ''; end
+                return
+            end
+            V    = obj.ParamValues;
+            vary = mabr.ui.TraceOrganizer.varyingCols(V);
+            vary = vary(vary ~= splitCol);
+            for k = 1:n
+                parts = {};
+                for j = vary
+                    if ~isnan(V(k,j))
+                        parts{end+1} = mabr.ui.TraceOrganizer.paramValueText( ...
+                            obj.ParamNames{j},V(k,j)); %#ok<AGROW>
+                    end
+                end
+                obj.Traces(k).Caption = strjoin(parts,', ');
+            end
+        end
+
+        function tf = isArranged(obj)
+            % Whether the stack is laid out by arrange() -- kept even, panel
+            % by panel -- rather than placed by hand. A split just lifted
+            % still counts, until arrange has merged its panels.
+            tf = obj.isOrganized() || numel(obj.PanelLabels) > 1;
+        end
+
+        function note = manualOrder(obj)
+            % A trace moved by hand: from now on the order is the user's. A
+            % parameter order is cleared (quietly -- the caller is about to
+            % arrange and redraw) and the note says what it was.
+            note = '';
+            if ~any(~cellfun(@isempty,obj.OrderBy)), return; end
+            was = obj.orderDescription();
+            obj.Suspended = true;
+            obj.OrderBy   = {};
+            obj.Suspended = false;
+            obj.syncMenuChecks();
+            if isempty(was)
+                note = 'Order is now manual.';
+            else
+                note = sprintf('Order is now manual (was %s).',was);
+            end
+        end
+
+        function [by,way] = orderPair(obj)
+            % OrderBy and OrderDirection as two parallel lists, one direction
+            % per name, as arrangement reads them; empty names dropped.
+            by  = obj.OrderBy;
+            d   = obj.OrderDirection;
+            way = cell(1,numel(by));
+            for k = 1:numel(by)
+                if isscalar(d),       way{k} = d{1};
+                elseif k <= numel(d), way{k} = d{k};
+                else,                 way{k} = 'ascending';
+                end
+            end
+            keep = ~cellfun(@isempty,by);
+            by   = by(keep);
+            way  = way(keep);
+        end
+
+        function s = orderDescription(obj)
+            % The order in force, in words ('Level descending, Frequency
+            % ascending'), or '' for none.
+            K = obj.OrderKeys;
+            c = cell(1,numel(K));
+            for k = 1:numel(K), c{k} = sprintf('%s %s',K(k).Name,K(k).Direction); end
+            s = strjoin(c,', ');
+        end
+
+        % --- Organize menu ----------------------------------------------------
+        function syncOrganizeMenus(obj)
+            % List the parameters to split and order by, rebuilding the three
+            % submenus only when that list changes (a new block seldom
+            % changes it), and tick what is in force.
+            if ~obj.isvalidView(), return; end
+            names = obj.menuParams();
+            if ~isequal(names,obj.MenuParamKey)
+                obj.MenuParamKey = names;
+                obj.fillOrganizeMenus(names);
+            end
+            obj.syncMenuChecks();
+        end
+
+        function names = menuParams(obj)
+            % The parameters the traces held vary -- a constant one is a
+            % single panel, and orders nothing -- plus any the settings name
+            % that are not among them, so a setting in force is always on
+            % the menu with its tick.
+            names = obj.ParamNames(mabr.ui.TraceOrganizer.varyingCols(obj.ParamValues));
+            [by,~] = obj.orderPair();
+            extra  = [{obj.SplitBy} by];
+            for k = 1:numel(extra)
+                if ~isempty(extra{k}) && ~any(strcmpi(names,extra{k}))
+                    names{end+1} = extra{k}; %#ok<AGROW>
+                end
+            end
+            names = reshape(names,1,[]);
+        end
+
+        function fillOrganizeMenus(obj,names)
+            dirs = obj.OrderDirections;
+            for h = reshape(findobj(obj.Figure,'Tag','org_split'),1,[])
+                delete(allchild(h));
+                uimenu(h,'Label','None (one stack)','Tag','org_split_none', ...
+                    'Callback',@(~,~) obj.pickSplit(''));
+                for j = 1:numel(names)
+                    m = uimenu(h,'Label',names{j},'Tag',['org_split_' lower(names{j})], ...
+                        'Callback',@(~,~) obj.pickSplit(names{j}));
+                    if j == 1, m.Separator = 'on'; end
+                end
+                obj.noParamsItem(h,names);
+            end
+            slots = {'org_order','org_then'};
+            none  = {'Manual (as arranged)','None'};
+            for s = 1:2
+                for h = reshape(findobj(obj.Figure,'Tag',slots{s}),1,[])
+                    delete(allchild(h));
+                    uimenu(h,'Label',none{s},'Tag',[slots{s} '_none'], ...
+                        'Callback',@(~,~) obj.pickOrder(s,'',''));
+                    for j = 1:numel(names)
+                        for d = 1:numel(dirs)
+                            m = uimenu(h,'Label',sprintf('%s, %s',names{j},dirs{d}), ...
+                                'Tag',sprintf('%s_%s_%s',slots{s},lower(names{j}),dirs{d}), ...
+                                'Callback',@(~,~) obj.pickOrder(s,names{j},dirs{d}));
+                            if d == 1, m.Separator = 'on'; end
+                        end
+                    end
+                    obj.noParamsItem(h,names);
+                end
+            end
+        end
+
+        function noParamsItem(~,h,names)
+            % Say why a submenu offers nothing rather than leave it bare.
+            if ~isempty(names), return; end
+            uimenu(h,'Label','(no stimulus parameter varies)','Enable','off', ...
+                'Separator','on');
+        end
+
+        function pickSplit(obj,name)
+            obj.SplitBy = name;
+        end
+
+        function pickOrder(obj,slot,name,way)
+            % The Order by (slot 1) and Then by (slot 2) submenus. Picking the
+            % first key for the parameter already second promotes it rather
+            % than ordering by one name twice.
+            [by,ways] = obj.orderPair();
+            by   = by(1:min(2,end));
+            ways = ways(1:min(2,end));
+            if slot == 1
+                if isempty(name)
+                    by = {}; ways = {};
+                else
+                    if numel(by) >= 2 && strcmpi(by{2},name)
+                        by(2) = []; ways(2) = [];
+                    end
+                    if isempty(by)
+                        by = {name}; ways = {way};
+                    else
+                        by{1} = name; ways{1} = way;
+                    end
+                end
+            else
+                if isempty(by), return; end
+                if isempty(name)
+                    by = by(1); ways = ways(1);
+                elseif strcmpi(by{1},name)
+                    obj.status(sprintf('Already ordered by %s.',by{1}));
+                    obj.syncMenuChecks();
+                    return
+                else
+                    by = {by{1} name}; ways = {ways{1} way};
+                end
+            end
+            obj.setOrder(by,ways);
+        end
+
+        function pickLabel(obj,mode)
+            obj.LabelBy = mode;
+        end
+
+        function cycleSplit(obj)
+            % The keyboard route through the Split by menu: none, then each
+            % parameter the traces vary, then none again.
+            names = [{''} obj.ParamNames(mabr.ui.TraceOrganizer.varyingCols(obj.ParamValues))];
+            if numel(names) < 2
+                obj.status('No stimulus parameter varies across these traces to split by.');
+                return
+            end
+            i = find(strcmpi(names,obj.SplitBy),1);
+            if isempty(i), i = 1; end
+            obj.SplitBy = names{mod(i,numel(names))+1};
         end
 
         function sc = yscale(obj)
@@ -1051,14 +1733,16 @@ classdef TraceOrganizer < handle
         end
 
         % --- Interaction ------------------------------------------------------
-        function onTraceClick(obj,k)
+        function onTraceClick(obj,tr)
+            k = find(obj.Traces == tr,1);
+            if isempty(k), return; end
             mods  = get(obj.Figure,'SelectionType');
             % 'open' = double-click. MATLAB delivers the first click of the
             % pair as a normal one, so a drag is already armed by the time
             % this arrives -- disarm it, or the inspector opens with the
             % trace still following the mouse.
             if strcmp(mods,'open')
-                obj.dragIdx   = [];
+                obj.dragTrace = [];
                 obj.dragMoved = false;
                 obj.select(k);
                 obj.inspectTrace(k);
@@ -1069,29 +1753,51 @@ classdef TraceOrganizer < handle
             extend = any(strcmp(mods,{'extend','alt'}));
             obj.select(k,extend);
 
-            obj.dragIdx = k;
-            cp = obj.Axes.CurrentPoint;
+            % The trace's own panel: a drag moves it up and down its stack.
+            obj.dragTrace = tr;
+            ax = obj.panelFor(k);
+            cp = ax.CurrentPoint;
             obj.dragStartY = cp(1,2);
-            obj.dragStartOffset = obj.Traces(k).YOffset;
+            obj.dragStartOffset = tr.YOffset;
             obj.dragMoved = false;
         end
 
         function doDrag(obj)
-            if isempty(obj.dragIdx), return; end
-            cp = obj.Axes.CurrentPoint;
+            tr = obj.dragTrace;
+            if isempty(tr), return; end
+            k = [];
+            if isvalid(tr), k = find(obj.Traces == tr,1); end
+            if isempty(k), obj.dragTrace = []; return; end
+            ax = obj.panelFor(k);
+            cp = ax.CurrentPoint;
             dy = cp(1,2) - obj.dragStartY;
             if dy == 0, return; end
             obj.dragMoved = true;
             sc = obj.yscale();
-            obj.Traces(obj.dragIdx).YOffset = obj.dragStartOffset + dy;
-            obj.Traces(obj.dragIdx).plot(obj.Axes,sc(obj.dragIdx),obj.labelX());
+            tr.YOffset = obj.dragStartOffset + dy;
+            tr.plot(ax,sc(k),obj.labelX());
         end
 
         function endDrag(obj)
             moved = obj.dragMoved;
-            obj.dragIdx = [];
+            obj.dragTrace = [];
             obj.dragMoved = false;
-            if moved, obj.refreshStatus(); end
+            if ~moved, return; end
+            if ~obj.isArranged()
+                obj.refreshStatus();   % placed by hand: it stays where it was put
+                return
+            end
+            % An organized stack is kept even, so the trace drops into the
+            % place it was let go at. A drop that crossed no other trace
+            % changes nothing and snaps back, the order intact; one that did
+            % is a hand-made order, which replaces a parameter one.
+            note = '';
+            if ~isequal(obj.visualRank(),1:numel(obj.Traces))
+                note = obj.manualOrder();
+            end
+            obj.arrange(true);
+            obj.plotAll(false);
+            if ~isempty(note), obj.status(note); end
         end
 
         function onKey(obj,e)
@@ -1130,6 +1836,8 @@ classdef TraceOrganizer < handle
                     obj.clearMarkers();
                 case 'b'
                     obj.cycleBand();
+                case 'g'
+                    obj.cycleSplit();
                 case 'i'
                     obj.inspectTrace();
                 case 'h'
@@ -1175,6 +1883,10 @@ classdef TraceOrganizer < handle
             if isempty(a), return; end
             obj.Traces(idx).StimID = a{1};
             obj.plotAll(false);
+            if strcmp(obj.LabelBy,'params') && ~isempty(obj.Traces(idx).Caption)
+                obj.status(['Renamed. The labels show stimulus parameters; ' ...
+                    'Organize > Label by stimulus ID shows names.']);
+            end
         end
 
         function promptColor(obj)
@@ -1213,6 +1925,9 @@ classdef TraceOrganizer < handle
                 'Double-click a trace to inspect and mark it full size.'
                 'Amplitude commands act on the selection, or on all traces'
                 'when nothing is selected.'
+                'Organize splits the view into panels and orders the stacks'
+                'by stimulus parameter; moving a trace by hand then makes'
+                'the order manual.'
                 ''
                 'Up / Down            amplitude larger / smaller'
                 'Shift+Up / Down      spacing wider / narrower'
@@ -1224,6 +1939,7 @@ classdef TraceOrganizer < handle
                 'l                    toggle stimulus ID labels'
                 'p / c                mark peaks / clear markers'
                 'b                    cycle the error band'
+                'g                    cycle the split by stimulus parameter'
                 'i                    inspect the selected trace'
                 'h                    hide / show selected'
                 'Delete               remove selected'
@@ -1243,19 +1959,284 @@ classdef TraceOrganizer < handle
             if ~strcmp(obj.ErrorBand,'none')
                 band = sprintf('  |  %s',obj.bandDescription());
             end
-            obj.status(sprintf('%d trace(s), %d selected  |  spacing %.3g  |  %s scale%s', ...
-                n,numel(s),obj.YSpacing,mode,band));
+            obj.status(sprintf('%d trace(s), %d selected  |  spacing %.3g  |  %s scale%s%s', ...
+                n,numel(s),obj.YSpacing,mode,band,obj.organizeDescription()));
+        end
+
+        function s = organizeDescription(obj)
+            % The split and order in force, for the status line -- and a
+            % setting naming a parameter no trace carries, said as such,
+            % since it is otherwise invisible.
+            s = '';
+            if ~isempty(obj.SplitName)
+                s = sprintf('%s  |  split by %s (%d)',s,obj.SplitName,numel(obj.PanelLabels));
+            elseif ~isempty(obj.SplitBy) && ~isempty(obj.Traces)
+                s = sprintf('%s  |  split by %s: no trace carries it',s,obj.SplitBy);
+            end
+            o = obj.orderDescription();
+            if ~isempty(o)
+                s = sprintf('%s  |  ordered by %s',s,o);
+            elseif any(~cellfun(@isempty,obj.OrderBy)) && ~isempty(obj.Traces)
+                s = sprintf('%s  |  order by %s: no trace carries it',s, ...
+                    strjoin(obj.OrderBy(~cellfun(@isempty,obj.OrderBy)),', '));
+            end
         end
 
         function status(obj,txt)
-            if obj.isvalidView()
-                title(obj.Axes,txt,'FontWeight','normal','FontSize',9, ...
-                    'Interpreter','none');
+            if obj.isvalidView() && ~isempty(obj.StatusText) && isgraphics(obj.StatusText)
+                obj.StatusText.String = txt;
+            end
+        end
+    end
+
+    methods (Static)
+        function A = arrangement(P,splitBy,orderBy,orderDir,rank)
+            % How a set of traces is arranged by stimulus parameter. Pure --
+            % no graphics, no organizer -- so it is tested on its own.
+            %
+            %   P         .Names {1 x nP}, .Values [n x nP], NaN where a trace
+            %             lacks the parameter (see paramTable)
+            %   splitBy   a parameter name, '' for none
+            %   orderBy   names, most significant first; {} for none
+            %   orderDir  'ascending' / 'descending', read in parallel with
+            %             orderBy: one applies to all, a name without one of
+            %             its own is 'ascending'
+            %   rank      [1 x n] where each trace stands now (1 = top): the
+            %             tie-break, and the whole order when there is no
+            %             key. Default 1:n.
+            %
+            %   A.panelOf      [1 x n] each trace's panel, in input order
+            %   A.order        [1 x n] the traces top to bottom, panel by panel
+            %   A.panel        [1 x n] A.panelOf(A.order)
+            %   A.panelValues  [1 x nPanels] each panel's value (NaN for the
+            %                  panel of traces lacking the parameter)
+            %   A.panelLabels  {1 x nPanels} its title ('8 kHz'); {''} unsplit
+            %   A.split        the parameter split by, as the traces name it,
+            %                  '' when no split is in force
+            %   A.splitCol     its column of P, 0 for none
+            %   A.keys         struct('Name','Direction'), the order applied
+            %
+            % A name no trace carries is ignored rather than refused: the
+            % setting outlives the traces it was chosen for. Panels run in
+            % ascending order of their value -- descending when the split
+            % parameter is itself an order key, descending -- and the traces
+            % lacking it come last. Within a panel the keys sort, missing
+            % values last, and rank breaks every tie, so the sort is stable
+            % in either direction and reversing one key reverses nothing else.
+            n = size(P.Values,1);
+            if nargin < 5 || isempty(rank), rank = 1:n; end
+            if ischar(orderBy)  || isstring(orderBy),  orderBy  = cellstr(orderBy);  end
+            if ischar(orderDir) || isstring(orderDir), orderDir = cellstr(orderDir); end
+            A = struct('panelOf',ones(1,n),'order',1:n,'panel',ones(1,n), ...
+                'panelValues',NaN,'panelLabels',{{''}},'split','','splitCol',0, ...
+                'keys',struct('Name',{},'Direction',{}));
+
+            % --- the order keys this table can honour ---------------------
+            cols = zeros(1,0);
+            dirs = cell(1,0);
+            for k = 1:numel(orderBy)
+                if isempty(orderBy{k}), continue; end
+                j = find(strcmpi(P.Names,orderBy{k}),1);
+                % Named a second time a parameter adds nothing: the first has
+                % already decided every comparison it could.
+                if isempty(j) || any(cols == j), continue; end
+                if isempty(orderDir),        way = 'ascending';
+                elseif isscalar(orderDir),   way = lower(orderDir{1});
+                elseif k <= numel(orderDir), way = lower(orderDir{k});
+                else,                        way = 'ascending';
+                end
+                cols(end+1) = j;   %#ok<AGROW>
+                dirs{end+1} = way; %#ok<AGROW>
+                A.keys(end+1) = struct('Name',P.Names{j},'Direction',way);
+            end
+
+            % --- panels ---------------------------------------------------
+            s = 0;
+            if ~isempty(splitBy)
+                j = find(strcmpi(P.Names,splitBy),1);
+                if ~isempty(j) && any(~isnan(P.Values(:,j))), s = j; end
+            end
+            if s > 0
+                v  = P.Values(:,s);
+                uv = unique(v(~isnan(v))).';
+                k  = find(cols == s,1);
+                if ~isempty(k) && strcmp(dirs{k},'descending'), uv = fliplr(uv); end
+                pv = uv;
+                if any(isnan(v)), pv(end+1) = NaN; end
+                panelOf = zeros(1,n);
+                for i = 1:n
+                    if isnan(v(i)), panelOf(i) = numel(pv);
+                    else,           panelOf(i) = find(uv == v(i),1);
+                    end
+                end
+                labels = cell(1,numel(pv));
+                for i = 1:numel(pv)
+                    labels{i} = mabr.ui.TraceOrganizer.paramValueText(P.Names{s},pv(i));
+                end
+                A.panelOf     = panelOf;
+                A.panelValues = pv;
+                A.panelLabels = labels;
+                A.split       = P.Names{s};
+                A.splitCol    = s;
+            end
+
+            % --- order: panel, then the keys, then where each stands now ---
+            M = A.panelOf(:);
+            for k = 1:numel(cols)
+                c = P.Values(:,cols(k));
+                if strcmp(dirs{k},'descending'), c = -c; end   % NaN stays last
+                M = [M c]; %#ok<AGROW>
+            end
+            M = [M rank(:)];
+            [~,ord] = sortrows(M);
+            A.order = ord(:).';
+            A.panel = A.panelOf(A.order);
+        end
+
+        function P = paramTable(params)
+            % Traces' stimulus parameters as one table. params is a cell of
+            % scalar structs, one per trace (mabr.ui.Trace.parameters).
+            %   P.Names  {1 x nP} every name any trace carries, in order of
+            %            first appearance
+            %   P.Values [n x nP] NaN where a trace lacks it
+            n = numel(params);
+            names = cell(1,0);
+            for k = 1:n
+                f = reshape(fieldnames(params{k}),1,[]);
+                names = [names f(~ismember(f,names))]; %#ok<AGROW>
+            end
+            V = nan(n,numel(names));
+            for k = 1:n
+                for j = 1:numel(names)
+                    if isfield(params{k},names{j}), V(k,j) = params{k}.(names{j}); end
+                end
+            end
+            P = struct('Names',{names},'Values',V);
+        end
+
+        function p = blockParams(block)
+            % The stimulus parameters of a finalized mabr.data.Block, from
+            % its metadata: the informativeParams it declares -- the
+            % dimensions the offline pipeline groups by -- or, where it
+            % declares none, every numeric scalar it carries, the rule
+            % mabr.stim.StimulusSet follows. Real numeric scalars only, as
+            % doubles (mabr.ui.Trace.cleanParams); nothing is coerced.
+            p = struct();
+            try
+                meta = block.Stim.Meta;
+            catch
+                return
+            end
+            if ~isstruct(meta) || ~isscalar(meta), return; end
+            if isfield(meta,'informativeParams') && ~isempty(meta.informativeParams)
+                names = cellstr(meta.informativeParams);
+            else
+                names = setdiff(fieldnames(meta), ...
+                    {'ID','Label','informativeParams','alternatePolarity'},'stable');
+            end
+            q = struct();
+            for k = 1:numel(names)
+                if isfield(meta,names{k}), q.(names{k}) = meta.(names{k}); end
+            end
+            p = mabr.ui.Trace.cleanParams(q);
+        end
+
+        function [pos,isBottom] = panelRects(N,W,H,labelPx,titled)
+            % Where N panels go in a figure W x H pixels whose trace labels
+            % are labelPx wide (0: none shown): normalized [x y w h] per
+            % panel, left to right then top to bottom, and which have no
+            % panel below them (those carry the time axis label). Pure, so
+            % it is tested on its own.
+            %
+            % One untitled panel -- the stack as it always was -- keeps the
+            % original geometry: MATLAB's default axes box, its left edge
+            % moved right only as far as the labels need, half the figure at
+            % most. Otherwise the panels form a grid of equal columns, each
+            % with room on its left for its own labels: one row while every
+            % column can still be MinPanelPx wide, more rows when not, with
+            % room above each row for its titles.
+            if nargin < 5, titled = false; end
+            W = max(W,1); H = max(H,1);
+            rightEdge = 0.955;
+            if N <= 1 && ~titled
+                left = 0.13;
+                if labelPx > 0, left = min(0.5,max(0.13,(labelPx+16)/W)); end
+                pos = [left 0.11 rightEdge-left 0.815];
+                isBottom = true;
+                return
+            end
+            N      = max(N,1);
+            usable = rightEdge*W;
+            gut0   = max(mabr.ui.TraceOrganizer.MinGutterPx,labelPx+16);
+            gap    = 10;
+            cols   = 1;
+            for c = N:-1:1
+                g = min(gut0,0.5*usable/c);
+                if (usable - c*g - (c-1)*gap)/c >= mabr.ui.TraceOrganizer.MinPanelPx
+                    cols = c;
+                    break
+                end
+            end
+            gut  = min(gut0,0.5*usable/cols);
+            if cols == 1, gut = max(gut,min(0.13*W,0.5*usable)); end
+            rows = ceil(N/cols);
+            pw   = max(1,(usable - cols*gut - (cols-1)*gap)/cols);
+            top  = 0.955*H - 22;   % under the status line, over a title
+            bot  = 0.11*H;         % tick labels and the time axis label
+            rgap = 48;             % one row's tick labels, the next row's titles
+            ph   = max(1,(top - bot - (rows-1)*rgap)/rows);
+            pos      = zeros(N,4);
+            isBottom = false(N,1);
+            for k = 1:N
+                r = ceil(k/cols);
+                c = k - (r-1)*cols;
+                x = gut + (c-1)*(pw + gap + gut);
+                y = top - r*ph - (r-1)*rgap;
+                pos(k,:)    = [x/W y/H pw/W ph/H];
+                isBottom(k) = k + cols > N;
+            end
+        end
+
+        function s = paramValueText(name,v)
+            % One parameter value as a label or a panel title reads it:
+            % '8 kHz', '60 dB', 'Duration 0.005' -- the units
+            % mabr.stim.StimulusSet claims for a name, and the name where it
+            % claims none -- or 'No Frequency' for the traces that lack it.
+            if isnan(v), s = sprintf('No %s',name); return; end
+            u = mabr.stim.StimulusSet.paramUnit(name);
+            if isempty(u), s = sprintf('%s %g',name,v);
+            else,          s = sprintf('%g %s',v,u);
+            end
+        end
+
+        function vary = varyingCols(V)
+            % The columns of a parameter table that vary across its rows:
+            % more than one value among the traces carrying it, or carried by
+            % some traces and not by others.
+            vary = zeros(1,0);
+            for j = 1:size(V,2)
+                v  = V(:,j);
+                ok = ~isnan(v);
+                if numel(unique(v(ok))) > 1 || (any(ok) && ~all(ok))
+                    vary(end+1) = j; %#ok<AGROW>
+                end
             end
         end
     end
 
     methods (Static, Access = private)
+        function v = nameArg(v,what)
+            if isstring(v) && isscalar(v), v = char(v); end
+            if isempty(v), v = ''; return; end
+            assert(ischar(v) && isrow(v),'mabr:ui:TraceOrganizer:name', ...
+                '%s must be a stimulus parameter name.',what);
+        end
+
+        function k = panelKeyOf(labels)
+            % What a set of panels is: how many, and their titles.
+            k = sprintf('%d|%s',numel(labels),strjoin(labels,newline));
+        end
+
         function w = labelWidth(h)
             % A visible label's width in pixels; 0 for one that is absent or
             % hidden. Reading Extent lays the text out, which is the cost the
