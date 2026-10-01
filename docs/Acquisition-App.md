@@ -11,8 +11,8 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
 ```
  [L] [T] | [?]
  ┌ Session ─────────────────────────────────────────┐
- │  Subject ID  [ SUBJ_ID_001                    v ] │
- │      Output  [ C:\data\subj001    v ] [ Browse… ] │
+ │  Subject ID  [ SUBJ_ID_001               v ][−]          │
+ │      Output  [ C:\data\subj001           v ][−][folder]  │
  └───────────────────────────────────────────────────┘
  ┌ Stimulus ────────────────────────────────────────┐
  │  Bank [ ABR_tones.spl          v ][+][−][ Open…  ] │
@@ -42,11 +42,13 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
 
 Every panel shares one label-column width, so the fields line up along a single edge down the whole window. The gap above **Run** is a spacer that absorbs extra height, keeping the transport controls pinned to the bottom at any window size. The overlap warning and plan summary rows in **Presentation** are blank until they have something to say, but their space is reserved so nothing jumps when they appear.
 
+Every panel except **Run** can be folded up to its title bar with the **▾** at the right end of that title (**▸** opens it again). The window resizes to fit what is open, and its top edge stays put, so the chevron you just pressed stays under the pointer. Folding a panel changes no setting, and the chevrons stay active while a schedule runs, so you can tuck away what you are not using during a long session. MABR remembers which panels are folded for the next session. A saved configuration also records them, along with the window layout.
+
 ## Session identity
 
-**Subject ID** — Labels the session and forms the first part of every filename. If it contains digits they are used (`Rat42` → `SUBJ_ID_42`); if it is purely alphabetic the whole name is used. IDs already starting with `SUBJ` are left alone.
+**Subject ID** — Labels the session and forms the first part of every filename. If it contains digits they are used (`Rat42` → `SUBJ_ID_42`); if it is purely alphabetic the whole name is used. IDs already starting with `SUBJ` are left alone. The dropdown remembers the last ten IDs you used; the **−** beside it takes the ID on show off that list, and the field moves on to the next one. Nothing else is touched. If it was the last entry, the list starts over from `SUBJ_ID_001`.
 
-**Output** — Folder for `.abr` files, one per condition. **Browse…** opens a folder picker. The folder is created if it does not exist. Leave it empty to record without saving (blocks stay in memory for the Trace Organizer only).
+**Output** — Folder for `.abr` files, one per condition. The **folder button** beside it opens a folder picker; that is how a folder gets onto the list, since the box is a dropdown rather than a field you type in. The box shows the *end* of the path, `…\2026\Mouse12`, because the lowest folders are the ones that tell one output from another — hover over it for the whole path. The folder is created if it does not exist. Choose **(not saved)**, the last item, to record without saving (blocks stay in memory for the Trace Organizer only). Like Subject ID it remembers the last ten, and its **−** takes the folder on show off the list — the folder on disk is never touched.
 
 ## Stimulus
 

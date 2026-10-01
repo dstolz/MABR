@@ -125,14 +125,25 @@ function run_all_verifications()
 %       verify_icons             - the toolbar pictograms (mabr.ui.Icon):
 %                                  each renders to NaN-transparent 16x16
 %                                  CData blended only at its edges, no two
-%                                  alike, and every glyph a toolbar names is
-%                                  one Icon draws
+%                                  alike, and every glyph a toolbar or a Run
+%                                  panel button names is one Icon draws (the
+%                                  buttons' PNGs keep their own alpha)
 %       verify_recent_banks      - the recent stimulus banks list behind the
 %                                  Stimulus panel's Bank dropdown
 %                                  (mabr.stim.BankHistory): newest first,
 %                                  repeats move up, the cap and what it drops,
 %                                  remove, distinct labels, and a pref that
 %                                  holds anything still loads
+%       verify_history_remove    - the - beside Subject ID and Output: the
+%                                  entry on show leaves the list and the field
+%                                  moves on, a value never used changes
+%                                  nothing, an emptied list starts over from
+%                                  its default; and the buttons lock with
+%                                  their fields
+%       verify_panel_collapse    - every main-window panel but Run folds to
+%                                  its title bar: the window's height fitted
+%                                  to the panels, a saved list read back
+%                                  forgivingly, the chevrons never locked
 %       verify_stimgen_import    - stimgen bank -> StimulusSet: one variant per
 %                                  entry, regenerated at the DAC rate, and the
 %                                  waveform matching its own label. SKIPS when
@@ -187,7 +198,8 @@ function run_all_verifications()
 %   verify_trace_organizer,
 %   verify_trace_inspector, verify_audio_settings, verify_input_calibration,
 %   verify_view_prefs, verify_window_arrange, verify_icons,
-%   verify_recent_banks, verify_stimgen_launcher, and
+%   verify_recent_banks, verify_history_remove, verify_panel_collapse,
+%   verify_stimgen_launcher, and
 %   verify_calibration_latency).
 %   None require audio hardware.
 %
@@ -207,6 +219,7 @@ tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_p
          @verify_notes, @verify_audio_settings, @verify_input_calibration, ...
          @verify_view_prefs, ...
          @verify_window_arrange, @verify_icons, @verify_recent_banks, ...
+         @verify_history_remove, @verify_panel_collapse, ...
          @verify_stimgen_import, @verify_stimgen_launcher, @verify_calibration_latency, ...
          @verify_stimulation_only, ...
          @verify_timing_selftest, @verify_spectrum, ...

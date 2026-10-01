@@ -25,9 +25,9 @@ A small window titled **MABR** opens. Every control is described in [The Acquisi
 
 ### 2. Identify the subject and choose where data goes
 
-**Subject ID** labels the recording and becomes part of every filename. **Output** is the folder the `.abr` files are written to — use **Browse…** to pick one. A per-subject or per-session folder is a good habit, because the offline analysis tools treat each folder as one session.
+**Subject ID** labels the recording and becomes part of every filename. **Output** is the folder the `.abr` files are written to — use the folder button beside it to pick one. The **−** next to each of these two boxes forgets the entry on show, if a list has filled up with old subjects or folders. A per-subject or per-session folder is a good habit, because the offline analysis tools treat each folder as one session.
 
-If you leave Output blank, blocks are still recorded and held in memory, but nothing is written to disk.
+If you choose **(not saved)** in Output, blocks are still recorded and held in memory, but nothing is written to disk.
 
 ### 3. Load a stimulus
 

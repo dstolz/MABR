@@ -98,9 +98,30 @@ classdef App < handle
         NoBankSentinel = '__mabr_no_recent_bank__';
         NoBankText = '(no bank loaded)';
         NothingLoadedText = 'No bank loaded';
+
+        % The Output dropdown's last item: no folder, so a run writes
+        % nothing. ItemsData is a sentinel rather than '' so it is a value
+        % like any other; outputFolder() turns it back into the empty path
+        % everything downstream already reads as "do not save".
+        NoOutputSentinel = '__mabr_no_output__';
+        NoOutputText = '(not saved)';
         % Width of the Stimulus panel's text buttons: fixed rather than 'fit'
         % so Design… becoming Adopt bank does not move anything.
         BankButtonWidth = 80;
+
+        % The panels that fold up to their title bar, in window order. Run is
+        % deliberately not one of them: it is the window's reason for being,
+        % and a run started with its transport folded away could not be
+        % stopped at a glance.
+        CollapsibleSections = {'Session','Stimulus','Presentation','Acquisition'};
+        % What the window is taller than its grid's fixed rows, spacing and
+        % padding add up to -- the 16 px it has always had over the 790 px
+        % those came to (806). fitHeight keeps it whatever is folded, so a
+        % fully open window is exactly the size it always was.
+        WindowSlack = 16;
+        % A panel's title bar, should measuring the Run panel's fail
+        % (collapsedHeight).
+        DefaultTitleBar = 24;
 
         % Stamped on the UIFigure so a second launch can find the first
         % instance's window rather than opening a duplicate onto the same
@@ -229,7 +250,12 @@ classdef App < handle
         AlwaysOnTopTool
         Grid
         SubjectField
+        SubjectRemoveButton
         OutputField
+        % How many characters of a folder's path the Output dropdown has room
+        % for, as of the last time its labels were made (see fillOutputField).
+        OutputChars = NaN
+        OutputRemoveButton
         BrowseButton
         SourceLabel
         DesignButton
@@ -297,6 +323,14 @@ classdef App < handle
         % syncAcquisitionEnables can grey the header and put it back without
         % hard-coding either value (it is not the same in every MATLAB theme).
         AcqPanelFG (1,3) double = [0 0 0]
+        % One element per CollapsibleSections panel (sectionGrid): its row
+        % in Grid, its open height, the panel, the grid it holds (hidden while
+        % folded), the chevron button, and whether it is folded.
+        Sections = struct('Name',{},'Row',{},'Height',{},'Panel',{}, ...
+                          'Body',{},'Toggle',{},'Collapsed',{})
+        % A panel's title bar in pixels, measured off the Run panel the first
+        % time a panel folds (collapsedHeight); NaN until then.
+        TitleBarHeight (1,1) double = NaN
         ArtifactDrop
         ArtifactField
         ArtifactRepeatCheck
@@ -419,6 +453,11 @@ classdef App < handle
             app.syncLoopEnable();
             app.syncISIFields();
             app.syncRecentConfigsMenu();
+            % The panels folded when the window last closed, and the window's
+            % height fitted to them -- always, even with none folded, so a
+            % window remembered taller than its panels comes back without the
+            % empty band.
+            app.applyCollapsed(getpref('MABR','CollapsedPanels',{}));
             % Last, once every control exists to be written into: whatever the
             % previous session was set up with -- bank, repetitions, strategy,
             % ISI, subject, output folder. The three policy objects above are
@@ -575,14 +614,18 @@ classdef App < handle
     % ===================================================================
     methods (Access = private)
         function createComponents(app)
-            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 796], ...
+            % AutoResizeChildren off, or MATLAB ignores the SizeChangedFcn the
+            % Output field refits its labels on (buildSessionPanel). Nothing
+            % is lost by it: the window's one child is a uigridlayout, which
+            % lays itself out whatever this says.
+            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 806], ...
+                'AutoResizeChildren','off', ...
                 'Tag',mabr.ui.App.InstanceTag, ...
                 'CloseRequestFcn',@(~,~) app.onClose());
-            % The panels' fixed heights add up to 780 px; a window remembered
-            % from before the Stimulus panel gained its second row, or the
-            % Presentation panel its two Order rows, would reopen with the Run
-            % panel's bottom edge below the window.
-            mabr.ui.WindowPos.restore(app.UIFigure,'MABR',app.UIFigure.Position,[0 796]);
+            % Only the spot is the user's: the height is whatever the panels
+            % need with the folded ones folded, and fitHeight sets it once
+            % they are built (see the constructor).
+            mabr.ui.WindowPos.restore(app.UIFigure,'MABR',app.UIFigure.Position);
             if getpref('MABR','AlwaysOnTop',false)
                 app.UIFigure.WindowStyle = 'alwaysontop';
             end
@@ -708,7 +751,7 @@ classdef App < handle
             % not see through a panel to its nested grid.
             app.Grid = uigridlayout(app.UIFigure,[7 1]);
             app.Grid.ColumnWidth = {'1x'};
-            app.Grid.RowHeight   = {96,96,256,150,'1x',96,22};
+            app.Grid.RowHeight   = {96,96,256,150,'1x',106,22};
             app.Grid.RowSpacing  = 8;
             app.Grid.Padding     = [10 10 10 6];
 
@@ -727,9 +770,16 @@ classdef App < handle
         % --- Layout building blocks -----------------------------------------
         % Every panel shares one label-column width, so the fields line up in a
         % single vertical edge down the whole window even across panel borders.
-        function g = panelGrid(app,title,row,rowHeights,colWidths)
-            p = uipanel(app.Grid,'Title',title,'FontWeight','bold');
-            p.Layout.Row = row; p.Layout.Column = 1;
+        function g = panelGrid(app,title,row,rowHeights,colWidths,parent)
+            % PARENT is the grid the panel goes in -- app.Grid, at ROW, unless
+            % sectionGrid has given it a cell of its own.
+            if nargin < 6
+                parent = app.Grid;
+            end
+            p = uipanel(parent,'Title',title,'FontWeight','bold');
+            if parent == app.Grid
+                p.Layout.Row = row; p.Layout.Column = 1;
+            end
             g = uigridlayout(p,[numel(rowHeights) numel(colWidths)]);
             g.RowHeight     = rowHeights;
             g.ColumnWidth   = colWidths;
@@ -738,30 +788,317 @@ classdef App < handle
             g.ColumnSpacing = 6;
         end
 
+        function g = sectionGrid(app,title,row,rowHeights,colWidths)
+            % panelGrid for a panel that folds up to its title bar. A uipanel
+            % has no control of its own for that, so the chevron is a small
+            % button laid OVER the right end of the title bar: the panel and
+            % the button share a 3x3 grid in the panel's row of app.Grid, the
+            % panel spanning all of it and the button in the 18 px cell 2 px
+            % down and 4 px in from its top-right corner. Created after the
+            % panel, so it is drawn on top of it.
+            s = uigridlayout(app.Grid,[3 3]);
+            s.Layout.Row = row; s.Layout.Column = 1;
+            s.RowHeight     = {2,18,'1x'};
+            s.ColumnWidth   = {'1x',18,4};
+            s.Padding       = [0 0 0 0];
+            s.RowSpacing    = 0;
+            s.ColumnSpacing = 0;
+            g = app.panelGrid(title,row,rowHeights,colWidths,s);
+            p = g.Parent;
+            p.Layout.Row = [1 3]; p.Layout.Column = [1 3];
+            b = uibutton(s,'Text',char(9662),'FontSize',10, ...   % ▾
+                'ButtonPushedFcn',@(~,~) app.onToggleSection(title));
+            b.Layout.Row = 2; b.Layout.Column = 2;
+            k = numel(app.Sections) + 1;
+            app.Sections(k) = struct('Name',title,'Row',row, ...
+                'Height',app.Grid.RowHeight{row},'Panel',p,'Body',g, ...
+                'Toggle',b,'Collapsed',false);
+            app.syncSectionToggle(k);
+        end
+
+        % --- Folding panels --------------------------------------------------
+        % Every panel but Run folds up to its title bar, and the window takes
+        % up exactly the slack: its height is always fitted to the panels as
+        % they are (fitHeight), with the top edge held so the title bar the
+        % pointer just pressed stays under it. What is folded is a look, so it
+        % persists twice like the rest of the window's look: in the pref
+        % MABR/CollapsedPanels (written by the chevrons and by loading a
+        % configuration, never at close) and in a configuration
+        % (cfg.CollapsedPanels). The chevrons are in no control
+        % list, so they are never locked -- folding a panel changes no setting,
+        % and the panels are worth tidying away most while a schedule runs.
+        function onToggleSection(app,name)
+            k = find(strcmp({app.Sections.Name},name),1);
+            if isempty(k), return; end
+            app.setSectionCollapsed(k,~app.Sections(k).Collapsed);
+            app.fitHeight();
+            try
+                setpref('MABR','CollapsedPanels',app.collapsedNames());
+            catch me
+                mabr.log.vprintf(2,'App: folded panels not remembered (%s).',me.message);
+            end
+        end
+
+        function applyCollapsed(app,names)
+            % Fold exactly the panels NAMES lists (a pref or configuration
+            % value, so anything at all -- see collapsedList), open the rest,
+            % and fit the window to the result.
+            names = mabr.ui.App.collapsedList(names,{app.Sections.Name});
+            for k = 1:numel(app.Sections)
+                tf = any(strcmp(names,app.Sections(k).Name));
+                if tf ~= app.Sections(k).Collapsed
+                    app.setSectionCollapsed(k,tf);
+                end
+            end
+            app.fitHeight();
+        end
+
+        function names = collapsedNames(app)
+            names = {app.Sections([app.Sections.Collapsed]).Name};
+        end
+
+        function setSectionCollapsed(app,k,tf)
+            % Folded, the panel is just its title bar: the row shrinks to it
+            % and the panel's grid is hidden rather than squeezed, so nothing
+            % in it can be tabbed to or half drawn.
+            app.Sections(k).Collapsed = tf;
+            rh = app.Grid.RowHeight;
+            if tf
+                rh{app.Sections(k).Row} = app.collapsedHeight();
+            else
+                rh{app.Sections(k).Row} = app.Sections(k).Height;
+            end
+            app.Grid.RowHeight = rh;
+            app.Sections(k).Body.Visible = onOff(~tf);
+            app.syncSectionToggle(k);
+        end
+
+        function syncSectionToggle(app,k)
+            s = app.Sections(k);
+            if s.Collapsed
+                s.Toggle.Text    = char(9656);   % ▸
+                s.Toggle.Tooltip = sprintf('Show the %s panel.',s.Name);
+            else
+                s.Toggle.Text    = char(9662);   % ▾
+                s.Toggle.Tooltip = sprintf('Fold the %s panel up to its title.',s.Name);
+            end
+        end
+
+        % --- Panel titles ----------------------------------------------------
+        % A uipanel title is plain text (no HTML, and one weight for the whole
+        % string), so each panel's current setting follows its name after an
+        % em dash: the Subject ID, the bank, the strategy and timing, the
+        % artifact and advance rules. That is what a FOLDED panel still has
+        % to say, and what an open one confirms at a glance. A panel's Name
+        % in Sections (what the chevron and the saved fold list use) never
+        % changes -- only the text on the title bar does.
+        function syncPanelTitles(app)
+            % Called wherever one of the values it reads can have changed;
+            % cheap string work, so callers do not judge whether it did. Some
+            % of those callers run while the window is still being built, so
+            % a panel or control that does not exist yet is skipped.
+            if isempty(app.Sections), return; end
+            try
+                app.setSectionTitle('Session',   app.sessionTitleDetail());
+                app.setSectionTitle('Stimulus',  app.stimulusTitleDetail());
+                app.setSectionTitle('Presentation',app.presentationTitleDetail());
+                app.setSectionTitle('Acquisition',app.acquisitionTitleDetail());
+            catch me
+                mabr.log.vprintf(3,'App: panel titles not updated (%s).',me.message);
+            end
+        end
+
+        function setSectionTitle(app,name,detail)
+            k = find(strcmp({app.Sections.Name},name),1);
+            if isempty(k), return; end
+            if isempty(detail), t = name; else, t = [name ' — ' detail]; end
+            p = app.Sections(k).Panel;
+            if ~strcmp(p.Title,t), p.Title = t; end
+        end
+
+        function s = sessionTitleDetail(app)
+            s = '';
+            if isempty(app.SubjectField) || ~isvalid(app.SubjectField), return; end
+            s = mabr.ui.App.clipText(strtrim(app.SubjectField.Value),28);
+        end
+
+        function s = stimulusTitleDetail(app)
+            s = '';
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
+            n = app.Stimuli.numStimuli;
+            if ~isempty(app.BankFile)
+                [~,fn,ext] = fileparts(app.BankFile);
+                name = [fn ext];
+            else
+                switch lower(app.Stimuli.Source.Kind)
+                    case 'demo',    name = 'demo bank';
+                    case 'stimgen', name = 'designer bank';
+                    otherwise,      name = 'unsaved bank';
+                end
+            end
+            parts = {mabr.ui.App.clipText(name,26),sprintf('%d stimuli',n)};
+            % Calibration is the one property of a bank that does not show in
+            % a waveform, so it is the one a folded panel must not hide.
+            [cal,known] = app.Stimuli.isCalibrated();
+            if known && ~cal, parts{end+1} = 'uncalibrated'; end
+            s = strjoin(parts,' · ');
+        end
+
+        function s = presentationTitleDetail(app)
+            s = '';
+            if isempty(app.StrategyDrop) || ~isvalid(app.StrategyDrop) ...
+                    || isempty(app.ISIField) || ~isvalid(app.ISIField) ...
+                    || isempty(app.ISIMaxField) || ~isvalid(app.ISIMaxField)
+                return
+            end
+            k = find(strcmp(app.StrategyDrop.ItemsData,app.strategySetting()),1);
+            if isempty(k), return; end
+            % "Conventional — one stimulus per run" -> "Conventional": the
+            % rest of the label explains the choice and the title only has to
+            % name it.
+            label = strtrim(regexprep(app.StrategyDrop.Items{k},'\s+—.*$',''));
+            parts = {mabr.ui.App.clipText(label,24)};
+            r = app.Reps;
+            if ~isempty(r)
+                if all(r == r(1)), parts{end+1} = sprintf('%d reps',r(1));
+                else,              parts{end+1} = 'varied reps';
+                end
+            end
+            if app.JitterCheck.Value
+                parts{end+1} = sprintf('%.4g–%.4g ms ISI',app.ISIMinField.Value,app.ISIMaxField.Value);
+            else
+                parts{end+1} = sprintf('%.4g ms ISI',app.ISIField.Value);
+            end
+            s = strjoin(parts,' · ');
+        end
+
+        function s = acquisitionTitleDetail(app)
+            % Stimulation only is not a setting of this panel but the reason
+            % none of it applies, and outranks what it would have said.
+            if app.Audio.isStimulationOnly()
+                s = 'n/a (STIMULATION ONLY)';
+                return
+            end
+            s = '';
+            if isempty(app.AdvanceDrop) || ~isvalid(app.AdvanceDrop) ...
+                    || isempty(app.CorrField) || ~isvalid(app.CorrField)
+                return
+            end
+            p = app.Artifacts;
+            switch p.Mode
+                case 'voltage', rej = sprintf('reject ±%.4g mV',1e3*p.VoltageThreshold);
+                case 'rms',     rej = sprintf('reject RMS > %.4g mV',1e3*p.RMSThreshold);
+                otherwise,      rej = 'no rejection';
+            end
+            % The advance rule as it will be applied, not as the dropdown
+            % reads: an intermixed strategy forces every repetition.
+            v = app.AdvanceDrop.Value;
+            if app.currentStrategyIntermixes() || strcmp(v,'All Repetitions') ...
+                    || strcmp(v,'Custom…')
+                adv = 'all reps';
+            elseif strcmp(v,'Correlation Threshold')
+                adv = sprintf('stop at r ≥ %.2f',app.CorrField.Value);
+            else
+                adv = mabr.ui.App.clipText(regexprep(v,'^Custom:\s*',''),20);
+            end
+            s = [rej ' · ' adv];
+        end
+
+        function h = collapsedHeight(app)
+            % A folded panel's height: its title bar and border, nothing
+            % more. Measured once, off the Run panel -- never folded, and
+            % titled in the same font -- as the part of its height that is
+            % not inner area; the theme decides it, so it is not hard-coded.
+            % Never under the chevron's 20 px, which must fit in it.
+            if isnan(app.TitleBarHeight)
+                h = mabr.ui.App.DefaultTitleBar;
+                try
+                    drawnow
+                    d = app.RunPanel.Position(4) - app.RunPanel.InnerPosition(4);
+                    if isfinite(d) && d >= 12 && d <= 48, h = d; end
+                catch me
+                    mabr.log.vprintf(3,'App: title bar not measured (%s).',me.message);
+                end
+                app.TitleBarHeight = max(20,ceil(h));
+            end
+            h = app.TitleBarHeight;
+        end
+
+        function fitHeight(app)
+            % Size the window to its panels, holding the top edge. A
+            % maximized window is left alone -- its size is the screen's.
+            f = app.UIFigure;
+            if isempty(f) || ~isvalid(f), return; end
+            try
+                if ~strcmp(f.WindowState,'normal'), return; end
+            catch
+            end
+            h = mabr.ui.App.fittedHeight(app.Grid.RowHeight,app.Grid.RowSpacing, ...
+                app.Grid.Padding,mabr.ui.App.WindowSlack);
+            pos = f.Position;
+            if pos(4) == h, return; end
+            pos(2) = pos(2) + pos(4) - h;
+            pos(4) = h;
+            f.Position = mabr.ui.WindowPos.clampToScreen(pos);
+        end
+
         function addLabel(~,g,txt,r,c)
             h = uilabel(g,'Text',txt,'HorizontalAlignment','right');
             h.Layout.Row = r; h.Layout.Column = c;
         end
 
         function buildSessionPanel(app,row)
-            g = app.panelGrid('Session',row,{24,24},{app.LabelWidth,'1x','fit'});
+            % Both rows are a dropdown of what was used before (Output shows
+            % the end of each path) and
+            % a − that takes the entry on show off that list, in the same
+            % column so the two line up; the folder picker hangs off the end
+            % of the Output row as a picture, since its caption was wider than
+            % anything else in the column and a folder says it without one.
+            g = app.sectionGrid('Session',row,{24,24},{app.LabelWidth,'1x',26,26});
 
             app.addLabel(g,'Subject ID',1,1);
             app.SubjectField = uidropdown(g,'Editable','on', ...
-                'Items',app.loadHistory('Subject',{'SUBJ_ID_001'}), ...
-                'Tooltip','Labels the session and begins every saved filename.');
+                'Items',app.loadHistory('Subject',app.historyDefaults('Subject')), ...
+                'Tooltip','Labels the session and begins every saved filename.', ...
+                'ValueChangedFcn',@(~,~) app.syncPanelTitles());
             app.SubjectField.Value = app.SubjectField.Items{1};
-            app.SubjectField.Layout.Row = 1; app.SubjectField.Layout.Column = [2 3];
+            app.SubjectField.Layout.Row = 1; app.SubjectField.Layout.Column = 2;
+            app.SubjectRemoveButton = uibutton(g,'Text',char(8722), ...   % minus sign
+                'FontWeight','bold', ...
+                'Tooltip',['Take the Subject ID on show off this list. Nothing else is ' ...
+                           'touched, and the field moves on to the next one.'], ...
+                'ButtonPushedFcn',@(~,~) app.forgetHistoryValue(app.SubjectField,'Subject','Subject ID'));
+            app.SubjectRemoveButton.Layout.Row = 1; app.SubjectRemoveButton.Layout.Column = 3;
 
             app.addLabel(g,'Output',2,1);
-            app.OutputField = uidropdown(g,'Editable','on', ...
-                'Items',app.loadHistory('Output',{pwd}), ...
-                'Tooltip',['Folder for .abr files, one per condition — or, under stimulation ' ...
-                           'only, .stimlog files, one per run. Leave empty to run without saving.']);
-            app.OutputField.Value = app.OutputField.Items{1};
+            % Not editable, unlike Subject ID: a path is longer than the box,
+            % and an editable dropdown shows the START of what it holds with
+            % no way to align it otherwise -- the folders that matter are the
+            % last ones. So each item is labelled by the END of its path and
+            % the full path rides as ItemsData (and the tooltip); the folder
+            % picker is how a path gets in.
+            app.OutputField = uidropdown(g,'Items',{' '}, ...
+                'ValueChangedFcn',@(~,~) app.syncOutputTip());
             app.OutputField.Layout.Row = 2; app.OutputField.Layout.Column = 2;
-            app.BrowseButton = uibutton(g,'Text','Browse…','ButtonPushedFcn',@(~,~) app.onBrowse());
-            app.BrowseButton.Layout.Row = 2; app.BrowseButton.Layout.Column = 3;
+            items = app.loadHistory('Output',app.historyDefaults('Output'));
+            app.fillOutputField(items,items{1});
+            % The label is cut to the box, so it is cut again when the box moves.
+            app.UIFigure.SizeChangedFcn = @(~,~) app.refitOutput();
+            app.OutputRemoveButton = uibutton(g,'Text',char(8722), ...
+                'FontWeight','bold', ...
+                'Tooltip',['Take the folder on show off this list. The folder itself is ' ...
+                           'not touched, and the field moves on to the next one.'], ...
+                'ButtonPushedFcn',@(~,~) app.forgetHistoryValue(app.OutputField,'Output','Output folder'));
+            app.OutputRemoveButton.Layout.Row = 2; app.OutputRemoveButton.Layout.Column = 3;
+            app.BrowseButton = uibutton(g,'Text','', ...
+                'Tooltip','Browse for the output folder.', ...
+                'ButtonPushedFcn',@(~,~) app.onBrowse());
+            app.BrowseButton.Layout.Row = 2; app.BrowseButton.Layout.Column = 4;
+            % Without the picture (its file could not be written) the button
+            % is not left blank: an ellipsis is the conventional "choose…".
+            if ~app.setButtonIcon(app.BrowseButton,'load','center')
+                app.BrowseButton.Text = '…';
+            end
         end
 
         function buildStimulusPanel(app,row)
@@ -775,7 +1112,7 @@ classdef App < handle
             % the +/− pair, Design… under Open…. The button column is a fixed
             % width, so Design… turning into Adopt bank moves nothing.
             bw = mabr.ui.App.BankButtonWidth;
-            g = app.panelGrid('Stimulus',row,{24,24}, ...
+            g = app.sectionGrid('Stimulus',row,{24,24}, ...
                 {app.LabelWidth,'1x',26,26,bw});
 
             app.addLabel(g,'Bank',1,1);
@@ -831,7 +1168,7 @@ classdef App < handle
         end
 
         function buildPresentationPanel(app,row)
-            g = app.panelGrid('Presentation',row,{24,24,24,24,24,24,16,18},{app.LabelWidth,'1x','1x'});
+            g = app.sectionGrid('Presentation',row,{24,24,24,24,24,24,16,18},{app.LabelWidth,'1x','1x'});
 
             app.addLabel(g,'Strategy',1,1);
             app.StrategyDrop = uidropdown(g, ...
@@ -956,7 +1293,7 @@ classdef App < handle
         end
 
         function buildAcquisitionPanel(app,row)
-            g = app.panelGrid('Acquisition',row,{24,24,24,24},{app.LabelWidth,'1x','1x'});
+            g = app.sectionGrid('Acquisition',row,{24,24,24,24},{app.LabelWidth,'1x','1x'});
             % Kept so the whole panel can say when none of it applies: every
             % control below judges, stops, or displays a RECORDING, and a
             % stimulation-only run has none (see syncAcquisitionEnables).
@@ -977,7 +1314,8 @@ classdef App < handle
             % as a bare "0.50" beside a dropdown it read as an orphan.
             app.CorrField = uieditfield(g,'numeric','Value',0.5,'Limits',[0 1], ...
                 'ValueDisplayFormat','stop at r ≥ %.2f','Enable','off', ...
-                'Tooltip','Correlation the running average must reach for the run to stop early.');
+                'Tooltip','Correlation the running average must reach for the run to stop early.', ...
+                'ValueChangedFcn',@(~,~) app.syncPanelTitles());
             app.CorrField.Layout.Row = 1; app.CorrField.Layout.Column = 3;
 
             % One threshold field serves both criteria -- they are alternatives,
@@ -1042,9 +1380,14 @@ classdef App < handle
 
         function buildRunPanel(app,row)
             % Loop's column is fixed and narrow -- its label is one short word
-            % -- so the six text buttons keep their share of the window's
-            % minimum width.
-            g = app.panelGrid('Run',row,{22,32},{'1x','1x','1x',48,'1x','1x','1x'});
+            % -- so the six other buttons keep their share of the window's
+            % minimum width. Each button is a picture over its caption
+            % (setButtonIcon): beside it, "Advance" and a 16 px icon do not
+            % fit the ~60 px a column gets, and the caption stays because
+            % Abort is not a button to be learnt from a pictogram alone. The
+            % buttons are 42 px tall, which is what the picture and the line
+            % under it take.
+            g = app.panelGrid('Run',row,{22,42},{'1x','1x','1x',48,'1x','1x','1x'});
             % Kept so a preview can say so in the title: it is the one caption
             % here with room for the words, and it sits directly above the
             % button that started the run.
@@ -1073,6 +1416,7 @@ classdef App < handle
             app.StartButton = uibutton(g,'Text','Start','BackgroundColor',[0.6 0.9 0.6], ...
                 'FontWeight','bold','ButtonPushedFcn',@(~,~) app.onStart());
             app.StartButton.Layout.Row = 2; app.StartButton.Layout.Column = 1;
+            app.setButtonIcon(app.StartButton,'play');
             % Preview runs the identical schedule -- same stimuli, same
             % acquisition, same live view and organizer traces -- with the
             % Session's output folder left empty, so no .abr file is written.
@@ -1082,6 +1426,7 @@ classdef App < handle
                 'Tooltip','Run the schedule exactly as Start does, but write no .abr files.', ...
                 'ButtonPushedFcn',@(~,~) app.onStart(true));
             app.PreviewButton.Layout.Row = 2; app.PreviewButton.Layout.Column = 2;
+            app.setButtonIcon(app.PreviewButton,'preview');
             % Only meaningful once a blocked-strategy run has completed (an
             % intermixed run has no single stimulus to repeat), so it starts
             % disabled and is re-derived by syncRepeatEnable rather than by
@@ -1092,6 +1437,7 @@ classdef App < handle
                            'stimulus to repeat.'], ...
                 'ButtonPushedFcn',@(~,~) app.onRepeat());
             app.RepeatButton.Layout.Row = 2; app.RepeatButton.Layout.Column = 3;
+            app.setButtonIcon(app.RepeatButton,'repeat');
             % Repeat's sibling: one more run of the last condition, against
             % the same run over and over until switched off -- and, like
             % Repeat, only for a plan of one condition per run
@@ -1110,6 +1456,7 @@ classdef App < handle
                            'presents every condition at once.'], ...
                 'ValueChangedFcn',@(~,~) app.onLoopChanged());
             app.LoopButton.Layout.Row = 2; app.LoopButton.Layout.Column = 4;
+            app.setButtonIcon(app.LoopButton,'loop');
             % The theme's own button colour, so switching Loop off puts back
             % what was there rather than a hard-coded grey.
             app.LoopOffColor = app.LoopButton.BackgroundColor;
@@ -1117,14 +1464,50 @@ classdef App < handle
                 'Tooltip','Suspend playback in place, keeping the audio device open.', ...
                 'ButtonPushedFcn',@(~,~) app.onPause());
             app.PauseButton.Layout.Row = 2; app.PauseButton.Layout.Column = 5;
+            app.setPauseButton(false);
             app.StopButton = uibutton(g,'Text','Advance','Enable','off', ...
                 'Tooltip','End the current run early and advance to the next.', ...
                 'ButtonPushedFcn',@(~,~) app.onStopBlock());
             app.StopButton.Layout.Row = 2; app.StopButton.Layout.Column = 6;
+            app.setButtonIcon(app.StopButton,'advance');
             app.AbortButton = uibutton(g,'Text','Abort','Enable','off','BackgroundColor',[0.95 0.7 0.7], ...
                 'Tooltip','Abandon the whole schedule. Data already recorded is still saved.', ...
                 'ButtonPushedFcn',@(~,~) app.onAbort());
             app.AbortButton.Layout.Row = 2; app.AbortButton.Layout.Column = 7;
+            app.setButtonIcon(app.AbortButton,'abort');
+        end
+
+        function ok = setButtonIcon(~,btn,glyph,align)
+            % A picture above the caption, from mabr.ui.Icon -- the same art
+            % as the toolbars, kept transparent so it sits on whatever
+            % colour the button is (pastel, disabled, Loop's amber). If the
+            % file cannot be made the button keeps its caption and nothing
+            % else, which is how it worked before it had a picture; OK says
+            % which, for a button with no caption to fall back on. ALIGN is
+            % 'top' for a captioned button and 'center' for one that is only
+            % the picture.
+            if nargin < 4, align = 'top'; end
+            f = mabr.ui.Icon.file(glyph);
+            ok = ~isempty(f);
+            if ~ok, return; end
+            btn.Icon = f;
+            btn.IconAlignment = align;
+        end
+
+        function setPauseButton(app,paused)
+            % One button, two jobs: it suspends the run, and then it resumes
+            % it, so its picture changes with its caption -- two bars to
+            % stop, the Start triangle to go on. onPause tells the two
+            % apart by the caption, which this is the only thing to write.
+            if paused
+                app.PauseButton.Text = 'Resume';
+                app.PauseButton.Tooltip = 'Carry on from where playback was suspended.';
+                app.setButtonIcon(app.PauseButton,'play');
+            else
+                app.PauseButton.Text = 'Pause';
+                app.PauseButton.Tooltip = 'Suspend playback in place, keeping the audio device open.';
+                app.setButtonIcon(app.PauseButton,'pause');
+            end
         end
 
         function buildToolbar(app)
@@ -1285,9 +1668,9 @@ classdef App < handle
             % and still reach any file a later real run writes.
             app.Notes.Subject = app.SubjectField.Value;
             app.Notes.JournalFile = '';
-            if preview || isempty(app.OutputField.Value), return; end
+            if preview || isempty(app.outputFolder()), return; end
             try
-                app.Notes.JournalFile = fullfile(app.OutputField.Value, ...
+                app.Notes.JournalFile = fullfile(app.outputFolder(), ...
                     mabr.data.io.buildNotesFilename(app.Notes.Subject, ...
                                                     app.Notes.StartTime));
                 app.Notes.writeJournal();
@@ -1314,29 +1697,154 @@ classdef App < handle
         end
 
         % --- Editable-dropdown history -------------------------------------
-        % Subject ID and Output are editable dropdowns: free text is allowed,
-        % and whatever gets used is remembered (most-recent first) across
-        % sessions via MATLAB prefs.
+        % Subject ID is an editable dropdown, free text allowed, and Output a
+        % dropdown of folders; whatever gets used is remembered (most-recent
+        % first) across sessions via MATLAB prefs.
         function items = loadHistory(~,name,defaults)
             items = getpref('MABR',['History_' name],defaults);
             if ~iscellstr(items) || isempty(items), items = defaults; end %#ok<ISCLSTR>
         end
 
+        function d = historyDefaults(~,name)
+            % What a history list holds when nothing has been used yet --
+            % and what it goes back to when the last entry is removed, since
+            % the dropdown is never left without an item to show.
+            switch name
+                case 'Subject', d = {'SUBJ_ID_001'};
+                otherwise,      d = {pwd};
+            end
+        end
+
+        function [items,v] = historyState(app,field)
+            % The history a dropdown holds, as plain values, and the value
+            % on show. Subject ID's items ARE its values; Output's are
+            % labels of them (see fillOutputField), so its values come from
+            % ItemsData, less the "(not saved)" item, which is not a folder.
+            if isequal(field,app.OutputField)
+                items = field.ItemsData(~strcmp(field.ItemsData,mabr.ui.App.NoOutputSentinel));
+                v = app.outputFolder();
+            else
+                items = field.Items;
+                v = strtrim(field.Value);
+            end
+        end
+
+        function showHistory(app,field,items,v)
+            % The inverse: put a history and a value on show.
+            if isequal(field,app.OutputField)
+                app.fillOutputField(items,v);
+            else
+                field.Items = items;
+                field.Value = v;
+            end
+            app.syncPanelTitles();
+        end
+
         function rememberValue(app,field,name)
-            v = strtrim(field.Value);
+            [old,v] = app.historyState(field);
             if isempty(v), return; end
-            items = [{v} field.Items(~strcmp(field.Items,v))];
+            items = [{v} old(~strcmp(old,v))];
             if numel(items) > 10, items = items(1:10); end
-            field.Items = items;
-            field.Value = v;
+            app.showHistory(field,items,v);
             setpref('MABR',['History_' name],items);
         end
 
+        function forgetHistoryValue(app,field,name,what)
+            % The − beside an editable dropdown: take the entry on show off
+            % its history (and off the pref that keeps it across sessions).
+            % No chooser, unlike the Bank list's −: picking in this dropdown
+            % only sets the field, so the entry to remove is simply the one
+            % showing. Only the list is touched -- never a folder -- and a
+            % value typed but never used is not on it, which is said rather
+            % than silently ignored.
+            [old,v] = app.historyState(field);
+            [items,next,removed] = mabr.ui.App.withoutHistoryValue( ...
+                old,v,app.historyDefaults(name));
+            if ~removed
+                app.setStatus(sprintf('Nothing to remove: the %s on show is not on the list.',what));
+                return
+            end
+            if isequal(items,old)
+                % The only entry, and also what the list starts from.
+                app.setStatus(sprintf('''%s'' is the only entry and the list''s starting value, so it stays.',v));
+                return
+            end
+            app.showHistory(field,items,next);
+            setpref('MABR',['History_' name],items);
+            msg = sprintf('Removed ''%s'' from the %s list.',v,what);
+            if isscalar(old)
+                msg = sprintf('%s That was the last one, so the list starts over from ''%s''.',msg,next);
+            end
+            app.setStatus(msg);
+        end
+
         % Editable dropdowns reject a programmatic Value that is not in Items,
-        % so add it first.
-        function setDropValue(~,field,v)
-            if ~any(strcmp(field.Items,v)), field.Items = [{v} field.Items]; end
-            field.Value = v;
+        % so add it first. The same goes for Output, whose values are its
+        % ItemsData.
+        function setDropValue(app,field,v)
+            [old,~] = app.historyState(field);
+            if ~isempty(v) && ~any(strcmp(old,v)), old = [{v} old]; end
+            app.showHistory(field,old,v);
+        end
+
+        % --- The Output dropdown ---------------------------------------------
+        function fillOutputField(app,items,v)
+            % Items are the folders used before, newest first, and V the one
+            % to show ('' for "(not saved)"). Each is labelled by the END of
+            % its path, since the lowest folders are the ones that tell one
+            % output from another; the full path is the value. The last item
+            % is always "(not saved)". Items and ItemsData go in ONE set(),
+            % as syncRecentBanks does, so the two are never out of step.
+            items = items(:)';
+            items = items(~cellfun(@isempty,items));
+            app.OutputChars = app.outputCharsFit();
+            labels = mabr.ui.App.tailLabels(items,app.OutputChars);
+            set(app.OutputField, ...
+                'Items',[labels {mabr.ui.App.NoOutputText}], ...
+                'ItemsData',[items {mabr.ui.App.NoOutputSentinel}]);
+            if isempty(v), v = mabr.ui.App.NoOutputSentinel; end
+            app.OutputField.Value = v;
+            app.syncOutputTip();
+        end
+
+        function v = outputFolder(app)
+            % The folder to write to; '' for "(not saved)".
+            v = app.OutputField.Value;
+            if strcmp(v,mabr.ui.App.NoOutputSentinel), v = ''; end
+        end
+
+        function syncOutputTip(app)
+            % The box shows the end of the path; the whole of it is here.
+            v = app.outputFolder();
+            if isempty(v)
+                app.OutputField.Tooltip = ['Folder for .abr files, one per condition — or, under ' ...
+                    'stimulation only, .stimlog files, one per run. "(not saved)" runs without saving.'];
+            else
+                app.OutputField.Tooltip = v;
+            end
+        end
+
+        function n = outputCharsFit(app)
+            % How many characters of a path the box has room for. Worked out
+            % from the window rather than read off the box, whose Position is
+            % a default until it has been laid out: the window's width less
+            % the main grid's margins, the panel's border and padding, the
+            % label column, the two 26 px buttons and the spacing between
+            % columns. Then less the arrow and padding, over a character's
+            % width taken a little wide, since a label that overflows shows
+            % its START -- the one thing it is there to avoid.
+            w = app.UIFigure.Position(3) - app.Grid.Padding(1) - app.Grid.Padding(3) ...
+                - 4 - 16 - app.LabelWidth - 2*26 - 3*6;
+            n = max(16,floor((w - 36)/7));
+        end
+
+        function refitOutput(app)
+            % The window changed size: remake the labels if the box now has
+            % room for a different number of characters.
+            if isempty(app.OutputField) || ~isvalid(app.OutputField), return; end
+            if app.outputCharsFit() == app.OutputChars, return; end
+            [items,v] = app.historyState(app.OutputField);
+            app.fillOutputField(items,v);
         end
 
         % --- Save/load configuration -----------------------------------------
@@ -1674,7 +2182,7 @@ classdef App < handle
             cfg.FormatVersion = 1;
             cfg.Saved         = datetime('now');
             cfg.Subject       = app.SubjectField.Value;
-            cfg.OutputPath    = app.OutputField.Value;
+            cfg.OutputPath    = app.outputFolder();
 
             if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0
                 cfg.StimulusSource = mabr.stim.StimulusSet.emptySource();
@@ -1747,6 +2255,8 @@ classdef App < handle
             app.rememberViewerPositions();
             mabr.ui.WindowPos.remember(app.UIFigure,'MABR');
             cfg.WindowPos = mabr.ui.WindowPos.snapshot();
+            % Which of this window's own panels are folded up.
+            cfg.CollapsedPanels = app.collapsedNames();
         end
 
         function warn = applyConfiguration(app,cfg)
@@ -1908,6 +2418,16 @@ classdef App < handle
             end
             if isfield(cfg,'WindowPos')
                 app.applyWindowPositions(cfg.WindowPos);
+            end
+            % After the positions, which can have given this window a height
+            % of its own: folding (or not) refits it to its panels either way.
+            if isfield(cfg,'CollapsedPanels')
+                folded = mabr.ui.App.collapsedList(cfg.CollapsedPanels, ...
+                    mabr.ui.App.CollapsibleSections);
+                app.applyCollapsed(folded);
+                try, setpref('MABR','CollapsedPanels',folded); end %#ok<TRYNC>
+            else
+                app.fitHeight();
             end
             % Last, and unconditionally: the Audio restored above can have put
             % the app into stimulation only, which disables the entire
@@ -2272,7 +2792,7 @@ classdef App < handle
 
         % --- Button callbacks ----------------------------------------------
         function onBrowse(app)
-            p = uigetdir(app.OutputField.Value,'Select output folder');
+            p = uigetdir(app.outputFolder(),'Select output folder');
             if ischar(p) && ~isequal(p,0), app.setDropValue(app.OutputField,p); end
             figure(app.UIFigure);
         end
@@ -2533,6 +3053,7 @@ classdef App < handle
             % Remember the last real selection so a cancelled/rejected Custom…
             % pick has somewhere to fall back to.
             if ~strcmp(v,'Custom…'), app.LastAdvanceValue = v; end
+            app.syncPanelTitles();
         end
 
         function chooseCustomAdvance(app)
@@ -2906,6 +3427,7 @@ classdef App < handle
             % immediately, which is how the user sees whether the threshold
             % they just typed is the one they wanted.
             app.saveArtifactPrefs();
+            app.syncPanelTitles();
             msg = ['Artifact rejection: ' app.Artifacts.describe() '.'];
             if ~isempty(app.Controller) && isvalid(app.Controller)
                 app.Controller.Artifacts = app.Artifacts;
@@ -2961,11 +3483,7 @@ classdef App < handle
             % would never fill. The trace organizer stays -- it can still load
             % a saved .torg view, which has nothing to do with this run.
             stimOnly = app.Audio.isStimulationOnly();
-            if stimOnly
-                app.AcqPanel.Title = 'Acquisition — n/a (STIMULATION ONLY)';
-            else
-                app.AcqPanel.Title = 'Acquisition';
-            end
+            app.syncPanelTitles();   % the Acquisition one says why, under stimulation only
             app.LiveTool.Enable   = onOff(~stimOnly);
             app.MetricTool.Enable = onOff(~stimOnly);
             app.SpectrumTool.Enable = onOff(~stimOnly);
@@ -3493,6 +4011,7 @@ classdef App < handle
             % many runs, how many presentations, and roughly how long.
             app.PlanLabel.Text    = '';
             app.PlanLabel.Tooltip = '';
+            app.syncPanelTitles();   % strategy, repetitions and ISI all land here
             if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
             try
                 sch = app.buildSchedule();
@@ -3593,7 +4112,7 @@ classdef App < handle
                     c.Session.OutputPath = '';
                 else
                     app.rememberValue(app.OutputField,'Output');
-                    c.Session.OutputPath = app.OutputField.Value;
+                    c.Session.OutputPath = app.outputFolder();
                 end
                 % The session is already on the App's notebook (bindNotes, from
                 % ensureController above), so every file this run writes carries
@@ -3720,9 +4239,9 @@ classdef App < handle
 
         function onPause(app)
             if strcmp(app.PauseButton.Text,'Pause')
-                app.Controller.pauseAcq(); app.PauseButton.Text = 'Resume';
+                app.Controller.pauseAcq(); app.setPauseButton(true);
             else
-                app.Controller.resumeAcq(); app.PauseButton.Text = 'Pause';
+                app.Controller.resumeAcq(); app.setPauseButton(false);
             end
         end
 
@@ -4444,7 +4963,7 @@ classdef App < handle
                 if app.StimLogsWritten > 0
                     app.setStatus(sprintf(['Stimulation complete — nothing recorded; ' ...
                         '%d stimulation log(s) written to %s.'], ...
-                        app.StimLogsWritten,app.OutputField.Value));
+                        app.StimLogsWritten,app.outputFolder()));
                 elseif app.Previewing
                     % Preview withholds the output folder, so it withholds the
                     % stimulation log with it -- the mode's only output.
@@ -4504,7 +5023,8 @@ classdef App < handle
             % list-editing buttons with it, a small price for one switch).
             % Save Configuration does not: it only reads the current
             % settings, so it stays live throughout.
-            h = {app.SubjectField, app.OutputField, app.BrowseButton, ...
+            h = {app.SubjectField, app.SubjectRemoveButton, ...
+                 app.OutputField, app.OutputRemoveButton, app.BrowseButton, ...
                  app.DesignButton, app.LoadButton, app.TestButton, ...
                  app.RecentBankDrop, ...
                  app.RecentAddButton, app.RecentRemoveButton, ...
@@ -4570,7 +5090,7 @@ classdef App < handle
             % The toolbar is deliberately never disabled -- raising a viewer is
             % safe at any time, including while the engine is starting up.
             if ~running
-                app.PauseButton.Text = 'Pause';
+                app.setPauseButton(false);
                 app.syncAdvanceEnables();     % re-derives the Advance/Corr enables
                 app.syncOrderEnable();        % only some strategies read the order
                 % Same reason: configControls just switched all five ISI
@@ -4638,6 +5158,7 @@ classdef App < handle
             % in a waveform. Amber rather than green when it is not calibrated,
             % since that is a runnable state but not a publishable one.
             n = app.Stimuli.numStimuli;
+            app.syncPanelTitles();
             [src,detail] = app.Stimuli.describeSource();
             if isempty(src)
                 app.SourceLabel.Text = sprintf('%d stimuli',n);
@@ -4729,6 +5250,127 @@ classdef App < handle
                 try, sp.set_control_visibility(Output=true); end %#ok<TRYNC>
             end
             note = ['Rig: ' strjoin(notes,' · ') '.'];
+        end
+
+        function s = clipText(s,maxChars)
+            % S cut to MAXCHARS characters with a trailing ellipsis, for a
+            % name that has to fit a panel's title bar.
+            s = char(s);
+            if numel(s) > maxChars
+                s = [s(1:max(1,maxChars-1)) '…'];
+            end
+        end
+
+        function labels = tailLabels(paths,maxChars)
+            % PATHS (a cellstr row) each labelled by the END of the path, in
+            % at most MAXCHARS characters: whole folders from the right, with
+            % a leading … for what was left off -- '…\2026\Mouse12' -- and
+            % only a cut name where the last folder alone is longer. They are
+            % dropdown items, so they must be distinct, and paths that end
+            % alike (one folder name on two drives) are told apart by also
+            % keeping their first folders -- 'D:\…\Gerbil\Mouse10' -- as many
+            % as it takes, all still inside MAXCHARS. Only where that cannot
+            % separate them does a longer tail go to each, at worst the whole
+            % path. Static, and of plain values, so it is verified without an
+            % App (verify_history_remove).
+            n = numel(paths);
+            labels = cell(1,n);
+            for k = 1:n, labels{k} = mabr.ui.App.pathTail(paths{k},maxChars); end
+            if n < 2, return; end
+            dup = mabr.ui.App.repeated(labels);
+            for j = 1:max(cellfun(@(p) nnz(p == '\' | p == '/'),paths))
+                if ~any(dup), break; end
+                for k = find(dup)
+                    s = mabr.ui.App.pathHeadTail(paths{k},maxChars,j);
+                    if ~isempty(s), labels{k} = s; end
+                end
+                dup = mabr.ui.App.repeated(labels);
+            end
+            len = repmat(maxChars,1,n);
+            full = cellfun(@numel,paths);
+            while any(dup & len < full)
+                grow = dup & len < full;
+                len(grow) = len(grow) + 4;
+                for k = find(grow), labels{k} = mabr.ui.App.pathTail(paths{k},len(k)); end
+                dup = mabr.ui.App.repeated(labels);
+            end
+        end
+
+        function tf = repeated(labels)
+            % Which of LABELS (a cellstr row) appear more than once.
+            [~,~,ic] = unique(labels);
+            c = accumarray(ic(:),1)';
+            tf = reshape(c(ic),1,[]) > 1;     % a row, whatever shape unique left ic in
+        end
+
+        function s = pathHeadTail(p,maxChars,j)
+            % P as its first J folders (to the J-th separator, kept), a …,
+            % and its end in what room is left -- or '' where there is not
+            % room for an end worth showing, or nothing to leave out.
+            s = '';
+            seps = find(p == '\' | p == '/');
+            if j > numel(seps), return; end
+            h = seps(j);
+            room = maxChars - h - 1;
+            if room < 12 || numel(p) - h <= room, return; end
+            tail = p(end-room+1:end);
+            b = find(tail == '\' | tail == '/',1);
+            if ~isempty(b) && b < numel(tail), tail = tail(b:end); end
+            s = [p(1:h) '…' tail];
+        end
+
+        function s = pathTail(p,maxChars)
+            % P if it fits in MAXCHARS, else its end, from a folder boundary.
+            if numel(p) <= maxChars, s = p; return; end
+            tail = p(end-maxChars+2:end);            % room for the …
+            b = find(tail == '\' | tail == '/',1);
+            if ~isempty(b) && b < numel(tail), tail = tail(b:end); end
+            s = ['…' tail];
+        end
+
+        function [items,next,removed] = withoutHistoryValue(items,v,defaults)
+            % ITEMS (a history list, most recent first) without V; NEXT is
+            % what the field should show then -- the entry that moved up
+            % into V's place, or the last one if V was last, so pressing −
+            % again walks down the list. REMOVED says V was on it at all.
+            % A list this empties starts over from DEFAULTS, because the
+            % dropdown always has an item to show. Static, and of plain
+            % values, so it is verified without an App
+            % (verify_history_remove).
+            k = find(strcmp(items,v),1);
+            removed = ~isempty(k);
+            next = v;
+            if ~removed, return; end
+            items(k) = [];
+            if isempty(items), items = defaults; end
+            next = items{min(k,numel(items))};
+        end
+
+        function h = fittedHeight(rowHeights,rowSpacing,padding,slack)
+            % The window height that holds a grid of ROWHEIGHTS exactly: the
+            % fixed rows, the spacing between every pair of rows (a '1x' row
+            % has its spacing too, and no height of its own), the top and
+            % bottom PADDING ([left bottom right top]), and SLACK. Static, and
+            % of plain values, so it is verified without an App
+            % (verify_panel_collapse).
+            fixed = cellfun(@(r) isnumeric(r) && isscalar(r),rowHeights);
+            h = sum([rowHeights{fixed}]) + rowSpacing*(numel(rowHeights)-1) + ...
+                padding(2) + padding(4) + slack;
+        end
+
+        function names = collapsedList(v,known)
+            % The folded panels a pref or configuration value names: those of
+            % KNOWN it lists, in KNOWN's order, once each. Anything else --
+            % a name this MABR has no panel for (Run among them), a char, a
+            % number, a struct edited by hand -- is passed over rather than
+            % refused, the rule every saved setting here is read back by.
+            if ischar(v) || (isstring(v) && isscalar(v)), v = cellstr(v); end
+            if isstring(v), v = cellstr(v); end
+            if ~iscell(v), v = {}; end
+            v = v(cellfun(@(x) ischar(x) || (isstring(x) && isscalar(x)),v));
+            v = cellfun(@char,v,'UniformOutput',false);
+            names = known(ismember(known,v));
+            names = reshape(names,1,[]);
         end
     end
 
