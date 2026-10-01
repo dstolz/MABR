@@ -49,7 +49,8 @@ function run_all_verifications()
 %                                  behind it until Loop is cleared, then the
 %                                  plan goes on; Advance still moves on, Abort
 %                                  still halts; each pass its own block and
-%                                  file, and no .abr ever overwritten by a
+%                                  file; an intermixed plan never looped;
+%                                  and no .abr ever overwritten by a
 %                                  same-second one
 %       verify_filters           - display filter chain, and that it never
 %                                  reaches the saved trace

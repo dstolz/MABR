@@ -1162,7 +1162,9 @@ classdef ProgressMonitor < handle
 
         function tf = looping(obj)
             % Whether the followed controller is holding its plan on one run
-            % (mabr.ui.AcqController.Loop). Read, not listened for: nothing
+            % (mabr.ui.AcqController.Loop) -- set, AND a plan it can hold
+            % (canLoop: one condition per run), since under an intermixed
+            % plan the controller ignores it. Read, not listened for: nothing
             % announces the switch, and the header is repainted at least once
             % a second while a schedule is in flight. False with no controller
             % or one that has no such switch (a plan attached directly, a
@@ -1171,6 +1173,7 @@ classdef ProgressMonitor < handle
             c = obj.Controller;
             try
                 tf = ~isempty(c) && isvalid(c) && isprop(c,'Loop') && logical(c.Loop);
+                if tf && ismethod(c,'canLoop'), tf = logical(c.canLoop()); end
             catch
             end
         end

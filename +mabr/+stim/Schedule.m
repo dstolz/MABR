@@ -163,8 +163,13 @@ classdef Schedule < handle
 %   loopRun inserts another pass of a run DIRECTLY AFTER it, so the next
 %   advance() lands on the pass instead of the run that was next --
 %   mabr.ui.AcqController calls it at the end of every run while its Loop is
-%   on, which holds the plan on one run until Loop is switched off and then
-%   lets it go on exactly where it was. Inserted rather than appended, unlike
+%   on, which holds the plan on one condition until Loop is switched off and
+%   then lets it go on exactly where it was. Only for a plan that presents
+%   ONE condition per run (isIntermixed false: the conventional strategies,
+%   or a custom one whose runs do) -- an intermixed run is every condition at
+%   once, and repeating it would be repeating the session, not holding a
+%   condition -- so loopRun refuses any other (mabr:stim:Schedule:
+%   loopIntermixed), the line Repeat and early stop already draw. Inserted rather than appended, unlike
 %   make-up and repeat runs: those must not jump the queue, whereas a loop is
 %   the queue waiting. A pass is flagged IsLoop, is never bounded (a loop ends
 %   when it is switched off), and is dropped by reset() along with make-up and
@@ -825,14 +830,18 @@ classdef Schedule < handle
             %   off. Only runs not yet reached move; run r keeps its index and
             %   the counts already credited to it.
             %
+            %   Only for a plan of one condition per run (isIntermixed false):
+            %   Loop holds a CONDITION, and an intermixed run is all of them
+            %   at once. Any other plan is refused
+            %   (mabr:stim:Schedule:loopIntermixed).
+            %
             %   The pass is run r again, presentation for presentation and
-            %   sign for sign: one condition's full train under a conventional
-            %   strategy, the same order of the same conditions under an
-            %   intermixed one. The exception is a make-up run, which holds
-            %   only what an artifact cost its stimulus rather than the
-            %   condition's run: its pass is a full run of that stimulus at
-            %   its scheduled repetition count -- the run repeatRun appends --
-            %   and is not charged to the make-up budget.
+            %   sign for sign -- that condition's full train. The exception
+            %   is a make-up run, which holds only what an artifact cost its
+            %   stimulus rather than the condition's run: its pass is a full
+            %   run of that stimulus at its scheduled repetition count -- the
+            %   run repeatRun appends -- and is not charged to the make-up
+            %   budget.
             %
             %   Unbounded, unlike appendMakeup: a loop ends when it is switched
             %   off, which is the whole point of it. Flagged IsLoop, and
@@ -840,6 +849,10 @@ classdef Schedule < handle
             if nargin < 2 || isempty(r), r = obj.CurrentRun; end
             assert(r >= 1 && r <= obj.NumRuns,'mabr:stim:Schedule:runRange', ...
                 'Run index %d out of range (1..%d).',r,obj.NumRuns);
+            assert(~obj.isIntermixed(),'mabr:stim:Schedule:loopIntermixed', ...
+                ['Loop holds one condition, and this plan (%s) presents several ' ...
+                 'in a run. Use a conventional strategy to loop a condition.'], ...
+                obj.strategyLabel());
             seq = obj.Runs{r};
             pol = obj.Polarities{r};
             if obj.IsMakeup(r)

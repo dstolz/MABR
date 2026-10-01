@@ -4,12 +4,13 @@ function verify_loop_mode()
 %
 %   Part A (pure, no pool): mabr.stim.Schedule.loopRun. A pass goes directly
 %   after its run and is that run again, presentation for presentation and
-%   sign for sign (an intermixed run in the same order); the rest of the plan
-%   waits behind it unchanged; the pass is flagged IsLoop and nothing else;
+%   sign for sign; the rest of the plan waits behind it unchanged; the pass
+%   is flagged IsLoop and nothing else;
 %   a make-up run's pass is a full run of its stimulus and is not charged to
 %   the make-up budget; dropPendingMakeup leaves passes alone; reset() drops
 %   them; the Disabled mask drops a pass of a condition switched off; an
-%   index off the plan is refused.
+%   index off the plan is refused, and so is an intermixed plan -- Loop
+%   holds one condition, and an intermixed run is all of them.
 %
 %   Part B (pure): no .abr is ever overwritten. Loop passes of one condition
 %   are short enough to start within the same second, which is all the
@@ -23,7 +24,8 @@ function verify_loop_mode()
 %   and the schedule completes.
 %
 %   Part D: Advance under Loop moves on to the next run, which is then held
-%   in its turn; Abort under Loop halts, and nothing is presented after it.
+%   in its turn; Abort under Loop halts, and nothing is presented after it;
+%   and an intermixed plan is not looped whatever Loop says (canLoop).
 %
 %   Part E: stimulation only loops the same way, one .stimlog per pass.
 %
@@ -127,19 +129,28 @@ sch.reset();
 assert_throws(@() sch.loopRun(99),'mabr:stim:Schedule:runRange');
 assert_throws(@() sch.loopRun(0), 'mabr:stim:Schedule:runRange');
 
-% An intermixed run is looped whole, in the same order: the pass is the same
-% conditions, not a fresh shuffle of them.
-schI = mabr.stim.Schedule(bank,cfg);
-schI.Strategy    = 'interleaved-random';
-schI.Repetitions = [5 4 3];
-schI.Seed        = 3;
-schI.build();
-schI.loopRun(1);
-assert(schI.NumRuns == 2 && isequal(schI.Runs{2},schI.Runs{1}) ...
-    && isequal(schI.Polarities{2},schI.Polarities{1}), ...
-    'an intermixed run''s pass must be the same order of the same conditions');
-assert(numel(unique(schI.Runs{2})) == 3,'the intermixed pass lost a condition');
-fprintf('  PASS Part A: a pass is its run again, inserted, flagged, and dropped by reset\n');
+% Loop holds ONE condition. An intermixed run is every condition at once, so
+% an intermixed plan is refused and left as it was; a shuffled run ORDER is
+% still one condition per run, and loops.
+for strat = {'interleaved','interleaved-random','shuffled'}
+    schI = mabr.stim.Schedule(bank,cfg);
+    schI.Strategy    = strat{1};
+    schI.Repetitions = [5 4 3];
+    schI.Seed        = 3;
+    schI.build();
+    assert_throws(@() schI.loopRun(1),'mabr:stim:Schedule:loopIntermixed');
+    assert(schI.NumRuns == 1 && ~any(schI.IsLoop), ...
+        '%s: a refused loop must leave the plan as it was',strat{1});
+end
+schS = mabr.stim.Schedule(bank,cfg);
+schS.Strategy    = 'conventional-shuffled';
+schS.Repetitions = [5 4 3];
+schS.Seed        = 3;
+schS.build();
+first = schS.runSequence(1);
+assert(schS.loopRun(1) == 2 && isequal(schS.runSequence(2),first), ...
+    'a shuffled run order still holds one condition per run, and should loop');
+fprintf('  PASS Part A: a pass is its run again, inserted, flagged, dropped by reset; intermixed refused\n');
 
 % ---- Part B: no .abr is ever overwritten ------------------------------------
 stamp = char(datetime('now','Format','yyyyMMdd''T''HHmmssSSS'));
@@ -249,10 +260,25 @@ assert(ctrl.State == mabr.ui.ProgState.Idle && ctrl.Session.NumBlocks == nb, ...
     string(ctrl.State),ctrl.Session.NumBlocks - nb);
 assert(all(block_ids(ctrl,n0) == id1),'Abort should have halted on run 1');
 ctrl.Loop = false;
-fprintf('  PASS Part D: Advance moved on and the next run was held; Abort halted\n');
+
+% An intermixed plan: Loop cannot hold it, so a Loop left set (as a script
+% could) is ignored and the one run plays through to completion.
+setup(ctrl,pair,reps,false,'interleaved');
+assert(~ctrl.canLoop(),'an intermixed plan must not be loopable');
+n0 = ctrl.Session.NumBlocks;
+ctrl.Loop = true;
+ctrl.start();
+wait_state(ctrl,mabr.ui.ProgState.SchedComplete,90);
+assert(ctrl.Schedule.NumRuns == 1 && ~any(ctrl.Schedule.IsLoop) ...
+    && ctrl.Session.NumBlocks == n0 + 2, ...
+    'an intermixed run must play once and not be looped (%d runs, %d blocks)', ...
+    ctrl.Schedule.NumRuns,ctrl.Session.NumBlocks - n0);
+ctrl.Loop = false;
+fprintf('  PASS Part D: Advance moved on and the next run was held; Abort halted; intermixed not looped\n');
 
 % ---- Part E: stimulation only -----------------------------------------------
 outE = fullfile(outC,'stimonly');
+nb   = ctrl.Session.NumBlocks;
 setup(ctrl,pair,reps,true);
 ctrl.Session.OutputPath = outE;
 ctrl.Loop = true;
@@ -278,11 +304,12 @@ end
 
 
 % =====================================================================
-function setup(ctrl,bank,reps,stimOnly)
-% A two-run conventional plan, paced fast: a pass is a fraction of a second,
-% which is what makes same-second file names likely in Part C.
+function setup(ctrl,bank,reps,stimOnly,strategy)
+% A two-run conventional plan (by default), paced fast: a pass is a fraction
+% of a second, which is what makes same-second file names likely in Part C.
+if nargin < 5, strategy = 'conventional'; end
 ctrl.setStimuli(bank);
-ctrl.Schedule.Strategy        = 'conventional';
+ctrl.Schedule.Strategy        = strategy;
 ctrl.Schedule.Repetitions     = reps;
 ctrl.Schedule.ISI             = 0.02;
 ctrl.Schedule.StimulationOnly = stimOnly;

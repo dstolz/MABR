@@ -234,7 +234,7 @@ The toolbar is never disabled — raising a viewer is safe at any time, includin
 |--------|--------|
 | **Start** | Begin the schedule from the first run |
 | **Repeat** | Queue one more full block of the stimulus that just finished |
-| **Loop** | Present the run in progress again when it ends, and again after that, until Loop is switched off |
+| **Loop** | Present the condition in progress again when its run ends, and again after that, until Loop is switched off. Conventional strategies only |
 | **Pause** / **Resume** | Suspend playback in place, keeping the audio device open |
 | **Advance** | End the current run now, save it, continue to the next |
 | **Abort** | End the current run now, save it, halt the schedule |
@@ -243,7 +243,9 @@ Advance and Abort both save what was recorded. Neither discards data. Stopping a
 
 **Repeat** appends one more run of whichever stimulus the most recently completed block presented, at its originally scheduled repetition count, to the end of the plan — the same "append to the end" mechanism artifact make-up uses, just triggered by you instead of a rejected sweep. It is **available only for blocked strategies** (Blocked, or Blocked with shuffled run order): an intermixed run has no single stimulus to point at, so the button stays disabled for the whole run in that case. It lights up as soon as the first eligible block lands and stays available for the rest of the schedule — including after everything has finished, to add one more block before you move on — and it works whether or not the schedule is still running, exactly like the artifact and filter controls beside it.
 
-**Loop** is a toggle, tinted amber while it is on. While it is on, the run in progress is presented again when it ends — and again after that, pass after pass — instead of the schedule moving on; switch it off and the pass that is playing finishes, then the schedule continues from the run that was next, exactly where it would have been. It can be switched on and off at any time: before Start (the first run is held), or mid-run (the run playing is held). It works under every strategy — for a blocked run that is one condition, for an intermixed run the whole intermixed run in the same order — and in stimulation-only mode, Test Mode and Preview.
+**Loop** is a toggle, tinted amber while it is on. While it is on, the run in progress is presented again when it ends — and again after that, pass after pass — instead of the schedule moving on; switch it off and the pass that is playing finishes, then the schedule continues from the run that was next, exactly where it would have been. It can be switched on and off at any time: before Start (the first run is held), or mid-run (the run playing is held). It works in stimulation-only mode, Test Mode and Preview.
+
+**Loop is available only for strategies that present one condition per run** — Conventional and Conventional (shuffled order), or a custom strategy whose runs each hold one stimulus — the same rule as Repeat and correlation early-stop. An intermixed run presents every condition at once, so repeating it would repeat the session rather than hold a condition. Under an intermixed strategy the button is greyed out, and choosing one while Loop is on switches it off (the status line says so).
 
 - **Each pass is a run of its own**: finalized, saved as its own `.abr` file(s) (or `.stimlog`), credited to the schedule, and sent to the viewers, exactly like any other run. Repeats of a condition accumulate in the online analysis window rather than replacing each other.
 - **The advance criterion still ends each pass** (a pass that reaches its sweep count or correlation threshold stops there) — and the pass is then presented again. It decides when a pass has enough, not when to leave the condition.

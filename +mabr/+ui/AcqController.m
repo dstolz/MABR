@@ -40,12 +40,14 @@ classdef AcqController < handle
 %   LastRunStimulus track the stimulus of the most recently completed
 %   single-stimulus run, and stay unset across an intermixed one.
 %
-%   Loop (the GUI's Loop toggle) holds the plan on the run in progress: while
-%   it is set, every run that ends by itself -- played out, or stopped by the
-%   advance criterion -- is presented again, pass after pass, and the plan
-%   goes on to the next run only once Loop is cleared. It works for any run,
-%   blocked or intermixed, recorded or stimulation-only; each pass is a run
-%   of its own, finalized, saved and credited like any other (see loop_run).
+%   Loop (the GUI's Loop toggle) holds the plan on the condition in progress:
+%   while it is set, every run that ends by itself -- played out, or stopped
+%   by the advance criterion -- is presented again, pass after pass, and the
+%   plan goes on to the next run only once Loop is cleared. Like Repeat it is
+%   for a BLOCKED plan, one condition per run (canLoop): an intermixed run is
+%   every condition at once, and repeating it would repeat the session, not
+%   hold a condition. Recorded or stimulation-only, each pass is a run of its
+%   own, finalized, saved and credited like any other (see loop_run).
 %   Advance (stopBlock) still means advance: it ends the pass and moves on,
 %   and the next run is then held in its turn. Abort still halts.
 %
@@ -217,7 +219,9 @@ classdef AcqController < handle
         % playing is presented again when it ends, and again after that;
         % cleared, the pass playing finishes and the plan goes on from the
         % run that was next. Never cleared by the controller itself -- only
-        % whoever set it can decide the loop is over. See loop_run.
+        % whoever set it can decide the loop is over. Honoured only for a
+        % plan of one condition per run (canLoop); under an intermixed one
+        % it is ignored, and the log says so. See loop_run.
         Loop (1,1) logical = false;
     end
 
@@ -718,6 +722,16 @@ classdef AcqController < handle
             obj.alignment_announce(R);
         end
 
+        function tf = canLoop(obj)
+            % Whether Loop can hold this schedule: only when it presents one
+            % condition per run -- a conventional strategy, or a custom one
+            % whose runs do (mabr.stim.Schedule.isIntermixed asks the built
+            % plan). Loop holds a CONDITION, and an intermixed run is every
+            % condition at once; repeating one would repeat the session.
+            % The same line canRepeat and the advance criterion draw.
+            tf = ~isempty(obj.Schedule) && ~obj.Schedule.isIntermixed();
+        end
+
         function tf = canRepeat(obj)
             % True once a blocked-strategy run has completed, so its stimulus
             % can be repeated with a fresh run appended to the plan (see
@@ -1117,6 +1131,14 @@ classdef AcqController < handle
             % go on as though Loop were clear, rather than stalling it.
             if ~obj.Loop || obj.HaltAfterBlock || obj.AdvanceRequested, return; end
             if isempty(obj.Schedule) || r < 1 || r > obj.Schedule.NumRuns, return; end
+            if ~obj.canLoop()
+                % Set by a script, not the GUI (which greys Loop out under an
+                % intermixed strategy): said rather than obeyed or thrown.
+                mabr.log.vprintf(1,['Loop is set, but this schedule presents several ' ...
+                    'conditions in a run (%s); it only holds a plan of one condition ' ...
+                    'per run, so the plan goes on.'],obj.Schedule.strategyLabel());
+                return
+            end
             try
                 obj.Schedule.loopRun(r);
             catch me
