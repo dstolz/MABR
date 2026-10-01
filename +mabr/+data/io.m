@@ -18,6 +18,16 @@ classdef io
 %   Filenames are built to match the pipeline's default regex:
 %       SUBJ_ID_<id>_Frequency_<f>kHz_Level_<L>dB_<yyMMdd'T'HHmmss>.abr
 %
+%   No file is ever overwritten. The stamp is to the second, so two runs of
+%   one condition started within the same second -- short passes of a looped
+%   run (mabr.ui.AcqController.Loop), a Repeat pressed straight after a run --
+%   would be given one name, and save() would replace the first run's data
+%   with the second's without a word. The later file is written as
+%   <name>_2.abr (then _3, ...) instead, and the log says so. That name still
+%   starts with the subject token parseABRFiles selects on and still ends in
+%   .abr, but NOT the strict pattern above, which ends at the timestamp: a
+%   script filtering on that pattern has to allow the suffix to see the file.
+%
 %   Two further fields are written for polarity-alternating conditions. The
 %   pipeline above does not read them, but offline analysis needs them to tell
 %   the two polarities apart, and both are always present:
@@ -60,7 +70,9 @@ classdef io
             ABR_Data = mabr.data.io.buildStruct(block); %#ok<NASGU>
 
             fn  = mabr.data.io.buildFilename(block,baseName);
-            ffn = fullfile(outputPath,fn);
+            ffn = mabr.data.io.uniqueFile(fullfile(outputPath,fn));
+            [~,n,e] = fileparts(ffn);
+            fn  = [n e];
 
             x = whos('ABR_Data');
             mabr.log.vprintf(1,'Saving %s (%.1f MB) [%s]',fn,x.bytes/1e6,ffn);
@@ -83,7 +95,9 @@ classdef io
             MABR_StimLog = mabr.data.io.buildStimLog(info); %#ok<NASGU>
 
             fn  = mabr.data.io.buildStimLogFilename(info,baseName);
-            ffn = fullfile(outputPath,fn);
+            ffn = mabr.data.io.uniqueFile(fullfile(outputPath,fn));
+            [~,n,e] = fileparts(ffn);
+            fn  = [n e];
 
             mabr.log.vprintf(1,'Saving stimulation log %s [%s]',fn,ffn);
             save(ffn,'MABR_StimLog','-mat','-nocompression');
@@ -489,6 +503,24 @@ classdef io
     end
 
     methods (Static, Access = private)
+        function ffn = uniqueFile(ffn)
+            % ffn itself when nothing is there, else the first of <name>_2,
+            % <name>_3, ... (same folder, same extension) that is free. The
+            % suffix goes AFTER the timestamp, so the name still says when
+            % the run started -- bumping the stamp instead would put a time
+            % in the name that nothing happened at. See the class help.
+            if ~isfile(ffn), return; end
+            [p,n,e] = fileparts(ffn);
+            k = 2;
+            while isfile(fullfile(p,sprintf('%s_%d%s',n,k,e)))
+                k = k + 1;
+            end
+            taken = [n e];
+            ffn   = fullfile(p,sprintf('%s_%d%s',n,k,e));
+            mabr.log.vprintf(1,'%s already exists and is kept; writing this one as %s_%d%s.', ...
+                taken,n,k,e);
+        end
+
         function subj = subjectToken(subj)
             % The SUBJ_ID_<n> filename stem, shared by .abr and .stimlog so a
             % session's files sort together whatever it wrote.

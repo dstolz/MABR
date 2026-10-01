@@ -24,7 +24,10 @@ function verify_progress_monitor()
 %          (read off the engine, not the program state) holds both, and the
 %          recorded count replaces the estimate once the run is credited;
 %      13. a window opened mid-session does not claim the session began when
-%          it opened.
+%          it opened;
+%      14. a loop (the controller's Loop): the header says the session is
+%          looping and quotes no time left or finish time -- a looping plan
+%          has no end to count down to -- and names an inserted pass as one.
 %
 %   Along the way: the header's run and plan lines, the percentage in the
 %   window title, the heat map outlining the conditions being presented and
@@ -431,6 +434,62 @@ pm.refresh(true);
 assert(contains(det,'3 / 10 this run'),'the first update did not reach the run line: "%s"',det);
 fc4.complete();
 fprintf('  PASS: a window opened mid-session measures from what it has seen\n');
+
+% --- 14. a loop holds the plan ------------------------------------------
+% While the controller's Loop is set every pass puts another behind it, so
+% the plan has no end of its own: the header must say the session is looping
+% and must NOT quote a time left or a finish time read off the plan. A pass
+% the loop inserted is named as one, like a make-up or a repeat run.
+sch5 = mabr.stim.Schedule(bank,cfg);
+sch5.Strategy    = 'conventional';
+sch5.Repetitions = 10;
+sch5.ISI         = 0.02;
+sch5.build();
+nRuns5 = sch5.NumRuns;
+r5     = sch5.runSequence(1);
+
+fc5 = mabrtest.FakeController(sch5,bank);
+pm.listenTo(fc5);
+fc5.setState(mabr.ui.ProgState.PrepBlock);
+fc5.setState(mabr.ui.ProgState.Acquire);
+fc5.metrics(4);
+pm.refresh(true);
+[~,st,tm] = pm.headerText();
+assert(~contains(st,'looping') && contains(tm,'left'), ...
+    'with Loop clear the header should estimate the time left: "%s" / "%s"',st,tm);
+
+fc5.Loop = true;
+pm.refresh(true);
+[~,st,tm] = pm.headerText();
+assert(contains(st,'looping'),'with Loop set the state line should say so: "%s"',st);
+assert(contains(tm,'until Loop is off') && ~contains(tm,'left') && ~contains(tm,'done'), ...
+    'a looping plan has no end to estimate, yet the time line reads "%s"',tm);
+
+% What AcqController does at the end of a run while Loop is set: credit the
+% run, insert another pass of it directly behind it, and advance onto it.
+fc5.setState(mabr.ui.ProgState.BlockComplete);
+done5 = zeros(1,bank.numStimuli);
+done5(r5(1)) = 10;
+sch5.recordRun(1,done5);
+sch5.loopRun(1);
+sch5.advance();
+fc5.setState(mabr.ui.ProgState.PrepBlock);
+fc5.setState(mabr.ui.ProgState.Acquire);
+fc5.metrics(2);
+pm.refresh(true);
+[~,st] = pm.headerText();
+assert(contains(st,sprintf('run 2 of %d (loop)',nRuns5+1)), ...
+    'the inserted pass should be named as one: "%s"',st);
+assert(pm.Targets(r5(1)) == 20, ...
+    'the pass should add a whole run to its condition''s plan (%d)',pm.Targets(r5(1)));
+
+fc5.Loop = false;
+pm.refresh(true);
+[~,st,tm] = pm.headerText();
+assert(~contains(st,'looping') && contains(tm,'left'), ...
+    'with Loop cleared the time left should come back: "%s" / "%s"',st,tm);
+fc5.complete();
+fprintf('  PASS: a loop is said, its passes are named, and no time left is quoted\n');
 
 fprintf('== verify_progress_monitor: all checks passed ==\n');
 end

@@ -309,6 +309,12 @@ classdef App < handle
         StartButton
         PreviewButton
         RepeatButton
+        % Holds the plan on the run in progress (mabr.ui.AcqController.Loop).
+        % A state button, so whether it is set is visible at a glance, and
+        % tinted while it is (syncLoopButton): a looping schedule has no end
+        % of its own, and that should not be easy to forget.
+        LoopButton
+        LoopOffColor (1,3) double = [0.96 0.96 0.96]
         PauseButton
         StopButton
         AbortButton
@@ -405,6 +411,7 @@ classdef App < handle
             % the acquisition controls have one more thing to be derived from
             % than themselves (see syncAcquisitionEnables).
             app.syncAcquisitionEnables();
+            app.syncLoopEnable();
             app.syncISIFields();
             app.syncRecentConfigsMenu();
             % Last, once every control exists to be written into: whatever the
@@ -1027,7 +1034,10 @@ classdef App < handle
         end
 
         function buildRunPanel(app,row)
-            g = app.panelGrid('Run',row,{22,32},{'1x','1x','1x','1x','1x','1x'});
+            % Loop's column is fixed and narrow -- its label is one short word
+            % -- so the six text buttons keep their share of the window's
+            % minimum width.
+            g = app.panelGrid('Run',row,{22,32},{'1x','1x','1x',48,'1x','1x','1x'});
             % Kept so a preview can say so in the title: it is the one caption
             % here with room for the words, and it sits directly above the
             % button that started the run.
@@ -1036,7 +1046,7 @@ classdef App < handle
             % Readout and transport share a panel: what the run is doing and
             % what you can do about it belong to the same glance.
             s = uigridlayout(g,[1 5]);
-            s.Layout.Row = 1; s.Layout.Column = [1 6];
+            s.Layout.Row = 1; s.Layout.Column = [1 7];
             % Fixed width for the state label rather than 'fit', so the sweep
             % count does not slide sideways as the state text changes length.
             s.ColumnWidth   = {18,112,'1x','fit','fit'};
@@ -1075,18 +1085,39 @@ classdef App < handle
                            'stimulus to repeat.'], ...
                 'ButtonPushedFcn',@(~,~) app.onRepeat());
             app.RepeatButton.Layout.Row = 2; app.RepeatButton.Layout.Column = 3;
+            % Repeat's sibling: one more run of the last condition, against
+            % the same run over and over until switched off -- and, like
+            % Repeat, only for a plan of one condition per run
+            % (syncLoopEnable). A live control, not a config one -- it is
+            % read when a run ENDS (see mabr.ui.AcqController.Loop), so
+            % setting or clearing it mid-run is exactly how it is meant to be
+            % used -- and not a preference either: it is never saved, so a
+            % session always starts with the plan free to advance.
+            app.LoopButton = uibutton(g,'state','Text','Loop','Value',false, ...
+                'Tooltip',['Present the condition in progress again when its run ends, ' ...
+                           'and again after that, until Loop is switched off; the ' ...
+                           'schedule then goes on from the run that was next. Each pass ' ...
+                           'is saved as a run of its own. Advance still moves on to the ' ...
+                           'next run (which is then looped in its turn); Abort still ' ...
+                           'stops. Conventional strategies only -- an intermixed run ' ...
+                           'presents every condition at once.'], ...
+                'ValueChangedFcn',@(~,~) app.onLoopChanged());
+            app.LoopButton.Layout.Row = 2; app.LoopButton.Layout.Column = 4;
+            % The theme's own button colour, so switching Loop off puts back
+            % what was there rather than a hard-coded grey.
+            app.LoopOffColor = app.LoopButton.BackgroundColor;
             app.PauseButton = uibutton(g,'Text','Pause','Enable','off', ...
                 'Tooltip','Suspend playback in place, keeping the audio device open.', ...
                 'ButtonPushedFcn',@(~,~) app.onPause());
-            app.PauseButton.Layout.Row = 2; app.PauseButton.Layout.Column = 4;
+            app.PauseButton.Layout.Row = 2; app.PauseButton.Layout.Column = 5;
             app.StopButton = uibutton(g,'Text','Advance','Enable','off', ...
                 'Tooltip','End the current run early and advance to the next.', ...
                 'ButtonPushedFcn',@(~,~) app.onStopBlock());
-            app.StopButton.Layout.Row = 2; app.StopButton.Layout.Column = 5;
+            app.StopButton.Layout.Row = 2; app.StopButton.Layout.Column = 6;
             app.AbortButton = uibutton(g,'Text','Abort','Enable','off','BackgroundColor',[0.95 0.7 0.7], ...
                 'Tooltip','Abandon the whole schedule. Data already recorded is still saved.', ...
                 'ButtonPushedFcn',@(~,~) app.onAbort());
-            app.AbortButton.Layout.Row = 2; app.AbortButton.Layout.Column = 6;
+            app.AbortButton.Layout.Row = 2; app.AbortButton.Layout.Column = 7;
         end
 
         function buildToolbar(app)
@@ -1775,6 +1806,7 @@ classdef App < handle
             % and the Advance restore then falls through to a built-in.
             warn = app.applyConfigCustomAdvance(cfg,warn);
             app.syncAdvanceEnables();   % re-derives Advance/Corr for the (maybe new) strategy
+            app.syncLoopEnable();       % and Loop, which the same strategies rule out
             % Early stop is meaningless for an intermixed strategy (see
             % syncAdvanceEnables), so a saved 'Correlation Threshold' is only
             % restored when the strategy just set actually allows it --
@@ -2552,6 +2584,7 @@ classdef App < handle
             app.refreshPlan();
             intermixed = app.currentStrategyIntermixes();
             app.syncAdvanceEnables();
+            app.syncLoopEnable();
             app.syncOrderEnable();
             % Remember the last real selection so a cancelled or rejected
             % Custom function... pick has somewhere to fall back to. Without
@@ -3531,6 +3564,9 @@ classdef App < handle
                 p = c.AdvanceParams;
                 p.corrThreshold = app.CorrField.Value;
                 c.AdvanceParams = p;
+                % A rebuilt controller starts with Loop clear; the button is
+                % what the operator can see, so it is what the run follows.
+                c.Loop = logical(app.LoopButton.Value);
 
                 c.Artifacts = app.Artifacts;
                 c.Filters   = app.Filters;
@@ -3582,8 +3618,15 @@ classdef App < handle
                         kind = 'stimulation (no recording; each run saves its sequence to a .stimlog file)';
                     end
                 end
-                app.setStatus(sprintf('Starting %s (%d runs, %d presentations, ~%s)…', ...
-                    kind,s.numRuns,s.presentations,durationText(s.duration)));
+                if c.Loop
+                    % The plan's duration is not the session's while a loop
+                    % holds it on its first run, so it is not quoted.
+                    app.setStatus(sprintf(['Starting %s with Loop on — run 1 of %d is ' ...
+                        'presented again until Loop is switched off…'],kind,s.numRuns));
+                else
+                    app.setStatus(sprintf('Starting %s (%d runs, %d presentations, ~%s)…', ...
+                        kind,s.numRuns,s.presentations,durationText(s.duration)));
+                end
                 % Last, so an open monitor starts its clock and its tally on
                 % the plan that is actually about to run rather than the one
                 % the previous Start left behind.
@@ -3633,6 +3676,82 @@ classdef App < handle
             % (see onBlockReady), not just at the running/idle boundary.
             can = ~isempty(app.Controller) && isvalid(app.Controller) && app.Controller.canRepeat();
             app.RepeatButton.Enable = onOff(can);
+        end
+
+        function onLoopChanged(app)
+            % Handed straight to the controller when there is one: it reads
+            % Loop when the run in progress ends, so this takes effect at the
+            % end of the current pass whatever state the schedule is in. With
+            % no controller yet, onStart hands it over.
+            on = logical(app.LoopButton.Value);
+            app.syncLoopButton();
+            if ~isempty(app.Controller) && isvalid(app.Controller)
+                app.Controller.Loop = on;
+            end
+            running = app.isRunning();
+            if on && running
+                app.setStatus(['Loop on — the run in progress will be presented again ' ...
+                    'when it ends, until Loop is switched off.']);
+            elseif on
+                app.setStatus(['Loop on — the next run to start will be presented again, ' ...
+                    'pass after pass, until Loop is switched off.']);
+            elseif running
+                app.setStatus('Loop off — the schedule goes on once the pass in progress ends.');
+            else
+                app.setStatus('Loop off.');
+            end
+            % An open progress window drops its time left while a loop holds
+            % the plan (a looping plan has no end to count down to); repaint
+            % it now rather than at its next tick.
+            if ~isempty(app.ProgressMon) && isvalid(app.ProgressMon)
+                app.ProgressMon.refresh(true);
+            end
+        end
+
+        function syncLoopButton(app)
+            % Tinted while set: the pressed look of a state button is easy to
+            % miss, and a schedule held on one run never finishes by itself.
+            if app.LoopButton.Value
+                app.LoopButton.BackgroundColor = [1 0.8 0.4];
+            else
+                app.LoopButton.BackgroundColor = app.LoopOffColor;
+            end
+        end
+
+        function syncLoopEnable(app)
+            % Loop holds the schedule on ONE CONDITION, which a run only is
+            % when the plan presents one condition per run -- the conventional
+            % strategies, or a custom one whose runs do. An intermixed run is
+            % every condition at once, and repeating it would be repeating the
+            % session, not looping a condition: the same line Repeat and
+            % correlation early-stop draw. Unavailable, the button is switched
+            % OFF as well as greyed -- a setting the run would ignore is not
+            % shown as on -- and the status line says so, but only then:
+            % transport() calls this on every state change.
+            ok = app.loopAvailable();
+            if ~ok && app.LoopButton.Value
+                app.LoopButton.Value = false;
+                app.syncLoopButton();
+                if ~isempty(app.Controller) && isvalid(app.Controller)
+                    app.Controller.Loop = false;
+                end
+                app.setStatus(['Loop off — it holds one condition, and this strategy ' ...
+                    'presents several in each run.']);
+            end
+            app.LoopButton.Enable = onOff(ok);
+        end
+
+        function tf = loopAvailable(app)
+            % During a schedule the plan being played is the authority (a
+            % custom strategy's runs are only known once built, and the one
+            % Start built is the one that counts); otherwise the strategy
+            % selected, answered as the Advance control answers it.
+            c = app.Controller;
+            if app.isRunning() && ~isempty(c) && isvalid(c) && ~isempty(c.Schedule)
+                tf = c.canLoop();
+            else
+                tf = ~app.currentStrategyIntermixes();
+            end
         end
 
         % --- Viewer windows -------------------------------------------------
@@ -4203,7 +4322,7 @@ classdef App < handle
             % onArtifactModeChanged, onFilters). They lock only during the busy
             % window, where nothing may be touched at all.
             h = {app.ArtifactDrop, app.ArtifactField, app.ArtifactRepeatCheck, ...
-                 app.FilterButton, app.RepeatButton};
+                 app.FilterButton, app.RepeatButton, app.LoopButton};
         end
 
         function h = allControls(app)
@@ -4236,6 +4355,11 @@ classdef App < handle
             % apply to (it re-derives the Advance pair for the same reason).
             app.syncAcquisitionEnables();
             app.syncRepeatEnable();
+            % Loop is live in both states and in every mode -- it only ever
+            % decides what happens when a run ends -- but only for a plan of
+            % one condition per run; setBusy took it away, and this is where
+            % it comes back if the plan allows it.
+            app.syncLoopEnable();
             % Re-derived for the same reason: configControls just switched it
             % on wholesale, but it must stay off without the stimgen submodule.
             app.syncDesignButton();

@@ -74,6 +74,7 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 | `summary()` | Plan overview: `numRuns`, `presentations`, `repetitions`, `duration` (s), `intermixed` |
 | `overlaps()` | True when the longest stimulus does not fit inside the ISI |
 | `recordRun(r,counts)` | Record presentations actually acquired, per stimulus |
+| `loopRun(r)` | Insert another pass of run `r` (default: the current run) directly after it and return its index, `r+1` — what `AcqController` does at the end of each run while `Loop` is set. The pass is run `r` again, presentations and signs; a make-up run's pass is a full run of its stimulus. Refused for an intermixed plan (`mabr:stim:Schedule:loopIntermixed`) — Loop holds one condition. Flagged in `IsLoop` (parallel to `Runs`, like `IsMakeup`/`IsRepeat`) and dropped by `reset()` |
 | `SilencePad`, `PlayerChannels`, `RecorderChannels`, `Device` | Padding and device/channel mapping |
 | `TestingFrameDelay` | Per-frame pause used to pace loopback in tests only |
 | `strategyIntermixes(s)` | Static. Whether strategy `s` intermixes — used by the GUI to gate early stop. `custom` answers `true` conservatively, having no plan to inspect |
@@ -242,6 +243,8 @@ One metric per stimulus **condition**, for the online analysis window ([`mabr.ui
 | `setStimuli(stimuli)` | Adopt a `StimulusSet` (or the raw struct array) and build a default `Schedule` to configure |
 | `setLivePlot(lp)` | Attach a `LivePlot` (or an embedded one) |
 | `start()`, `pauseAcq()`, `resumeAcq()`, `stopBlock()`, `abort()` | User actions. `stopBlock` continues the schedule; `abort` halts it — both save |
+| `canLoop()` | Whether `Loop` can hold this schedule: `~Schedule.isIntermixed()` — one condition per run, as for `canRepeat` |
+| `Loop` | Hold the plan on the run in progress (only where `canLoop()`; ignored, with a log line, under an intermixed plan): while set, each run that ends by itself (or by the advance criterion) is presented again, pass after pass (`Schedule.loopRun`); cleared, the plan goes on from the run that was next. Read when a run ends, so settable at any time. `stopBlock` still moves on (the next run is then held); `abort` still halts |
 | `Window` | ADC window in seconds relative to onset (default `[0 0.01]`) |
 | `AdvanceFcn`, `AdvanceParams` | The criterion and its context. `targetSweeps` is overwritten per run with that run's presentation count |
 | `Filters` | A `mabr.FilterPolicy` applied to the live view *and* handed to each finalized `Recording`. Settable mid-acquisition; never reaches `Recording.Data`, so saved files stay raw |
