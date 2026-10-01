@@ -771,7 +771,10 @@ rt = inc.RenderTiming;
 inc.updateStats(F(f),finfo);
 assert(isequal(inc.RenderTiming,rt),'statistics already on screen were drawn again');
 % ... but after a reset, which blanks every trace behind the record's back,
-% the very same frame is drawn in full.
+% the very same frame is drawn in full. (clearSession first: a bare reset() is
+% a run boundary, which keeps the finished run as one of the session's
+% conditions -- part 19 -- and this is the start of a new session.)
+inc.clearSession();
 inc.reset();
 inc.updateStats(F(f),finfo);
 assert_same_view(inc,F(f),finfo,'after a reset');
@@ -787,7 +790,133 @@ assert(isequal(inc.axLatest.Color,[1 1 1]), ...
     'a frame skipped for having nothing new left the artifact flash on');
 fprintf('  PASS: writing only what changed draws what a fresh view draws\n');
 
+% --- 19. a conventional plan: the session's conditions, one run at a time --
+% A blocked run presents ONE condition, so on its own it could only ever fill
+% the means with the one in progress, and Means / Group had nothing to
+% arrange. The conditions already finished stay in the view instead, so every
+% arrangement, grouping, scale and band a multi-condition run offers is there
+% for a conventional plan too -- from the second run on.
+[F,finfo] = stats_frames(8);
+last = F(end);                                  % all six conditions, a few sweeps each
+bp  = mabr.ui.LivePlot();
+cleanBp = onCleanup(@() delete(bp));
+cb  = live_controls(bp);
+bp.clearSession();
+bp.Layout = 'overlay';  bp.GroupBy = '';  bp.AmpMode = 'common';  bp.ErrorBand = 'none';
+
+[s1,i1] = block_stats(last,finfo,1);
+bp.reset();                                     % run 1 begins
+bp.updateStats(s1,i1);
+assert(~bp.MultiCondition && strcmp(cb.layout.Enable,'off') && strcmp(cb.group.Enable,'off'), ...
+    'Means/Group are live with one condition in the view');
+assert(numel(bp.axMean) == 1,'one condition did not draw one axes');
+
+[s2,i2] = block_stats(last,finfo,2);
+bp.reset();                                     % run 2 begins: condition 1 is finished
+bp.updateStats(s2,i2);
+assert(bp.MultiCondition && strcmp(cb.layout.Enable,'on') && strcmp(cb.group.Enable,'on'), ...
+    'Means/Group stayed greyed with two conditions in the view');
+assert(~contains(cb.layout.TooltipString,'ONE condition'),'the one-condition tooltip outlived it');
+bp.Layout = 'separate';
+assert(numel(bp.axMean) == 2,'a second blocked run did not add its condition to the view');
+% Condition 1 is drawn as it finished -- its own last mean, not blank (the
+% display unit is a common factor, so compare shapes).
+Y2 = mean_ydata(bp);
+assert(~any(isnan(Y2(1,:))),'the finished condition went blank when the next run began');
+assert(max(abs(Y2(1,:)/max(abs(Y2(1,:))) - s1.Mean/max(abs(s1.Mean)))) < 1e-9, ...
+    'the finished condition is not drawn from its own last statistics');
+
+% Every arrangement and grouping a multi-condition run has, on a conventional
+% plan: four finished-or-running conditions, two frequencies x two levels.
+[s3,i3] = block_stats(last,finfo,3);
+[s4,i4] = block_stats(last,finfo,4);
+bp.reset(); bp.updateStats(s3,i3);
+bp.reset(); bp.updateStats(s4,i4);
+nAxes = struct('overlay',1,'separate',4,'grid',4,'stacked',2);   % stacked: one per frequency
+for lay = fieldnames(nAxes)'
+    bp.Layout = lay{1};
+    drawnow;
+    assert(numel(bp.axMean) == nAxes.(lay{1}), ...
+        '%s of four conditions drew %d axes, not %d',lay{1},numel(bp.axMean),nAxes.(lay{1}));
+    assert(stray_axes(bp) == 0,'%s left stray axes with a finished history',lay{1});
+end
+bp.Layout = 'overlay';
+assert(size(mean_ydata(bp),1) == 4,'overlay does not hold the four means');
+bp.Layout = 'grid';  bp.GroupBy = 'Frequency';  bp.ErrorBand = 'sem';  bp.AmpMode = 'each';
+drawnow;
+assert(numel(bp.axMean) == 4 && stray_axes(bp) == 0,'a grouped grid with a band did not draw four tiles');
+assert(all(ismember({'Frequency','Level'},cb.group.String)), ...
+    'the Group menu does not offer the bank''s parameters after a conventional run');
+bp.Layout = 'stacked';  bp.GroupBy = 'Level';
+drawnow;
+assert(numel(bp.axMean) == 2 && stray_axes(bp) == 0,'stacked, grouped by Level, did not draw two stacks');
+
+% A condition acquired twice -- a make-up, a Loop pass, a Repeat -- is ONE
+% condition holding the sweeps of both, pooled exactly as if acquired in one run.
+tt = last.Time;  nS = numel(tt);
+rs = RandStream('mt19937ar','Seed',7);
+YA = 1e-7*randn(rs,10,nS) + 2e-7*sin(2*pi*600*tt);
+YB = 1e-7*randn(rs,5,nS)  + 2e-7*sin(2*pi*600*tt) + 3e-8;
+pp = mabr.ui.LivePlot();
+cleanPp = onCleanup(@() delete(pp));
+pp.clearSession();
+pp.Layout = 'separate';  pp.GroupBy = '';  pp.AmpMode = 'common';  pp.ErrorBand = 'std';
+[sA,iA] = sweep_stats(YA,tt,finfo,1);
+[sB,iB] = sweep_stats(YB,tt,finfo,1);
+[sC,iC] = sweep_stats(YA(1:4,:),tt,finfo,2);
+pp.reset(); pp.updateStats(sA,iA);               % run 1: condition 1
+pp.reset(); pp.updateStats(sC,iC);               % run 2: condition 2
+pp.reset(); pp.updateStats(sB,iB);               % run 3: condition 1 again
+assert(numel(pp.axMean) == 2,'a repeated condition was given a tile of its own');
+Yp  = mean_ydata(pp);
+all15 = [YA;YB];
+ref = mean(all15,1);
+assert(max(abs(Yp(1,:)/max(abs(Yp(1,:))) - ref/max(abs(ref)))) < 1e-9, ...
+    'a condition acquired in two runs does not read as one run''s mean');
+Pb = band_patches(pp);
+[lo,hi] = band_edges(Pb(1));
+got  = (hi - lo)/2;
+want = std(all15,0,1);
+assert(max(abs(got/max(got) - want/max(want))) < 1e-9, ...
+    'a condition acquired in two runs does not carry one run''s SD');
+
+% A new schedule forgets them.
+pp.clearSession();
+pp.reset(); pp.updateStats(sC,iC);
+assert(~pp.MultiCondition && numel(pp.axMean) == 1,'clearSession left finished conditions behind');
+fprintf('  PASS: a conventional plan fills every arrangement with the session''s conditions\n');
+
 fprintf('== verify_live_plot PASSED ==\n');
+end
+
+function [stats,info] = block_stats(F,finfo,c)
+% The statistics and run info of a blocked run holding only condition c, cut
+% out of one frame of a six-condition run. `Varying` is the BANK's answer, as
+% AcqController supplies it: a run of one condition varies nothing itself.
+stats = F;
+stats.Stimuli = c;
+stats.Mean = F.Mean(c,:);  stats.SD = F.SD(c,:);  stats.CondCounts = F.CondCounts(c,:);
+stats.NumSweeps = F.CondCounts(c,2);  stats.NumClean = F.CondCounts(c,1);
+stats.NumArtifacts = 0;  stats.LatestStim = c;
+info = run_info(finfo,c);
+end
+
+function [stats,info] = sweep_stats(Y,t,finfo,c)
+% A run of condition c from its sweeps: what mabr.compute.Pipeline.step holds.
+n = size(Y,1);
+stats = struct('RunId',1,'Time',t,'NumSamples',numel(t),'Latest',Y(end,:), ...
+    'LatestBad',false,'LatestStim',c,'Corr',0.1,'NumSweeps',n,'NumClean',n, ...
+    'NumArtifacts',0,'Stimuli',c,'Mean',mean(Y,1),'SD',std(Y,0,1), ...
+    'CondCounts',[n n 0]);
+info = run_info(finfo,c);
+end
+
+function info = run_info(finfo,c)
+info = struct('Stimuli',c,'Labels',{finfo.Labels(c)});
+info.Params = struct('Names',{finfo.Params.Names}, ...
+    'Values',finfo.Params.Values(c,:),'Units',{finfo.Params.Units}, ...
+    'Varying',[true true]);
+info.target = finfo.target;
 end
 
 

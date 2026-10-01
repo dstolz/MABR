@@ -651,6 +651,9 @@ classdef AcqController < handle
             end
             obj.HaltAfterBlock = false;
             obj.Schedule.reset();
+            % A new schedule: the live view's finished conditions belong to
+            % the last one (and possibly another bank).
+            if ~isempty(obj.LivePlot) && isvalid(obj.LivePlot), obj.LivePlot.clearSession(); end
             obj.begin_current_run();
         end
 

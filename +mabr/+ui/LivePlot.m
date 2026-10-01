@@ -165,7 +165,7 @@ classdef LivePlot < handle
         % edge is measured from the labels that have to fit beside it (see
         % fitLabelGutters), and only one of the two can be the fixed one.
         LatestRightWide   = 0.97;
-        OverlayRight      = 0.81;   % the overlaid means' right edge
+        OverlayRight      = 0.97;   % the overlaid means' right edge: flush with the latest sweep's
         % Bounds on a measured label gutter. The floor is there for an axes
         % that answers with nothing; the ceiling is the point past which a
         % margin wide enough for the labels has swallowed the plot they were
@@ -195,16 +195,18 @@ classdef LivePlot < handle
         % would otherwise leave the axes wide for good.
         MeanShrinkHold   = 40;   % refreshes (~2 s at the 20 Hz live tick)
         % Means and Group arrange SEVERAL conditions; with one there is
-        % nothing to arrange (see syncArrangeControls).
+        % nothing to arrange (see syncArrangeControls). A conventional plan
+        % has several as soon as its second run begins: the finished ones
+        % stay on screen (Done).
         LayoutTip = ['One axes for every stimulus mean, one axes each, a grid ' ...
                      'arranged by stimulus parameter, or one offset stack per ' ...
                      'group.  Right-click the means for an error band.']
         GroupTip  = ['The stimulus parameter the conditions are grouped by: it ' ...
                      'colours each group as a series and forms the columns of ' ...
                      'Grid and Stacked.']
-        OneConditionTip = ['  This run presents ONE condition, so there is ' ...
-                           'nothing to arrange: the setting is kept and applies ' ...
-                           'to the next intermixed run.']
+        OneConditionTip = ['  Only ONE condition has data so far this ' ...
+                           'session, so there is nothing to arrange yet: the ' ...
+                           'setting is kept and applies once a second one has.']
     end
 
     properties
@@ -288,6 +290,21 @@ classdef LivePlot < handle
         % Whether the run on screen presents more than one condition -- the
         % only case in which Means and Group can change anything.
         MultiCondition (1,1) logical = true
+        % The conditions already FINISHED this session, one entry per
+        % stimulus (a repeat, make-up or Loop pass is pooled into its
+        % condition's entry): stimulus index, label, parameter row, and the
+        % statistics a mean and its band are drawn from -- mean, SD and the
+        % clean / total / rejected counts. A conventional (blocked) run holds
+        % ONE condition, so without these the view could only ever show the
+        % one in progress and every arrangement of the means would be an
+        % arrangement of one. Taken from the run's last statistics when the
+        % next run begins (reset), merged into every frame under the live
+        % condition (withSession), and dropped by clearSession or when the
+        % bank's parameters or the time base change under them.
+        Done        = struct('stim',{},'label',{},'values',{}, ...
+                             'mean',{},'sd',{},'counts',{})
+        DoneNames   = {}
+        DoneTime    = []
         % Room reserved for the y axis labels, in fractions of the plot panel:
         % left of the first column of means, between columns, and left of the
         % latest-sweep axes. All three are MEASURED from what is actually on
@@ -380,6 +397,9 @@ classdef LivePlot < handle
             % Forget the run just finished. The axes stay as they are: the
             % next run rebuilds them for its own stimulus list on the first
             % update, and rebuilding here would flash an empty grid in between.
+            % The run that just ended joins the session's finished
+            % conditions first, while obj.Last still holds its statistics.
+            obj.captureRun();
             obj.Last   = [];
             obj.LastIn = [];
             % The next run is scaled on its own evidence: a rung held over
@@ -389,22 +409,41 @@ classdef LivePlot < handle
             obj.LatestShrink = 0;
             obj.clearMeanRungs();
             if ~obj.isvalidView(), return; end
-            set(obj.meanLines(isgraphics(obj.meanLines)),'XData',nan,'YData',nan);
-            set(obj.bandPatches(isgraphics(obj.bandPatches)), ...
-                'XData',nan(3,1),'YData',nan(3,1));
             if isgraphics(obj.latestLine)
                 set(obj.latestLine,'XData',nan,'YData',nan,'Color',obj.RecentColor);
             end
-            % Written behind the caches' backs just now, so they are
-            % forgotten: the next frame writes everything afresh.
-            obj.forgetWritten();
             obj.ArtifactSeen   = 0;
             obj.ArtifactFlashT = [];
             obj.showArtifacts(0,0);
             title(obj.axLatest,'');
+            % The means of the conditions already finished stay on screen:
+            % what is drawn IS their statistics, and blanking them for the
+            % second or so before the next run's first sweep arrives would
+            % flash the whole view empty at every run of a conventional
+            % plan. The first frame of the new run rewrites whatever moved.
+            if ~isempty(obj.Done), return; end
+            set(obj.meanLines(isgraphics(obj.meanLines)),'XData',nan,'YData',nan);
+            set(obj.bandPatches(isgraphics(obj.bandPatches)), ...
+                'XData',nan(3,1),'YData',nan(3,1));
+            % Written behind the caches' backs just now, so they are
+            % forgotten: the next frame writes everything afresh.
+            obj.forgetWritten();
             for k = 1:numel(obj.axMean)
                 if isgraphics(obj.axMean(k)), title(obj.axMean(k),''); end
             end
+        end
+
+        function clearSession(obj)
+            % Forget the conditions finished so far. The controller calls it
+            % when a schedule starts: the stimulus indices in the history
+            % belong to one bank and one schedule, and the next Start may be
+            % another. Not reset(), which runs at every RUN and is exactly
+            % what feeds the history.
+            obj.Done      = obj.Done([]);
+            obj.DoneNames = {};
+            obj.DoneTime  = [];
+            obj.Last      = [];
+            obj.LastIn    = [];
         end
 
         function update(obj,sweeps,tvec,R,target,bad,info)
@@ -534,6 +573,7 @@ classdef LivePlot < handle
             S.nTotal     = stats.NumSweeps;
             S.nBad       = stats.NumArtifacts;
 
+            S = obj.withSession(S);
             obj.Last = S;
             obj.render();
         end
@@ -1494,12 +1534,13 @@ classdef LivePlot < handle
 
         function syncArrangeControls(obj)
             % Means (and Group, in syncGroupControl) arrange SEVERAL
-            % conditions. A run presenting one -- every run of a blocked
+            % conditions. A view holding one -- the first run of a blocked
             % strategy -- has a single mean, which every arrangement draws
             % as the same one axes (resolveGrouping), so a live control there
             % would change a setting and nothing on screen. Greyed instead,
-            % with the tooltip saying why; the setting itself is kept for the
-            % next run that has something to arrange. Written only on a
+            % with the tooltip saying why; the setting itself is kept for
+            % when there is something to arrange. Later runs of a blocked
+            % plan do have: the conditions already finished stay in the view. Written only on a
             % change, since this runs behind the 20 Hz live tick.
             if ~isfield(obj.Ctrl,'layout') || ~isgraphics(obj.Ctrl.layout), return; end
             h = obj.Ctrl.layout;
@@ -1521,6 +1562,112 @@ classdef LivePlot < handle
             % no data arrives to count it down.
             obj.clearMeanRungs();
             if ~isempty(obj.Last), obj.render(); end
+        end
+
+        % --- The session's finished conditions --------------------------------
+        function S = withSession(obj,S)
+            % Lay the run's own statistics over the conditions finished
+            % before it: the stimulus list, labels, parameter table and
+            % statistics the grouping and the means are drawn from become
+            % those of the whole session so far, finished conditions first
+            % (in the order they finished, so a tile does not move when the
+            % next run adds one), then the ones this run introduces. A
+            % condition the run repeats -- a make-up, a Loop pass, a Repeat --
+            % is POOLED with its finished self, the same way the analysis
+            % window accumulates it. What the run alone holds is kept in
+            % S.run, which is what captureRun hands to the history, so the
+            % merged view is never fed back into it.
+            run = struct('stats',S.stats,'stimList',S.stimList, ...
+                         'labels',{S.labels},'params',S.params);
+            S.run = run;
+            st = S.stats;
+            if ~isempty(obj.Done) && (~isequal(obj.DoneNames,S.params.Names) ...
+                    || ~isequal(obj.DoneTime,st.Time))
+                % Another bank, or another window: the finished means are not
+                % on this run's axes and cannot be drawn with it.
+                obj.Done = obj.Done([]);
+            end
+            if isempty(obj.Done), return; end
+
+            dStim = [obj.Done.stim];
+            cur   = S.stimList(:)';
+            list  = [dStim cur(~ismember(cur,dStim))];
+            nL    = numel(list);
+            nS    = numel(st.Time);
+            nP    = numel(S.params.Names);
+
+            M  = nan(nL,nS);  SD = nan(nL,nS);  CC = zeros(nL,3);
+            labels = cell(1,nL);
+            vals   = nan(nL,nP);
+            for i = 1:nL
+                d  = find(dStim == list(i),1);
+                c  = find(cur == list(i),1);
+                r  = find(st.Stimuli == list(i),1);
+                m1 = nan(1,nS);  s1 = nan(1,nS);  k1 = [0 0 0];
+                if ~isempty(d)
+                    m1 = obj.Done(d).mean;  s1 = obj.Done(d).sd;  k1 = obj.Done(d).counts;
+                end
+                m2 = nan(1,nS);  s2 = nan(1,nS);  k2 = [0 0 0];
+                if ~isempty(r)
+                    m2 = st.Mean(r,:);  s2 = st.SD(r,:);  k2 = st.CondCounts(r,:);
+                end
+                [M(i,:),SD(i,:)] = mabr.ui.LivePlot.poolStats(m1,s1,k1(1),m2,s2,k2(1));
+                CC(i,:) = k1 + k2;
+                if ~isempty(c)
+                    labels{i} = S.labels{c};
+                    vals(i,:) = S.params.Values(c,:);
+                else
+                    labels{i} = obj.Done(d).label;
+                    vals(i,:) = obj.Done(d).values;
+                end
+            end
+
+            S.stimList = list;
+            S.labels   = labels;
+            S.params.Values = vals;
+            S.stats.Stimuli    = list;
+            S.stats.Mean       = M;
+            S.stats.SD         = SD;
+            S.stats.CondCounts = CC;
+        end
+
+        function captureRun(obj)
+            % Fold the run that just ended into the finished conditions,
+            % from the statistics its last frame drew. The saved block is
+            % authoritative and a few sweeps behind this at most (the live
+            % tick stops with the run); what this is for is that a
+            % conventional plan's earlier conditions stay on screen.
+            S = obj.Last;
+            if isempty(S) || ~isfield(S,'run') || isempty(S.run), return; end
+            run = S.run;
+            st  = run.stats;
+            names = run.params.Names;
+            if ~isempty(obj.Done) && (~isequal(obj.DoneNames,names) ...
+                    || ~isequal(obj.DoneTime,st.Time))
+                obj.Done = obj.Done([]);
+            end
+            obj.DoneNames = names;
+            obj.DoneTime  = st.Time;
+            nP = numel(names);
+            for i = 1:numel(run.stimList)
+                r = find(st.Stimuli == run.stimList(i),1);
+                if isempty(r) || st.CondCounts(r,2) < 1, continue; end   % no sweeps at all
+                e = struct('stim',run.stimList(i),'label',run.labels{i}, ...
+                    'values',nan(1,nP),'mean',st.Mean(r,:),'sd',st.SD(r,:), ...
+                    'counts',st.CondCounts(r,:));
+                if nP > 0, e.values = run.params.Values(i,:); end
+                d = [];
+                if ~isempty(obj.Done), d = find([obj.Done.stim] == e.stim,1); end
+                if isempty(d)
+                    obj.Done(end+1) = e;
+                else
+                    old = obj.Done(d);
+                    [old.mean,old.sd] = mabr.ui.LivePlot.poolStats(old.mean,old.sd, ...
+                        old.counts(1),e.mean,e.sd,e.counts(1));
+                    old.counts = old.counts + e.counts;
+                    obj.Done(d) = old;
+                end
+            end
         end
 
         % --- Rendering -------------------------------------------------------
@@ -2103,8 +2250,10 @@ classdef LivePlot < handle
             end
         end
 
-        function txt = latestTitle(~,S,G,counts)
-            done = sum(counts);
+        function txt = latestTitle(~,S,G,~)
+            % The run's own count: the means below may hold conditions
+            % finished in earlier runs, which are not this sweep's to claim.
+            done = S.nTotal;
             if isnan(S.target), sweeps = sprintf('%d sweeps',done);
             else,               sweeps = sprintf('%d / %d sweeps',done,S.target);
             end
@@ -2379,6 +2528,24 @@ classdef LivePlot < handle
             P.Values  = V;
             P.Varying = varying;
             P.Units   = units;
+        end
+
+        function [m,sd] = poolStats(m1,sd1,n1,m2,sd2,n2)
+            % Two sets of sweeps' mean and SD, and their clean counts, as
+            % one: the exact parallel combination of Welford accumulators,
+            % so a condition acquired in two runs reads as it would had it
+            % been acquired in one. Either side may hold no clean sweep.
+            if n2 < 1
+                m = m1;  sd = sd1;
+            elseif n1 < 1
+                m = m2;  sd = sd2;
+            else
+                n  = n1 + n2;
+                dm = m2 - m1;
+                m  = m1 + dm*(n2/n);
+                M2 = sd1.^2*(n1 - 1) + sd2.^2*(n2 - 1) + dm.^2*(n1*n2/n);
+                sd = sqrt(max(M2,0)/(n - 1));
+            end
         end
 
         function vary = varyingCols(P,n)
