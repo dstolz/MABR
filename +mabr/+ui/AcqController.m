@@ -64,7 +64,7 @@ classdef AcqController < handle
 %   is coming back.
 %
 %   What such a run DOES save is the stimulation sequence itself (see
-%   log_stim_run): one .stimlog file per run, holding every presentation in
+%   log_stim_run): one _STIM_ .mat file per run, holding every presentation in
 %   play order with its stimulus, polarity, and onset time, plus which of them
 %   actually went out. Nothing is recorded, but what was played is still the
 %   experimental record -- and on a rig where another system does the
@@ -82,7 +82,7 @@ classdef AcqController < handle
 %
 %   The session's rig notebook (mabr.data.SessionNotes) rides along with all
 %   of that: finalize_run copies the log onto each Block it builds and
-%   log_stim_run puts it in each .stimlog, so every file a run writes carries
+%   log_stim_run puts it in each _STIM_ .mat, so every file a run writes carries
 %   what the operator had written by the time it was written. noteContext is
 %   the other direction -- it tells the notebook where the session is, so a
 %   note taken mid-run is stamped with that run and its sweep count.
@@ -110,7 +110,7 @@ classdef AcqController < handle
 %       BlockSaved       - a file was written (.Info.file), and only when the
 %                          Session has an OutputPath: once per stimulus
 %                          recovered from a recorded run, or once per run for
-%                          the .stimlog of a stimulation-only one
+%                          the _STIM_ .mat of a stimulation-only one
 %       ScheduleComplete - the whole schedule finished
 %       MetricsReset     - resetMetrics() was called: the online analysis
 %                          windows forget the conditions gathered so far
@@ -329,7 +329,7 @@ classdef AcqController < handle
         % from mabr.stim.Schedule.renderSpec. Recorded runs recover the onsets
         % that actually came back off the timing channel and have no use for
         % these; a stimulation-only run has no input at all, so the rendered
-        % positions are what its .stimlog reports (see log_stim_run).
+        % positions are what its _STIM_ .mat reports (see log_stim_run).
         CurOnsets  (1,:) double = [];
         % The stimuli this run presents and what to call them, worked out once
         % when the run is prepared rather than on every one of the 20 live
@@ -2061,9 +2061,12 @@ classdef AcqController < handle
                 % metric that fails or runs out of memory must cost the
                 % metric -- not this block's .abr and every later one of the
                 % run, which is what an error here used to do.
+                % Into the session's folder (mabr.FolderScheme), resolved
+                % with this block's stimulus so a pattern may split a
+                % session by condition.
                 if ~isempty(obj.Session.OutputPath)
                     files{end+1} = mabr.data.io.writeABR(blk, ...
-                        obj.Session.OutputPath,obj.Session.Subject.ID); %#ok<AGROW>
+                        obj.Session.folderFor(stimMeta.Meta),obj.Session.Subject.ID); %#ok<AGROW>
                 end
                 try
                     blk = blk.computeMetrics();
@@ -2143,7 +2146,7 @@ classdef AcqController < handle
             info.IDs             = obj.Stimuli.IDs();
             info.StimulusMeta    = arrayfun(@(u) obj.Stimuli.meta(u), ...
                 1:obj.Stimuli.numStimuli,'UniformOutput',false);
-            % A stimulation-only session writes no .abr, so the .stimlog is the
+            % A stimulation-only session writes no .abr, so the _STIM_ .mat is the
             % only file its notes can reach.
             info.Notes           = obj.Session.noteRecord();
 
@@ -2165,7 +2168,13 @@ classdef AcqController < handle
                 stream.reason);
 
             if isempty(obj.Session.OutputPath), return; end
-            file = mabr.data.io.writeStimLog(info,obj.Session.OutputPath, ...
+            % A run of one stimulus is filed as that stimulus's .abr would be;
+            % a run of several has no one stimulus to name a per-condition
+            % folder level after, so it goes in the session folder.
+            meta = [];
+            u = unique(obj.CurSeq(obj.CurSeq >= 1));
+            if isscalar(u), meta = obj.Stimuli.meta(u); end
+            file = mabr.data.io.writeStimLog(info,obj.Session.folderFor(meta), ...
                 obj.Session.Subject.ID);
         end
 

@@ -323,7 +323,7 @@ blk = mabr.data.Block();
 blk.Stim      = set.meta(1);
 blk.StartTime = datetime(2026,7,21,10,30,0);
 fn = mabr.data.io.buildFilename(blk,'SUBJ_ID_1');
-assert(contains(fn,'Frequency_') && contains(fn,'kHz_Level_') && endsWith(fn,'.abr'), ...
+assert(contains(fn,'_Frequency-') && contains(fn,'kHz_Level-') && endsWith(fn,'.abr'), ...
     'Filename "%s" does not match the offline pipeline''s shape.',fn);
 fprintf('  filename: %s\n',fn);
 

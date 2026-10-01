@@ -461,7 +461,7 @@ classdef Schedule < handle
 
         function s = strategyLabel(obj)
             % How the strategy should be NAMED in a record of the session --
-            % the .stimlog's Presentation.Strategy, a log line, a status line.
+            % the stimulation log's Presentation.Strategy, a log line, a status line.
             % 'custom' alone does not say which custom, and a file recording
             % only that the order was "custom" cannot be reproduced from.
             %

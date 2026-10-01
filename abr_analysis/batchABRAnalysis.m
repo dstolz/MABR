@@ -7,7 +7,7 @@ function [thresh_hat,logMdls] = batchABRAnalysis(rootPth, options)
 
 arguments
     rootPth
-    options.filePattern = "^SUBJ_ID_(\d+)_Frequency_([\d_]+kHz)_Level_(\d+dB)_(\d{6}T\d{6})\.abr";
+    options.filePattern = "^SUBJ-ID-(\d+)_Frequency-([\dp]+kHz)_Level-(m?[\dp]+dB)_(\d{6}T\d{6})\.abr";
     options.window (1,2) double {mustBeFinite,mustBeAscending} = [-10 10]; % ms
 end
 

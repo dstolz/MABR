@@ -76,8 +76,10 @@ ABR_Data.SIG.informativeParams, numeric SIG.(param), SIG.Label
 and filenames matching:
 
 ```
-^SUBJ_ID_(\d+)_Frequency_([\d_]+kHz)_Level_(\d+dB)_(\d{6}T\d{6})\.abr
+^SUBJ-ID-(\d+)_Frequency-([\dp]+kHz)_Level-(m?[\dp]+dB)_(\d{6}T\d{6})\.abr
 ```
+
+(the default `filePattern` of `batchABRAnalysis`). Underscores separate tokens and hyphens join the parts of one; a decimal point is `p` and a minus sign `m` (see [Data Files](Data-Files.md#filenames)). Files named before this scheme (`SUBJ_ID_001_Frequency_8kHz_…`) do not match it — pass a pattern of your own to reach them.
 
 [mabr.data.io.writeABR](../+mabr/+data/io.m) emits precisely this, and [verify_data_roundtrip.m](../tests/verify_data_roundtrip.m) asserts it — including running the real `parseABRFiles`/`extractABRResponses` over freshly written files when `parfor_progress` is on the path. Changing the writer without running that test risks silently breaking every downstream analysis.
 

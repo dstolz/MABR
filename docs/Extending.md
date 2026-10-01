@@ -298,7 +298,7 @@ Once accepted the dropdown reads `Custom: <name>`, and the choice is remembered 
 Two consequences worth knowing:
 
 - **Early stop follows the plan, not the name.** Whether a custom strategy intermixes is a property of the runs it produced, so `Schedule.isIntermixed` asks the built plan whether any run holds more than one stimulus. A custom strategy emitting one stimulus per run keeps the correlation early-stop, the Repeat button, and the live view's correlation bar; one that mixes loses all three, exactly as the built-in intermixed strategies do.
-- **The record names your function.** A `.stimlog`'s `Presentation.Strategy` reads `custom: descending_levels`, not just `custom` — a record of what was presented that cannot name the function that ordered it cannot be reproduced from.
+- **The record names your function.** A stimulation log's `Presentation.Strategy` reads `custom: descending_levels`, not just `custom` — a record of what was presented that cannot name the function that ordered it cannot be reproduced from.
 
 Setting `Strategy = 'custom'` with no `StrategyFcn` is refused (`mabr:stim:Schedule:noStrategyFcn`) rather than quietly falling back to a built-in: a session presented in an order nobody chose is worse than one that will not start.
 

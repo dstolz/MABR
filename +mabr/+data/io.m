@@ -15,8 +15,13 @@ classdef io
 %       ABR_Data.SIG.(param)              (numeric, one per informativeParam)
 %       ABR_Data.SIG.Label                (cellstr; also drives the filename)
 %
-%   Filenames are built to match the pipeline's default regex:
-%       SUBJ_ID_<id>_Frequency_<f>kHz_Level_<L>dB_<yyMMdd'T'HHmmss>.abr
+%   Filenames are underscore-separated TOKENS, each token hyphenated inside
+%   (a name-value pair is one token), and match the strict offline pattern
+%       ^SUBJ-ID-(\d+)_Frequency-([\dp]+kHz)_Level-(m?[\dp]+dB)_(\d{6}T\d{6})\.abr
+%   e.g. SUBJ-ID-1254_Frequency-8kHz_Level-30dB_261001T143012.abr. Underscores
+%   appear ONLY between tokens, so a name splits unambiguously on them; a
+%   decimal point in a value is written p (11.3 kHz -> 11p3kHz) and a minus
+%   sign m (-10 dB -> m10dB), since '.' and '-' are taken.
 %
 %   No file is ever overwritten. The stamp is to the second, so two runs of
 %   one condition started within the same second -- short passes of a looped
@@ -58,9 +63,11 @@ classdef io
 %   is no recording to put in a .abr, but what was played, in what order, with
 %   what polarity, and at what time is still the experimental record -- and
 %   without it a rig where something else did the recording has no way to line
-%   its own data up with the stimuli. One `.stimlog` file per run, same
-%   MAT-file-with-a-distinctive-extension convention as .abr/.torg/.mabrcfg,
-%   holding a single MABR_StimLog struct. Load with load(file,'-mat').
+%   its own data up with the stimuli. One MAT-file per run, named as the run's
+%   .abr would be with STIM after the subject (see buildStimLogFilename):
+%       SUBJ-ID-<id>_STIM_Frequency-<f>kHz_Level-<L>dB_<yyMMdd'T'HHmmss>.mat
+%   holding a single MABR_StimLog struct: one entry per trial (onset, stimulus,
+%   polarity, and that stimulus's parameters) plus the session's notes.
 %
 % Daniel Stolzberg (c) 2019-2026
 
@@ -84,7 +91,7 @@ classdef io
         end
 
         function ffn = writeStimLog(info,outputPath,baseName)
-            % Write one run's stimulation sequence to a .stimlog file and
+            % Write one run's stimulation sequence to a _STIM_ .mat file and
             % return the full path ('' when there is no output folder, the
             % same record-without-saving rule writeABR follows via its caller).
             %
@@ -115,6 +122,7 @@ classdef io
             % PRESENTATION in play order, so struct2table(S.Sequence) is a
             % readable log on the spot:
             %       Order StimulusIndex ID Polarity OnsetSample OnsetTime Presented
+            % followed by one column per stimulus parameter (S.Parameters).
             %
             % OnsetSample indexes the run's play matrix (silence pad included,
             % see mabr.stim.Schedule.renderSpec) and OnsetTime is that in
@@ -191,6 +199,38 @@ classdef io
                 'OnsetSample',   ons, ...
                 'OnsetTime',     (ons-1)/Fs, ...
                 'Presented',     presented);
+
+            % The stimulus parameters of every trial, as more parallel arrays
+            % beside the ones above -- so struct2table(S.Sequence) reads
+            % "trial 37: 8 kHz, 30 dB, polarity -1, onset 1.234 s" without a
+            % lookup into Stimuli. The names are every informativeParams of
+            % the bank (the same values a .abr's SIG holds, flattened by the
+            % same buildSIG), listed in S.Parameters; a trial whose stimulus
+            % lacks one reads NaN. A name that would overwrite one of the
+            % fixed columns above is written as Stim_<name>.
+            meta = g('StimulusMeta',{});
+            sig  = cell(1,numel(meta));
+            pn   = cell(1,0);
+            for u = 1:numel(meta)
+                sig{u} = mabr.data.io.buildSIG(struct('Stim',struct('Meta',meta{u})));
+                new = setdiff(sig{u}.informativeParams,pn,'stable');
+                pn  = [pn reshape(new,1,[])]; %#ok<AGROW>
+            end
+            S.Parameters = cell(1,0);
+            for i = 1:numel(pn)
+                v = nan(1,n);
+                for k = 1:n
+                    u = idx(k);
+                    if u >= 1 && u <= numel(sig) && isfield(sig{u},pn{i}) && ...
+                            isscalar(sig{u}.(pn{i}))
+                        v(k) = sig{u}.(pn{i});
+                    end
+                end
+                col = pn{i};
+                if isfield(S.Sequence,col), col = ['Stim_' col]; end
+                S.Sequence.(col) = v;
+                S.Parameters{end+1} = col;
+            end
             S.NumPlanned   = n;
             S.NumPresented = nnz(presented);
 
@@ -204,15 +244,14 @@ classdef io
             % is -- so the parameters of a stimulus in the log read exactly as
             % they would in a recorded file, and a per-stimulus tally says how
             % many times each one went out.
-            meta = g('StimulusMeta',{});
             S.Stimuli = struct('Index',{},'ID',{},'SIG',{},'NumPresented',{});
             for u = unique(idx(idx >= 1))
                 e = struct();
                 e.Index = u;
                 e.ID    = '';
                 if u <= numel(ids), e.ID = char(string(ids{u})); end
-                if u <= numel(meta)
-                    e.SIG = mabr.data.io.buildSIG(struct('Stim',struct('Meta',meta{u})));
+                if u <= numel(sig)
+                    e.SIG = sig{u};
                 else
                     e.SIG = struct();
                 end
@@ -222,19 +261,36 @@ classdef io
         end
 
         function fn = buildStimLogFilename(info,baseName)
-            % <SUBJ_ID_n>_StimLog_Run<k>_<yyMMdd'T'HHmmss>.stimlog -- the run
-            % index rather than a condition, because a stimulation-only run is
-            % not split per stimulus: there is nothing recorded to split.
+            % The .abr name with STIM after the subject, as a .mat file:
+            %   <SUBJ-ID-n>_STIM_Frequency-8kHz_Level-30dB_<yyMMdd'T'HHmmss>.mat
+            % for a run of one stimulus (the condition named exactly as its
+            % .abr would be, or by its ID when it has no Frequency/Level), and
+            %   <SUBJ-ID-n>_STIM_Run-<k>_<yyMMdd'T'HHmmss>.mat
+            % for a run that intermixes several, which has no one condition to
+            % name. STIM says what the file is at a glance, and the .mat
+            % extension (rather than .abr) keeps it out of everything that
+            % reads a folder of .abr files as recordings.
             subj = mabr.data.io.subjectToken(baseName);
-            r    = mabr.data.io.getdef(info,'Run',1);
-            t    = mabr.data.io.timestampToken(mabr.data.io.getdef(info,'StartTime',''));
-            fn   = sprintf('%s_StimLog_Run%d_%s.stimlog',subj,r,t);
+            g    = @(f,d) mabr.data.io.getdef(info,f,d);
+            t    = mabr.data.io.timestampToken(g('StartTime',''));
+
+            idx  = double(g('StimulusIndex',[]));
+            u    = unique(idx(idx >= 1));
+            meta = g('StimulusMeta',{});
+            cond = '';
+            if isscalar(u) && u <= numel(meta)
+                cond = mabr.data.io.conditionToken(meta{u});
+            end
+            if isempty(cond)
+                cond = sprintf('Run-%d',g('Run',1));
+            end
+            fn = sprintf('%s_STIM_%s_%s.mat',subj,cond,t);
         end
 
         function fn = buildNotesFilename(subject,startTime)
-            % <SUBJ_ID_n>_Notes_<yyMMdd'T'HHmmss>.notes -- the plain-text crash
+            % <SUBJ-ID-n>_Notes_<yyMMdd'T'HHmmss>.notes -- the plain-text crash
             % journal mabr.data.SessionNotes rewrites on every commit. Named on
-            % the same pattern as the .abr and .stimlog files beside it (one
+            % the same pattern as the .abr and _STIM_ .mat files beside it (one
             % subjectToken for all three) so a session's outputs sort together,
             % and stamped with when the SESSION started rather than when the
             % note was taken: there is one journal per session, rewritten, not
@@ -387,9 +443,10 @@ classdef io
         end
 
         function fn = buildFilename(block,baseName)
-            % Build a filename that matches the offline pipeline's default
-            % regex when Frequency/Level are present; otherwise a label-based
-            % fallback. Frequency is formatted in kHz with '.' -> '_'.
+            % <subject>_<condition>_<yyMMdd'T'HHmmss>.abr, matching the
+            % strict offline pattern (see the class help) when Frequency/Level
+            % are present; otherwise the condition is the stimulus ID. Every
+            % token is hyphenated inside, so underscores only separate tokens.
             if isfield(block.Stim,'Meta'), meta = block.Stim.Meta; else, meta = block.Stim; end
 
             subj = char(baseName);
@@ -398,27 +455,32 @@ classdef io
 
             t = mabr.data.io.timestampToken(block.StartTime);
 
-            hasFL = isfield(meta,'Frequency') && isfield(meta,'Level');
-            if hasFL
-                fkHz = mabr.data.io.plainValue(meta.Frequency);
-                lvl  = mabr.data.io.plainValue(meta.Level);
-                fStr = strrep(sprintf('%g',fkHz),'.','_');
-                lStr = strrep(sprintf('%g',lvl),'.','_');
-                fn = sprintf('%s_Frequency_%skHz_Level_%sdB_%s.abr',subj,fStr,lStr,t);
+            cond = mabr.data.io.conditionToken(meta);
+            fn   = sprintf('%s_%s_%s.abr',subj,cond,t);
+        end
+
+        function tok = conditionToken(meta)
+            % The condition part of a filename: Frequency-<f>kHz_Level-<L>dB
+            % (kHz; see numberToken) where the stimulus has both, which is what
+            % the strict offline pattern matches; otherwise the stimulus ID --
+            % which every entry supplies and which is far more legible than a
+            % joined Label -- as ONE token (wordToken). Shared by the .abr and
+            % stimulation-log names so one condition is spelled the same in
+            % both.
+            if isfield(meta,'Frequency') && isfield(meta,'Level')
+                fStr = mabr.data.io.numberToken(mabr.data.io.plainValue(meta.Frequency));
+                lStr = mabr.data.io.numberToken(mabr.data.io.plainValue(meta.Level));
+                tok  = sprintf('Frequency-%skHz_Level-%sdB',fStr,lStr);
             else
-                % No Frequency/Level to match the pipeline's default regex, so
-                % fall back to the stimulus ID — which every entry supplies and
-                % which is far more legible than a joined Label.
                 if isfield(meta,'ID') && ~isempty(meta.ID)
-                    lbl = char(string(meta.ID));
+                    tok = char(string(meta.ID));
                 elseif isfield(meta,'Label') && ~isempty(meta.Label)
-                    lbl = char(join(string(meta.Label),'_'));
+                    tok = char(join(string(meta.Label),'_'));
                 else
-                    lbl = 'block';
+                    tok = 'block';
                 end
-                lbl = regexprep(lbl,'\s+','');
-                fn  = matlab.lang.makeValidName(sprintf('%s_%s_%s',subj,lbl,t));
-                fn  = [fn '.abr'];
+                tok = mabr.data.io.wordToken(tok);
+                if isempty(tok), tok = 'block'; end
             end
         end
 
@@ -533,21 +595,43 @@ classdef io
         end
 
         function subj = subjectToken(subj)
-            % The SUBJ_ID_<n> filename stem, shared by .abr and .stimlog so a
-            % session's files sort together whatever it wrote.
-            subj = char(subj);
-            if isempty(subj), subj = 'SUBJ_ID_0'; end
-            if ~startsWith(subj,'SUBJ')
+            % The SUBJ-ID-<n> filename stem, shared by .abr, _STIM_ .mat and
+            % .notes so a session's files sort together whatever it wrote. One
+            % token: hyphens inside, never an underscore (SUBJ_ID_42 as typed
+            % is written SUBJ-ID-42).
+            subj = strtrim(char(subj));
+            if isempty(subj), subj = 'SUBJ-ID-0'; end
+            if startsWith(subj,'SUBJ')
+                subj = mabr.data.io.wordToken(subj);
+            else
                 % Prefer the numeric part, but fall back to the sanitized name:
                 % stripping non-digits from a purely alphabetic ID yielded
-                % 'SUBJ_ID_', collapsing every such subject onto one filename.
+                % 'SUBJ-ID-', collapsing every such subject onto one filename.
                 digits = regexprep(subj,'\D','');
                 if isempty(digits)
-                    subj = ['SUBJ_ID_' matlab.lang.makeValidName(subj)];
+                    subj = ['SUBJ-ID-' mabr.data.io.wordToken(subj)];
                 else
-                    subj = ['SUBJ_ID_' digits];
+                    subj = ['SUBJ-ID-' digits];
                 end
             end
+        end
+
+        function s = numberToken(v)
+            % A number as part of one filename token: %g, with the decimal
+            % point written p and a minus sign m (11.3 -> 11p3, -10 -> m10),
+            % because '.' would read as an extension and '-' joins a token.
+            s = sprintf('%g',double(v(1)));
+            s = strrep(strrep(s,'.','p'),'-','m');
+        end
+
+        function s = wordToken(s)
+            % Free text as ONE filename token: a decimal point between digits
+            % becomes p, every other run of characters that is not a letter or
+            % digit becomes a single hyphen, and none is left at either end.
+            s = char(s);
+            s = regexprep(s,'(?<=\d)\.(?=\d)','p');
+            s = regexprep(s,'[^A-Za-z0-9]+','-');
+            s = regexprep(s,'^-+|-+$','');
         end
 
         function v = getdef(s,f,d)

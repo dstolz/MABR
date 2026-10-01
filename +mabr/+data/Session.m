@@ -14,7 +14,17 @@ classdef Session < handle
         DACSampleRate (1,1) double = 192000;
         ADCSampleRate (1,1) double = 12000;
 
-        OutputPath    (1,:) char = '';                  % folder for .abr files
+        OutputPath    (1,:) char = '';                  % root folder for .abr files
+
+        % Where under OutputPath the files go (mabr.FolderScheme), and the
+        % session half of what its pattern is filled in from
+        % (mabr.FolderScheme.context -- subject, start time, bank, ...).
+        % Off by default, so a Session built by a script writes straight into
+        % OutputPath as it always did; mabr.ui.App hands over the user's
+        % scheme, and a context stamped with the moment Start was pressed, at
+        % every Start. See folderFor.
+        Folders       (1,1) mabr.FolderScheme = mabr.FolderScheme.none()
+        FolderContext (1,1) struct = struct()
         Schedule                                        % mabr.stim.Schedule
 
         Blocks        (1,:) mabr.data.Block             % completed results
@@ -74,12 +84,36 @@ classdef Session < handle
             end
         end
 
+        function d = folderFor(obj,meta)
+            % The folder a file of this session is written to: OutputPath
+            % resolved through Folders. meta is the stimulus metadata of the
+            % file (mabr.stim.StimulusSet.meta / Block.Stim.Meta); without it
+            % this is the SESSION folder -- the deepest level the pattern can
+            % name without a stimulus, where the notes journal and a mixed
+            % run's _STIM_ .mat go. '' when the session is not saving.
+            %
+            % Anything the context leaves out is filled from the Session
+            % itself (the subject, and StartTime for the date), so a script
+            % that sets Folders alone still gets a sensible folder.
+            if nargin < 2, meta = []; end
+            ctx = obj.FolderContext;
+            if ~isfield(ctx,'Subject') || isempty(ctx.Subject)
+                ctx.Subject = char(string(obj.Subject.ID));
+            end
+            if ~isfield(ctx,'Start') || isempty(ctx.Start)
+                ctx.Start = obj.StartTime;
+            end
+            d = obj.Folders.resolve(obj.OutputPath,ctx,meta);
+        end
+
         function ffn = saveBlock(obj,block,baseName)
             % Write one completed block to an offline-compatible .abr file.
             if nargin < 3 || isempty(baseName)
                 baseName = obj.Subject.ID;
             end
-            ffn = mabr.data.io.writeABR(block,obj.OutputPath,baseName);
+            meta = [];
+            if isstruct(block.Stim) && isfield(block.Stim,'Meta'), meta = block.Stim.Meta; end
+            ffn = mabr.data.io.writeABR(block,obj.folderFor(meta),baseName);
         end
     end
 end

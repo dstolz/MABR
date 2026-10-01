@@ -33,7 +33,7 @@ classdef SessionNotes < handle
 %   SAVED WITH THE DATA, always in full. Every file a session writes carries
 %   the whole log as of the moment it was written:
 %       .abr      ABR_Data.Notes     (via mabr.data.Block.Notes)
-%       .stimlog  MABR_StimLog.Notes
+%       _STIM_.mat MABR_StimLog.Notes
 %       .torg     View.Notes         (mabr.ui.TraceOrganizer)
 %   Writing the whole log into each file rather than the notes "since the last
 %   one" means no file depends on another to be read, and a session recovered

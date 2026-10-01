@@ -100,7 +100,7 @@ MABR makes that as hard to miss as it can:
 To check a file you already have:
 
 ```matlab
->> D = load('SUBJ_ID_001_Frequency_8kHz_Level_30dB_260828T101500.abr','-mat');
+>> D = load('SUBJ-ID-001_Frequency-8kHz_Level-30dB_260828T101500.abr','-mat');
 >> D.ABR_Data.TestMode
 ans =
   logical

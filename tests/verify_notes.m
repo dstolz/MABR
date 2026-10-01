@@ -9,7 +9,7 @@ function verify_notes()
 %       3. the plain-text crash journal is rewritten whole on every change
 %          and reads back with SessionNotes.fromFile;
 %       4. notes reach the data: a Block carries the log it was finalized
-%          under and mabr.data.io writes it to the .abr, a .stimlog carries
+%          under and mabr.data.io writes it to the .abr, a stimulation log carries
 %          it too, and both are present (and empty-but-typed) when nothing
 %          was noted;
 %       5. two views on one store stay in step, and a view survives its
@@ -157,7 +157,7 @@ assert(isempty(B.ABR_Data.Notes),'an un-noted .abr should carry an empty log');
 assert(all(ismember({'Stamp','Text','Time'},fieldnames(B.ABR_Data.Notes))), ...
     'an empty log was written without its fields');
 
-% ... and the same for the .stimlog a stimulation-only run writes instead.
+% ... and the same for the stimulation log a stimulation-only run writes instead.
 info = struct('Run',1,'NumRuns',1,'StartTime',sess.StartTime,'Subject','SUBJ_ID_9', ...
     'StimulusIndex',[1 1],'Polarity',[1 -1],'OnsetSample',[1 1000], ...
     'IDs',{{'8kHz_60dB'}},'Notes',sess.noteRecord());
@@ -167,9 +167,9 @@ assert(isfield(S,'Notes') && numel(S.Notes) == n.NumNotes, ...
 
 % The filename sorts with the rest of the session's files.
 fn = mabr.data.io.buildNotesFilename('SUBJ_ID_9',sess.StartTime);
-assert(startsWith(fn,'SUBJ_ID_9_Notes_') && endsWith(fn,'.notes'), ...
+assert(startsWith(fn,'SUBJ-ID-9_Notes_') && endsWith(fn,'.notes'), ...
     'unexpected notes filename "%s"',fn);
-fprintf('  PASS: notes saved into .abr, .stimlog, and a matching filename\n');
+fprintf('  PASS: notes saved into .abr, stimulation log, and a matching filename\n');
 
 % --- 5. two views, one store ---------------------------------------------
 v1 = mabr.ui.Notes(n,[],'Name','VerifyA');

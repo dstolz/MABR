@@ -11,7 +11,7 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
 ```
  [L] [T] | [?]
  ┌ Session ─────────────────────────────────────────┐
- │  Subject ID  [ SUBJ_ID_001               v ][−]          │
+ │  Subject ID  [ SUBJ-ID-001               v ][−]          │
  │      Output  [ C:\data\subj001           v ][−][folder]  │
  └───────────────────────────────────────────────────┘
  ┌ Stimulus ────────────────────────────────────────┐
@@ -37,7 +37,7 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
  │  (o) Acquire   Sweeps: 128   r = 0.42  rejected: 3 │
  │  [ Start ] [ Preview ] [ Repeat ] [Loop] [ Pause ] [ Advance ] [ Abort ] │
  └───────────────────────────────────────────────────┘
- Saved SUBJ_ID_001_Frequency_8kHz_Level_30dB_....abr
+ Saved SUBJ-ID-001_Frequency-8kHz_Level-30dB_....abr
 ```
 
 Every panel shares one label-column width, so the fields line up along a single edge down the whole window. The gap above **Run** is a spacer that absorbs extra height, keeping the transport controls pinned to the bottom at any window size. The overlap warning and plan summary rows in **Presentation** are blank until they have something to say, but their space is reserved so nothing jumps when they appear.
@@ -46,7 +46,7 @@ Every panel except **Run** can be folded up to its title bar with the **▾** at
 
 ## Session identity
 
-**Subject ID** — Labels the session and forms the first part of every filename. If it contains digits they are used (`Rat42` → `SUBJ_ID_42`); if it is purely alphabetic the whole name is used. IDs already starting with `SUBJ` are left alone. The dropdown remembers the last ten IDs you used; the **−** beside it takes the ID on show off that list, and the field moves on to the next one. Nothing else is touched. If it was the last entry, the list starts over from `SUBJ_ID_001`.
+**Subject ID** — Labels the session and forms the first part of every filename. If it contains digits they are used (`Rat42` → `SUBJ-ID-42`); if it is purely alphabetic the whole name is used. IDs already starting with `SUBJ` are kept, with any underscores written as hyphens (`SUBJ_ID_42` → `SUBJ-ID-42`), because underscores separate the parts of a filename. The dropdown remembers the last ten IDs you used; the **−** beside it takes the ID on show off that list, and the field moves on to the next one. Nothing else is touched. If it was the last entry, the list starts over from `SUBJ-ID-001`.
 
 **Output** — Folder for `.abr` files, one per condition. The **folder button** beside it opens a folder picker; that is how a folder gets onto the list, since the box is a dropdown rather than a field you type in. The box shows the *end* of the path, `…\2026\Mouse12`, because the lowest folders are the ones that tell one output from another — hover over it for the whole path. The folder is created if it does not exist. Choose **(not saved)**, the last item, to record without saving (blocks stay in memory for the Trace Organizer only). Like Subject ID it remembers the last ten, and its **−** takes the folder on show off the list — the folder on disk is never touched.
 
@@ -253,7 +253,7 @@ Advance and Abort both save what was recorded. Neither discards data. Stopping a
 
 **Loop is available only for strategies that present one condition per run** — Conventional and Conventional (shuffled order), or a custom strategy whose runs each hold one stimulus — the same rule as Repeat and correlation early-stop. An intermixed run presents every condition at once, so repeating it would repeat the session rather than hold a condition. Under an intermixed strategy the button is greyed out, and choosing one while Loop is on switches it off (the status line says so).
 
-- **Each pass is a run of its own**: finalized, saved as its own `.abr` file(s) (or `.stimlog`), credited to the schedule, and sent to the viewers, exactly like any other run. Repeats of a condition accumulate in the online analysis window rather than replacing each other.
+- **Each pass is a run of its own**: finalized, saved as its own `.abr` file(s) (or `_STIM_` `.mat` stimulation log), credited to the schedule, and sent to the viewers, exactly like any other run. Repeats of a condition accumulate in the online analysis window rather than replacing each other.
 - **The advance criterion still ends each pass** (a pass that reaches its sweep count or correlation threshold stops there) — and the pass is then presented again. It decides when a pass has enough, not when to leave the condition.
 - **Advance still means advance**: it ends the pass and moves on to the next run — which, with Loop still on, is then held in its turn. **Abort** still halts the schedule.
 - A pass of an artifact make-up run is a full run of that stimulus at its scheduled count, not another make-up-sized one.

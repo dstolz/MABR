@@ -27,7 +27,7 @@ function verify_loop_mode()
 %   in its turn; Abort under Loop halts, and nothing is presented after it;
 %   and an intermixed plan is not looped whatever Loop says (canLoop).
 %
-%   Part E: stimulation only loops the same way, one .stimlog per pass.
+%   Part E: stimulation only loops the same way, one stimulation log per pass.
 %
 %   Parts C-E require the Parallel Computing Toolbox. None need hardware.
 %   Run:  >> verify_loop_mode
@@ -169,7 +169,7 @@ f3 = mabr.data.io.writeABR(b2,outB,'SUBJ_ID_42');
 [~,n1,e1] = fileparts(f1);
 [~,n2,e2] = fileparts(f2);
 [~,n3,e3] = fileparts(f3);
-assert(strcmp(n1,'SUBJ_ID_42_Frequency_8kHz_Level_60dB_260930T100000') && strcmp(e1,'.abr'), ...
+assert(strcmp(n1,'SUBJ-ID-42_Frequency-8kHz_Level-60dB_260930T100000') && strcmp(e1,'.abr'), ...
     'test premise: the first file takes the ordinary name (got %s%s)',n1,e1);
 assert(strcmp(n2,[n1 '_2']) && strcmp(e2,'.abr') && strcmp(n3,[n1 '_3']) && strcmp(e3,'.abr'), ...
     'a taken name should be suffixed _2, _3 after the timestamp (got %s%s, %s%s)',n2,e2,n3,e3);
@@ -283,21 +283,21 @@ setup(ctrl,pair,reps,true);
 ctrl.Session.OutputPath = outE;
 ctrl.Loop = true;
 ctrl.start();
-wait_until(@() numel(dir(fullfile(outE,'*.stimlog'))) >= 3,90,'three stimulation logs');
+wait_until(@() numel(dir(fullfile(outE,'*_STIM_*.mat'))) >= 3,90,'three stimulation logs');
 ctrl.Loop = false;
 wait_state(ctrl,mabr.ui.ProgState.SchedComplete,90);
-logs = dir(fullfile(outE,'*.stimlog'));
+logs = dir(fullfile(outE,'*_STIM_*.mat'));
 sch  = ctrl.Schedule;
 nPass = sch.NumRuns - 1;
 assert(nPass >= 3 && nnz(sch.IsLoop) == nPass-1, ...
     'run 1 should have been held for 3+ passes (%d runs, %d flagged)', ...
     sch.NumRuns,nnz(sch.IsLoop));
 assert(numel(logs) == sch.NumRuns, ...
-    'expected one .stimlog per pass and run (%d), found %d',sch.NumRuns,numel(logs));
+    'expected one stimulation log per pass and run (%d), found %d',sch.NumRuns,numel(logs));
 assert(sch.RunCounts(s1) == reps*nPass && sch.RunCounts(s2) == reps, ...
     'every pass played should be credited (RunCounts %s)',mat2str(sch.RunCounts));
 assert(ctrl.Session.NumBlocks == nb,'stimulation only must build no block');
-fprintf('  PASS Part E: stimulation only held run 1 for %d passes, one .stimlog each\n',nPass);
+fprintf('  PASS Part E: stimulation only held run 1 for %d passes, one stimulation log each\n',nPass);
 
 fprintf('== verify_loop_mode PASSED ==\n');
 end

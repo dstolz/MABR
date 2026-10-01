@@ -86,12 +86,15 @@ For threshold estimation across a whole subject or study, use the offline pipeli
 
 ## What to expect on disk
 
-One file per condition, in your output folder:
+One file per condition, in a folder of its own for each Start, under your output folder:
 
 ```
-SUBJ_ID_001_Frequency_8kHz_Level_30dB_260720T141530.abr
-SUBJ_ID_001_Frequency_8kHz_Level_60dB_260720T141812.abr
+SUBJ-ID-001\SUBJ-ID-001_260720T141522\
+    SUBJ-ID-001_Frequency-8kHz_Level-30dB_260720T141530.abr
+    SUBJ-ID-001_Frequency-8kHz_Level-60dB_260720T141812.abr
 ```
+
+**Settings ▸ Session Folders…** changes how that folder is named (add the bank, the date as a level of its own, a folder per stimulus, …) or switches it off. See [Data Files](Data-Files.md#changing-the-folder-pattern).
 
 These names are not cosmetic — the offline analysis tools read the stimulus parameters back out of them. See [Data Files](Data-Files.md).
 
@@ -117,7 +120,7 @@ c.Schedule.Repetitions = 512;               % scalar, or one value per stimulus
 c.Schedule.ISI         = 1/21.1;            % seconds, onset-to-onset
 c.Schedule.build();                          % required after either change
 
-c.Session.Subject.ID = 'SUBJ_ID_001';
+c.Session.Subject.ID = 'SUBJ-ID-001';
 c.Session.OutputPath = 'C:\data\subj001';
 
 addlistener(c,'BlockReady',      @(~,e) disp(e.Info.block.Label));

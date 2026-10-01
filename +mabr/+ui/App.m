@@ -184,6 +184,13 @@ classdef App < handle
         % stimulation-only schedule still opens the progress monitor alone
         % (see openViewers and mabr.ViewPolicy).
         Views       (1,1) mabr.ViewPolicy = mabr.ViewPolicy
+        % Where under the Output folder a session's files go -- by default a
+        % folder per Start, <Subject>\<Subject>_<yyMMdd>T<HHmmss> (see
+        % mabr.FolderScheme). Edited through mabr.ui.FolderSchemeDialog
+        % (Settings > Session Folders...) and persisted on the same terms as
+        % the policies above. In NEITHER control list: onStart hands the
+        % Session a copy, so an edit mid-schedule decides only the next Start.
+        Folders     (1,1) mabr.FolderScheme = mabr.FolderScheme
         % The rig notebook for this session: what the operator writes down
         % while it is happening, stamped with the run and sweep it happened at,
         % and saved into every file the session produces. Owned HERE rather
@@ -230,6 +237,7 @@ classdef App < handle
         RestoringSession (1,1) logical = false
         SettingsMenu
         AudioMenuItem
+        FoldersMenuItem
         StimgenMenuItem
         CalMenuItem
         ComputeMenuItem
@@ -388,10 +396,14 @@ classdef App < handle
         % stimulation only records nothing at all, while this one writes
         % ordinary-looking .abr files whose contents are the stimulus.
         TestRun (1,1) logical = false
-        % .stimlog files written by the schedule now running, so the completion
+        % _STIM_ .mat stimulation logs written by the schedule now running, so the completion
         % message can say what a stimulation-only session actually left behind.
         % Zeroed at Start alongside the artifact tallies.
         StimLogsWritten (1,1) double = 0
+        % The session folder the schedule now running writes into ('' for a
+        % preview or no Output folder), resolved at Start so the completion
+        % message can say where the files went.
+        SessionFolder (1,:) char = ''
     end
 
     methods
@@ -423,6 +435,7 @@ classdef App < handle
             app.Artifacts = mabr.ArtifactPolicy.loadPrefs();
             app.Filters   = mabr.FilterPolicy.loadPrefs();
             app.Views     = mabr.ViewPolicy.loadPrefs();
+            app.Folders   = mabr.FolderScheme.loadPrefs();
             % stimgen (when present) logs through MABR's logger from here on
             % -- one console stream and one .error_logs/ file instead of a
             % second daily file under tempdir. The seam is stimgen's
@@ -646,6 +659,13 @@ classdef App < handle
                 'MenuSelectedFcn',@(~,~) app.onAudioSettings());
             app.CalMenuItem = uimenu(app.SettingsMenu,'Text','Calibration…', ...
                 'MenuSelectedFcn',@(~,~) app.onCalibration());
+            % Not a config control: onStart hands the Session its own copy of
+            % the scheme, so an edit made mid-schedule decides where the NEXT
+            % Start writes and cannot move the run in progress.
+            app.FoldersMenuItem = uimenu(app.SettingsMenu,'Text','Session Folders…', ...
+                'Tooltip',['How the folder each Start saves into is named, under the ' ...
+                           'Output folder (subject, date and time, bank, stimulus ...).'], ...
+                'MenuSelectedFcn',@(~,~) app.onFolderScheme());
             % Not a config control: the launcher itself touches nothing. The
             % tools it opens that DO need the device (calibration, spot check)
             % are refused by mabr.stim.CalibrationAdapter while a schedule holds
@@ -1657,10 +1677,12 @@ classdef App < handle
             app.Controller.Session.Notes = app.Notes;
         end
 
-        function applyNotesJournal(app,preview)
-            % Point the notebook's crash journal at this session's output
-            % folder, so every note is on disk the moment it is committed
-            % rather than only once a block finishes.
+        function applyNotesJournal(app,preview,folder)
+            % Point the notebook's crash journal at this session's folder
+            % (folder: the Session's, see mabr.FolderScheme -- the Output
+            % folder itself when no scheme is in force), so every note is on
+            % disk the moment it is committed rather than only once a block
+            % finishes.
             %
             % A preview writes no files at all -- that is the whole of what
             % Preview means -- so it gets no journal either, and neither does a
@@ -1668,9 +1690,10 @@ classdef App < handle
             % and still reach any file a later real run writes.
             app.Notes.Subject = app.SubjectField.Value;
             app.Notes.JournalFile = '';
-            if preview || isempty(app.outputFolder()), return; end
+            if nargin < 3, folder = app.outputFolder(); end
+            if preview || isempty(folder), return; end
             try
-                app.Notes.JournalFile = fullfile(app.outputFolder(), ...
+                app.Notes.JournalFile = fullfile(folder, ...
                     mabr.data.io.buildNotesFilename(app.Notes.Subject, ...
                                                     app.Notes.StartTime));
                 app.Notes.writeJournal();
@@ -1710,7 +1733,7 @@ classdef App < handle
             % and what it goes back to when the last entry is removed, since
             % the dropdown is never left without an item to show.
             switch name
-                case 'Subject', d = {'SUBJ_ID_001'};
+                case 'Subject', d = {'SUBJ-ID-001'};
                 otherwise,      d = {pwd};
             end
         end
@@ -1818,7 +1841,12 @@ classdef App < handle
             v = app.outputFolder();
             if isempty(v)
                 app.OutputField.Tooltip = ['Folder for .abr files, one per condition — or, under ' ...
-                    'stimulation only, .stimlog files, one per run. "(not saved)" runs without saving.'];
+                    'stimulation only, _STIM_ .mat files, one per run. "(not saved)" runs without saving.'];
+            elseif app.Folders.Enabled && ~isempty(strtrim(app.Folders.Pattern))
+                % Say where a Start will actually write, since it is not the
+                % folder shown (Settings > Session Folders...).
+                app.OutputField.Tooltip = sprintf('%s\nEach Start saves into %s', ...
+                    v,fullfile(v,strrep(app.Folders.Pattern,'/',filesep)));
             else
                 app.OutputField.Tooltip = v;
             end
@@ -2218,6 +2246,7 @@ classdef App < handle
             cfg.Artifacts = app.Artifacts.toStruct();
             cfg.Filters   = app.Filters.toStruct();
             cfg.Audio     = app.Audio.toStruct();
+            cfg.Folders   = app.Folders.toStruct();
             % The stimgen tools' rig -- which hardware the tools measure through
             % and which calibration file they load -- is part of the protocol.
             cfg.StimgenTools = mabr.ui.StimgenLauncher.configStruct();
@@ -2381,6 +2410,11 @@ classdef App < handle
                 app.Filters = mabr.FilterPolicy.fromStruct(cfg.Filters);
                 app.syncFilterFields();
                 app.applyFilters();
+            end
+            if isfield(cfg,'Folders')
+                app.Folders = mabr.FolderScheme.fromStruct(cfg.Folders);
+                mabr.FolderScheme.savePrefs(app.Folders);
+                app.syncOutputTip();
             end
             if isfield(cfg,'StimgenTools')
                 % Into the pref, and into the launcher if it is up (which
@@ -3729,7 +3763,7 @@ classdef App < handle
             msg = ['Audio device: ' app.Audio.describe() '.'];
             if app.Audio.isStimulationOnly()
                 msg = [msg ' Nothing will be recorded — each run saves its ' ...
-                       'stimulation sequence to a .stimlog file instead.'];
+                       'stimulation sequence to a _STIM_ .mat file instead.'];
             end
             if rateChanged
                 % The worker's Config is fixed at construction, so a new rate
@@ -3827,6 +3861,69 @@ classdef App < handle
             app.Filters = p;
             app.syncFilterFields();
             app.applyFilters();
+        end
+
+        % --- Session folders ------------------------------------------------
+        function onFolderScheme(app)
+            % The preview in the dialog is drawn from this session as it
+            % stands -- the subject typed, the Output folder, the bank loaded
+            % and its first stimulus -- so the pattern is judged against the
+            % folder it would actually make.
+            meta = []; params = {};
+            if ~isempty(app.Stimuli) && app.Stimuli.numStimuli > 0
+                try
+                    meta   = app.Stimuli.meta(1);
+                    P      = app.Stimuli.paramTable();
+                    params = P.Names;
+                catch me
+                    mabr.log.vprintf(2,'Session folders: no bank preview (%s).',me.message);
+                end
+            end
+            s = mabr.ui.FolderSchemeDialog(app.Folders,app.outputFolder(), ...
+                app.folderContext(datetime('now')),meta,params);
+            figure(app.UIFigure);
+            if isempty(s), return; end        % cancelled
+            app.Folders = s;
+            mabr.FolderScheme.savePrefs(app.Folders);
+            app.syncOutputTip();
+            msg = ['Saving to ' app.Folders.describe() '.'];
+            if app.isRunning(), msg = [msg ' Takes effect at the next Start.']; end
+            app.setStatus(msg);
+        end
+
+        function ctx = folderContext(app,t)
+            % The session tokens of the folder pattern, as of time t (Start).
+            mode = '';
+            if app.Audio.Testing
+                mode = 'TestMode';
+            elseif app.Audio.isStimulationOnly()
+                mode = 'StimOnly';
+            end
+            strat = app.strategySetting();
+            if strcmp(strat,'custom') && ~isempty(app.CustomStrategyName)
+                strat = app.CustomStrategyName;
+            end
+            ctx = mabr.FolderScheme.context('Subject',app.SubjectField.Value, ...
+                'Start',t,'Bank',app.bankName(),'Strategy',strat,'Mode',mode);
+        end
+
+        function s = bankName(app)
+            % The loaded bank's name for a folder: its file name without the
+            % extension, or what kind of bank it is when it has no file.
+            s = '';
+            if ~isempty(app.BankFile)
+                [~,s] = fileparts(app.BankFile);
+                return
+            end
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
+            src = app.Stimuli.Source;
+            if strcmpi(src.Kind,'demo')
+                s = 'demo';
+            elseif ~isempty(src.File)
+                [~,s] = fileparts(src.File);
+            elseif strcmpi(src.Kind,'stimgen')
+                s = 'designer';
+            end
         end
 
         function applyFilters(app)
@@ -4114,13 +4211,24 @@ classdef App < handle
                     app.rememberValue(app.OutputField,'Output');
                     c.Session.OutputPath = app.outputFolder();
                 end
+                % The session folder is named once, here, from the moment
+                % Start was pressed: every file this schedule writes -- make-up,
+                % loop and repeat runs included -- lands in the same one, and
+                % the next Start gets a new one. A copy of the scheme, so an
+                % edit made while this runs waits for the next Start.
+                c.Session.Folders       = app.Folders;
+                c.Session.FolderContext = app.folderContext(datetime('now'));
+                app.SessionFolder       = c.Session.folderFor();
+                if ~isempty(app.SessionFolder)
+                    mabr.log.vprintf(1,'Session folder: %s',app.SessionFolder);
+                end
                 % The session is already on the App's notebook (bindNotes, from
                 % ensureController above), so every file this run writes carries
                 % the whole log -- including the notes taken while the
                 % electrodes went in. All that is left is where the crash
                 % journal goes, which is only knowable now that the output
                 % folder is settled.
-                app.applyNotesJournal(preview);
+                app.applyNotesJournal(preview,app.SessionFolder);
 
                 c.setStimuli(app.Stimuli);
 
@@ -4197,13 +4305,13 @@ classdef App < handle
                     kind = 'preview (nothing will be saved)';
                 elseif app.StimOnlyRun
                     % Say what IS written, since "no recording" invites the
-                    % assumption that nothing is -- one .stimlog per run, or
+                    % assumption that nothing is -- one _STIM_ .mat per run, or
                     % none at all with no output folder set, which is a
                     % session that leaves no record of itself whatsoever.
                     if isempty(c.Session.OutputPath)
                         kind = 'stimulation (no recording, and no output folder — nothing will be saved)';
                     else
-                        kind = 'stimulation (no recording; each run saves its sequence to a .stimlog file)';
+                        kind = 'stimulation (no recording; each run saves its sequence to a _STIM_ .mat file)';
                     end
                 end
                 if c.Loop
@@ -4918,13 +5026,13 @@ classdef App < handle
         end
 
         function onBlockSaved(app,e)
-            % One .abr per condition from a recorded run, or one .stimlog per
+            % One .abr per condition from a recorded run, or one _STIM_ .mat per
             % run from a stimulation-only one -- the event means "a file was
             % written" and the extension says which.
             % No forced repaint: these come in a burst, one per file, while
             % a run is (usually) already streaming again.
             [~,fn,ext] = fileparts(e.Info.file);
-            if strcmpi(ext,'.stimlog')
+            if strcmpi(ext,'.mat')
                 app.StimLogsWritten = app.StimLogsWritten + 1;
                 app.setStatus(['Saved stimulation sequence ' fn ext],false);
             else
@@ -4963,7 +5071,7 @@ classdef App < handle
                 if app.StimLogsWritten > 0
                     app.setStatus(sprintf(['Stimulation complete — nothing recorded; ' ...
                         '%d stimulation log(s) written to %s.'], ...
-                        app.StimLogsWritten,app.outputFolder()));
+                        app.StimLogsWritten,app.SessionFolder));
                 elseif app.Previewing
                     % Preview withholds the output folder, so it withholds the
                     % stimulation log with it -- the mode's only output.
@@ -4987,6 +5095,8 @@ classdef App < handle
                 end
             elseif app.Previewing
                 app.setStatus('Preview complete — no files were written.');
+            elseif ~isempty(app.SessionFolder)
+                app.setStatus(['Schedule complete — files saved in ' app.SessionFolder '.']);
             else
                 app.setStatus('Schedule complete.');
             end

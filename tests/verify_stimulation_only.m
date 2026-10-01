@@ -21,9 +21,11 @@ function verify_stimulation_only()
 %   Schedule.StimulationOnly set and confirm start() needs no loop-back, the
 %   plan advances through every run to SchedComplete, and nothing is recorded
 %   or finalized -- no mabr.data.Block, no .abr.
-%   Part D (the record): what such a session DOES write. One .stimlog per run
-%   holding the sequence that was played -- every presentation in play order
-%   with its stimulus, polarity, and onset time -- because nothing being
+%   Part D (the record): what such a session DOES write. One _STIM_ .mat per
+%   run, named as its .abr would be with STIM after the subject, holding the
+%   sequence that was played -- every presentation in play order with its
+%   stimulus, its stimulus parameters, polarity, and onset time, plus the
+%   notes -- because nothing being
 %   recorded here does not make what was presented any less the experimental
 %   record, and a rig where another system does the recording has nothing else
 %   to align against.
@@ -184,19 +186,20 @@ fprintf(['  PASS Part C: %d runs played to completion; 0 blocks, 0 .abr files, '
     'no loop-back required\n'],nRuns);
 
 % ---- Part D: the stimulation sequence IS saved ---------------------------
-logs = dir(fullfile(outDir,'*.stimlog'));
+logs = dir(fullfile(outDir,'*_STIM_*.mat'));
 assert(numel(logs) == nRuns, ...
-    'expected one .stimlog per run (%d), found %d',nRuns,numel(logs));
+    'expected one stimulation log per run (%d), found %d',nRuns,numel(logs));
 assert(numel(saved) == nRuns, ...
     'every written log should be announced through BlockSaved (%d of %d)', ...
     numel(saved),nRuns);
-assert(all(endsWith(saved,'.stimlog')), ...
+assert(all(endsWith(saved,'.mat')) && all(contains(saved,'_STIM_')), ...
     'BlockSaved reported something other than the stimulation logs');
-assert(all(startsWith({logs.name},'SUBJ_ID_777_StimLog_Run')), ...
-    'stimulation logs should be named for the subject and the run');
+assert(all(startsWith({logs.name},'SUBJ-ID-777_STIM_Frequency-8kHz_Level-')), ...
+    'stimulation logs should be named as the .abr would be, with STIM after the subject');
+assert(numel(unique({logs.name})) == nRuns,'each run should have a log of its own');
 
 L = load(fullfile(outDir,logs(1).name),'-mat','MABR_StimLog');
-assert(isfield(L,'MABR_StimLog'),'a .stimlog must hold one MABR_StimLog struct');
+assert(isfield(L,'MABR_StimLog'),'a stimulation log must hold one MABR_StimLog struct');
 S = L.MABR_StimLog;
 
 assert(strcmp(S.Mode,'stimulation-only') && ~S.Recorded, ...
@@ -230,6 +233,20 @@ assert(isscalar(S.Stimuli) && S.Stimuli.NumPresented == 8, ...
     'the per-stimulus tally should cover the one stimulus this run played');
 assert(isfield(S.Stimuli.SIG,'informativeParams'), ...
     'each stimulus should carry its parameters, flattened as a .abr SIG is');
+
+% ... and every trial carries its stimulus's parameters as a column of its
+% own, so the sequence reads as a table with no lookup.
+assert(all(ismember({'Frequency','Level'},S.Parameters)), ...
+    'the log should list the per-trial stimulus parameters (got %s)', ...
+    strjoin(S.Parameters,', '));
+assert(numel(seq.Level) == 8 && all(seq.Level == S.Stimuli.SIG.Level) && ...
+       all(seq.Frequency == S.Stimuli.SIG.Frequency), ...
+    'each trial should carry the parameters of the stimulus it presented');
+assert(contains(logs(1).name,sprintf('_Level-%gdB_',seq.Level(1))), ...
+    'the filename should name the condition the log holds');
+tbl = struct2table(structfun(@(c) c(:),seq,'UniformOutput',false));
+assert(height(tbl) == 8,'the sequence should read as an 8-row table');
+assert(isfield(S,'Notes'),'the log should carry the session notes');
 
 % The plan's own bookkeeping is kept as truthfully as a recorded run keeps it.
 assert(sum(ctrl.Schedule.RunCounts) == nRuns*8, ...

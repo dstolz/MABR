@@ -30,6 +30,8 @@ A condition with fewer than two surviving sweeps gets no band — not a band of 
 
 SEM and confidence bands are part of the amplitude scaling: turning one on frames it. An SD band deliberately is not, and will run off the axes — on an ABR the spread of a single sweep is tens of times the average, and letting it set the scale would flatten every mean in the window to a line. That is the SD band's message rather than a bug.
 
+**Stimulus waveform** — right-click the plot and tick **Show stimulus waveform** to draw the waveform that was presented *behind* the traces: behind the latest sweep (the stimulus that evoked it) and behind each condition's average, in a pale tint of the trace's own colour. It runs from time zero, the onset the timing channel marked, on the same time axis as the response, so you can read where the stimulus starts and stops and how long after it the response begins. It is **normalized** — every stimulus is drawn at its own peak and fills the same share of its axes, whatever the axis reads in microvolts. A stimulus is volts at a loudspeaker and a response is volts at an electrode, so they share no scale, and drawing a 30 dB step at the 1/32 amplitude it is would turn the quieter stimuli into flat lines. What it shows is shape and timing, not level. In **Overlaid** every condition's stimulus is drawn on the one axes; Separate, Grid and Stacked give each its own. The choice is remembered for the next window, and saved in a configuration file with the rest of the live view's look.
+
 **Controls** — the strip along the bottom of the window:
 
 - **Means: Overlaid / Separate / Grid / Stacked** — all the averages on one axes (easiest for comparing them directly); one small panel each, titled with its condition and running count (easiest when there are many, or when they differ hugely in size); a **grid** with one group per column and the other parameter up the rows, largest at the top, which is the live version of the figure the offline pipeline draws; or **stacked**, one axes per group with its conditions offset into it and named on the y axis — the shape a threshold is actually read from, filling in as the session runs.
@@ -253,6 +255,7 @@ Display settings are public properties, and the control strip along the bottom o
 | `ManualLimit` | `5e-6` V | The ± limit `'manual'` pins the mean axes to. Switching into Manual seeds it from what is on screen |
 | `ErrorBand` | `'none'` | `'std'`, `'sem'`, or `'ci'` — a patch behind each mean, in its colour, from [error_band](../+mabr/+metrics/error_band.m). Chosen from the right-click menu. `'sem'`/`'ci'` widen the axes to fit; `'std'` does not (see above) |
 | `ConfidenceLevel` | `0.95` | The level `'ci'` uses. The menu offers 90 / 99 as well; any value in (0,1) works from a script |
+| `ShowStimulus` | `false` | Draws the presented waveform, normalized, behind the latest sweep and every mean. Chosen from the right-click menu. The waveforms are handed over once per run with `setStimulusWaves(stim,fs,signals)` (the controller does this at each run's start), never per frame |
 
 Overlaid means share an axes and therefore one scale, so `'each'` behaves as `'common'` there; in `'stacked'` the mode sets the offset between traces the same way, from the group's own largest response or the largest anywhere. Under `'each'` every tile keeps its y tick labels rather than only the left column — each is on its own scale, and hiding the numbers would leave a column of traces with no way to tell how big they are. The latest-sweep axes always autoscales, `'manual'` included: it is a single sweep, tens of times the size of a mean, and a limit chosen to frame the averages would clip it away entirely.
 
@@ -379,7 +382,7 @@ The arithmetic is static and needs no figure: `TraceOrganizer.arrangement(P,spli
 
 ```matlab
 to = mabr.ui.TraceOrganizer();
-to.addBlock(mabr.data.io.importLegacy('SUBJ_ID_001_Frequency_8kHz_Level_60dB_....abr'));
+to.addBlock(mabr.data.io.importLegacy('SUBJ-ID-001_Frequency-8kHz_Level-60dB_....abr'));
 to.show();
 ```
 

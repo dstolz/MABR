@@ -107,7 +107,7 @@ function run_all_verifications()
 %       verify_notes             - session notes: run/sweep stamping, the
 %                                  editable log, the plain-text crash journal,
 %                                  and the notebook reaching the .abr, the
-%                                  .stimlog, and a .torg
+%                                  stimulation log, and a .torg
 %       verify_audio_settings    - ASIO device/channel settings: prefs,
 %                                  graceful device query, schedule wiring
 %       verify_input_calibration - the recorder input's full scale in volts:
@@ -144,6 +144,11 @@ function run_all_verifications()
 %                                  its title bar: the window's height fitted
 %                                  to the panels, a saved list read back
 %                                  forgivingly, the chevrons never locked
+%       verify_folder_scheme     - session folders (mabr.FolderScheme): the
+%                                  default Subject\Subject_yyMMddTHHmmss, the
+%                                  tokens, per-condition levels, unsafe
+%                                  patterns refused, a block written into the
+%                                  resolved folder, and the prefs round trip
 %       verify_stimgen_import    - stimgen bank -> StimulusSet: one variant per
 %                                  entry, regenerated at the DAC rate, and the
 %                                  waveform matching its own label. SKIPS when
@@ -199,6 +204,7 @@ function run_all_verifications()
 %   verify_trace_inspector, verify_audio_settings, verify_input_calibration,
 %   verify_view_prefs, verify_window_arrange, verify_icons,
 %   verify_recent_banks, verify_history_remove, verify_panel_collapse,
+%   verify_folder_scheme,
 %   verify_stimgen_launcher, and
 %   verify_calibration_latency).
 %   None require audio hardware.
@@ -219,7 +225,7 @@ tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_p
          @verify_notes, @verify_audio_settings, @verify_input_calibration, ...
          @verify_view_prefs, ...
          @verify_window_arrange, @verify_icons, @verify_recent_banks, ...
-         @verify_history_remove, @verify_panel_collapse, ...
+         @verify_history_remove, @verify_panel_collapse, @verify_folder_scheme, ...
          @verify_stimgen_import, @verify_stimgen_launcher, @verify_calibration_latency, ...
          @verify_stimulation_only, ...
          @verify_timing_selftest, @verify_spectrum, ...

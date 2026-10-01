@@ -1,6 +1,7 @@
 *.asv
 *.abr
 *.stimlog
+*_STIM_*.mat
 *.esgc
 .runtime_data/
 .vscode/

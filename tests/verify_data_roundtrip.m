@@ -27,7 +27,7 @@ if isfolder(outDir), rmdir(outDir,'s'); end
 mkdir(outDir);
 clean = onCleanup(@() rmdir(outDir,'s'));
 
-regex = "^SUBJ_ID_(\d+)_Frequency_([\d_]+kHz)_Level_(\d+dB)_(\d{6}T\d{6})\.abr";
+regex = "^SUBJ-ID-(\d+)_Frequency-([\dp]+kHz)_Level-(m?[\dp]+dB)_(\d{6}T\d{6})\.abr";
 
 % One alternating-polarity condition and one fixed, so the polarity fields are
 % checked in both states.
