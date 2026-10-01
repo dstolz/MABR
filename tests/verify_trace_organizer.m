@@ -14,7 +14,21 @@ function verify_trace_organizer()
 %       8. listenTo auto-adds a trace for each block an AcqController
 %          finalizes, without duplicating listeners;
 %       9. a trace added that way is drawn on its own, and the view is
-%          exactly what a full redraw would leave.
+%          exactly what a full redraw would leave;
+%      10. organizing by stimulus parameter: each trace carries its block's
+%          parameters exactly; SplitBy gives one panel per value, sharing
+%          one time axis and one stack height, none overlapping; OrderBy
+%          sorts every stack, top to bottom, either way; LabelBy 'params'
+%          names traces by what varies; lifting the split restacks one
+%          even stack; a hand-made move makes the order manual and never
+%          crosses a panel; a name no trace carries does nothing and says
+%          so; a bad direction is refused; the Organize menu and 'g' work;
+%      11. organized, a trace added mid-run is drawn incrementally (moving
+%          only what it pushed down its panel) and the view is exactly what
+%          a full redraw leaves -- new panels and relabelled traces included;
+%      12. save/load restores the organization and each trace's Params; a
+%          version-4 file loads as one stack, its parameters read back off
+%          the labels for organizing but never saved back as Params.
 %
 %   Creates (invisible-capable) figures but needs no hardware. Run:
 %       >> verify_trace_organizer
@@ -202,7 +216,7 @@ assert(isempty(to2.Traces(1).MarkerLocs),'"c" did not clear the markers');
 key('0'); key('r');   % must not error
 
 tops = findobj(to2.Figure,'Type','uimenu','Parent',to2.Figure);
-names = {'Amplitude','Spacing','Traces','Peaks','File'};
+names = {'Amplitude','Spacing','Traces','Organize','Band','Peaks','File'};
 assert(all(ismember(names,{tops.Label})), ...
     'menu bar is missing entries: %s',strjoin(setdiff(names,{tops.Label}),', '));
 for k = 1:numel(tops)
@@ -270,7 +284,243 @@ assert(isequaln(drawn,view_state(to4)), ...
     'a trace that moved the shared scale left the others drawn at the old one');
 fprintf('  PASS: an added trace is drawn alone, identically to a full redraw\n');
 
-delete(viewFile); delete(oldFile);
+% --- 10. organizing by stimulus parameter ---------------------------------
+% A Frequency x Level grid arriving in a scrambled order, as an intermixed
+% run's blocks do.
+F = [16  8 32  8 16 32  8 16];
+L = [60 90 60 30 90 30 60 30];
+to5 = mabr.ui.TraceOrganizer();
+cleanTo5 = onCleanup(@() delete(to5)); %#ok<NASGU>
+to5.show();
+for i = 1:numel(F)
+    to5.addBlock(make_grid_block(F(i),L(i)));
+end
+assert(numel(to5.Traces) == numel(F),'grid traces were not all added');
+for k = 1:numel(to5.Traces)
+    p = to5.Traces(k).Params;
+    assert(isequal(sort(fieldnames(p)),{'Frequency';'Level'}) && ...
+        p.Frequency == F(k) && p.Level == L(k), ...
+        'trace %d does not carry exactly the parameters its block declares',k);
+end
+assert(~to5.isOrganized() && numel(to5.PanelAxes) == 1, ...
+    'a new organizer is not one unorganized stack');
+fprintf('  PASS: each trace carries its block''s stimulus parameters\n');
+
+% Split by frequency: one panel per value, ascending, in arrival order.
+s = to5.YSpacing;
+to5.SplitBy = 'Frequency';
+pax = to5.PanelAxes;
+assert(numel(pax) == 3,'SplitBy Frequency gave %d panels, expected 3',numel(pax));
+ttl = arrayfun(@(a) a.Title.String,pax,'UniformOutput',false);
+assert(isequal(ttl,{'8 kHz','16 kHz','32 kHz'}),'panel titles: %s',strjoin(ttl,' | '));
+assert(pax(1) == to5.Axes,'Axes is not the first panel');
+for k = 1:numel(to5.Traces)
+    tr = to5.Traces(k);
+    assert(tr.LineHandle.Parent == pax([8 16 32] == tr.Params.Frequency), ...
+        '"%s" is drawn in the wrong panel',tr.DisplayName);
+end
+assert(isequal(pax(1).XLim,pax(2).XLim,pax(3).XLim) && ...
+       isequal(pax(1).YLim,pax(2).YLim,pax(3).YLim), ...
+    'the panels do not share one time axis and one stack height');
+assert(no_overlap(pax),'the split panels overlap');
+for f = [8 16 32]
+    y = sort([to5.Traces(param_of(to5,'Frequency') == f).YOffset],'descend');
+    assert(isequal(y,-(0:numel(y)-1)*s),'the %g kHz panel is not stacked evenly',f);
+end
+assert(isequal(levels_top_down(to5,8),[90 30 60]), ...
+    'with no order, a panel did not keep the arrival order');
+assert(contains(to5.statusText(),'split by Frequency (3)'), ...
+    'the status line does not report the split: "%s"',to5.statusText());
+
+% Order each stack by level, both ways; the traces are held panel by panel.
+to5.setOrder('Level','descending');
+for f = [8 16 32]
+    assert(isequal(levels_top_down(to5,f),sort(L(F == f),'descend')), ...
+        'the %g kHz panel is not ordered by level, descending',f);
+end
+assert(issorted(param_of(to5,'Frequency')),'traces are not held panel by panel');
+assert(contains(to5.statusText(),'ordered by Level descending'), ...
+    'the status line does not report the order: "%s"',to5.statusText());
+to5.OrderDirection = 'ascending';
+for f = [8 16 32]
+    assert(isequal(levels_top_down(to5,f),sort(L(F == f),'ascend')), ...
+        'the %g kHz panel is not ordered by level, ascending',f);
+end
+
+% Panels follow the split parameter's own direction when it is an order key.
+to5.setOrder({'Frequency','Level'},{'descending','descending'});
+ttl = arrayfun(@(a) a.Title.String,to5.PanelAxes,'UniformOutput',false);
+assert(isequal(ttl,{'32 kHz','16 kHz','8 kHz'}), ...
+    'panels did not follow a descending split parameter: %s',strjoin(ttl,' | '));
+fprintf('  PASS: SplitBy gives a panel per value; OrderBy sorts every stack\n');
+
+% Labels by parameter: the split parameter is the panel's title, not the label's.
+to5.setOrder('Level','descending');
+to5.LabelBy = 'params';
+for k = 1:numel(to5.Traces)
+    tr = to5.Traces(k);
+    assert(strcmp(tr.LabelHandle.String,sprintf('%g dB',tr.Params.Level)), ...
+        'split label reads "%s"',tr.LabelHandle.String);
+end
+% Lifting the split restacks one even stack, still in the order in force.
+to5.SplitBy = '';
+assert(numel(to5.PanelAxes) == 1 && isempty(to5.PanelAxes(1).Title.String), ...
+    'lifting the split did not return to one untitled stack');
+assert(isequal([to5.Traces.YOffset],-(0:numel(F)-1)*s), ...
+    'lifting the split did not restack evenly');
+assert(issorted(-param_of(to5,'Level')),'the order was lost with the split');
+for k = 1:numel(to5.Traces)
+    tr = to5.Traces(k);
+    want = sprintf('%g kHz, %g dB',tr.Params.Frequency,tr.Params.Level);
+    assert(strcmp(tr.LabelHandle.String,want), ...
+        'label reads "%s", expected "%s"',tr.LabelHandle.String,want);
+end
+to5.LabelBy = 'id';
+assert(strcmp(to5.Traces(1).LabelHandle.String,to5.Traces(1).StimID), ...
+    'LabelBy id did not restore the stimulus ID');
+fprintf('  PASS: LabelBy names traces by what varies; lifting a split restacks\n');
+
+% A move by hand makes the order manual, and never crosses a panel.
+to5.SplitBy = 'Frequency';
+to5.select(1);                       % the 90 dB trace, top of the 8 kHz panel
+to5.moveTrace(1,+1);
+assert(isempty(to5.OrderBy),'a move by hand left the parameter order in force');
+assert(contains(to5.statusText(),'manual'), ...
+    'the status line did not say the order is now manual: "%s"',to5.statusText());
+assert(isequal(levels_top_down(to5,8),[60 90 30]),'the move did not land');
+last8 = find(param_of(to5,'Frequency') == 8,1,'last');
+ids0  = {to5.Traces.StimID};
+to5.moveTrace(last8,+1);
+assert(isequal({to5.Traces.StimID},ids0),'a trace moved across a panel boundary');
+% ...and a trace arriving now goes to the bottom of its panel.
+to5.addBlock(make_grid_block(8,10));
+assert(isequal(levels_top_down(to5,8),[60 90 30 10]), ...
+    'a trace added to a manual order did not go to the bottom of its panel');
+fprintf('  PASS: a hand-made move makes the order manual, within its panel\n');
+
+% A name no trace carries does nothing, and says so; a bad direction is refused.
+to5.SplitBy = 'Duration';
+assert(numel(to5.PanelAxes) == 1 && strcmp(to5.SplitBy,'Duration'), ...
+    'a split no trace can take was not kept as a no-op');
+assert(contains(to5.statusText(),'no trace carries it'), ...
+    'the status line does not say no trace carries the split: "%s"',to5.statusText());
+try
+    to5.OrderDirection = 'sideways';
+    error('verify:accepted','an unknown order direction was accepted');
+catch me
+    assert(strcmp(me.identifier,'mabr:ui:TraceOrganizer:orderDirection'), ...
+        'unexpected error for a bad direction: %s',me.identifier);
+end
+
+% The Organize menu (bar and right-click) and the 'g' key.
+it = findobj(to5.Figure,'Tag','org_split_level');
+assert(numel(it) == 2,'Split by > Level is not on both the menu bar and the context menu');
+cb = it(1).Callback;
+cb(it(1),[]);
+assert(strcmp(to5.SplitBy,'Level') && numel(to5.PanelAxes) == 4, ...
+    'the Split by menu did not split by level');
+assert(all(arrayfun(@(h) strcmp(char(h.Checked),'on'),findobj(to5.Figure,'Tag','org_split_level'))), ...
+    'the split in force is not ticked');
+it = findobj(to5.Figure,'Tag','org_order_frequency_descending');
+cb = it(1).Callback;
+cb(it(1),[]);
+assert(isequal(to5.OrderBy,{'Frequency'}) && isequal(to5.OrderDirection,{'descending'}), ...
+    'the Order by menu did not set the order');
+to5.SplitBy = '';
+to5.Figure.WindowKeyPressFcn([],struct('Key','g','Modifier',{{}}));
+assert(~isempty(to5.SplitBy),'"g" did not split the view');
+fprintf('  PASS: unknown names, bad directions, the Organize menu and "g"\n');
+
+% --- 11. organized incremental adds == full redraw --------------------------
+% Quieter traces land at the top of their panel (level ascending) and push
+% the rest down; a new frequency adds a panel; with LabelBy 'params' a new
+% level relabels everything. Each add, drawn incrementally, must leave
+% exactly what a full redraw leaves.
+seq = [8 90; 16 90; 8 60; 16 60; 8 30; 32 90; 16 30];
+for labelMode = {'id','params'}
+    to6 = mabr.ui.TraceOrganizer();
+    to6.show();
+    to6.SplitBy = 'Frequency';
+    to6.setOrder('Level','ascending');
+    to6.LabelBy = labelMode{1};
+    for i = 1:size(seq,1)
+        to6.addBlock(make_grid_block(seq(i,1),seq(i,2)));
+        drawn = panel_state(to6,true);
+        to6.show();
+        assert(isequaln(drawn,panel_state(to6,true)), ...
+            'LabelBy %s, add %d: drawn incrementally differs from a full redraw',labelMode{1},i);
+    end
+    if strcmp(labelMode{1},'id'), delete(to6); end
+end
+cleanTo6 = onCleanup(@() delete(to6)); %#ok<NASGU>
+fprintf('  PASS: organized adds are drawn incrementally, identical to a full redraw\n');
+
+% --- 12. save / load the organization ---------------------------------------
+orgFile = fullfile(outDir,'organized.torg');
+v4File  = fullfile(outDir,'version4.torg');
+to6.saveView(orgFile);
+to7 = mabr.ui.TraceOrganizer();
+cleanTo7 = onCleanup(@() delete(to7)); %#ok<NASGU>
+to7.SplitBy = 'Level';              % its own setting, which the file replaces
+to7.loadView(orgFile);
+assert(strcmp(to7.SplitBy,'Frequency') && isequal(to7.OrderBy,to6.OrderBy) && ...
+       isequal(to7.OrderDirection,to6.OrderDirection) && strcmp(to7.LabelBy,'params'), ...
+    'loadView did not restore the organization settings');
+assert(numel(to7.Traces) == numel(to6.Traces),'loadView lost traces');
+for k = 1:numel(to6.Traces)
+    a = to6.Traces(k).toStruct(); b = to7.Traces(k).toStruct();
+    f = fieldnames(a);
+    for i = 1:numel(f)
+        assert(isequal(a.(f{i}),b.(f{i})),'trace %d field %s differs after save/load',k,f{i});
+    end
+end
+assert(isequaln(panel_state(to6,false),panel_state(to7,false)), ...
+    'the loaded view is not drawn as the saved one was');
+
+% A version-4 file -- one stack, no settings, no Params -- loads as saved,
+% with the parameters read back off the labels for organizing.
+to6.SplitBy = '';
+to6.setOrder({});
+to6.LabelBy = 'id';
+to6.saveView(v4File);
+S4 = load(v4File,'-mat');
+View = S4.View;
+View = rmfield(View,{'SplitBy','OrderBy','OrderDirection','LabelBy'});
+View.Traces  = rmfield(View.Traces,'Params');
+View.Version = 4;
+save(v4File,'View','-mat');
+to7.loadView(v4File);
+assert(isempty(to7.SplitBy) && isempty(to7.OrderBy) && strcmp(to7.LabelBy,'id') && ...
+       numel(to7.PanelAxes) == 1,'a version-4 file did not load as one stack');
+assert(isequal([to7.Traces.YOffset],[View.Traces.YOffset]), ...
+    'a version-4 file''s offsets were not kept as saved');
+for k = 1:numel(to7.Traces)
+    tr = to7.Traces(k);
+    p  = tr.parameters();
+    assert(isempty(fieldnames(tr.Params)) && p.Frequency == to6.Traces(k).Params.Frequency ...
+        && p.Level == to6.Traces(k).Params.Level, ...
+        'trace %d: parameters were not read back off its label',k);
+end
+to7.SplitBy = 'Frequency';
+assert(numel(to7.PanelAxes) == 3,'a version-4 view could not be split by its labels');
+to7.saveView(v4File);
+S5 = load(v4File,'-mat');
+assert(all(arrayfun(@(t) isempty(fieldnames(t.Params)),S5.View.Traces)), ...
+    'parameters read off a label were saved back as Params');
+
+% The arrangement itself, with no figure: a trace lacking the split
+% parameter gets a panel of its own, last; ties keep their place.
+P = struct('Names',{{'Frequency','Level'}},'Values',[8 30; 16 30; 8 60; NaN 70]);
+A = mabr.ui.TraceOrganizer.arrangement(P,'Frequency','Level','descending',1:4);
+assert(isequaln(A.panelValues,[8 16 NaN]) && ...
+       isequal(A.panelLabels,{'8 kHz','16 kHz','No Frequency'}) && ...
+       isequal(A.order,[3 1 2 4]) && isequal(A.panel,[1 1 2 3]), ...
+    'arrangement: unexpected panels or order');
+pos = mabr.ui.TraceOrganizer.panelRects(9,640,700,40,true);
+assert(no_overlap_rects(pos),'panelRects: nine panels overlap');
+fprintf('  PASS: save/load restores the organization; a version-4 view still organizes\n');
+
+delete(viewFile); delete(oldFile); delete(orgFile); delete(v4File);
 fprintf('== verify_trace_organizer PASSED ==\n');
 end
 
@@ -285,6 +535,86 @@ s = struct('XLim',to.Axes.XLim,'YLim',to.Axes.YLim,'Position',to.Axes.Position, 
     'Y',{arrayfun(@(t) t.LineHandle.YData,tr,'UniformOutput',false)}, ...
     'LabelPos',{arrayfun(@(t) t.LabelHandle.Position,tr,'UniformOutput',false)}, ...
     'LabelStr',{arrayfun(@(t) t.LabelHandle.String,tr,'UniformOutput',false)});
+end
+
+function s = panel_state(to,withPosition)
+% Everything a redraw decides across the panels: each panel's limits,
+% title, and (optionally) placement, and each trace's panel, drawn data and
+% label.
+pax = to.PanelAxes;
+tr  = to.Traces;
+s = struct( ...
+    'XLim',    {arrayfun(@(a) a.XLim,pax,'UniformOutput',false)}, ...
+    'YLim',    {arrayfun(@(a) a.YLim,pax,'UniformOutput',false)}, ...
+    'Title',   {arrayfun(@(a) a.Title.String,pax,'UniformOutput',false)}, ...
+    'Panel',   {arrayfun(@(t) find(pax == t.LineHandle.Parent),tr,'UniformOutput',false)}, ...
+    'X',       {arrayfun(@(t) t.LineHandle.XData,tr,'UniformOutput',false)}, ...
+    'Y',       {arrayfun(@(t) t.LineHandle.YData,tr,'UniformOutput',false)}, ...
+    'LabelPos',{arrayfun(@(t) t.LabelHandle.Position,tr,'UniformOutput',false)}, ...
+    'LabelStr',{arrayfun(@(t) t.LabelHandle.String,tr,'UniformOutput',false)});
+if withPosition
+    s.Position = arrayfun(@(a) a.Position,pax,'UniformOutput',false);
+end
+end
+
+function v = param_of(to,name)
+% One stimulus parameter of every trace, in the order the traces are held.
+v = arrayfun(@(t) t.Params.(name),to.Traces);
+end
+
+function lv = levels_top_down(to,f)
+% The levels in the frequency-f panel, read top to bottom.
+in = param_of(to,'Frequency') == f;
+tr = to.Traces(in);
+[~,o] = sort([tr.YOffset],'descend');
+lv = arrayfun(@(t) t.Params.Level,tr(o));
+end
+
+function tf = no_overlap(ax)
+tf = no_overlap_rects(cell2mat(arrayfun(@(a) a.Position,ax(:),'UniformOutput',false)));
+end
+
+function tf = no_overlap_rects(pos)
+tf = true;
+for i = 1:size(pos,1)
+    for j = i+1:size(pos,1)
+        a = pos(i,:); b = pos(j,:);
+        if a(1) < b(1)+b(3)-1e-9 && b(1) < a(1)+a(3)-1e-9 && ...
+           a(2) < b(2)+b(4)-1e-9 && b(2) < a(2)+a(4)-1e-9
+            tf = false;
+            return
+        end
+    end
+end
+end
+
+function block = make_grid_block(f,lvl)
+% A synthetic block from a Frequency x Level grid, its metadata shaped as
+% mabr.stim.StimulusSet.meta writes it. The wavelet is scaled to a peak set
+% by level alone, so every frequency at one level has the same amplitude --
+% which keeps the shared scale still while quieter traces arrive.
+Fs = 12000;
+nSweeps = 8; period = round(Fs/21.1);
+N = nSweeps*period + period;
+
+tw = (0:round(0.002*Fs)-1)'/Fs;
+wavelet = sin(2*pi*(400+20*f)*tw).*hann(numel(tw));
+wavelet = wavelet/max(abs(wavelet))*1e-6*10^((lvl-90)/20);
+
+data   = zeros(N,1);
+onsets = (round(0.05*Fs) + (0:nSweeps-1)*period)';
+for i = 1:nSweeps
+    i0 = onsets(i);
+    data(i0:i0+numel(wavelet)-1) = data(i0:i0+numel(wavelet)-1) + wavelet;
+end
+
+id   = sprintf('Tone_%g_%g',f,lvl);
+rec  = mabr.data.Recording(Fs,data,onsets,round(0.01*Fs),1);
+meta = struct('ID',id,'Frequency',f,'Level',lvl,'alternatePolarity',false, ...
+              'informativeParams',{{'Frequency','Level'}}, ...
+              'Label',{{sprintf('ID = %s',id),sprintf('Frequency = %g',f), ...
+                        sprintf('Level = %g',lvl)}});
+block = mabr.data.Block(struct('Meta',meta,'SampleRate',Fs),rec);
 end
 
 function block = make_block(id,k)

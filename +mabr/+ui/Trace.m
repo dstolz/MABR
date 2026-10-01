@@ -24,6 +24,21 @@ classdef Trace < handle
 %   sweeps instead of one per redraw; the sweeps travel with the trace so
 %   the statistic is still a question a loaded view can be asked.
 %
+%   Params holds the stimulus parameters the trace was recorded under -- the
+%   numeric informativeParams of the block it came from (Frequency, Level,
+%   ...), exactly as the stimulus metadata states them. They are what
+%   mabr.ui.TraceOrganizer splits, orders and labels the stack by.
+%   parameters() is the read side: Params where the trace has them, and
+%   otherwise whatever its Label states as 'Name = value' (a .torg saved
+%   before Params existed carries only the label, written at %g precision).
+%   Only Params are ever saved -- a value read back off a label is not
+%   stimulus metadata and is never written as if it were.
+%
+%   Caption is what the organizer asks the on-plot label to read instead of
+%   DisplayName (the parameters, say, rather than the stimulus ID). It is
+%   derived from the view's settings every time they change, so it is not
+%   saved either.
+%
 %   toStruct/fromStruct round-trip the complete display state, which is what
 %   lets TraceOrganizer restore a saved view exactly as it was.
 %
@@ -47,6 +62,11 @@ classdef Trace < handle
         Sweeps     (:,:) double = [];   % [nSamples x nSweeps] behind Data
         BandLo     (:,1) double = [];   % error band, as offsets from Data
         BandHi     (:,1) double = [];
+        Params     (1,1) struct = struct(); % stimulus parameters, name -> value
+    end
+
+    properties (Transient)
+        Caption    (1,:) char = '';     % label text the organizer asks for ('' = DisplayName)
     end
 
     properties (Constant, Access = private)
@@ -54,7 +74,7 @@ classdef Trace < handle
     end
 
     properties (Dependent)
-        DisplayName     % what the on-plot label reads
+        DisplayName     % the trace's name; the label reads it unless Caption is set
     end
 
     properties (SetAccess = private, Transient)
@@ -101,9 +121,31 @@ classdef Trace < handle
             y = obj.Data*yscale*obj.Gain + obj.YOffset;
         end
 
+        function s = labelText(obj)
+            % What the on-plot label reads: the organizer's Caption when it
+            % has set one, otherwise DisplayName. A non-unit gain is
+            % advertised either way, since it is a fact about the drawing.
+            if isempty(obj.Caption), s = obj.DisplayName; return; end
+            s = obj.Caption;
+            if abs(obj.Gain-1) > 1e-3
+                s = sprintf('%s  (x%.3g)',s,obj.Gain);
+            end
+        end
+
+        function p = parameters(obj)
+            % The stimulus parameters this trace can be organized by: Params
+            % where the trace carries them, otherwise the 'Name = value'
+            % items of its Label (see paramsFromLabel). Recomputed on every
+            % call rather than cached into Params, so a value read off a label
+            % can never be saved back out as though it were metadata.
+            if ~isempty(fieldnames(obj.Params)), p = obj.Params; return; end
+            p = mabr.ui.Trace.paramsFromLabel(obj.Label);
+        end
+
         function plot(obj,ax,yscale,labelX)
             if nargin < 3 || isempty(yscale), yscale = 1; end
             if isempty(obj.Data), return; end
+            obj.adoptAxes(ax);
             tms = obj.Time*1000;                       % s -> ms
             y   = obj.displayY(yscale);
             vis = mabr.ui.Trace.onoff(obj.Visible);
@@ -128,17 +170,32 @@ classdef Trace < handle
             % never sit on top of the waveform. Clipping must be off for text
             % drawn outside the axes box to render at all.
             if isempty(obj.LabelHandle) || ~isgraphics(obj.LabelHandle)
-                obj.LabelHandle = text(ax,labelX,obj.YOffset,obj.DisplayName, ...
+                obj.LabelHandle = text(ax,labelX,obj.YOffset,obj.labelText(), ...
                     'HorizontalAlignment','right','VerticalAlignment','middle', ...
                     'Interpreter','none','Clipping','off');
             else
                 set(obj.LabelHandle,'Position',[labelX obj.YOffset 0], ...
-                    'String',obj.DisplayName);
+                    'String',obj.labelText());
             end
             set(obj.LabelHandle,'Color',max(obj.Color-0.2,0), ...
                 'FontWeight',weight,'Visible',showLbl);
 
             obj.redrawMarkers(ax,yscale);
+        end
+
+        function adoptAxes(obj,ax)
+            % Draw into ax from now on. The organizer splits its stack across
+            % panels, and a trace whose panel changed still holds graphics in
+            % the old axes: those are deleted here so plot draws them afresh
+            % in the new one (markers are redrawn on every plot anyway).
+            f = {'LineHandle','LabelHandle','BandHandle'};
+            for i = 1:numel(f)
+                h = obj.(f{i});
+                if ~isempty(h) && isgraphics(h) && h.Parent ~= ax
+                    delete(h);
+                    obj.(f{i}) = [];
+                end
+            end
         end
 
         % --- Error band ------------------------------------------------------
@@ -267,7 +324,8 @@ classdef Trace < handle
                 'ID',         obj.ID, ...
                 'Sweeps',     obj.Sweeps, ...
                 'BandLo',     obj.BandLo, ...
-                'BandHi',     obj.BandHi);
+                'BandHi',     obj.BandHi, ...
+                'Params',     obj.Params);
         end
     end
 
@@ -287,6 +345,51 @@ classdef Trace < handle
                 if isfield(s,f{i}) && ~isempty(s.(f{i}))
                     obj.(f{i}) = s.(f{i});
                 end
+            end
+            % Version 5 and later. A file without them leaves Params empty,
+            % and parameters() falls back on the label -- see above.
+            if isfield(s,'Params')
+                obj.Params = mabr.ui.Trace.cleanParams(s.Params);
+            end
+        end
+
+        function p = cleanParams(q)
+            % A parameter struct as Params holds it: one scalar struct, every
+            % field a real numeric scalar, as double. Anything else -- a
+            % categorical field, a vector, a struct array -- is dropped
+            % rather than coerced: Params are dimensions to sort and group
+            % by, and a value that has no order cannot be either.
+            p = struct();
+            if ~isstruct(q) || ~isscalar(q), return; end
+            f = fieldnames(q);
+            for i = 1:numel(f)
+                v = q.(f{i});
+                if isnumeric(v) && isscalar(v) && isreal(v)
+                    p.(f{i}) = double(v);
+                end
+            end
+        end
+
+        function p = paramsFromLabel(label)
+            % The 'Name = value' items of a label such as
+            % 'ID = Tone_8000_60, Frequency = 8, Level = 60' -- the form
+            % mabr.stim.StimulusSet.meta writes and TraceOrganizer.addBlock
+            % joins -- as a parameter struct. The ID is not a parameter and a
+            % value that is not a finite number is not one either; neither is
+            % kept. The label was written with %g, so a value read back here
+            % carries at most six significant digits: enough to group and
+            % order a view, which is all it is used for, and the reason it is
+            % never saved as Params.
+            p = struct();
+            if isempty(label) || ~ischar(label), return; end
+            parts = strsplit(label,',');
+            for i = 1:numel(parts)
+                tok = regexp(strtrim(parts{i}), ...
+                    '^([A-Za-z]\w*)\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)$', ...
+                    'tokens','once');
+                if isempty(tok) || strcmpi(tok{1},'ID') || isfield(p,tok{1}), continue; end
+                v = str2double(tok{2});
+                if isfinite(v), p.(tok{1}) = v; end
             end
         end
     end

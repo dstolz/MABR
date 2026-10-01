@@ -138,9 +138,22 @@ Opens with the app, and is raised by the stacked-traces toolbar button. Closing 
 - **Drag a trace vertically** to reorder or separate the stack. Click and drag; release to drop.
 - **Mark peaks** — **Peaks ▸ Mark peaks** (or the toolbar button with orange ▼ markers over a response's peaks, or `p`) finds and labels response peaks on the selected trace, for identifying waves I–V.
 - **Double-click a trace** to open it in the **Trace Inspector** (below) and measure it properly.
+- **Organize by stimulus parameter** — the **Organize** menu (also on the right-click menu) splits and orders the stack by what each condition was recorded at. See below.
 - **Save / load** the arrangement, so a figure you have laid out can be recovered later.
 
-Traces are labeled with their stimulus parameters and coloured in sequence. Time is shown in milliseconds relative to sweep onset.
+Traces are labeled with their stimulus ID and coloured in sequence. Time is shown in milliseconds relative to sweep onset.
+
+### Organizing by stimulus parameter
+
+Every trace carries the stimulus parameters its condition was recorded at — the ones the stimulus bank declares as informative, usually Frequency and Level — exactly as the stimulus metadata states them. The **Organize** menu arranges the view by them:
+
+- **Split by** gives every value of one parameter a panel of its own: split by Frequency and each frequency gets its own column, titled `8 kHz`, `16 kHz`, …, in ascending order. The panels sit side by side and wrap onto more rows only when the window is too narrow for one row. Every panel shares one time axis and one amplitude scale, so a response in one column compares with its neighbour as directly as two traces in one stack do. Traces that lack the parameter (clicks in a session that also has tones, say) get a last panel of their own, `No Frequency`. Press `g` to step through the choices from the keyboard.
+- **Order by** sorts every stack top to bottom by a parameter, ascending (smallest at the top) or descending — Level, descending, is the usual threshold series, loudest at the top. **Then by** adds a second key for ties under the first (Frequency, then Level, in one stack). Traces tied on every key keep the order they had. When the split parameter is also an order key, the panels follow its direction too.
+- **Label by parameters** names each trace by the parameters that vary across the traces shown — `60 dB` in a panel already titled `8 kHz`, `8 kHz, 60 dB` in a single stack — instead of by its stimulus ID. **Label by stimulus ID** goes back.
+
+While a split or an order is in force the stacks are kept even, and a condition that completes during a run goes straight to its place. Moving a trace by hand (dragging it, or `Ctrl+Up`/`Ctrl+Down`) still works, within its own panel: it lands where you drop it, and the order becomes manual — the status line across the top says so, and which order it replaced. A setting that names a parameter no trace carries is kept but does nothing, and the status line says that too. The split, the order and the labels are saved with the view.
+
+Views saved before this existed hold no parameters; their traces are organized by the `Name = value` items of their labels instead (which carry six significant digits), and those values are never saved back as parameters.
 
 Reading a level series: as level decreases, the response amplitude shrinks and its peaks shift later. The lowest level at which a repeatable waveform is still visible is the visually-determined threshold. For an objective, statistically-defined threshold across a whole study, use the offline pipeline — see [Offline Analysis](Offline-Analysis.md).
 
@@ -288,16 +301,41 @@ Every command is reachable three ways — the menu bar, the right-click context 
 | `a` / `Esc` | select all / none |
 | `l` | toggle stimulus ID labels |
 | `p` / `c` | mark peaks / clear markers |
+| `b` | cycle the error band |
+| `g` | cycle the split: none, then each stimulus parameter that varies |
 | `i` | inspect the selected trace (same as double-clicking it) |
 | `h` / `Delete` | hide / remove selected |
 | `Ctrl+S` / `Ctrl+O` | save / load the view |
 
-`saveView` writes a `.torg` file (a MAT-file holding a `View` struct) containing the waveforms plus the complete display state — gains, offsets, stack order, colours, markers, spacing, normalization mode, and axis limits — so `loadView` reproduces the view exactly as it was saved. Older version-1 `.torg` files still load. Markers are stored as **sample indices** rather than plotted coordinates, so they follow their trace through rescaling, restacking, and a save/load round-trip.
+`saveView` writes a `.torg` file (a MAT-file holding a `View` struct) containing the waveforms plus the complete display state — gains, offsets, stack order, colours, markers, spacing, normalization mode, axis limits, and the organization settings below — so `loadView` reproduces the view exactly as it was saved. Older `.torg` files still load, down to version 1; one saved before version 5 loads unsplit and unordered, as it was saved, whatever the organizer was set to. Markers are stored as **sample indices** rather than plotted coordinates, so they follow their trace through rescaling, restacking, and a save/load round-trip.
 
 ```matlab
 to.saveView('session1.torg');
 to.loadView('session1.torg');          % restored exactly as saved
 ```
+
+#### Organizing by stimulus parameter
+
+`addBlock` stores the block's stimulus parameters on its trace as `Trace.Params` — the `informativeParams` of `block.Stim.Meta` (every numeric scalar field, where it declares none), real numeric scalars only, as doubles; `addTrace(data,time,label,stimID,sweeps,params)` takes them from a script. `Trace.parameters()` is what the organizer reads: `Params`, or, for a trace that has none (one from a pre-version-5 `.torg`), the `Name = value` items of its `Label` — never saved back as `Params`.
+
+| Property | Default | Effect |
+| --- | --- | --- |
+| `SplitBy` | `''` | One panel per value of this parameter (`PanelAxes`; the first is always `Axes`), ascending, traces lacking it in a last panel. `''` is one stack |
+| `OrderBy` | `{}` | Parameter names, most significant first, each stack sorted by them top to bottom; `{}` is the order as arranged by hand. A char is one name |
+| `OrderDirection` | `{'ascending'}` | `'ascending'` (smallest at the top) or `'descending'`, read in parallel with `OrderBy`: one applies to every name, and a name without one of its own is ascending. Anything else is refused (`mabr:ui:TraceOrganizer:orderDirection`) |
+| `LabelBy` | `'id'` | `'params'` labels each trace with the parameters that vary across the traces held, less the split one |
+
+```matlab
+to.SplitBy = 'Frequency';
+to.setOrder('Level','descending');                         % both at once, arranged once
+to.setOrder({'Frequency','Level'},{'ascending','descending'});
+to.LabelBy = 'params';
+to.statusText()                                            % what the status line reads
+```
+
+Every setter re-arranges and redraws, the same thing the Organize menu does. While `isOrganized()` the stacks are kept even: adding, removing, restacking (`r`) and moving all re-arrange, a trace moved by hand (`moveTrace`, or a drag) stays within its panel, and doing so clears `OrderBy` — the order is the user's from then on. With neither setting, the organizer behaves exactly as before. A trace added to an organized view is still drawn incrementally: the new trace and the ones it pushed down its panel, falling back to a full redraw only for a new panel, a change of shared scale or time axis, or a relabelling — `verify_trace_organizer` checks 11 holds that equal to a full redraw.
+
+The arithmetic is static and needs no figure: `TraceOrganizer.arrangement(P,splitBy,orderBy,orderDir,rank)` returns each trace's panel, the order, the panel titles and the keys applied for a parameter table from `TraceOrganizer.paramTable`; `TraceOrganizer.panelRects(N,W,H,labelPx,titled)` is the panel geometry.
 
 `addBlock` reads `block.ADC.SweepMean` and `block.ADC.TimeVector`, so any `mabr.data.Block` — including one loaded from disk with `mabr.data.io.importLegacy` — can be displayed. `SweepMean` averages only the sweeps that survived artifact rejection (`Recording.CleanSweepData`), so a trace here never carries one the acquisition threw out; a block whose sweeps were *all* rejected has no mean to draw and is skipped with a log message rather than stacked as an empty trace.
 
