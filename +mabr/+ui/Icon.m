@@ -76,7 +76,7 @@ classdef Icon
             % Every glyph render() knows, main-window ones first.
             n = {'live','metrics','traces','stim','progress','order', ...
                  'notes','front','arrange','pin','help', ...
-                 'grow','shrink','spread','squeeze','peaks','inspect', ...
+                 'grow','shrink','spread','squeeze','overlap','separate','peaks','inspect', ...
                  'save','load','trash','keys'};
         end
 
@@ -272,6 +272,18 @@ classdef Icon
                     c = P(c,Box([13 0 14 1]) | Box([13 15 14 16]),K.Orange);
                     c = P(c,Poly([13.5 4.2; 10.8 0.8; 16.2 0.8]),K.Orange);
                     c = P(c,Poly([13.5 11.8; 10.8 15.2; 16.2 15.2]),K.Orange);
+
+                case 'overlap'     % two traces laid onto one baseline
+                    c = mabr.ui.Icon.response(c,X,Y,[0.5 15.5],8,5.4,K.Blue);
+                    c = mabr.ui.Icon.response(c,X,Y,[0.5 15.5],8,3.2,K.Green);
+                    c = P(c,Poly([8 6.4; 5.6 2.4; 10.4 2.4]),K.Orange);
+                    c = P(c,Poly([8 9.6; 5.6 13.6; 10.4 13.6]),K.Orange);
+
+                case 'separate'    % one stack of two pulled onto their own lines
+                    c = mabr.ui.Icon.response(c,X,Y,[0.5 15.5],3.5,1.8,K.Blue);
+                    c = mabr.ui.Icon.response(c,X,Y,[0.5 15.5],12.5,1.8,K.Green);
+                    c = P(c,Poly([8 5.6; 5.6 9.6; 10.4 9.6]),K.Orange);
+                    c = P(c,Poly([8 10.4; 5.6 6.4; 10.4 6.4]),K.Orange);
 
                 case 'peaks'       % markers dropped on a response's peaks
                     x = linspace(0.5,15.5,240);

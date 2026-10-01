@@ -63,10 +63,12 @@ classdef Trace < handle
         BandLo     (:,1) double = [];   % error band, as offsets from Data
         BandHi     (:,1) double = [];
         Params     (1,1) struct = struct(); % stimulus parameters, name -> value
+        Group      (1,1) double {mustBeNonnegative,mustBeInteger} = 0; % overlap group (0 = on its own line)
     end
 
     properties (Transient)
         Caption    (1,:) char = '';     % label text the organizer asks for ('' = DisplayName)
+        LabelShift (1,1) double = 0;    % label offset from YOffset, in stack units: keeps an overlap group's labels apart
     end
 
     properties (Constant, Access = private)
@@ -160,6 +162,11 @@ classdef Trace < handle
                 set(obj.LineHandle,'XData',tms,'YData',y,'Color',obj.Color,'LineWidth',lw);
             end
             obj.LineHandle.Visible = vis;
+            % A selected trace in an overlap group comes to the front, or it
+            % could not be seen under the ones drawn after it.
+            if obj.Selected && obj.Group > 0
+                try, uistack(obj.LineHandle,'top'); end %#ok<TRYNC>
+            end
 
             if nargin < 4 || isempty(labelX), labelX = tms(1); end
             showLbl = mabr.ui.Trace.onoff(obj.ShowLabel && obj.Visible);
@@ -170,11 +177,11 @@ classdef Trace < handle
             % never sit on top of the waveform. Clipping must be off for text
             % drawn outside the axes box to render at all.
             if isempty(obj.LabelHandle) || ~isgraphics(obj.LabelHandle)
-                obj.LabelHandle = text(ax,labelX,obj.YOffset,obj.labelText(), ...
+                obj.LabelHandle = text(ax,labelX,obj.YOffset+obj.LabelShift,obj.labelText(), ...
                     'HorizontalAlignment','right','VerticalAlignment','middle', ...
                     'Interpreter','none','Clipping','off');
             else
-                set(obj.LabelHandle,'Position',[labelX obj.YOffset 0], ...
+                set(obj.LabelHandle,'Position',[labelX obj.YOffset+obj.LabelShift 0], ...
                     'String',obj.labelText());
             end
             set(obj.LabelHandle,'Color',max(obj.Color-0.2,0), ...
@@ -325,7 +332,8 @@ classdef Trace < handle
                 'Sweeps',     obj.Sweeps, ...
                 'BandLo',     obj.BandLo, ...
                 'BandHi',     obj.BandHi, ...
-                'Params',     obj.Params);
+                'Params',     obj.Params, ...
+                'Group',      obj.Group);
         end
     end
 
@@ -350,6 +358,11 @@ classdef Trace < handle
             % and parameters() falls back on the label -- see above.
             if isfield(s,'Params')
                 obj.Params = mabr.ui.Trace.cleanParams(s.Params);
+            end
+            % Overlap groups; a file saved before they existed has none.
+            if isfield(s,'Group') && isnumeric(s.Group) && isscalar(s.Group) ...
+                    && isfinite(s.Group) && s.Group >= 0 && s.Group == round(s.Group)
+                obj.Group = double(s.Group);
             end
         end
 

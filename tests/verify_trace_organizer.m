@@ -29,6 +29,9 @@ function verify_trace_organizer()
 %      12. save/load restores the organization and each trace's Params; a
 %          version-4 file loads as one stack, its parameters read back off
 %          the labels for organizing but never saved back as Params.
+%      13. overlap: selected traces share one slot (the rest close up around
+%          it), survive restacking and a save/load, step with stepOverlap,
+%          and separateTraces gives each its own line again.
 %
 %   Creates (invisible-capable) figures but needs no hardware. Run:
 %       >> verify_trace_organizer
@@ -519,6 +522,54 @@ assert(isequaln(A.panelValues,[8 16 NaN]) && ...
 pos = mabr.ui.TraceOrganizer.panelRects(9,640,700,40,true);
 assert(no_overlap_rects(pos),'panelRects: nine panels overlap');
 fprintf('  PASS: save/load restores the organization; a version-4 view still organizes\n');
+
+% --- 13. overlap and separate ----------------------------------------------
+to8 = mabr.ui.TraceOrganizer();
+cleanTo8 = onCleanup(@() delete(to8)); %#ok<NASGU>
+for i = 1:4, to8.addBlock(make_block(sprintf('ov%d',i),i)); end
+to8.show();
+to8.overlapTraces([1 3]);
+y = [to8.Traces.YOffset];
+assert(isequal(sort(y,'descend'),[0 0 -1 -2]*to8.YSpacing), ...
+    'overlap: two traces must share one slot, the others close up');
+g = [to8.Traces.Group];
+assert(nnz(g > 0) == 2 && numel(unique(g(g>0))) == 1,'overlap: group not recorded');
+k = find(g > 0);
+assert(to8.Traces(k(1)).YOffset == to8.Traces(k(2)).YOffset,'overlap: members differ in offset');
+assert(to8.Traces(k(1)).LabelHandle.Position(2) ~= to8.Traces(k(2)).LabelHandle.Position(2), ...
+    'overlap: members'' labels were left on top of each other');
+to8.restack();                                  % restacking keeps the slot
+assert(numel(unique([to8.Traces.YOffset])) == 3,'restack broke an overlap');
+% stepping reaches every member, one at a time, and wraps
+to8.select(k(1));
+to8.stepOverlap(+1);
+assert(isequal(to8.selectedIndices(),k(2)),'stepOverlap did not reach the other member');
+to8.stepOverlap(+1);
+assert(isequal(to8.selectedIndices(),k(1)),'stepOverlap did not wrap');
+% a save/load keeps the group
+ovFile = fullfile(outDir,'overlap.torg');
+to8.saveView(ovFile);
+to9 = mabr.ui.TraceOrganizer();
+cleanTo9 = onCleanup(@() delete(to9)); %#ok<NASGU>
+to9.loadView(ovFile);
+assert(isequal([to9.Traces.Group],[to8.Traces.Group]) && ...
+       isequal([to9.Traces.YOffset],[to8.Traces.YOffset]),'overlap lost in save/load');
+delete(ovFile);
+% removing one member dissolves the group
+to8.removeTraces(k(2));
+assert(all([to8.Traces.Group] == 0),'a lone trace was left in an overlap group');
+% separate
+to8.addBlock(make_block('ov5',5));
+to8.overlapTraces([1 2 3]);
+assert(numel(unique([to8.Traces.YOffset])) == numel(to8.Traces) - 2,'overlap of three');
+to8.select(1);
+to8.separateTraces();
+assert(all([to8.Traces.Group] == 0) && numel(unique([to8.Traces.YOffset])) == numel(to8.Traces), ...
+    'separate: every trace must have its own line again');
+% the pure gather: members brought beside the first of their group
+g = mabr.ui.TraceOrganizer.gatherOrder([1 1 1 1 2 2],[7 0 7 0 3 3]);
+assert(isequal(g,[1 3 2 4 5 6]),'gatherOrder: unexpected permutation');
+fprintf('  PASS: overlap shares a slot, survives restack/save, steps, and separates\n');
 
 delete(viewFile); delete(oldFile); delete(orgFile); delete(v4File);
 fprintf('== verify_trace_organizer PASSED ==\n');
