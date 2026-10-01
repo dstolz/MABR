@@ -67,6 +67,12 @@ classdef TraceOrganizer < handle
 %   dragged or moved by hand lands where it is dropped -- which makes the
 %   order manual (OrderBy is cleared, and the status line says so).
 %
+%   Overlap: two or more selected traces can be laid onto one baseline
+%   (overlapTraces) to compare shapes. They keep that slot through restacking,
+%   organizing and saving (Trace.Group) until separateTraces, or until one is
+%   dragged out. The selected member is drawn in front; stepOverlap (Tab), or
+%   clicking the selected trace again, selects the next one under it.
+%
 %     Up / Down            amplitude larger / smaller
 %     Shift+Up / Down      spacing wider / narrower
 %     Ctrl+Up / Down       move selected trace up / down the stack
@@ -74,6 +80,8 @@ classdef TraceOrganizer < handle
 %     n                    toggle per-trace vs. common normalization
 %     r                    restack evenly in current visual order
 %     a / Escape           select all / none
+%     o / u                overlap the selected traces / separate them
+%     Tab / Shift+Tab      step the selection through an overlap group
 %     l                    toggle stimulus ID labels
 %     p / c                mark peaks / clear markers
 %     b                    cycle the error band
@@ -174,6 +182,7 @@ classdef TraceOrganizer < handle
         dragStartY  = 0;
         dragStartOffset = 0;
         dragMoved   = false;
+        cycleOnRelease = false;   % a plain click on the one selected overlapped trace
         FigTag (1,:) char = '';
         BlockListener   % listener on an AcqController's BlockReady event
         Inspector       % mabr.ui.TraceInspector, at most one at a time
@@ -583,11 +592,151 @@ classdef TraceOrganizer < handle
             end
             [~,ord] = sort([obj.Traces.YOffset],'descend');
             obj.Traces = obj.Traces(ord);
-            for k = 1:numel(obj.Traces)
-                obj.Traces(k).YOffset = -(k-1)*obj.YSpacing;
-            end
+            obj.pruneGroups(ones(1,numel(obj.Traces)));
+            obj.assignSlots(1:numel(obj.Traces));
             obj.plotAll(false);
             obj.refreshStatus();
+        end
+
+        % --- Overlap ----------------------------------------------------------
+        function overlapTraces(obj,idx)
+            % Lay the selected traces onto one baseline, to compare their
+            % shapes. They share a slot in the stack -- the others close up
+            % around it -- and stay a group (Trace.Group) through restacking,
+            % reordering and saving, until separateTraces undoes it.
+            if nargin < 2, idx = obj.selectedIndices(); end
+            if numel(idx) < 2
+                obj.status('Select two or more traces to overlap (click, then shift-click).');
+                return
+            end
+            pan = ones(1,numel(obj.Traces));
+            if numel(obj.PanelIndex) == numel(obj.Traces), pan = obj.PanelIndex; end
+            if numel(unique(pan(idx))) > 1
+                obj.status('Traces in different panels cannot be overlapped; select within one panel.');
+                return
+            end
+            g = max([0 obj.Traces.Group]) + 1;
+            top = max([obj.Traces(idx).YOffset]);
+            for k = idx(:)'
+                obj.Traces(k).Group   = g;
+                obj.Traces(k).YOffset = top;
+            end
+            obj.restack();
+            obj.syncMenuChecks();
+            obj.status(sprintf(['%d traces overlapped. Tab / Shift+Tab (or clicking the ' ...
+                'selected one again) steps through them; u separates.'],numel(idx)));
+        end
+
+        function separateTraces(obj,idx)
+            % Give overlapped traces a line each again: the selected ones, or
+            % every overlapped trace when none is selected. Selecting any one
+            % member of a group separates that whole group.
+            if nargin < 2 || isempty(idx), idx = obj.selectedIndices(); end
+            grouped = [obj.Traces.Group];
+            if isempty(grouped) || ~any(grouped > 0)
+                obj.status('No traces are overlapped.');
+                return
+            end
+            if isempty(idx)
+                gs = unique(grouped(grouped > 0));
+            else
+                gs = unique(grouped(idx)); gs = gs(gs > 0);
+                if isempty(gs), obj.status('The selected traces are not overlapped.'); return; end
+            end
+            n = 0;
+            for k = 1:numel(obj.Traces)
+                if any(obj.Traces(k).Group == gs)
+                    obj.Traces(k).Group = 0;
+                    n = n + 1;
+                end
+            end
+            obj.restack();
+            obj.status(sprintf('%d trace(s) separated.',n));
+        end
+
+        function stepOverlap(obj,delta)
+            % Select the next (delta = +1) or previous overlapped trace in
+            % the group of the one selected -- the way to reach a trace that
+            % lies under others, which a click cannot. With nothing in an
+            % overlap selected, picks up the first group's first trace.
+            if isempty(obj.Traces), return; end
+            sel = obj.selectedIndices();
+            k = [];
+            if ~isempty(sel) && obj.Traces(sel(1)).Group > 0, k = sel(1); end
+            if isempty(k)
+                k = find([obj.Traces.Group] > 0,1);
+                if isempty(k), obj.status('No traces are overlapped.'); return; end
+                obj.select(k);
+                return
+            end
+            m = obj.groupMembers(k);
+            j = find(m == k,1) + delta;
+            j = mod(j-1,numel(m)) + 1;
+            obj.select(m(j));
+            obj.status(sprintf('Overlap: trace %d of %d, %s.',j,numel(m), ...
+                obj.Traces(m(j)).DisplayName));
+        end
+
+        function selectOverlapGroup(obj)
+            % Select every trace overlapped with the selected one(s).
+            sel = obj.selectedIndices();
+            m = [];
+            for k = sel(:)'
+                if obj.Traces(k).Group > 0, m = [m obj.groupMembers(k)]; end %#ok<AGROW>
+            end
+            if isempty(m), obj.status('Select an overlapped trace first.'); return; end
+            obj.select(unique(m));
+        end
+
+        function m = groupMembers(obj,k)
+            % The traces overlapped with trace k (itself included), in stack
+            % order, within k's own panel.
+            g = obj.Traces(k).Group;
+            if g == 0, m = k; return; end
+            same = [obj.Traces.Group] == g;
+            if numel(obj.PanelIndex) == numel(obj.Traces)
+                same = same & obj.PanelIndex == obj.PanelIndex(k);
+            end
+            m = find(same);
+        end
+
+        function pruneGroups(obj,panel)
+            % A group is two traces or more in one panel; anything less is a
+            % trace on its own line, whatever was left behind in its Group.
+            n = numel(obj.Traces);
+            if n == 0, return; end
+            g = [obj.Traces.Group];
+            for k = find(g > 0)
+                if sum(g == g(k) & panel(:).' == panel(k)) < 2
+                    obj.Traces(k).Group = 0;
+                end
+            end
+        end
+
+        function assignSlots(obj,k)
+            % Offsets for the traces at positions k (one panel, top to bottom):
+            % an even stack in which consecutive traces of one overlap group
+            % share a slot. gatherOrder has already made members consecutive.
+            slot = 0; prev = 0;
+            for i = 1:numel(k)
+                g = obj.Traces(k(i)).Group;
+                if g == 0 || g ~= prev, slot = slot + 1; end
+                prev = g;
+                obj.Traces(k(i)).YOffset = -(slot-1)*obj.YSpacing;
+            end
+        end
+
+        function shift = labelShift(obj,k)
+            % Overlapped traces share a baseline, so their labels would be
+            % written over one another; each is nudged to its own share of
+            % the slot instead, in stack order.
+            shift = 0;
+            if obj.Traces(k).Group == 0, return; end
+            m = obj.groupMembers(k);
+            if numel(m) < 2, return; end
+            i = find(m == k,1);
+            step = obj.YSpacing/numel(m);
+            shift = ((numel(m)-1)/2 - (i-1))*step;
         end
 
         function moveTrace(obj,idx,delta)
@@ -595,6 +744,10 @@ classdef TraceOrganizer < handle
             if numel(idx) ~= 1, obj.status('Select one trace to move.'); return; end
             j = idx + delta;
             if j < 1 || j > numel(obj.Traces), return; end
+            if obj.Traces(idx).Group > 0 || obj.Traces(j).Group > 0
+                obj.status('Overlapped traces cannot be moved one at a time; separate them first (u).');
+                return
+            end
             if obj.isArranged()
                 % Within its own panel only -- which panel a trace is in is
                 % its parameter's business, not its position's.
@@ -615,9 +768,7 @@ classdef TraceOrganizer < handle
                 return
             end
             obj.Traces([idx j]) = obj.Traces([j idx]);
-            for k = 1:numel(obj.Traces)
-                obj.Traces(k).YOffset = -(k-1)*obj.YSpacing;
-            end
+            obj.assignSlots(1:numel(obj.Traces));
             obj.plotAll(false);
         end
 
@@ -629,6 +780,11 @@ classdef TraceOrganizer < handle
             obj.Traces(idx) = [];
             if max(idx) <= numel(obj.PanelIndex), obj.PanelIndex(idx) = []; end
             obj.pruneInspector();
+            if numel(obj.PanelIndex) == numel(obj.Traces)
+                obj.pruneGroups(obj.PanelIndex);
+            else
+                obj.pruneGroups(ones(1,numel(obj.Traces)));
+            end
             % An organized stack closes the gap (and may lose a panel); a
             % hand-placed one keeps every other trace where it was put.
             obj.arrange(true);
@@ -958,6 +1114,8 @@ classdef TraceOrganizer < handle
             obj.toolButton('shrink', 'Smaller amplitude (Down arrow)',     @() obj.scaleTraces(1/obj.GainStep));
             obj.toolButton('spread', 'Wider spacing (Shift+Up)',           @() obj.setSpacing(obj.YSpacing*obj.SpacingStep),true);
             obj.toolButton('squeeze','Tighter spacing (Shift+Down)',       @() obj.setSpacing(obj.YSpacing/obj.SpacingStep));
+            obj.toolButton('overlap','Overlap selected traces (o)',        @() obj.overlapTraces(),true);
+            obj.toolButton('separate','Separate overlapped traces (u)',    @() obj.separateTraces());
             obj.toolButton('peaks',  'Mark peaks on selection (p)',        @() obj.markPeaks(),true);
             obj.toolButton('inspect','Inspect selected trace (i, or double-click)',@() obj.inspectTrace());
             % The same notes component the main window carries, over the same
@@ -1044,6 +1202,11 @@ classdef TraceOrganizer < handle
                 it('Select all'                  ,@() obj.select(1:numel(obj.Traces))) , ...
                 it('Select none'                 ,@() obj.select([])) , ...
                 it('Invert selection'            ,@() obj.invertSelection()) , ...
+                it('Overlap selected (o)'        ,@() obj.overlapTraces(),'sep',true) , ...
+                it('Separate overlapped (u)'     ,@() obj.separateTraces()) , ...
+                it('Next in overlap (Tab)'       ,@() obj.stepOverlap(+1)) , ...
+                it('Previous in overlap (Shift+Tab)',@() obj.stepOverlap(-1)) , ...
+                it('Select overlap group'        ,@() obj.selectOverlapGroup()) , ...
                 it('Move up'                     ,@() obj.moveTrace(obj.selectedIndices(),-1),'sep',true) , ...
                 it('Move down'                   ,@() obj.moveTrace(obj.selectedIndices(),+1)) , ...
                 it('Rename...'                   ,@() obj.promptRename(),'sep',true) , ...
@@ -1316,6 +1479,7 @@ classdef TraceOrganizer < handle
             % somebody else.
             tr = obj.Traces(k);
             tr.ShowLabel = obj.ShowLabels;
+            tr.LabelShift = obj.labelShift(k);
             tr.plot(obj.panelFor(k),sc,labelX);
             if isempty(tr.LineHandle) || ~isgraphics(tr.LineHandle), return; end
             tr.LineHandle.ButtonDownFcn  = @(~,~) obj.onTraceClick(tr);
@@ -1481,11 +1645,17 @@ classdef TraceOrganizer < handle
                 obj.Traces = obj.Traces(A.order);
                 P.Values   = P.Values(A.order,:);
                 panel      = A.panel;
+                % Overlapped traces stay one slot: members are gathered
+                % beside the first of their group, and share its offset.
+                obj.pruneGroups(panel);
+                g = mabr.ui.TraceOrganizer.gatherOrder(panel,[obj.Traces.Group]);
+                if ~isequal(g,1:n)
+                    obj.Traces = obj.Traces(g);
+                    P.Values   = P.Values(g,:);
+                    panel      = panel(g);
+                end
                 for p = unique(panel)
-                    k = find(panel == p);
-                    for i = 1:numel(k)
-                        obj.Traces(k(i)).YOffset = -(i-1)*obj.YSpacing;
-                    end
+                    obj.assignSlots(find(panel == p));
                 end
             else
                 panel = A.panelOf;
@@ -1751,6 +1921,10 @@ classdef TraceOrganizer < handle
             % 'extend' = shift-click, 'alt' = ctrl-click (or right-click, which
             % the context menu handles before this fires).
             extend = any(strcmp(mods,{'extend','alt'}));
+            % Clicking the one selected trace of an overlap again selects the
+            % next one under it -- on release, so that pressing and dragging
+            % it still moves it rather than cycling.
+            obj.cycleOnRelease = ~extend && tr.Group > 0 && isequal(obj.selectedIndices(),k);
             obj.select(k,extend);
 
             % The trace's own panel: a drag moves it up and down its stack.
@@ -1780,9 +1954,24 @@ classdef TraceOrganizer < handle
 
         function endDrag(obj)
             moved = obj.dragMoved;
+            tr    = obj.dragTrace;
+            cyc   = obj.cycleOnRelease;
             obj.dragTrace = [];
             obj.dragMoved = false;
-            if ~moved, return; end
+            obj.cycleOnRelease = false;
+            if ~moved
+                if cyc, obj.stepOverlap(+1); end
+                return
+            end
+            % Dragging a trace out of an overlap takes it out of the group.
+            if ~isempty(tr) && isvalid(tr) && tr.Group > 0
+                tr.Group = 0;
+                if numel(obj.PanelIndex) == numel(obj.Traces)
+                    obj.pruneGroups(obj.PanelIndex);
+                else
+                    obj.pruneGroups(ones(1,numel(obj.Traces)));
+                end
+            end
             if ~obj.isArranged()
                 obj.refreshStatus();   % placed by hand: it stays where it was put
                 return
@@ -1847,7 +2036,11 @@ classdef TraceOrganizer < handle
                 case 's'
                     if ctrl, obj.saveView(); end
                 case 'o'
-                    if ctrl, obj.loadView(); end
+                    if ctrl, obj.loadView(); else, obj.overlapTraces(); end
+                case 'u'
+                    obj.separateTraces();
+                case 'tab'
+                    if shift, obj.stepOverlap(-1); else, obj.stepOverlap(+1); end
                 case {'f1','slash','help'}
                     obj.showHelp();
             end
@@ -1923,6 +2116,8 @@ classdef TraceOrganizer < handle
                 'Shift- or ctrl-click extends the selection.'
                 'Drag a trace vertically to reposition it.'
                 'Double-click a trace to inspect and mark it full size.'
+                'Overlap (o) lays the selected traces on one line; clicking the'
+                'selected one again, or Tab, selects the next one under it.'
                 'Amplitude commands act on the selection, or on all traces'
                 'when nothing is selected.'
                 'Organize splits the view into panels and orders the stacks'
@@ -1936,6 +2131,8 @@ classdef TraceOrganizer < handle
                 'n                    per-trace vs. common normalization'
                 'r                    restack evenly'
                 'a / Escape           select all / none'
+                'o / u                overlap selected traces / separate them'
+                'Tab / Shift+Tab      step through the overlapped traces'
                 'l                    toggle stimulus ID labels'
                 'p / c                mark peaks / clear markers'
                 'b                    cycle the error band'
@@ -1990,6 +2187,21 @@ classdef TraceOrganizer < handle
     end
 
     methods (Static)
+        function g = gatherOrder(panel,group)
+            % A permutation (1 x n) of traces already ordered panel by panel
+            % that brings every overlap group's members next to its first
+            % member, keeping everything else where it was. Pure.
+            n = numel(panel);
+            panel = panel(:).'; group = group(:).';
+            anchor = 1:n;
+            for k = 1:n
+                if group(k) == 0, continue; end
+                anchor(k) = find(group == group(k) & panel == panel(k),1);
+            end
+            [~,g] = sortrows([anchor(:) (1:n).']);
+            g = g(:).';
+        end
+
         function A = arrangement(P,splitBy,orderBy,orderDir,rank)
             % How a set of traces is arranged by stimulus parameter. Pure --
             % no graphics, no organizer -- so it is tested on its own.
