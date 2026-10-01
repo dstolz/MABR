@@ -199,18 +199,21 @@ Calibration is greyed out in Testing mode (loopback would just measure the stimu
 
 Both viewers open automatically with the app and sit beside the main window, so the toolbar buttons normally just raise them; they rebuild a window only if you closed it.
 
-Each button is drawn as what its window shows; hover for the tooltip if the pictogram is ambiguous.
+Each button is drawn as what its window shows or what it does, and the colours mean the same thing on every button — blue is the data, orange is the action, green is done or added, red is live or destructive. Hover for the tooltip if a picture is not enough. The same set of pictures is used on the Trace Organizer's toolbar ([mabr.ui.Icon](../+mabr/+ui/Icon.m); `mabr.ui.Icon.preview` shows them all).
 
 | Button | Effect |
 | --- | --- |
-| a trace on axes | Raises the Live Plot. |
-| three rising points on axes | Opens **another** Online Analysis window — one metric across the conditions, refreshed while the schedule runs. Not a raise: every press gives you a new one, so a second question does not cost you the first answer. |
-| a stack of traces | Raises the Trace Organizer, refreshed with the conditions completed so far. |
-| a loudspeaker | Opens the Stimulus Viewer on the loaded bank. |
-| three part-filled bars | Opens the [Progress Monitor](Viewing-Data.md#progressmonitor) — how much of the schedule is done, and which conditions are still short. |
-| three cascaded windows | Raises every open MABR window, the main window last. |
-| four tiled windows | **Arranges** every open MABR window: the main window stays put and the others are tiled in a grid over the wider strip of its display beside it, without overlapping it or each other, then all are raised. Pressing again gives the same layout. |
-| **?** | Opens the [MABR wiki](https://github.com/dstolz/MABR/wiki) in a browser (same as **Help ▸ MABR Wiki**). |
+| a monitor with a response on it and a red recording dot | Raises the Live Plot. |
+| a growth curve through orange points, with a green **+** | Opens **another** Online Analysis window — one metric across the conditions, refreshed while the schedule runs. Not a raise: every press gives you a new one (hence the **+**), so a second question does not cost you the first answer. |
+| three coloured traces, each smaller and later than the one above | Raises the Trace Organizer, refreshed with the conditions completed so far. |
+| a loudspeaker, sounding | Opens the Stimulus Viewer on the loaded bank. |
+| a green ring most of the way round | Opens the [Progress Monitor](Viewing-Data.md#progressmonitor) — how much of the schedule is done, and which conditions are still short. |
+| a play list: a tick, an orange play mark, an empty circle | Opens the Presentation Order window — the order the plan presents its conditions in, the one on now highlighted, and where upcoming conditions are switched off. |
+| a notepad with a pencil | Opens the session notes. |
+| two windows, the front one blue | Raises every open MABR window, the main window last. |
+| a tall window with two tiled beside it | **Arranges** every open MABR window: the main window stays put and the others are tiled in a grid over the wider strip of its display beside it, without overlapping it or each other, then all are raised. Pressing again gives the same layout. |
+| a red push pin | Keeps the main window on top of other windows while pressed in. Remembered between sessions. |
+| a white **?** in a blue disc | Opens the [MABR wiki](https://github.com/dstolz/MABR/wiki) in a browser (same as **Help ▸ MABR Wiki**). |
 
 All three viewers are described in [Viewing Data](Viewing-Data.md). Under **Stimulation only** the live-plot and analysis buttons are disabled along with the whole Acquisition panel: nothing is recorded, so there is nothing for either to show.
 

@@ -1124,36 +1124,38 @@ classdef App < handle
             % Every viewer opens on demand from here. The acquisition pair also
             % opens by itself at Start/Preview (see openViewers), so in practice
             % these two are usually "bring to front" during a run and "show"
-            % before one. Each glyph draws
-            % what its window shows -- one trace on axes, a stack of traces,
-            % a loudspeaker -- so the toolbar reads without the tooltip, the
-            % same convention mabr.ui.TraceOrganizer's toolbar uses.
-            ink  = [0.16 0.26 0.42];
-            help = [0.35 0.35 0.35];
-
+            % before one. Each glyph draws what its window shows -- a monitor
+            % with a response on it, a level series, a loudspeaker, a gauge
+            % -- so the toolbar reads without the tooltip. The art is in
+            % mabr.ui.Icon, shared with mabr.ui.TraceOrganizer's toolbar.
             app.Toolbar = uitoolbar(app.UIFigure);
             % The live view is the one tool that has nothing to show in
             % stimulation-only mode, so it is also the one kept as a handle
             % (see syncAcquisitionEnables).
-            app.LiveTool = app.toolButton('live',ink,'Live plot',@() app.onShowLive());
+            app.LiveTool = app.toolButton('live', ...
+                'Live plot — the run being recorded, as it arrives',@() app.onShowLive());
             % Online analysis. Like the live view it has nothing to show when
             % nothing is recorded, so it is the other tool syncAcquisitionEnables
             % greys out under stimulation only. Every press opens ANOTHER
             % window -- see onMetricPlot.
-            app.MetricTool = app.toolButton('metrics',ink, ...
+            app.MetricTool = app.toolButton('metrics', ...
                 'Online analysis — one metric across conditions (new window each press)', ...
                 @() app.onMetricPlot());
-            app.toolButton('traces',ink, 'Trace organizer',  @() app.onTraceOrg());
-            app.toolButton('stim',  ink, 'Stimulus viewer',  @() app.onStimViewer());
+            app.toolButton('traces', ...
+                'Trace organizer — finished conditions, stacked',@() app.onTraceOrg());
+            app.toolButton('stim', ...
+                'Stimulus viewer — the loaded bank''s waveforms and spectra',@() app.onStimViewer());
             % Progress is the one viewer that is worth having open in EVERY
             % mode, stimulation-only included -- it is the only window there
             % that fills (see onStart), which is why it is here rather than
             % beside the live view in syncAcquisitionEnables' disable list.
-            app.toolButton('progress',ink,'Acquisition progress', @() app.onProgress());
+            app.toolButton('progress', ...
+                'Acquisition progress — how far the schedule has got, and the time left', ...
+                @() app.onProgress());
             % The order the plan presents its conditions in, the one on now
             % highlighted -- and where upcoming conditions are switched off.
             % Useful in every mode, stimulation-only included, like progress.
-            app.toolButton('order',ink, ...
+            app.toolButton('order', ...
                 'Presentation order — the condition on now, and switching upcoming ones off', ...
                 @() app.onOrder());
             % The notebook. Deliberately a toolbar button rather than a panel
@@ -1164,7 +1166,7 @@ classdef App < handle
             % writing a note is safe in any state, and the states worth writing
             % about are exactly the busy ones.
             app.NotesView = mabr.ui.Notes.toolbarButton(app.Toolbar,app.Notes, ...
-                'Name','Session','Color',ink);
+                'Name','Session');
 
             % Window management, grouped together after the viewers: one
             % button gathers the windows up, the other pins this one down.
@@ -1172,21 +1174,21 @@ classdef App < handle
             % losing a viewer behind another application is a thing that
             % happens most during a run, which is exactly when every other
             % control is locked.
-            app.toolButton('front',ink, ...
+            app.toolButton('front', ...
                 'Bring all MABR windows to the front', ...
                 @() app.onBringToFront(),true);
-            app.toolButton('arrange',ink, ...
+            app.toolButton('arrange', ...
                 'Arrange MABR windows beside this one and bring them to the front', ...
                 @() app.onArrangeWindows());
 
             onTop = strcmp(app.UIFigure.WindowStyle,'alwaysontop');
             app.AlwaysOnTopTool = uitoggletool(app.Toolbar,'Separator','off', ...
-                'CData',mabr.ui.Icon.fromArt(mabr.ui.App.glyph('pin'),ink), ...
+                'CData',mabr.ui.Icon.toolbar('pin',app.Toolbar), ...
                 'State',matlab.lang.OnOffSwitchState(onTop), ...
                 'Tooltip','Keep the MABR window on top of other windows', ...
                 'ClickedCallback',@(src,~) app.onAlwaysOnTop(src));
 
-            app.toolButton('help',  help,'Help (MABR wiki)', @() app.openHelp(),true);
+            app.toolButton('help','Help (MABR wiki)',@() app.openHelp(),true);
         end
 
         function onAlwaysOnTop(app,src)
@@ -1221,11 +1223,11 @@ classdef App < handle
             end
         end
 
-        function h = toolButton(app,glyph,rgb,tip,fcn,sep)
-            if nargin < 6, sep = false; end
+        function h = toolButton(app,glyph,tip,fcn,sep)
+            if nargin < 5, sep = false; end
             sepStr = 'off'; if sep, sepStr = 'on'; end
             h = uipushtool(app.Toolbar,'Tooltip',tip,'Separator',sepStr, ...
-                'CData',mabr.ui.Icon.fromArt(mabr.ui.App.glyph(glyph),rgb), ...
+                'CData',mabr.ui.Icon.toolbar(glyph,app.Toolbar), ...
                 'ClickedCallback',@(~,~) fcn());
         end
 
@@ -4615,186 +4617,6 @@ classdef App < handle
             if ~isgraphics(f), return; end
             if strcmp(get(f,'Tag'),mabr.ui.App.InstanceTag), return; end
             tf = startsWith(get(f,'Tag'),'MABR') || startsWith(get(f,'Name'),'MABR');
-        end
-
-        function rows = glyph(name)
-            % 16x16 toolbar art, one 16-char string per row; see mabr.ui.Icon.
-            % Kept as art rather than index math because the shapes have to
-            % be legible at 16 px and that is only checkable by looking.
-            switch name
-                case 'live'      % one evoked trace on a pair of axes
-                    rows = {'................'
-                            '.X..............'
-                            '.X..............'
-                            '.X.....XX.......'
-                            '.X....XXX.......'
-                            '.X...XX.........'
-                            '.X...XX..X......'
-                            '.X...X...X......'
-                            '.X..XX....X..XX.'
-                            '.X.XX.....X.XX..'
-                            '.X........XXX...'
-                            '.X.........X....'
-                            '.X..............'
-                            '.XXXXXXXXXXXXXX.'
-                            '................'
-                            '................'};
-                case 'traces'    % three stacked traces: the organizer's view
-                    rows = {'................'
-                            '......XX........'
-                            '.....X..X.......'
-                            'XXXXX....XXXXXXX'
-                            '................'
-                            '................'
-                            '......XX........'
-                            '.....X..X.......'
-                            'XXXXX....XXXXXXX'
-                            '................'
-                            '................'
-                            '......XX........'
-                            '.....X..X.......'
-                            'XXXXX....XXXXXXX'
-                            '................'
-                            '................'};
-                case 'metrics'   % three rising points on axes: a metric vs a parameter
-                    rows = {'................'
-                            '.X..............'
-                            '.X..........XX..'
-                            '.X.........X..X.'
-                            '.X..........XX..'
-                            '.X......XX......'
-                            '.X.....X..X.....'
-                            '.X......XX......'
-                            '.X..XX..........'
-                            '.X.X..X.........'
-                            '.X..XX..........'
-                            '.X..............'
-                            '.XXXXXXXXXXXXXX.'
-                            '................'
-                            '................'
-                            '................'};
-                case 'stim'      % loudspeaker radiating: what gets played
-                    rows = {'................'
-                            '................'
-                            '................'
-                            '.......X...X....'
-                            '......XX....X...'
-                            '.....XXX.X...X..'
-                            '..XXXXXX..X..X..'
-                            '..XXXXXX..X..X..'
-                            '..XXXXXX..X..X..'
-                            '..XXXXXX..X..X..'
-                            '.....XXX.X...X..'
-                            '......XX....X...'
-                            '.......X...X....'
-                            '................'
-                            '................'
-                            '................'};
-                case 'order'     % marks stepping across rows, one per condition
-                    rows = {'................'
-                            '................'
-                            '.X..............'
-                            '.X.XX...........'
-                            '.X..............'
-                            '.X......XX......'
-                            '.X..............'
-                            '.X...........XX.'
-                            '.X..............'
-                            '.X....XX........'
-                            '.X..............'
-                            '.X..........XX..'
-                            '.X..............'
-                            '.XXXXXXXXXXXXXX.'
-                            '................'
-                            '................'};
-                case 'progress'  % three bars of a progress chart, part-filled
-                    rows = {'................'
-                            '................'
-                            '..XXXXXXXXXX....'
-                            '..XXXXXX...X....'
-                            '..XXXXXXXXXX....'
-                            '................'
-                            '..XXXXXXXXXXXX..'
-                            '..XXXX......X...'
-                            '..XXXXXXXXXXXX..'
-                            '................'
-                            '..XXXXXXXX......'
-                            '..XX.....X......'
-                            '..XXXXXXXX......'
-                            '................'
-                            '................'
-                            '................'};
-                case 'front'     % three cascaded windows, the front one solid
-                    rows = {'................'
-                            '..XXXXXXXXXX....'
-                            '..X........X....'
-                            '..X.XXXXXXXXXX..'
-                            '..X.X...........'
-                            '..X.X.XXXXXXXXXX'
-                            '..X.X.XXXXXXXXXX'
-                            '..X.X.X........X'
-                            '..XXX.X........X'
-                            '....X.X........X'
-                            '....X.X........X'
-                            '......X........X'
-                            '......X........X'
-                            '......XXXXXXXXXX'
-                            '................'
-                            '................'};
-                case 'arrange'   % four tiled windows, title bars solid
-                    rows = {'................'
-                            '.XXXXXX..XXXXXX.'
-                            '.XXXXXX..XXXXXX.'
-                            '.X....X..X....X.'
-                            '.X....X..X....X.'
-                            '.X....X..X....X.'
-                            '.XXXXXX..XXXXXX.'
-                            '................'
-                            '................'
-                            '.XXXXXX..XXXXXX.'
-                            '.XXXXXX..XXXXXX.'
-                            '.X....X..X....X.'
-                            '.X....X..X....X.'
-                            '.X....X..X....X.'
-                            '.XXXXXX..XXXXXX.'
-                            '................'};
-                case 'pin'       % pushpin: keep window on top
-                    rows = {'................'
-                            '.......XXXX....'
-                            '......XXXXXX...'
-                            '......XXXXXX...'
-                            '......XXXXXX...'
-                            '.......XXXX....'
-                            '........XX.....'
-                            '........XX.....'
-                            '........XX.....'
-                            '........XX.....'
-                            '........XX.....'
-                            '.......XXXX....'
-                            '................'
-                            '................'
-                            '................'
-                            '................'};
-                case 'help'      % question mark
-                    rows = {'................'
-                            '.....XXXXXX.....'
-                            '....XX....XX....'
-                            '...XX......XX...'
-                            '...XX......XX...'
-                            '...........XX...'
-                            '..........XX....'
-                            '.......XXXX.....'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '................'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '................'
-                            '................'
-                            '................'};
-                otherwise
-                    rows = repmat({repmat('.',1,16)},16,1);
-            end
         end
     end
 end
