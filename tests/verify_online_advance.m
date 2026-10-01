@@ -112,6 +112,7 @@ ctrl.AdvanceParams = struct('corrThreshold',0.01,'minSweeps',4,'maxSweeps',Inf,'
 lp = mabr.ui.LivePlot();
 cleanLP = onCleanup(@() delete(lp));
 lp.Layout = 'separate';
+lp.ShowStimulus = true;      % the controller hands the view each run's waveforms
 ctrl.setLivePlot(lp);
 
 run_schedule(ctrl,90);
@@ -136,6 +137,23 @@ latest = findobj(lp.axLatest,'Type','line');
 latest = latest(arrayfun(@(h) numel(h.XData) > 2,latest));
 assert(~isempty(latest) && latest(1).XData(1) < 0, ...
     'the live view was handed no pre-onset baseline, so a negative time base is empty');
+
+% ... and the waveform behind each panel's mean is the bank's own for that
+% condition: onset-aligned, at unit peak scaled to the panel's share of its
+% axes (mabr.ui.LivePlot, Show stimulus waveform).
+for a = lp.axMean
+    L  = sscanf(regexp(string(a.Title.String),'([\d.]+) dB','tokens','once'),'%f');
+    u  = find(arrayfun(@(i) double(ctrl.Stimuli.meta(i).Level) == L,1:ctrl.Stimuli.numStimuli));
+    assert(isscalar(u),'no single bank entry is the %g dB panel',L);
+    sig = double(ctrl.Stimuli.signal(u));
+    tt  = (0:numel(sig)-1)/ctrl.Stimuli.SampleRate*1000;
+    keep = tt >= a.XLim(1) & tt <= a.XLim(2);
+    hs  = findall(a,'Tag','MABR_STIMULUS');
+    assert(isscalar(hs) && strcmp(string(hs.Visible),"on"),'the %g dB panel has no stimulus line',L);
+    assert(isequal(hs.XData,tt(keep)),'the %g dB stimulus is not on the onset-aligned time axis',L);
+    assert(max(abs(hs.YData/(0.45*a.YLim(2)) - sig(keep)'/max(abs(sig)))) < 1e-6, ...
+        'the %g dB panel does not show that condition''s own waveform',L);
+end
 
 newBlocks = ctrl.Session.Blocks(n0+1:end);
 assert(numel(newBlocks) == 2, ...

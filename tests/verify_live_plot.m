@@ -48,7 +48,12 @@ function verify_live_plot()
 %          a view drawn once from the same frame shows, through every
 %          arrangement, scale, band, grouping, time base and a reset; skips a
 %          frame whose statistics are already on screen; and still ends an
-%          artifact flash on its clock when it does.
+%          artifact flash on its clock when it does;
+%      19. a conventional plan keeps the session's finished conditions;
+%      20. SHOW STIMULUS WAVEFORM: the presented waveform drawn behind the
+%          latest sweep and every mean, normalized and onset-aligned, off the
+%          handle list, written only when asked for and only when changed,
+%          switched from the right-click menu and remembered.
 %
 %   Run:  >> verify_live_plot
 %
@@ -894,7 +899,209 @@ pp.reset(); pp.updateStats(sC,iC);
 assert(~pp.MultiCondition && numel(pp.axMean) == 1,'clearSession left finished conditions behind');
 fprintf('  PASS: a conventional plan fills every arrangement with the session''s conditions\n');
 
+% --- 20. the stimulus behind the traces --------------------------------------
+% ShowStimulus draws the waveform that was presented behind the latest sweep
+% and behind every condition's mean. It is normalized (each stimulus at its
+% own peak, filling a fixed share of its axes), so a 30 dB step does not turn
+% the quiet stimuli into flat lines on an axis that reads microvolts; it runs
+% from the onset on the same time axis as the response; it is not part of
+% the traces' own bookkeeping (not in findobj, not in the legend); and, like
+% every other write this view makes, it is only written when it changed.
+fsD  = 192000;  nD = round(0.005*fsD);  tD = (0:nD-1)/fsD;
+[F,finfo] = stats_frames(40);
+V    = finfo.Params.Values;                      % [Frequency kHz, Level dB] per condition
+sigs = cell(1,size(V,1));
+for c = 1:numel(sigs)                            % 5 ms tones, 30 dB steps apart
+    sigs{c} = single(10^((V(c,2)-90)/20)*sin(2*pi*1000*V(c,1)*tD));
+end
+
+sv = mabr.ui.LivePlot();
+cleanSv = onCleanup(@() delete(sv));
+sv.clearSession();
+set_look(sv,'separate');
+sv.setStimulusWaves(1:numel(sigs),fsD,sigs);
+assert(~sv.ShowStimulus,'the stimulus waveform is drawn unless asked for');
+sv.updateStats(F(end),finfo);
+drawnow;
+sl = findall(sv.PlotPanel,'Tag','MABR_STIMULUS');
+assert(numel(sl) == numel(sv.axMean) + 1, ...
+    'expected one stimulus line behind the latest sweep and one per mean');
+assert(~any(arrayfun(@vis_on,sl)),'a stimulus line is visible while the option is off');
+assert(all(arrayfun(@(h) all(isnan(h.YData)),sl)), ...
+    'a stimulus was drawn while the option was off -- it should cost a frame nothing');
+assert(isempty(findobj(sv.PlotPanel,'Tag','MABR_STIMULUS')), ...
+    'the stimulus lines are on the handle list (findobj, legend, cla would reach them)');
+
+% On, with sweeps already on screen: drawn at once, from the cached frame.
+sv.ShowStimulus = true;
+assert(sv.displaySettings().ShowStimulus,'ShowStimulus is not among the display settings');
+for k = 1:numel(sv.axMean)
+    ax = sv.axMean(k);
+    h  = findall(ax,'Tag','MABR_STIMULUS');
+    assert(isscalar(h) && vis_on(h),'tile %d has no visible stimulus line',k);
+    fk = sscanf(ax.Title.String,'%f',1);          % '8 kHz, 30 dB  (n=...)'
+    assert(abs(tone_freq(h.YData,fsD) - 1000*fk) < 50, ...
+        'tile %d (%g kHz) shows a stimulus at %.0f Hz',k,fk,tone_freq(h.YData,fsD));
+    assert(h.XData(1) == 0 && numel(h.XData) == nD && ...
+           abs(h.XData(end) - 1000*tD(end)) < 1e-9, ...
+        'the stimulus does not run from the onset for its own duration, in ms');
+    assert(abs(max(abs(h.YData)) - 0.45*ax.YLim(2)) < 1e-6*ax.YLim(2), ...
+        'tile %d: the stimulus is not normalized to a fixed share of its axes',k);
+    ch = allchild(ax);
+    ml = findobj(ax,'Type','line');
+    ml = ml(arrayfun(@(x) numel(x.XData) > 2,ml));
+    assert(find(ch == h) > find(ch == ml(1)),'tile %d: the stimulus is drawn over its trace',k);
+end
+hl = findall(sv.axLatest,'Tag','MABR_STIMULUS');
+assert(isscalar(hl) && vis_on(hl),'the latest sweep has no stimulus behind it');
+assert(abs(tone_freq(hl.YData,fsD) - 1000*V(F(end).LatestStim,1)) < 50, ...
+    'the latest sweep shows another condition''s stimulus');
+assert(abs(max(abs(hl.YData)) - 0.45*sv.axLatest.YLim(2)) < 1e-6*sv.axLatest.YLim(2), ...
+    'the latest sweep''s stimulus is not normalized to its axes');
+
+% A stimulus the view was never handed is blanked, not left holding another's.
+so = mabr.ui.LivePlot();
+cleanSo = onCleanup(@() delete(so));
+so.clearSession();
+set_look(so,'separate');
+so.setStimulusWaves(1,fsD,sigs(1));
+so.ShowStimulus = true;
+so.updateStats(F(end),finfo);
+drawnow;
+has = arrayfun(@(a) any(~isnan(findall(a,'Tag','MABR_STIMULUS').YData)),so.axMean);
+assert(nnz(has) == 1,'%d tiles show a stimulus when only one was handed over',nnz(has));
+
+% Every other arrangement.
+sv.Layout = 'overlay';
+drawnow;
+assert(isscalar(sv.axMean) && numel(findall(sv.axMean,'Tag','MABR_STIMULUS')) == numel(sigs), ...
+    'overlay does not carry one stimulus per condition');
+sv.Layout = 'stacked';
+drawnow;
+for g = 1:numel(sv.axMean)
+    ax   = sv.axMean(g);
+    hs   = findall(ax,'Tag','MABR_STIMULUS');
+    step = diff(ax.YTick(1:2));
+    for i = 1:numel(hs)
+        y = hs(i).YData;
+        assert(min(abs(ax.YTick - (max(y)+min(y))/2)) < 1e-6*step, ...
+            'a stacked stimulus is not centred on its own trace');
+        assert(abs((max(y)-min(y))/2 - 0.4*step) < 1e-6*step, ...
+            'a stacked stimulus overlaps its neighbours');
+    end
+end
+
+% The right-click entry, which is how a person turns it on and off.
+cm = findall(sv.Figure,'Type','uicontextmenu');
+cm = cm(arrayfun(@(c) ~isempty(findall(c,'Type','uimenu','Label','Show stimulus waveform')),cm));
+assert(isscalar(cm),'the live plot has no single Show stimulus waveform menu entry');
+item = findall(cm,'Type','uimenu','Label','Show stimulus waveform');
+assert(strcmp(item.Checked,'on'),'the entry is not ticked while the stimulus is shown');
+fire_menu(item);
+assert(~sv.ShowStimulus && strcmp(item.Checked,'off') && ...
+       ~any(arrayfun(@vis_on,findall(sv.PlotPanel,'Tag','MABR_STIMULUS'))), ...
+    'the menu did not hide the stimulus');
+fire_menu(item);
+assert(sv.ShowStimulus && strcmp(item.Checked,'on'),'the menu did not show the stimulus again');
+
+% A choice made in the menu is the one the next window opens with, and a
+% configuration file's older settings (no such field) still load.
+sn = mabr.ui.LivePlot();
+cleanSn = onCleanup(@() delete(sn));
+assert(sn.ShowStimulus,'a new live view did not open on the stimulus setting last chosen');
+sn.applySettings(struct('Layout','grid'));
+assert(sn.ShowStimulus,'settings without the field changed it');
+sn.applySettings(struct('ShowStimulus',false));
+assert(~sn.ShowStimulus,'applySettings did not restore the stimulus setting');
+
+% A waveform finer than the screen is thinned to its envelope, not strided
+% into a slower wave: its peaks survive and the time axis still runs forward.
+fsH = 1536000;  tH = (0:round(0.005*fsH)-1)/fsH;
+sh  = mabr.ui.LivePlot();
+cleanSh = onCleanup(@() delete(sh));
+sh.clearSession();
+set_look(sh,'separate');
+sh.setStimulusWaves(1:numel(sigs),fsH,repmat({single(sin(2*pi*16000*tH))},1,numel(sigs)));
+sh.ShowStimulus = true;
+sh.updateStats(F(end),finfo);
+drawnow;
+h = findall(sh.axMean(1),'Tag','MABR_STIMULUS');
+assert(numel(h.XData) > 100 && numel(h.XData) <= 4000 && all(diff(h.XData) >= 0), ...
+    'a %d-sample stimulus was not thinned to a drawable, time-ordered line',numel(tH));
+assert(abs(max(h.YData) - 0.45*sh.axMean(1).YLim(2)) < 1e-6*sh.axMean(1).YLim(2) && ...
+       abs(min(h.YData) + 0.45*sh.axMean(1).YLim(2)) < 1e-6*sh.axMean(1).YLim(2), ...
+    'thinning lost the stimulus''s peaks');
+
+% Writing only what changed must still draw what a view drawn once draws:
+% brought here a frame at a time, through arrangements, scales, bands,
+% groupings and time bases, with the stimulus on.
+inc = mabr.ui.LivePlot();
+cleanInc = onCleanup(@() delete(inc));
+inc.clearSession();
+set_look(inc,'overlay');
+inc.setStimulusWaves(1:numel(sigs),fsD,sigs);
+inc.ShowStimulus = true;
+changes = {{'Layout','grid'},{'Layout','stacked'},{'AmpMode','each'}, ...
+           {'ErrorBand','sem'},{'GroupBy','Level'},{'TimeBase',[-1 4]}, ...
+           {'Layout','separate'},{'GroupBy',''},{'TimeBase',[-2 10]},{'Layout','overlay'}};
+f = 0;
+for s = 1:numel(changes)
+    inc.(changes{s}{1}) = changes{s}{2};
+    for j = 1:3
+        f = f + 1;
+        inc.updateStats(F(f),finfo);
+    end
+    assert_same_stimulus(inc,F(f),finfo,fsD,sigs, ...
+        sprintf('after %s = %s',changes{s}{1},mat2str(changes{s}{2})));
+end
+inc.clearSession();                       % a new schedule forgets the waveforms too
+inc.reset();
+inc.updateStats(F(f),finfo);
+assert(all(arrayfun(@(h) all(isnan(h.YData)),findall(inc.PlotPanel,'Tag','MABR_STIMULUS'))), ...
+    'a new schedule kept the previous bank''s stimuli');
+fprintf('  PASS: the stimulus is drawn behind the traces, normalized, and only when asked for\n');
+
 fprintf('== verify_live_plot PASSED ==\n');
+end
+
+function set_look(lp,layout)
+% A known look, whatever the last window was left showing (the pref).
+lp.Layout = layout;  lp.GroupBy = '';  lp.AmpMode = 'common';
+lp.ErrorBand = 'none';  lp.TimeBase = [-2 10];  lp.ShowStimulus = false;
+end
+
+function f = tone_freq(y,fs)
+% The frequency of a tone burst, Hz, off a zero-padded spectrum.
+N = 2^16;
+[~,i] = max(abs(fft(y(:),N)));
+f = (i-1)*fs/N;
+end
+
+function assert_same_stimulus(v,stats,info,fsD,sigs,what)
+% The stimulus lines of `v`, which was brought here a frame at a time, against
+% those of a view drawn once from the same frame under the same settings.
+ref = mabr.ui.LivePlot();
+cleanRef = onCleanup(@() delete(ref));
+ref.clearSession();
+ref.Layout = v.Layout;  ref.GroupBy = v.GroupBy;  ref.AmpMode = v.AmpMode;
+ref.ErrorBand = v.ErrorBand;  ref.TimeBase = v.TimeBase;
+ref.setStimulusWaves(1:numel(sigs),fsD,sigs);
+ref.ShowStimulus = true;
+ref.updateStats(stats,info);
+drawnow;
+axV = [v.axLatest v.axMean(:).'];
+axR = [ref.axLatest ref.axMean(:).'];
+same(numel(axV),numel(axR),what,'number of axes');
+for i = 1:numel(axV)
+    ha = findall(axV(i),'Tag','MABR_STIMULUS');
+    hb = findall(axR(i),'Tag','MABR_STIMULUS');
+    at = sprintf('%s, axes %d',what,i);
+    same(numel(ha),numel(hb),at,'number of stimulus lines');
+    for k = 1:numel(ha)
+        same(ha(k).XData,hb(k).XData,at,sprintf('stimulus %d time base',k));
+        same(ha(k).YData,hb(k).YData,at,sprintf('stimulus %d',k));
+    end
+end
 end
 
 function [stats,info] = block_stats(F,finfo,c)

@@ -104,6 +104,8 @@ classdef LivePlot < handle
 %       ManualLimit  volts                    the +/- limit AmpMode 'manual' uses
 %       ErrorBand    'none' | 'std' | 'sem' | 'ci'
 %       ConfidenceLevel  0<c<1                default 0.95, used by 'ci'
+%       ShowStimulus logical                  default false; the stimulus drawn
+%                                             behind each trace (see below)
 %
 %   'each' lets every stimulus autoscale to its own response, which is what
 %   you want when levels differ by 40 dB; 'common' holds them all to one scale,
@@ -132,6 +134,26 @@ classdef LivePlot < handle
 %   when it was the one rejected, so a noisy electrode is visible as it happens
 %   rather than at the end of the block.
 %
+%   STIMULUS WAVEFORM
+%   -----------------
+%   `ShowStimulus` (right-click menu: Show stimulus waveform) draws the
+%   waveform that was presented BEHIND each trace -- behind the latest sweep
+%   (the stimulus that evoked it) and behind every condition's mean -- on the
+%   same time axis, so the response is read against what caused it: where the
+%   stimulus starts and stops, and how long after it the response begins.
+%   It is drawn in a pale tint of the trace's own colour (grey behind the
+%   latest sweep) and is NORMALIZED: each stimulus is scaled to its own peak
+%   and fills a fixed share of its axes, whatever the axis reads in
+%   microvolts. A stimulus is volts at a loudspeaker and a response is
+%   volts at an electrode; they share no scale, and drawing a 30 dB step as
+%   the 1/32 amplitude it is would leave the quieter stimuli as flat lines.
+%   What it shows is shape and timing. Time zero is the onset the timing
+%   channel marked, which is the stimulus's first sample -- the two share a
+%   converter, so no latency separates them. In the Overlay layout every
+%   condition's stimulus is drawn on the one axes; Separate, Grid and
+%   Stacked give each its own. The waveforms are handed over once per run
+%   (setStimulusWaves), never per frame.
+%
 %   The control strip ends with NEW ANALYSIS…, which asks the host to open an
 %   online-analysis window (mabr.ui.MetricPlot) -- one metric across the
 %   conditions, refreshed while the schedule runs. It is deliberately a
@@ -157,6 +179,16 @@ classdef LivePlot < handle
         StackCols     = 4;    % stacked groups sit this many across before wrapping
         BandAlpha     = 0.18; % error-band patch opacity
         CILevels      = [0.90 0.95 0.99];   % offered in the right-click menu
+        % The stimulus waveform behind a trace (ShowStimulus). HalfHeight is
+        % the share of an axes' half-height its peak reaches (of a stack's
+        % step, in Stacked); the tint is how far its colour is taken toward
+        % white; MaxStimPoints is where a long window is thinned to a
+        % min/max envelope, so a 192 kHz carrier costs the graphics what a
+        % screen can show of it and no more.
+        StimColor     = [0.55 0.55 0.55];   % behind the latest sweep
+        StimHalfHeight = 0.45;
+        StimTint      = 0.7;
+        MaxStimPoints = 4000;
         % Vertical split of the plot region: the latest sweep on top, the
         % means below it. Fractions of the plot panel.
         TopFrac       = 0.34;
@@ -251,10 +283,23 @@ classdef LivePlot < handle
         ManualLimit (1,1) double = 5e-6        % volts, +/-
         ErrorBand   (1,:) char   = 'none'      % none | std | sem | ci
         ConfidenceLevel (1,1) double = 0.95    % used by ErrorBand 'ci'
+        ShowStimulus (1,1) logical   = false   % the stimulus behind each trace
     end
 
     properties (Access = private)
         meanLines  = gobjects(1,0);   % one per stimulus, in layout order
+        stimLines  = gobjects(1,0);   % the stimulus behind each of them
+        stimLatest                    % ... and behind the latest sweep
+        StimItem                      % the right-click entry that switches it on
+        % The waveforms of the conditions this session has presented, as
+        % setStimulusWaves was handed them: stimulus index, sample rate and
+        % samples. Kept for the whole session, like Done, because a finished
+        % condition's tile still wants its stimulus.
+        Waves     = struct('stim',{},'fs',{},'y',{})
+        % What drawing one needs, worked out once: the part inside the time
+        % axis, in ms, at unit peak, thinned. Keyed on stimulus and time axis.
+        WaveDisp  = struct('stim',{},'xl',{},'t',{},'y',{})
+        StimCache = {}        % per stimulus line: what was last written (setStim)
         bandPatches = gobjects(1,0);  % error band behind each of them
         ContextMenu                   % right-click menu over the plot region
         BandItems  = gobjects(1,0);   % its error-band entries, in menu order
@@ -416,6 +461,11 @@ classdef LivePlot < handle
             obj.ArtifactFlashT = [];
             obj.showArtifacts(0,0);
             title(obj.axLatest,'');
+            % The stimulus behind the latest sweep goes with it.
+            if isgraphics(obj.stimLatest)
+                set(obj.stimLatest,'XData',nan,'YData',nan);
+            end
+            if ~isempty(obj.StimCache), obj.StimCache{1} = []; end
             % Both written behind their records just now, so the records go
             % too -- whichever way this returns below. A stale LatestX left
             % the next frame writing a run's YData against the 1-sample XData
@@ -431,6 +481,7 @@ classdef LivePlot < handle
             % plan. The first frame of the new run rewrites whatever moved.
             if ~isempty(obj.Done), return; end
             set(obj.meanLines(isgraphics(obj.meanLines)),'XData',nan,'YData',nan);
+            set(obj.stimLines(isgraphics(obj.stimLines)),'XData',nan,'YData',nan);
             set(obj.bandPatches(isgraphics(obj.bandPatches)), ...
                 'XData',nan(3,1),'YData',nan(3,1));
             % Written behind the caches' backs just now, so they are
@@ -452,6 +503,36 @@ classdef LivePlot < handle
             obj.DoneTime  = [];
             obj.Last      = [];
             obj.LastIn    = [];
+            % The waveforms belong to the bank too.
+            obj.Waves     = obj.Waves([]);
+            obj.WaveDisp  = obj.WaveDisp([]);
+            obj.StimCache = {};
+        end
+
+        function setStimulusWaves(obj,stim,fs,signals)
+            % The waveforms behind the conditions of a run, for ShowStimulus.
+            %   stim     [1 x n]  stimulus indices -- the same numbers the
+            %                     statistics and info.Stimuli use
+            %   fs       scalar   their sample rate, Hz
+            %   signals  {1 x n}  the samples of each
+            % Called by the controller once per run, not per frame. Merged into
+            % what the session already holds (a stimulus handed over again
+            % replaces its earlier copy), so a finished condition keeps its
+            % waveform when the next run presents another. Drawn from the next
+            % frame; nothing is rendered here.
+            if numel(stim) ~= numel(signals) || ~isscalar(fs) || ~(fs > 0)
+                error('mabr:ui:LivePlot:waves', ...
+                    'Stimulus waveforms need one signal per index and a positive sample rate.');
+            end
+            for i = 1:numel(stim)
+                y = signals{i};
+                if isempty(y) || ~isnumeric(y), continue; end
+                w = struct('stim',double(stim(i)),'fs',double(fs),'y',single(y(:)));
+                j = find([obj.Waves.stim] == w.stim,1);
+                if isempty(j), obj.Waves(end+1) = w; else, obj.Waves(j) = w; end
+                obj.WaveDisp(ismember([obj.WaveDisp.stim],w.stim)) = [];
+            end
+            obj.StimCache = {};      % what the lines hold may be a replaced waveform
         end
 
         function update(obj,sweeps,tvec,R,target,bad,info)
@@ -653,6 +734,11 @@ classdef LivePlot < handle
             obj.afterSettingChange();
         end
 
+        function set.ShowStimulus(obj,v)
+            obj.ShowStimulus = logical(v);
+            obj.afterSettingChange();
+        end
+
         % --- Persistence ------------------------------------------------------
         % Every display setting above in one struct: what the pref holds, and
         % what mabr.ui.App's configuration file carries so that a named setup
@@ -665,7 +751,8 @@ classdef LivePlot < handle
             s = struct('Layout',obj.Layout,'GroupBy',obj.GroupBy, ...
                        'TimeBase',obj.TimeBase,'AmpMode',obj.AmpMode, ...
                        'ManualLimit',obj.ManualLimit,'ErrorBand',obj.ErrorBand, ...
-                       'ConfidenceLevel',obj.ConfidenceLevel);
+                       'ConfidenceLevel',obj.ConfidenceLevel, ...
+                       'ShowStimulus',obj.ShowStimulus);
         end
 
         function applySettings(obj,s)
@@ -676,7 +763,7 @@ classdef LivePlot < handle
             % own setter, so nothing invalid gets in by this door either.
             if ~isstruct(s) || ~isscalar(s), return; end
             f = {'Layout','GroupBy','TimeBase','AmpMode','ManualLimit', ...
-                 'ErrorBand','ConfidenceLevel'};
+                 'ErrorBand','ConfidenceLevel','ShowStimulus'};
             for i = 1:numel(f)
                 if ~isfield(s,f{i}), continue; end
                 try
@@ -710,7 +797,8 @@ classdef LivePlot < handle
             % survives being handed back.
             d = struct('Layout','overlay','GroupBy','','TimeBase',[-2 10], ...
                        'AmpMode','common','ManualLimit',5e-6, ...
-                       'ErrorBand','none','ConfidenceLevel',0.95);
+                       'ErrorBand','none','ConfidenceLevel',0.95, ...
+                       'ShowStimulus',false);
             try
                 if ~ispref(mabr.ui.LivePlot.PrefGroup,mabr.ui.LivePlot.PrefKey)
                     return
@@ -787,6 +875,8 @@ classdef LivePlot < handle
             grid(obj.axLatest,'on');
             yline(obj.axLatest,0,'Color',obj.ZeroColor,'LineWidth',1);
             xline(obj.axLatest,0,'Color',obj.ZeroColor,'LineStyle',':');
+            % Created BEFORE the sweep so the sweep draws over it.
+            obj.stimLatest = obj.newStimLine(obj.axLatest,obj.StimColor);
             obj.latestLine = line(obj.axLatest,nan,nan, ...
                 'Color',obj.RecentColor,'LineWidth',1);
 
@@ -807,6 +897,7 @@ classdef LivePlot < handle
             obj.LineCache  = struct('x',{},'y',{});
             obj.BandCache  = struct('x',{},'y',{});
             obj.TitleCache = {};
+            obj.StimCache  = {};
             obj.StackCache = struct('ticks',{},'lbl',{},'done',{});
             obj.TickShown  = [];
             obj.LatestX    = [];
@@ -823,6 +914,7 @@ classdef LivePlot < handle
             delete(obj.axMean(isgraphics(obj.axMean)));
             obj.axMean      = gobjects(1,0);
             obj.meanLines   = gobjects(1,0);
+            obj.stimLines   = gobjects(1,0);
             obj.bandPatches = gobjects(1,0);
             obj.legendHandle = [];
             obj.clearMeanRungs();     % new axes: nothing to hold on to
@@ -850,7 +942,8 @@ classdef LivePlot < handle
                     for k = 1:n
                         ax = obj.newTile(p,pos(k,:),isBottom(k),isLeft(k),true);
                         obj.axMean(k) = ax;
-                        [obj.bandPatches(k),obj.meanLines(k)] = obj.newMean(ax,col(k,:));
+                        [obj.bandPatches(k),obj.meanLines(k),obj.stimLines(k)] = ...
+                            obj.newMean(ax,col(k,:));
                     end
 
                 case 'grid'
@@ -859,7 +952,8 @@ classdef LivePlot < handle
                     for k = 1:n
                         ax = obj.newTile(p,pos(k,:),isBottom(k),isLeft(k),true);
                         obj.axMean(k) = ax;
-                        [obj.bandPatches(k),obj.meanLines(k)] = obj.newMean(ax,col(k,:));
+                        [obj.bandPatches(k),obj.meanLines(k),obj.stimLines(k)] = ...
+                            obj.newMean(ax,col(k,:));
                     end
 
                 case 'stacked'
@@ -879,7 +973,7 @@ classdef LivePlot < handle
                     for k = 1:n
                         g  = 1;
                         if k <= numel(G.group), g = G.group(k); end
-                        [obj.bandPatches(k),obj.meanLines(k)] = ...
+                        [obj.bandPatches(k),obj.meanLines(k),obj.stimLines(k)] = ...
                             obj.newMean(obj.axMean(g),col(k,:));
                     end
 
@@ -893,7 +987,8 @@ classdef LivePlot < handle
                     xline(ax,0,'Color',obj.ZeroColor,'LineStyle',':');
                     obj.axMean = ax;
                     for k = 1:n
-                        [obj.bandPatches(k),obj.meanLines(k)] = obj.newMean(ax,col(k,:));
+                        [obj.bandPatches(k),obj.meanLines(k),obj.stimLines(k)] = ...
+                            obj.newMean(ax,col(k,:));
                     end
                     obj.addOverlayLegend(G.labels);
                     xlabel(obj.axMean(1),'Time (ms)');
@@ -919,15 +1014,27 @@ classdef LivePlot < handle
             if ~isempty(stray), delete(stray); end
         end
 
-        function [band,ln] = newMean(obj,ax,c)
-            % One condition's band and mean trace, in that order: the patch is
-            % created FIRST so the line it belongs to draws over it rather
-            % than under its own shading. 'PickableParts' none keeps the band
-            % out of the way of a right-click, which belongs to the axes.
+        function [band,ln,stim] = newMean(obj,ax,c)
+            % One condition's stimulus, band and mean trace, in that order:
+            % each is created before the one that has to draw over it, so the
+            % trace is on top of its band and both are on top of the
+            % stimulus. 'PickableParts' none keeps the band out of the way of
+            % a right-click, which belongs to the axes.
+            stim = obj.newStimLine(ax,c + (1 - c)*obj.StimTint);
             band = patch('Parent',ax,'XData',nan(3,1),'YData',nan(3,1), ...
                 'FaceColor',c,'FaceAlpha',obj.BandAlpha,'EdgeColor','none', ...
                 'PickableParts','none');
             ln   = line(ax,nan,nan,'Color',c,'LineWidth',1.5);
+        end
+
+        function h = newStimLine(obj,ax,c)
+            % A stimulus waveform's line. Off the handle list (so legend(),
+            % findobj and cla leave it alone: it is furniture behind the
+            % data, not a series) and out of the way of a right-click; shown
+            % only while ShowStimulus is on. Tagged so a test can find it.
+            h = line(ax,nan,nan,'Color',c,'LineWidth',0.5, ...
+                'HandleVisibility','off','PickableParts','none', ...
+                'Tag','MABR_STIMULUS','Visible',onOff(obj.ShowStimulus));
         end
 
         function ax = newTile(obj,p,pos,bottom,left,zeroLine)
@@ -1288,7 +1395,11 @@ classdef LivePlot < handle
             f = ancestor(obj.PlotPanel,'figure');
             if isempty(f), return; end
             obj.ContextMenu = uicontextmenu(f);
-            parent = uimenu(obj.ContextMenu,'Label','Error band');
+            % The stimulus behind the traces is the same kind of question --
+            % a thing to ask of what is on screen -- so it lives here too.
+            obj.StimItem = uimenu(obj.ContextMenu,'Label','Show stimulus waveform', ...
+                'Callback',@(~,~) obj.onStimMenu());
+            parent = uimenu(obj.ContextMenu,'Label','Error band','Separator','on');
 
             % A flat radio list, deliberately: one click reaches any of the
             % six answers, where a Statistic > Level nesting would cost two
@@ -1314,6 +1425,7 @@ classdef LivePlot < handle
 
             obj.attachContextMenu(obj.PlotPanel);
             obj.syncBandMenu();
+            obj.syncStimMenu();
         end
 
         function attachContextMenu(obj,h)
@@ -1337,6 +1449,27 @@ classdef LivePlot < handle
             if ~isnan(obj.BandConfs(i)), obj.ConfidenceLevel = obj.BandConfs(i); end
             obj.ErrorBand = obj.BandModes{i};
             obj.savePrefs();
+        end
+
+        function onStimMenu(obj)
+            obj.ShowStimulus = ~obj.ShowStimulus;
+            obj.savePrefs();
+        end
+
+        function syncStimMenu(obj)
+            if ~isempty(obj.StimItem) && isgraphics(obj.StimItem)
+                obj.StimItem.Checked = onOff(obj.ShowStimulus);
+            end
+        end
+
+        function syncStimVisibility(obj)
+            % Show or hide every stimulus line to match ShowStimulus. The
+            % records of what they hold are dropped either way: a hidden line
+            % is not drawn from, so what it holds goes stale, and the next
+            % frame has to write it afresh.
+            h = [obj.stimLatest obj.stimLines];
+            set(h(isgraphics(h)),'Visible',onOff(obj.ShowStimulus));
+            obj.StimCache = {};
         end
 
         function syncBandMenu(obj)
@@ -1565,6 +1698,8 @@ classdef LivePlot < handle
             if ~obj.isvalidView(), return; end
             obj.syncControls();
             obj.syncBandMenu();
+            obj.syncStimMenu();
+            obj.syncStimVisibility();
             % A deliberate change rescales at once rather than waiting out
             % MeanShrinkHold: that hold is for data arriving, and between runs
             % no data arrives to count it down.
@@ -1777,6 +1912,11 @@ classdef LivePlot < handle
             % underscore as a subscript.
             obj.setLatestTitle(obj.latestTitle(S,G,D.counts),'Interpreter','none');
             obj.showArtifacts(S.nBad,S.nTotal);
+            % The stimulus that evoked the latest sweep, behind it.
+            if obj.ShowStimulus
+                obj.setStim(obj.stimLatest,1,S.latestStim,obj.KeyXLim, ...
+                    0,obj.StimHalfHeight*latLim*scale.mult);
+            end
 
             % --- per-stimulus means ------------------------------------------
             if strcmp(G.mode,'stacked')
@@ -1816,9 +1956,17 @@ classdef LivePlot < handle
             % Only the means that moved are written (setLine): a frame adds a
             % sweep to two or three conditions, not to all of them.
             obj.KeyStackLab = [];       % no stack labels here (gutterKey)
+            xl = obj.clampTime(S.t);
             for k = 1:numel(obj.meanLines)
                 obj.setLine(k,S.t,D.M(k,:)*scale.mult);
                 obj.setBand(k,S.t,D.M(k,:),D.E(k,:),scale.mult,0);
+                if obj.ShowStimulus
+                    % Its axes' own limit: the one shared axes of an overlay,
+                    % the tile of a separate or grid layout.
+                    a = min(k,numel(obj.axMean));
+                    obj.setStim(obj.stimLines(k),1+k,mabr.ui.LivePlot.stimOf(G,k),xl,0, ...
+                        obj.StimHalfHeight*lim(min(a,numel(lim)))*scale.mult);
+                end
             end
             % Unpadded: a rung already stands clear of its data, and a manual
             % limit is the number the operator typed -- the axes should read
@@ -1884,6 +2032,56 @@ classdef LivePlot < handle
             end
             obj.LineCache(k).x = t;
             obj.LineCache(k).y = y;
+        end
+
+        function setStim(obj,h,slot,stim,xl,center,half)
+            % A stimulus line: stimulus `stim`, at unit peak, scaled to
+            % +/- `half` about `center` (both in display units). Written only
+            % when one of those moved, judged on the inputs rather than on the
+            % samples -- a frame costs a handful of numbers compared, never a
+            % waveform built. A stimulus nothing was handed over for is
+            % blanked rather than left holding another's. `slot` indexes
+            % StimCache: 1 the latest sweep's, 1+k mean k's.
+            if isempty(stim) || ~isfinite(stim(1)), stim = NaN; else, stim = double(stim(1)); end
+            key = [stim xl(:).' center half];
+            if slot <= numel(obj.StimCache) && isequal(obj.StimCache{slot},key), return; end
+            [t,y] = obj.stimulusTrace(stim,xl);
+            if isempty(t)
+                t = nan;  y = nan;
+            else
+                y = center + half*y;
+            end
+            set(h,'XData',t,'YData',y);
+            obj.StimCache{slot} = key;
+        end
+
+        function [t,y] = stimulusTrace(obj,stim,xl)
+            % What is drawn of stimulus `stim` on a time axis of `xl` ms: its
+            % samples inside the axis, time in ms from the onset, at UNIT PEAK
+            % (the peak of the whole waveform, not of the part in view), and
+            % thinned to a min/max envelope past MaxStimPoints. Empty when
+            % there is no such waveform, or none of it is in view. Cached per
+            % stimulus, for the axis it was last asked for.
+            t = [];  y = [];
+            if isnan(stim), return; end
+            c = find([obj.WaveDisp.stim] == stim,1);
+            if ~isempty(c) && isequal(obj.WaveDisp(c).xl,xl(:).')
+                t = obj.WaveDisp(c).t;  y = obj.WaveDisp(c).y;
+                return
+            end
+            w = find([obj.Waves.stim] == stim,1);
+            if ~isempty(w)
+                sig = double(obj.Waves(w).y(:).');
+                tt  = (0:numel(sig)-1)/obj.Waves(w).fs*1000;
+                keep = tt >= xl(1) & tt <= xl(2);
+                pk   = max(abs(sig));
+                if any(keep) && pk > 0
+                    [t,y] = mabr.ui.LivePlot.thin(tt(keep),sig(keep)/pk, ...
+                        obj.MaxStimPoints);
+                end
+            end
+            if isempty(c), c = numel(obj.WaveDisp) + 1; end
+            obj.WaveDisp(c) = struct('stim',stim,'xl',xl(:).','t',t,'y',y);
         end
 
         function setBand(obj,k,t,m,e,mult,offset)
@@ -1988,6 +2186,12 @@ classdef LivePlot < handle
                     k = sel(j);
                     obj.setLine(k,S.t,Md(k,:)+offs(j));
                     obj.setBand(k,S.t,D.M(k,:),D.E(k,:),scale.mult,offs(j));
+                    % Within the share of the stack that is its own: the
+                    % neighbouring trace is `step` away.
+                    if obj.ShowStimulus
+                        obj.setStim(obj.stimLines(k),1+k,mabr.ui.LivePlot.stimOf(G,k), ...
+                            obj.clampTime(S.t),offs(j),0.4*step);
+                    end
                     lbl{j} = sprintf('%s (%d)',G.shortLabels{k}, ...
                         D.counts(k)-D.rejected(k));
                 end
@@ -2687,6 +2891,36 @@ classdef LivePlot < handle
                 c = turbo(n+2);
                 c = c(2:end-1,:);   % drop the near-black ends
             end
+        end
+
+        function s = stimOf(G,k)
+            % The stimulus behind mean line k -- NaN where the grouping holds
+            % none (an empty view still has its one placeholder line).
+            if k <= numel(G.stimList), s = G.stimList(k); else, s = NaN; end
+        end
+
+        function [t,y] = thin(t,y,maxN)
+            % Reduce (t,y) to at most ~maxN points, keeping each bucket's
+            % minimum and maximum in time order, so a carrier many times
+            % finer than a pixel still draws as the band it is rather than
+            % aliasing into a slower wave a plain stride would invent.
+            n = numel(y);
+            if n <= maxN, return; end
+            b   = floor(maxN/2);                 % buckets
+            len = ceil(n/b);
+            pad = b*len - n;
+            Y   = [y repmat(y(end),1,pad)];
+            T   = [t repmat(t(end),1,pad)];
+            Y   = reshape(Y,len,b);  T = reshape(T,len,b);
+            [lo,il] = min(Y,[],1);
+            [hi,ih] = max(Y,[],1);
+            tl = T(sub2ind(size(T),il,1:b));
+            th = T(sub2ind(size(T),ih,1:b));
+            first = tl <= th;                    % the minimum comes first
+            y = [hi; lo];  t = [th; tl];         % ... otherwise the maximum does
+            y(1,first) = lo(first);  t(1,first) = tl(first);
+            y(2,first) = hi(first);  t(2,first) = th(first);
+            y = y(:).';  t = t(:).';
         end
 
         function m = postprocess(m,tms,opts)

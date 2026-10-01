@@ -1044,6 +1044,7 @@ classdef AcqController < handle
             obj.CurLabels = arrayfun(@(u) obj.Stimuli.id(u),obj.CurStim, ...
                 'UniformOutput',false);
             obj.CurParams = obj.stimParams(obj.CurStim);
+            obj.send_stimulus_waves();
 
             % Tell the pipeline what this run's onsets belong to. Its cursor
             % starts over here too, so nothing from the last run can be
@@ -1696,6 +1697,26 @@ classdef AcqController < handle
             % cue to fall back on the run's own stimulus count.
             if ~isempty(obj.Schedule)
                 info.Intermixed = obj.Schedule.isIntermixed();
+            end
+        end
+
+        function send_stimulus_waves(obj)
+            % The waveform behind each of this run's conditions, for the live
+            % view's Show stimulus waveform option. Once per run rather than
+            % in live_info: the view compares what it is handed with what it
+            % drew last on every frame, and a run's waveforms do not change
+            % under it. The samples are the bank's own (single, at the DAC
+            % rate); the view crops, scales and thins them to what it draws.
+            % Never fatal -- a view without it is a view without a picture
+            % behind its traces, not a run without a recording.
+            if isempty(obj.LivePlot) || ~isvalid(obj.LivePlot), return; end
+            try
+                sig = arrayfun(@(u) obj.Stimuli.signal(u),obj.CurStim, ...
+                    'UniformOutput',false);
+                obj.LivePlot.setStimulusWaves(obj.CurStim,obj.Stimuli.SampleRate,sig);
+            catch me
+                mabr.log.vprintf(2,'Stimulus waveforms unavailable for the live view: %s', ...
+                    me.message);
             end
         end
 
