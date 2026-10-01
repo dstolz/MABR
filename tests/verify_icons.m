@@ -13,11 +13,18 @@ function verify_icons()
 %   Part C: an unknown name is refused, and background() reads a toolbar's
 %   colour where it has one and falls back where it does not.
 %   Part D: every glyph name the toolbars ask for (mabr.ui.App,
-%   mabr.ui.TraceOrganizer, mabr.ui.Notes) is one render() knows, and every
+%   mabr.ui.TraceOrganizer, mabr.ui.Notes, mabr.ui.PresentationOrder) is
+%   one render() knows, and every
 %   glyph is asked for by some toolbar -- a misspelt name would otherwise
 %   surface only when that window was opened.
 %   Part E: a trace organizer's toolbar is built from them: every tool
 %   carries 16x16x3 CData and a tooltip.
+%   Part F: the Run panel's buttons use the same art as PNGs (Icon.file):
+%   16x16, the glyph's own coverage as alpha rather than a baked-in
+%   background (a uibutton's colour changes), cached by content, and
+%   every run-control glyph is one a button in App.m asks for -- and the
+%   presentation-order window's (skip next, disable above / below, enable
+%   all, stay on top) are the same, asked for in PresentationOrder.m.
 %
 %   Opens one window (Part E), no hardware, no engine, no parallel pool, no
 %   prefs touched. Look at the glyphs themselves with mabr.ui.Icon.preview.
@@ -114,11 +121,16 @@ fprintf('  PASS Part C: unknown glyph refused, toolbar colour read or defaulted\
 root = fileparts(fileparts(mfilename('fullpath')));
 files = {fullfile(root,'+mabr','+ui','App.m'), ...
          fullfile(root,'+mabr','+ui','TraceOrganizer.m'), ...
-         fullfile(root,'+mabr','+ui','Notes.m')};
+         fullfile(root,'+mabr','+ui','Notes.m'), ...
+         fullfile(root,'+mabr','+ui','PresentationOrder.m')};
 used = {};
 for i = 1:numel(files)
     src = fileread(files{i});
     t = regexp(src,'(?:toolButton|Icon\.toolbar)\(\s*''([A-Za-z]+)''','tokens');
+    used = [used, cellfun(@(x) x{1},t,'UniformOutput',false)]; %#ok<AGROW>
+    % The Run panel's buttons: setButtonIcon(button,'glyph'), a glyph named
+    % as the second argument, with the button (app.PauseButton) before it.
+    t = regexp(src,'setButtonIcon\(\s*[A-Za-z_.]+\s*,\s*''([A-Za-z]+)''','tokens');
     used = [used, cellfun(@(x) x{1},t,'UniformOutput',false)]; %#ok<AGROW>
 end
 used = unique(used);
@@ -145,6 +157,57 @@ for i = 1:numel(tools)
 end
 clear cleanTo
 fprintf('  PASS Part E: the trace organizer''s %d tools all carry an icon\n',numel(tools));
+
+% ---- Part F: the same art as a button's PNG ------------------------------
+% A uibutton takes a file, and sits on a background that changes (disabled,
+% pressed, Loop on), so file() must keep real transparency rather than blend.
+runGlyphs   = {'play','preview','repeat','loop','pause','advance','abort'};
+% The presentation-order window's buttons (Stay on top wears the toolbar's pin).
+orderGlyphs = {'skipnext','offabove','offbelow','enableall','pin'};
+pngGlyphs   = [runGlyphs orderGlyphs];
+for k = 1:numel(pngGlyphs)
+    g = pngGlyphs{k};
+    f = mabr.ui.Icon.file(g);
+    assert(ischar(f) && isfile(f),'%s: file() must name a PNG that exists',g);
+    assert(strcmp(f,mabr.ui.Icon.file(g)), ...
+        '%s: a repeat call must return the same file',g);
+    [img,~,a] = imread(f);
+    [rgb,alpha] = mabr.ui.Icon.render(g);
+    assert(isequal(size(img),[N N 3]) && isequal(size(a),[N N]), ...
+        '%s: the PNG must be 16x16 colour with a 16x16 alpha channel',g);
+    assert(max(abs(double(a(:))/255 - alpha(:))) <= 1/255 + eps, ...
+        '%s: the PNG must carry the glyph''s own coverage as alpha',g);
+    solid = alpha == 1;
+    s3 = repmat(solid,[1 1 3]);
+    assert(max(abs(double(img(s3))/255 - rgb(s3))) <= 1/255 + eps, ...
+        '%s: a fully covered pixel must be the glyph''s own colour',g);
+    assert(any(a(:) == 0) && any(a(:) == 255), ...
+        '%s: the PNG must be both transparent and opaque somewhere',g);
+end
+try
+    mabr.ui.Icon.file('no-such-glyph');
+    error('verify:icons','an unknown glyph must be refused by file() too');
+catch me
+    assert(strcmp(me.identifier,'mabr:ui:Icon:unknown'), ...
+        'file() refused an unknown glyph with "%s", expected mabr:ui:Icon:unknown', ...
+        me.identifier);
+end
+% Names of the Run panel's buttons are all ones the buttons use.
+appSrc = fileread(fullfile(root,'+mabr','+ui','App.m'));
+for k = 1:numel(runGlyphs)
+    assert(~isempty(regexp(appSrc,['setButtonIcon\(\s*[A-Za-z_.]+\s*,\s*''' runGlyphs{k} ''''],'once')), ...
+        'no Run panel button asks for "%s"',runGlyphs{k});
+end
+% ...and the presentation-order window's. Stay on top's pin is shared with the
+% main toolbar, so it is the window's own source that must ask for it.
+orderSrc = fileread(fullfile(root,'+mabr','+ui','PresentationOrder.m'));
+for k = 1:numel(orderGlyphs)
+    assert(~isempty(regexp(orderSrc,['setButtonIcon\(\s*[A-Za-z_.]+\s*,\s*''' orderGlyphs{k} ''''],'once')), ...
+        'no presentation-order button asks for "%s"',orderGlyphs{k});
+end
+fprintf(['  PASS Part F: the %d run-control and %d presentation-order glyphs are PNGs ' ...
+         'with their own alpha, and every one is on a button\n'], ...
+    numel(runGlyphs),numel(orderGlyphs));
 
 fprintf('== verify_icons: PASS ==\n');
 end

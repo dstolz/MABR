@@ -23,15 +23,24 @@ classdef Icon
 %   transparent. render() returns the unflattened colour and coverage, for
 %   tests and for anything that can carry real alpha.
 %
+%   The Run panel's buttons use the same art through file(), which keeps
+%   the transparency and leaves the blending to the button (a uibutton's
+%   background is not a constant):
+%
+%       btn.Icon = mabr.ui.Icon.file('play');
+%
 %   Colour means the same thing on every button: blue is the data (a trace,
 %   a window, a disk), orange is what the button does to it (a marker
 %   dropped, a scale changed, the condition now playing), green is done or
-%   added, and red is live or destructive.
+%   added, and red is live or destructive. The Run panel's pair, dark
+%   green for go and dark red for stop, are the same two hues deepened to
+%   hold up on the pastel buttons they sit on.
 %
 %       mabr.ui.Icon.preview()            % every glyph, 1x and enlarged
 %       img = mabr.ui.Icon.sheet(names,8);% the same as an RGB image
 %
-%   Used by mabr.ui.App, mabr.ui.TraceOrganizer and mabr.ui.Notes.
+%   Used by mabr.ui.App (toolbar and Run panel), mabr.ui.TraceOrganizer and
+%   mabr.ui.Notes.
 %
 % Daniel Stolzberg (c) 2019-2026
 
@@ -50,6 +59,8 @@ classdef Icon
             'Orange',   [0.93 0.50 0.10], ...  % the action
             'Green',    [0.20 0.63 0.30], ...  % done, add
             'Red',      [0.84 0.19 0.16], ...  % live, destructive
+            'DeepGreen',[0.04 0.42 0.16], ...  % go -- dark enough to read on a green button
+            'DeepRed',  [0.66 0.10 0.10], ...  % stop -- the same, on a red one
             'Grey',     [0.62 0.65 0.70], ...  % inactive, upcoming
             'Track',    [0.82 0.84 0.87], ...  % the unfilled part of a gauge
             'Paper',    [1.00 1.00 1.00], ...
@@ -76,6 +87,8 @@ classdef Icon
             % Every glyph render() knows, main-window ones first.
             n = {'live','metrics','spectrum','traces','stim','progress','order', ...
                  'notes','front','arrange','pin','help', ...
+                 'play','preview','repeat','loop','pause','advance','abort', ...
+                 'skipnext','offabove','offbelow','enableall', ...
                  'grow','shrink','spread','squeeze','overlap','separate','peaks','inspect', ...
                  'save','load','trash','keys'};
         end
@@ -101,6 +114,46 @@ classdef Icon
             [rgb,alpha] = mabr.ui.Icon.render(name);
             c = mabr.ui.Icon.flatten(rgb,alpha,bg);
             cache(key) = c;
+        end
+
+        function f = file(name)
+            % The glyph NAME as a PNG with real transparency, for a
+            % uibutton's Icon -- which takes a file, and which (unlike a
+            % toolbar tool) sits on a background that changes: a disabled
+            % button, a pressed one, Loop switched on. A baked-in
+            % background would show as a box on every one of them, so the
+            % picture keeps its alpha and the button does the blending.
+            %
+            % Drawn once per MATLAB session into the temp folder (the
+            % toolbox ships no binary assets), and named by a checksum of
+            % its pixels, so edited art never meets a stale file and two
+            % MATLABs asking at once never overwrite one another. Empty if
+            % the file cannot be written -- a button without a picture still
+            % works. An unknown NAME is still refused: that is a typo, not a
+            % full disk.
+            persistent cache
+            if isempty(cache), cache = containers.Map(); end
+            if isKey(cache,name) && isfile(cache(name))
+                f = cache(name);
+                return;
+            end
+            [rgb,alpha] = mabr.ui.Icon.render(name);
+            try
+                b = uint8(round(255*[rgb(:); alpha(:)]));
+                h = mod(sum(double(b).*mod((1:numel(b))',65521)),2^32);
+                dirName = fullfile(tempdir,'mabr_icons');
+                if ~isfolder(dirName), mkdir(dirName); end
+                target = fullfile(dirName,sprintf('%s_%08x.png',name,h));
+                if ~isfile(target)
+                    part = [tempname(dirName) '.png'];
+                    imwrite(rgb,part,'Alpha',alpha);
+                    movefile(part,target,'f');
+                end
+                f = target;
+                cache(name) = f;
+            catch
+                f = '';
+            end
         end
 
         function bg = background(tb)
@@ -254,6 +307,91 @@ classdef Icon
                     c = P(c,Arc([8 6],2.5,2.0,-62,195),K.Paper);
                     c = P(c,Line([9.17 8.21; 8 9.4],2.0) | Box([7 9.2 9 10.6]),K.Paper);
                     c = P(c,RBox([7 12 9 14],0.5),K.Paper);
+
+                % ----------------------------------------------- run controls
+                % Media-player pictograms, on purpose: everyone already knows
+                % what a triangle, two bars and a square do. Solid shapes, no
+                % outline, so they hold up beside a caption on a button 16 px
+                % is all the icon gets.
+                case 'play'        % a triangle: Start, and Resume once paused
+                    t = [3.4 2.8; 13.2 8; 3.4 13.2];
+                    c = P(c,Poly(t) | Line([t; t(1,:)],1.6),K.DeepGreen);
+
+                case 'preview'     % an eye: look at the run, keep nothing
+                    d = 3.19;  R = 7.69;          % a lens 14 wide, 9 tall
+                    c = P(c,Disc([8 8+d],R) & Disc([8 8-d],R),K.Ink);
+                    c = P(c,Disc([8 8+d+1.1],R) & Disc([8 8-d-1.1],R),K.Paper);
+                    c = P(c,Disc([8 8],2.7),K.Blue);
+                    c = P(c,Disc([8 8],1.1),K.Ink);
+
+                case 'repeat'      % three quarters of a circle, clockwise, and
+                                   % its arrowhead: do it again. The quarter
+                                   % left open is what makes it an arrow and
+                                   % not a power button.
+                    p = [8 9];  r = 4.6;  ae = 110;      % the arrow ends at 110 deg
+                    c = P(c,Arc(p,r,2.0,ae,20),K.Ink);
+                    q = p + r*[cosd(ae) -sind(ae)];
+                    u = [sind(ae) cosd(ae)];             % heading clockwise
+                    n = [-u(2) u(1)];
+                    c = P(c,Poly([q + 3.6*u; q - 0.5*u + 3.3*n; q - 0.5*u - 3.3*n]),K.Ink);
+
+                case 'loop'        % an infinity sign: until switched off.
+                                   % Thin and tall, or the crossing fills in
+                                   % and it reads as two rings.
+                    t = linspace(0,2*pi,240);
+                    den = 1 + sin(t).^2;
+                    c = P(c,Line([8 + 6.9*cos(t(:))./den(:), ...
+                                  8 + 6.9*1.7*sin(t(:)).*cos(t(:))./den(:)],1.6),K.Ink);
+
+                case 'pause'       % two bars, on whole pixels so they stay crisp
+                    c = P(c,RBox([3 2 6 14],0.6) | RBox([10 2 13 14],0.6),K.Ink);
+
+                case 'advance'     % a triangle against a bar: on to the next run
+                    t = [2 3; 10 8; 2 13];
+                    c = P(c,Poly(t) | Line([t; t(1,:)],1.2),K.Ink);
+                    c = P(c,RBox([12 2.4 14 13.6],0.5),K.Ink);
+
+                case 'abort'       % a square: stop, and stay stopped
+                    c = P(c,RBox([3 3 13 13],1.6),K.DeepRed);
+
+                % ---------------------------------------- presentation order
+                % The window's list of conditions, drawn as a column of bars:
+                % solid ink is a condition still on, grey one that is off, blue
+                % the row the user has picked, and a red arrow says which way
+                % the switching-off reaches from it.
+                case 'skipnext'    % a hop over the next dot: leave that one out
+                    t = linspace(pi,0,48);
+                    c = P(c,Line([8 + 5.5*cos(t(:)), 10 - 6.5*sin(t(:))],1.8),K.Orange);
+                    c = P(c,Poly([13.5 11.3; 11 7.2; 16 7.2]),K.Orange);
+                    c = P(c,Disc([2.5 13.7],1.8) | Disc([13.5 13.7],1.8),K.Ink);
+                    c = P(c,Disc([8 13.7],1.8),K.Grey);
+
+                case {'offabove','offbelow'}   % switch off everything above /
+                                               % below the picked row
+                    above = strcmp(name,'offabove');
+                    rows  = [1 5 9 13];
+                    sel   = 2 + above;          % the picked row: 3rd, or 2nd
+                    for k = 1:4
+                        if k == sel
+                            col = K.Blue;
+                        elseif (k < sel) == above
+                            col = K.Grey;       % the side being switched off
+                        else
+                            col = K.Ink;
+                        end
+                        c = P(c,RBox([6.5 rows(k) 15.5 rows(k)+2],0.8),col);
+                    end
+                    if above
+                        c = P(c,Box([1.5 4 3.5 10]) | Poly([2.5 0.5; 0 4.4; 5 4.4]),K.Red);
+                    else
+                        c = P(c,Box([1.5 6 3.5 12]) | Poly([2.5 15.5; 0 11.6; 5 11.6]),K.Red);
+                    end
+
+                case 'enableall'   % every row ticked: all back on
+                    for cy = [3 8 13]
+                        c = P(c,Line([1.0 cy; 2.7 cy+1.8; 5.4 cy-1.8],1.5),K.Green);
+                        c = P(c,RBox([7.5 cy-1 15.5 cy+1],0.8),K.Ink);
+                    end
 
                 % -------------------------------------------- trace organizer
                 case 'grow'        % one response, its scale pushed outward
