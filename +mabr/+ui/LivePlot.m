@@ -416,6 +416,14 @@ classdef LivePlot < handle
             obj.ArtifactFlashT = [];
             obj.showArtifacts(0,0);
             title(obj.axLatest,'');
+            % Both written behind their records just now, so the records go
+            % too -- whichever way this returns below. A stale LatestX left
+            % the next frame writing a run's YData against the 1-sample XData
+            % above ("Array is wrong shape or size") on every run after the
+            % first that has finished conditions to keep.
+            obj.LatestX     = [];
+            obj.LatestColor = [];
+            obj.LatestTitle = {};
             % The means of the conditions already finished stay on screen:
             % what is drawn IS their statistics, and blanking them for the
             % second or so before the next run's first sweep arrives would

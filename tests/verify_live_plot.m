@@ -817,6 +817,14 @@ bp.updateStats(s2,i2);
 assert(bp.MultiCondition && strcmp(cb.layout.Enable,'on') && strcmp(cb.group.Enable,'on'), ...
     'Means/Group stayed greyed with two conditions in the view');
 assert(~contains(cb.layout.TooltipString,'ONE condition'),'the one-condition tooltip outlived it');
+% The latest sweep is drawn afresh after the reset, not as new YData against
+% the 1-sample XData the reset blanked it to (MATLAB's "Array is wrong shape
+% or size" at every Loop pass, since the history kept the reset from
+% forgetting what it had written).
+hl = findobj(bp.axLatest,'Type','line');
+assert(isscalar(hl) && numel(hl.XData) == numel(s2.Time) && numel(hl.YData) == numel(s2.Time), ...
+    'the latest sweep after a run boundary has %d x against %d y samples', ...
+    numel(hl(1).XData),numel(hl(1).YData));
 bp.Layout = 'separate';
 assert(numel(bp.axMean) == 2,'a second blocked run did not add its condition to the view');
 % Condition 1 is drawn as it finished -- its own last mean, not blank (the
