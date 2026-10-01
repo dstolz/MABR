@@ -6,7 +6,7 @@ A fourth window, the **Progress Monitor**, reports on the *schedule* rather than
 
 ## Live Plot
 
-Opens with the app, and is raised by the trace-on-axes toolbar button or by pressing Start. Closing it discards the window; the button builds a fresh one.
+Opens with the app, and is raised by the monitor toolbar button or by pressing Start. Closing it discards the window; the button builds a fresh one.
 
 **Latest sweep** — across the top, on its own axes: the most recent single sweep. A sanity check on the raw signal — if it is railing, flat, or dominated by 60 Hz, something is wrong with the electrodes or grounding. It turns **red** when that sweep was the one rejected. It keeps its own axes because a single sweep is tens of times the size of an average; sharing an axis would flatten the means below it. The title names the condition the sweep came from and the sweep count so far.
 
@@ -43,7 +43,7 @@ The plot refreshes about 20 times per second and resets at the start of each con
 
 ## Online Analysis
 
-Opens from the chart toolbar button, or from **Analysis…** on the live plot's control strip. **Every press opens another window**, because each window shows exactly one metric: "RMS against level" and "sweep correlation against frequency" are two questions, and a window that could only answer one at a time would make you throw the first answer away to ask the second. Open as many as the screen holds and arrange them.
+Opens from the chart-with-a-**+** toolbar button, or from **Analysis…** on the live plot's control strip. **Every press opens another window**, because each window shows exactly one metric: "RMS against level" and "sweep correlation against frequency" are two questions, and a window that could only answer one at a time would make you throw the first answer away to ask the second. Open as many as the screen holds and arrange them.
 
 Where the live plot shows you the *waveform* being recorded now, this shows you the *experiment* taking shape: one number per stimulus condition, plotted against the stimulus's own parameters, refreshed while the schedule runs.
 
@@ -103,7 +103,7 @@ Nothing in this window writes to your data. It is a view over what the acquisiti
 
 ## Progress Monitor
 
-Opens from the three-bars toolbar button. Small, cheap to leave open, and pinnable — **Always on top** keeps it above every other window, which is the point of it on a second monitor or in the corner of a busy screen. The setting is remembered per rig, along with where you leave the window.
+Opens from the green-ring toolbar button. Small, cheap to leave open, and pinnable — **Always on top** keeps it above every other window, which is the point of it on a second monitor or in the corner of a busy screen. The setting is remembered per rig, along with where you leave the window.
 
 Across the top, beside the state lamp, is how far along the whole schedule is — the big number, green once it is done — and three lines:
 
@@ -136,7 +136,7 @@ Opens with the app, and is raised by the stacked-traces toolbar button. Closing 
 **What you can do:**
 
 - **Drag a trace vertically** to reorder or separate the stack. Click and drag; release to drop.
-- **Mark peaks** — **Peaks ▸ Mark peaks** (or the ▼-over-a-peak toolbar button, or `p`) finds and labels response peaks on the selected trace, for identifying waves I–V.
+- **Mark peaks** — **Peaks ▸ Mark peaks** (or the toolbar button with orange ▼ markers over a response's peaks, or `p`) finds and labels response peaks on the selected trace, for identifying waves I–V.
 - **Double-click a trace** to open it in the **Trace Inspector** (below) and measure it properly.
 - **Save / load** the arrangement, so a figure you have laid out can be recovered later.
 

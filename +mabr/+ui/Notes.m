@@ -85,7 +85,6 @@ classdef Notes < handle
 
     properties (Constant, Access = private)
         DefaultPos = [200 200 420 380];
-        Ink        = [0.16 0.26 0.42];
     end
 
     methods
@@ -422,15 +421,14 @@ classdef Notes < handle
             %
             %   obj.NotesView = mabr.ui.Notes.toolbarButton(obj.Toolbar,store);
             %
-            % Options are mabr.ui.Notes' own, plus 'Color' and 'Separator' for
-            % the button itself.
-            rgb = mabr.ui.Notes.Ink;
+            % Options are mabr.ui.Notes' own, plus 'Separator' for the button
+            % itself. The glyph -- a notepad with a pencil on it -- is
+            % mabr.ui.Icon's 'notes', the same on every host's toolbar.
             sep = false;
             keep = true(1,numel(varargin));
             for i = 1:2:numel(varargin)
-                switch lower(varargin{i})
-                    case 'color',     rgb = varargin{i+1}; keep(i:i+1) = false;
-                    case 'separator', sep = varargin{i+1}; keep(i:i+1) = false;
+                if strcmpi(varargin{i},'separator')
+                    sep = varargin{i+1}; keep(i:i+1) = false;
                 end
             end
             opts = varargin(keep);
@@ -438,30 +436,9 @@ classdef Notes < handle
             obj = mabr.ui.Notes(store,[],'ButtonOnly',true,opts{:});
             sepStr = 'off'; if sep, sepStr = 'on'; end
             tool = uipushtool(toolbar,'Separator',sepStr, ...
-                'CData',mabr.ui.Icon.fromArt(mabr.ui.Notes.glyph(),rgb), ...
+                'CData',mabr.ui.Icon.toolbar('notes',toolbar), ...
                 'ClickedCallback',@(~,~) obj.popOut());
             obj.setTool(tool);      % also writes the tooltip
-        end
-
-        function rows = glyph()
-            % A ruled notepad with a spiral binding: 16x16 art for a toolbar
-            % button. See mabr.ui.Icon.
-            rows = {'................'
-                    '...X..X..X..X...'
-                    '..XXXXXXXXXXXX..'
-                    '..X..........X..'
-                    '..X.XXXXXXXX.X..'
-                    '..X..........X..'
-                    '..X.XXXXXXXX.X..'
-                    '..X..........X..'
-                    '..X.XXXXXXXX.X..'
-                    '..X..........X..'
-                    '..X.XXXX.....X..'
-                    '..X..........X..'
-                    '..XXXXXXXXXXXX..'
-                    '................'
-                    '................'
-                    '................'};
         end
     end
 end

@@ -686,19 +686,17 @@ classdef TraceOrganizer < handle
         function buildToolbar(obj)
             % Every action here is also in the menu bar -- the toolbar is a
             % shortcut, never the only route to a function. Each button draws
-            % the glyph named in obj.glyph so its meaning is readable without
-            % having to hover for the tooltip.
-            ink   = [0.16 0.26 0.42];   % amplitude / spacing / file
-            alert = [0.72 0.12 0.12];   % peaks
-            warn  = [0.45 0.16 0.16];   % destructive
-
+            % what it does (mabr.ui.Icon) so its meaning is readable without
+            % having to hover for the tooltip: one response with its scale
+            % pushed out or pressed in is amplitude, two traces pushed apart
+            % or together is spacing, and orange is always the action.
             obj.Toolbar = uitoolbar(obj.Figure);
-            obj.toolButton('grow',   ink,  'Larger amplitude (Up arrow)',        @() obj.scaleTraces(obj.GainStep));
-            obj.toolButton('shrink', ink,  'Smaller amplitude (Down arrow)',     @() obj.scaleTraces(1/obj.GainStep));
-            obj.toolButton('spread', ink,  'Wider spacing (Shift+Up)',           @() obj.setSpacing(obj.YSpacing*obj.SpacingStep),true);
-            obj.toolButton('squeeze',ink,  'Tighter spacing (Shift+Down)',       @() obj.setSpacing(obj.YSpacing/obj.SpacingStep));
-            obj.toolButton('peaks',  alert,'Mark peaks on selection (p)',        @() obj.markPeaks(),true);
-            obj.toolButton('inspect',alert,'Inspect selected trace (i, or double-click)',@() obj.inspectTrace());
+            obj.toolButton('grow',   'Larger amplitude (Up arrow)',        @() obj.scaleTraces(obj.GainStep));
+            obj.toolButton('shrink', 'Smaller amplitude (Down arrow)',     @() obj.scaleTraces(1/obj.GainStep));
+            obj.toolButton('spread', 'Wider spacing (Shift+Up)',           @() obj.setSpacing(obj.YSpacing*obj.SpacingStep),true);
+            obj.toolButton('squeeze','Tighter spacing (Shift+Down)',       @() obj.setSpacing(obj.YSpacing/obj.SpacingStep));
+            obj.toolButton('peaks',  'Mark peaks on selection (p)',        @() obj.markPeaks(),true);
+            obj.toolButton('inspect','Inspect selected trace (i, or double-click)',@() obj.inspectTrace());
             % The same notes component the main window carries, over the same
             % store once listenTo has adopted the session's -- so a note about
             % a trace can be written where the trace is being looked at.
@@ -708,20 +706,21 @@ classdef TraceOrganizer < handle
             % and a view built here each time would strand the previous one.
             notesTool = uipushtool(obj.Toolbar,'Separator','on', ...
                 'Tooltip','Session notes (saved with the data)', ...
-                'CData',mabr.ui.Icon.fromArt(mabr.ui.Notes.glyph(),ink), ...
+                'CData',mabr.ui.Icon.toolbar('notes',obj.Toolbar), ...
                 'ClickedCallback',@(~,~) obj.showNotes());
             obj.ensureNotesView();
             obj.NotesView.setTool(notesTool);   % so the count reaches the tooltip
-            obj.toolButton('save',   ink,  'Save view (Ctrl+S)',                 @() obj.saveView(),true);
-            obj.toolButton('load',   ink,  'Load view (Ctrl+O)',                 @() obj.loadView());
-            obj.toolButton('trash',  warn, 'Remove all traces',                  @() obj.clear());
-            obj.toolButton('help',   ink,  'Keyboard shortcuts (F1)',            @() obj.showHelp(),true);
+            obj.toolButton('save',   'Save view (Ctrl+S)',                 @() obj.saveView(),true);
+            obj.toolButton('load',   'Load view (Ctrl+O)',                 @() obj.loadView());
+            obj.toolButton('trash',  'Remove all traces',                  @() obj.clear());
+            obj.toolButton('keys',   'Keyboard shortcuts (F1)',            @() obj.showHelp(),true);
         end
 
-        function toolButton(obj,name,rgb,tip,fcn,sep)
-            if nargin < 6, sep = false; end
+        function toolButton(obj,name,tip,fcn,sep)
+            if nargin < 5, sep = false; end
             sepStr = 'off'; if sep, sepStr = 'on'; end
-            uipushtool(obj.Toolbar,'Tooltip',tip,'CData',obj.icon(name,rgb), ...
+            uipushtool(obj.Toolbar,'Tooltip',tip, ...
+                'CData',mabr.ui.Icon.toolbar(name,obj.Toolbar), ...
                 'Separator',sepStr,'ClickedCallback',@(~,~) fcn());
         end
 
@@ -1267,191 +1266,6 @@ classdef TraceOrganizer < handle
             h.Units = 'pixels';
             w = h.Extent(3);
             h.Units = u;
-        end
-
-        function c = icon(name,rgb)
-            % 16x16 CData from a named glyph.
-            c = mabr.ui.Icon.fromArt(mabr.ui.TraceOrganizer.glyph(name),rgb);
-        end
-
-        function rows = glyph(name)
-            % ASCII art, one 16-char string per row. Kept as art rather than
-            % index math because the shapes have to be legible at 16 px and
-            % that is only checkable by looking at them.
-            switch name
-                case 'grow'      % arrow up off a baseline: bigger amplitude
-                    rows = {'.......XX.......'
-                            '......XXXX......'
-                            '.....XXXXXX.....'
-                            '....XXXXXXXX....'
-                            '...XXXXXXXXXX...'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '................'
-                            'XXXXXXXXXXXXXXXX'
-                            '................'
-                            '................'
-                            '................'};
-                case 'shrink'    % arrow down toward a baseline
-                    rows = {'XXXXXXXXXXXXXXXX'
-                            '................'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '...XXXXXXXXXX...'
-                            '....XXXXXXXX....'
-                            '.....XXXXXX.....'
-                            '......XXXX......'
-                            '.......XX.......'
-                            '................'
-                            '................'
-                            '................'};
-                case 'spread'    % two rails, arrows pushing them apart
-                    rows = {'................'
-                            'XXXXXXXXXXXXXXXX'
-                            '................'
-                            '.......XX.......'
-                            '......XXXX......'
-                            '.....XXXXXX.....'
-                            '................'
-                            '................'
-                            '................'
-                            '.....XXXXXX.....'
-                            '......XXXX......'
-                            '.......XX.......'
-                            '................'
-                            'XXXXXXXXXXXXXXXX'
-                            '................'
-                            '................'};
-                case 'squeeze'   % two rails, arrows pulling them together
-                    rows = {'................'
-                            'XXXXXXXXXXXXXXXX'
-                            '................'
-                            '.....XXXXXX.....'
-                            '......XXXX......'
-                            '.......XX.......'
-                            '................'
-                            '................'
-                            '................'
-                            '.......XX.......'
-                            '......XXXX......'
-                            '.....XXXXXX.....'
-                            '................'
-                            'XXXXXXXXXXXXXXXX'
-                            '................'
-                            '................'};
-                case 'peaks'     % marker dropped onto a waveform peak
-                    rows = {'................'
-                            '....XXXXXXX.....'
-                            '.....XXXXX......'
-                            '......XXX.......'
-                            '.......X........'
-                            '................'
-                            '................'
-                            '.......XX.......'
-                            '......X..X......'
-                            '.....X....X.....'
-                            '....X......X....'
-                            '...X........X...'
-                            'XXX..........XXX'
-                            '................'
-                            '................'
-                            '................'};
-                case 'inspect'   % magnifying glass: look at one trace closely
-                    rows = {'................'
-                            '.....XXXX.......'
-                            '...XX....XX.....'
-                            '..X........X....'
-                            '..X........X....'
-                            '..X........X....'
-                            '..X........X....'
-                            '...XX....XX.....'
-                            '.....XXXX.X.....'
-                            '..........XX....'
-                            '...........XX...'
-                            '............XX..'
-                            '.............XX.'
-                            '................'
-                            '................'
-                            '................'};
-                case 'save'      % floppy disk
-                    rows = {'................'
-                            '.XXXXXXXXXXXXXX.'
-                            '.X....XXXX....X.'
-                            '.X....XXXX....X.'
-                            '.X....XXXX....X.'
-                            '.X............X.'
-                            '.X.XXXXXXXXXX.X.'
-                            '.X.X........X.X.'
-                            '.X.X........X.X.'
-                            '.X.X........X.X.'
-                            '.X.XXXXXXXXXX.X.'
-                            '.XXXXXXXXXXXXXX.'
-                            '................'
-                            '................'
-                            '................'
-                            '................'};
-                case 'load'      % folder with a waveform lifting out of it
-                    rows = {'................'
-                            '................'
-                            '.......XX.......'
-                            '......XXXX......'
-                            '.....XXXXXX.....'
-                            '.......XX.......'
-                            '.......XX.......'
-                            '................'
-                            'XXXX............'
-                            'X..XXXXX........'
-                            'X......XXXXXXXX.'
-                            'X..............X'
-                            'X..............X'
-                            'XXXXXXXXXXXXXXXX'
-                            '................'
-                            '................'};
-                case 'trash'     % waste bin: removes every trace
-                    rows = {'................'
-                            '......XXXX......'
-                            '...XXXXXXXXXX...'
-                            '................'
-                            '..XXXXXXXXXXXX..'
-                            '..X.X.X..X.X.X..'
-                            '..X.X.X..X.X.X..'
-                            '..X.X.X..X.X.X..'
-                            '..X.X.X..X.X.X..'
-                            '..X.X.X..X.X.X..'
-                            '..X.X.X..X.X.X..'
-                            '..X.X.X..X.X.X..'
-                            '..XXXXXXXXXXXX..'
-                            '................'
-                            '................'
-                            '................'};
-                case 'help'      % question mark
-                    rows = {'................'
-                            '....XXXXXX......'
-                            '...XX....XX.....'
-                            '..XX......XX....'
-                            '..XX......XX....'
-                            '..........XX....'
-                            '.........XX.....'
-                            '......XXXX......'
-                            '......XX........'
-                            '......XX........'
-                            '................'
-                            '......XX........'
-                            '......XX........'
-                            '................'
-                            '................'
-                            '................'};
-                otherwise
-                    rows = repmat({repmat('.',1,16)},16,1);
-            end
         end
 
         function s = shortName(file)

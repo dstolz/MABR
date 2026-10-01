@@ -232,6 +232,7 @@ One metric per stimulus **condition**, for the online analysis window ([`mabr.ui
 | [`mabr.ui.TraceOrganizer`](../+mabr/+ui/TraceOrganizer.m) | Interactive stacked-waveform viewer with drag-to-reposition and peak marking. |
 | [`mabr.ui.Trace`](../+mabr/+ui/Trace.m) | One waveform in the stack: data, time base, label, colour, offset, markers. |
 | [`mabr.ui.Marker`](../+mabr/+ui/Marker.m) | A peak marker (point + label) on a trace axes. |
+| [`mabr.ui.Icon`](../+mabr/+ui/Icon.m) | Every toolbar pictogram, drawn as anti-aliased vector art in one palette. `toolbar(name,tb)` returns 16×16×3 `CData` (NaN = transparent) blended against that toolbar's background; `render(name)` the unflattened colour and coverage; `names()` the catalog; `preview()` shows them all. |
 | [`mabr.ui.TestRunner`](../+mabr/+ui/TestRunner.m) | The verification suite as a window (Help ▸ Verification Tests…). Discovers every `verify_*.m` in `tests/`, runs the ticked ones, and reports verdict, elapsed time, and captured output per test. |
 
 **`AcqController` surface**
