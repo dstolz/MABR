@@ -20,6 +20,13 @@ classdef TraceInspector < handle
 %   a cage, and a latency that fell outside the window you guessed is a
 %   measurement, not an error.
 %
+%   The table starts as waves I-V. Add wave appends a row named with the next
+%   unused capital letter (A, B, C ... then AA, AB ...), Remove wave deletes
+%   the selected one, and any name can be typed over in the table. A name must
+%   be unique (any case) and not a plain number: all-digit labels are what the
+%   organizer's Mark peaks numbers its markers with, so they are never read
+%   back as waves.
+%
 %   Opening the inspector runs Auto-detect on whatever is not ALREADY placed,
 %   so a trace with no picks yet shows peaks immediately rather than a blank
 %   waveform waiting for a button press. A pick already there -- seeded from
@@ -34,10 +41,12 @@ classdef TraceInspector < handle
 %   table from them, so a second pass edits the first rather than starting
 %   over.
 %
-%   The search windows persist in MATLAB prefs (group 'MABR') on Apply, so a
-%   lab that works at one species and one rate sets its windows once.
+%   The wave table -- names, search windows, types, which are on -- persists in
+%   MATLAB prefs (group 'MABR') on Apply, so a lab that works at one species
+%   and one rate sets it up once. Picks do not persist, only the table.
 %
 %     Auto-detect (a)      fill every enabled wave from its window
+%     Add / Remove wave    add a row (next capital letter) / delete the selected
 %     click on the trace   place the selected wave (snaps to the nearest
 %                          local extremum within SnapWindow ms)
 %     drag a marker        move it freely, sample by sample
@@ -220,15 +229,52 @@ classdef TraceInspector < handle
             obj.status('All waves cleared.');
         end
 
-        function addWave(obj,name,t0,t1,type)
+        function i = addWave(obj,name,t0,t1,type)
             % Add a row beyond the default I-V (a trough between two waves, a
-            % late component, whatever this preparation actually shows).
-            if nargin < 2 || isempty(name), name = sprintf('P%d',numel(obj.Waves)+1); end
-            if nargin < 3 || isempty(t0),   t0 = obj.Axes.XLim(1); end
-            if nargin < 4 || isempty(t1),   t1 = t0 + 1;           end
-            if nargin < 5 || isempty(type), type = 'Peak';         end
+            % late component, whatever this preparation actually shows) and
+            % select it. Unnamed, it takes the next unused capital letter;
+            % without a window it looks for one ms from where the latest
+            % existing window ends. Returns the new row's index.
+            if nargin < 2 || isempty(name)
+                name = mabr.ui.TraceInspector.nextWaveName({obj.Waves.Name});
+            end
+            why = mabr.ui.TraceInspector.nameProblem(name,{obj.Waves.Name});
+            if ~isempty(why)
+                error('mabr:ui:TraceInspector:badName','%s',why);
+            end
+            if nargin < 3 || isempty(t0)
+                [t0,t1d] = obj.nextWindow();
+            else
+                t1d = t0 + 1;
+            end
+            if nargin < 4 || isempty(t1), t1 = t1d;    end
+            if nargin < 5 || isempty(type), type = 'Peak'; end
+            if ~isfinite(t0) || ~isfinite(t1) || t1 <= t0
+                error('mabr:ui:TraceInspector:badWindow', ...
+                    'A wave window must start below where it ends.');
+            end
             obj.Waves(end+1) = obj.mkWave(name,true,t0,t1,type);
+            i = numel(obj.Waves);
+            obj.SelRow = i;
             obj.redraw();
+            obj.status(sprintf(['Wave %s added -- click the trace to place it, ' ...
+                'or set its window and press Auto-detect.'],obj.Waves(i).Name));
+        end
+
+        function removeWave(obj,i)
+            % Delete a wave row (the selected one by default), its window and
+            % its pick with it. Nothing outside this window changes until
+            % Apply, so a wrong removal is undone by Cancel.
+            if nargin < 2, i = obj.SelRow; end
+            if ~obj.validWave(i)
+                obj.status('Select a wave row in the table, then press Remove wave.');
+                return
+            end
+            name = obj.Waves(i).Name;
+            obj.Waves(i) = [];
+            obj.SelRow   = [];
+            obj.redraw();
+            obj.status(sprintf('Wave %s removed.',name));
         end
 
         % --- Transfer ---------------------------------------------------------
@@ -288,13 +334,9 @@ classdef TraceInspector < handle
         function t = results(obj)
             % One row per placed wave: Name, Latency (ms), Amplitude (in
             % DisplayUnit), Type. A table, so it can go straight to a file.
-            [locs,names] = obj.markedWaves();
+            [locs,names,idx] = obj.markedWaves();
             y = obj.workingY()*obj.DisplayScale;
-            types = cell(numel(locs),1);
-            for i = 1:numel(locs)
-                j = find(strcmp({obj.Waves.Name},names{i}),1);
-                types{i} = obj.Waves(j).Type;
-            end
+            types = reshape({obj.Waves(idx).Type},[],1);
             t = table(names(:),obj.timeMs(locs(:)),y(locs(:)),types, ...
                 'VariableNames',{'Wave','Latency_ms','Amplitude','Type'});
             t.Properties.VariableUnits = {'','ms',obj.DisplayUnit,''};
@@ -361,6 +403,14 @@ classdef TraceInspector < handle
                 'RowName',[], ...
                 'CellEditCallback',@(~,e) obj.onCellEdit(e), ...
                 'CellSelectionCallback',@(~,e) obj.onCellSelect(e));
+
+            obj.H.add = obj.button(p,'Add wave', ...
+                ['Add a wave named with the next unused capital letter (A, B, C ...). ' ...
+                 'Type over its name in the table to call it anything else.'], ...
+                @() obj.addWave());
+            obj.H.remove = obj.button(p,'Remove wave', ...
+                'Delete the selected wave row from the table.', ...
+                @() obj.removeWave());
 
             obj.H.smoothLbl = obj.label(p,'Smooth (samples)');
             obj.H.smooth    = uicontrol(p,'Style','edit','Units','pixels', ...
@@ -455,6 +505,9 @@ classdef TraceInspector < handle
             obj.H.snapLbl.Position   = [x+158 y+3  62 16];
             obj.H.snap.Position      = [x+222 y    44 22];
             y = y + 22 + 10;
+
+            obj.H.add.Position    = [x y hw 26];
+            obj.H.remove.Position = [x+hw+6 y hw 26];   y = y + 26 + 8;
 
             top = pp(4) - 22;
             obj.H.header.Position = [x pp(4)-19 w 17];
@@ -652,14 +705,25 @@ classdef TraceInspector < handle
             if nargin >= 2, t = t(idx); end
         end
 
-        function [locs,names] = markedWaves(obj)
+        function [locs,names,idx] = markedWaves(obj)
             % Placed waves in temporal order, so the markers a trace carries
-            % read left to right whatever order the table is in.
-            en = [obj.Waves.Enabled] & ~isnan([obj.Waves.Loc]);
-            locs  = [obj.Waves(en).Loc];
-            names = {obj.Waves(en).Name};
-            [locs,ord] = sort(locs);
-            names = names(ord);
+            % read left to right whatever order the table is in. idx are
+            % their rows in obj.Waves, so nobody has to look a wave up by
+            % name afterwards.
+            en = find([obj.Waves.Enabled] & ~isnan([obj.Waves.Loc]));
+            [locs,ord] = sort([obj.Waves(en).Loc]);
+            idx   = en(ord);
+            names = {obj.Waves(idx).Name};
+        end
+
+        function [t0,t1] = nextWindow(obj)
+            % Where a wave added with no window looks: one ms from the end
+            % of the latest existing window, kept inside the trace.
+            t = obj.timeMs();
+            w = 1;
+            if isempty(obj.Waves), t0 = t(1); else, t0 = max([obj.Waves.TMax]); end
+            t0 = max(t(1),min(t0,t(end)-w));
+            t1 = min(t0+w,t(end));
         end
 
         function tf = validWave(obj,i)
@@ -738,19 +802,29 @@ classdef TraceInspector < handle
             if ~isfield(obj.H,'cursor') || ~isgraphics(obj.H.cursor), return; end
             xl = obj.Axes.XLim;
             if isempty(tms) || ~isfinite(tms) || tms < xl(1) || tms > xl(2)
-                obj.H.cursor.String = '';
-                return
+                txt = '';
+            else
+                k = obj.nearestSample(tms);
+                y = obj.workingY()*obj.DisplayScale;
+                txt = sprintf('t = %.2f ms      y = %.3f %s', ...
+                    obj.timeMs(k),y(k),obj.DisplayUnit);
             end
-            k = obj.nearestSample(tms);
-            y = obj.workingY()*obj.DisplayScale;
-            obj.H.cursor.String = sprintf('t = %.2f ms      y = %.3f %s', ...
-                obj.timeMs(k),y(k),obj.DisplayUnit);
+            % Motion fires continuously, including while the pointer is parked
+            % on the table with a cell editor open: write only a change.
+            if ~strcmp(obj.H.cursor.String,txt), obj.H.cursor.String = txt; end
         end
 
         function onCellSelect(obj,e)
+            % Selecting a row changes only which wave is drawn as selected,
+            % so it must not go through redraw(). That rewrites the table's
+            % Data, and rewriting a uitable inside its own selection callback
+            % tears down the cell editor the same click is opening: the Type
+            % dropdown collapsed the instant it appeared.
             if isempty(e.Indices), return; end
             obj.SelRow = e.Indices(1);
-            obj.redraw();
+            if ~obj.isopen(), return; end
+            obj.drawWindows();
+            obj.drawMarkers(obj.workingY()*obj.DisplayScale);
         end
 
         function onCellEdit(obj,e)
@@ -759,8 +833,14 @@ classdef TraceInspector < handle
             if ~obj.validWave(i), return; end
             switch c
                 case 1
-                    v = strtrim(e.NewData);
-                    if isempty(v), obj.refreshTable(); return; end
+                    v = strtrim(char(e.NewData));
+                    why = mabr.ui.TraceInspector.nameProblem(v, ...
+                        {obj.Waves([1:i-1 i+1:end]).Name});
+                    if ~isempty(why)
+                        obj.status(why);
+                        obj.refreshTable();     % put the rejected name back
+                        return
+                    end
                     obj.Waves(i).Name = v;
                 case 2
                     obj.Waves(i).Enabled = logical(e.NewData);
@@ -862,6 +942,8 @@ classdef TraceInspector < handle
                 'Select a wave row in the table, then click the trace to place it.'
                 'Drag a marker to move it. The search window is only a hint for'
                 'Auto-detect -- a marker may sit anywhere on the trace.'
+                'Add wave appends a row (A, B, C ...); type over a name to rename'
+                'it. Remove wave deletes the selected row.'
                 ''
                 'a                    auto-detect every enabled wave'
                 'click on the trace   place the selected wave (snaps to a peak)'
@@ -888,10 +970,17 @@ classdef TraceInspector < handle
             if numel(txt) < numel(locs), txt(end+1:numel(locs)) = {''}; end
             for i = 1:numel(locs)
                 name = strtrim(txt{i});
+                % An all-digit label is the organizer's Mark peaks numbering,
+                % not a wave anyone named. Seeding it made rows 1, 2, 3 ... that
+                % then persisted into every later session; leave those markers
+                % alone (Apply replaces them with the waves in the table).
+                if mabr.ui.TraceInspector.isAutoNumber(name), continue; end
                 j = find(strcmpi({obj.Waves.Name},name),1);
                 if isempty(j)
                     t0 = obj.timeMs(locs(i));
-                    if isempty(name), name = sprintf('P%d',numel(obj.Waves)+1); end
+                    if isempty(name)
+                        name = mabr.ui.TraceInspector.nextWaveName({obj.Waves.Name});
+                    end
                     obj.Waves(end+1) = obj.mkWave(name,true,t0-0.5,t0+0.5,'Peak');
                     j = numel(obj.Waves);
                 end
@@ -916,6 +1005,12 @@ classdef TraceInspector < handle
             v = mabr.ui.TraceInspector.emptyWaves();
             for i = 1:numel(s)
                 try
+                    % Rows an older version saved named 1, 2, 3 ... (the
+                    % organizer's peak numbering, seeded in as waves) and
+                    % repeated names fail the name check and are dropped here,
+                    % so a table saved before this rule heals itself.
+                    why = mabr.ui.TraceInspector.nameProblem(s(i).Name,{v.Name});
+                    if ~isempty(why), continue; end
                     v(end+1) = obj.mkWave(s(i).Name,s(i).Enabled, ...
                         s(i).TMin,s(i).TMax,s(i).Type); %#ok<AGROW>
                 catch
@@ -927,6 +1022,9 @@ classdef TraceInspector < handle
         end
 
         function saveWaves(obj)
+            % The whole table persists, added and removed rows included. A
+            % table emptied of every row is read back as "nothing saved" and
+            % starts again from I-V.
             s = obj.Waves;
             for i = 1:numel(s), s(i).Loc = NaN; end   % windows persist, picks do not
             try
@@ -957,13 +1055,63 @@ classdef TraceInspector < handle
                 error('mabr:ui:TraceInspector:badType', ...
                     'Wave type must be Peak or Trough, not "%s".',char(type));
             end
-            w = struct('Name',char(name),'Enabled',logical(enabled), ...
+            why = mabr.ui.TraceInspector.nameProblem(name,{});
+            if ~isempty(why)
+                error('mabr:ui:TraceInspector:badName','%s',why);
+            end
+            w = struct('Name',strtrim(char(name)),'Enabled',logical(enabled), ...
                 'TMin',double(t0),'TMax',double(t1), ...
                 'Type',[upper(char(type(1))) lower(char(type(2:end)))],'Loc',NaN);
         end
 
+        function why = nameProblem(name,used)
+            % Why a wave cannot be called name, or '' if it can. used are the
+            % other rows' names: wave names are what seeding and the markers
+            % a trace carries are matched by, so two of them cannot share one.
+            name = strtrim(char(name));
+            why  = '';
+            if isempty(name)
+                why = 'A wave needs a name.';
+            elseif mabr.ui.TraceInspector.isAutoNumber(name)
+                why = sprintf(['"%s" is a plain number, which is how the organizer ' ...
+                    'numbers the peaks it marks. Use a letter or a name (A, N1 ...).'],name);
+            elseif any(strcmpi(name,used))
+                why = sprintf('There is already a wave named "%s".',name);
+            end
+        end
+
+        function tf = isAutoNumber(name)
+            % All digits: the label Trace.setMarkers gives a marker nobody named.
+            tf = ~isempty(regexp(strtrim(char(name)),'^\d+$','once'));
+        end
+
+        function name = nextWaveName(used)
+            % The first of A, B, ... Z, AA, AB, ... not already taken (any
+            % case). I and V are the Roman waves' names, so they are skipped
+            % for as long as those rows exist.
+            used = cellfun(@(s) upper(strtrim(char(s))),used,'UniformOutput',false);
+            n = 0;
+            while true
+                n = n + 1;
+                name = mabr.ui.TraceInspector.letters(n);
+                if ~any(strcmp(name,used)), return; end
+            end
+        end
+
         function w = emptyWaves()
             w = struct('Name',{},'Enabled',{},'TMin',{},'TMax',{},'Type',{},'Loc',{});
+        end
+    end
+
+    methods (Static, Access = private)
+        function s = letters(n)
+            % 1 -> A, 26 -> Z, 27 -> AA: spreadsheet column names.
+            s = '';
+            while n > 0
+                r = mod(n-1,26);
+                s = [char('A'+r) s]; %#ok<AGROW>
+                n = (n-r-1)/26;
+            end
         end
     end
 end

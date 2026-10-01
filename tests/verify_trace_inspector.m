@@ -21,7 +21,15 @@ function verify_trace_inspector()
 %          leaves nothing dragging behind it;
 %       9. opening on an unmarked trace auto-detects every enabled wave with
 %          no button press, but a pick already there -- from an earlier
-%          Apply -- is never silently recomputed by a later open.
+%          Apply -- is never silently recomputed by a later open;
+%      10. selecting a table cell never rewrites the table (which is what
+%          closed the Type dropdown as it opened), and a Type edit lands;
+%      11. Add wave names new rows with the next unused capital letter,
+%          Remove wave deletes the selected row only, and a name must be
+%          unique, non-blank and not a plain number;
+%      12. the wave table -- custom waves included -- persists across
+%          inspectors, while the organizer's 1, 2, 3 ... peak numbering never
+%          becomes a wave (nor does an older saved table keep such rows).
 %
 %   The user's saved search windows are preserved. Creates figures but needs
 %   no hardware. Run:
@@ -283,7 +291,134 @@ assert(insp7.Waves(j).Loc == movedLoc, ...
     'reopening re-ran detection over a pick that was already there');
 fprintf('  PASS: a pick already on the trace survives reopening untouched\n');
 
+% --- 10. selecting a row must not rewrite the table -----------------------
+% The Type dropdown collapsed the moment it opened because the selection
+% callback went through redraw(), which assigns the table's Data -- tearing
+% down the cell editor the same click was opening. A value planted straight in
+% the table's Data survives a selection only if nothing rewrote the table.
+setpref('MABR','TraceInspectorWaves',mabr.ui.TraceInspector.defaultWaves());
+insp8 = mabr.ui.TraceInspector(mabr.ui.Trace(y,t,'select','select'));
+cleanInsp8 = onCleanup(@() delete(insp8)); %#ok<NASGU>
+tbl = findobj(insp8.Figure,'Type','uitable');
+assert(isscalar(tbl),'could not find the wave table');
+d = tbl.Data;  d{1,1} = 'PLANTED';  tbl.Data = d;
+tbl.CellSelectionCallback(tbl,struct('Indices',[2 5]));
+assert(strcmp(tbl.Data{1,1},'PLANTED'), ...
+    'selecting a cell rewrote the table, which closes the Type dropdown being opened');
+
+% Editing Type through the table's own callback sets the wave's type.
+tbl.CellEditCallback(tbl,struct('Indices',[2 5],'NewData','Trough'));
+assert(strcmp(insp8.Waves(2).Type,'Trough'),'a Type edit did not reach the wave');
+tbl.CellEditCallback(tbl,struct('Indices',[2 5],'NewData','Peak'));
+assert(strcmp(insp8.Waves(2).Type,'Peak'),'a Type edit back to Peak did not reach the wave');
+fprintf('  PASS: selecting a cell leaves the table alone; a Type edit lands\n');
+
+% --- 11. wave names, adding and removing ---------------------------------
+assert(strcmp(mabr.ui.TraceInspector.nextWaveName({'I','V'}),'A'), ...
+    'the first added wave should be A');
+assert(strcmp(mabr.ui.TraceInspector.nextWaveName({'A','B','C'}),'D'),'letters do not run on');
+assert(strcmp(mabr.ui.TraceInspector.nextWaveName({'a'}),'B'),'a lower-case name should count as taken');
+assert(strcmp(mabr.ui.TraceInspector.nextWaveName(cellstr(char('A'+(0:25))')),'AA'), ...
+    'after Z the next name should be AA');
+
+nBefore = numel(insp8.Waves);
+added = {};
+for k = 1:9
+    ii = insp8.addWave();
+    added{end+1} = insp8.Waves(ii).Name; %#ok<AGROW>
+end
+assert(isequal(added,{'A','B','C','D','E','F','G','H','J'}), ...
+    'added waves should take the unused capitals in order, skipping I: %s',strjoin(added,','));
+assert(numel(insp8.Waves) == nBefore+9,'addWave did not append a row each time');
+assert(all([insp8.Waves(end-8:end).Enabled]),'an added wave should be on');
+assert(all(isnan([insp8.Waves(end-8:end).Loc])),'an added wave should start unplaced');
+w = insp8.Waves(end);
+assert(w.TMax > w.TMin && w.TMin >= t(1)*1000 && w.TMax <= t(end)*1000+1e-9, ...
+    'an added wave got a window outside the trace (%g..%g ms)',w.TMin,w.TMax);
+
+% Remove: only the selected row, and nothing when none is selected.
+n0 = numel(insp8.Waves);
+tbl = findobj(insp8.Figure,'Type','uitable');
+tbl.CellSelectionCallback(tbl,struct('Indices',[nBefore+1 1]));   % wave A
+insp8.removeWave();
+assert(numel(insp8.Waves) == n0-1 && ~any(strcmp({insp8.Waves.Name},'A')), ...
+    'Remove wave did not delete the selected row');
+assert(any(strcmp({insp8.Waves.Name},'B')),'Remove wave deleted more than the selected row');
+insp8.removeWave();                      % selection was cleared by the removal
+assert(numel(insp8.Waves) == n0-1,'Remove wave with nothing selected changed the table');
+assert(strcmp(insp8.Waves(nBefore+1).Name,'B'),'rows after a removed one moved the wrong way');
+
+% Renaming through the table: a custom name is accepted, a clash or a plain
+% number is put back.
+k = nBefore+1;
+tbl = findobj(insp8.Figure,'Type','uitable');
+tbl.CellEditCallback(tbl,struct('Indices',[k 1],'NewData','N1'));
+assert(strcmp(insp8.Waves(k).Name,'N1'),'a custom name was not accepted');
+tbl.CellEditCallback(tbl,struct('Indices',[k 1],'NewData','ii'));
+assert(strcmp(insp8.Waves(k).Name,'N1'),'a name already in use (any case) was accepted');
+tbl.CellEditCallback(tbl,struct('Indices',[k 1],'NewData','7'));
+assert(strcmp(insp8.Waves(k).Name,'N1'),'a plain-number name was accepted');
+tbl.CellEditCallback(tbl,struct('Indices',[k 1],'NewData','   '));
+assert(strcmp(insp8.Waves(k).Name,'N1'),'a blank name was accepted');
+assert(strcmp(strtrim(tbl.Data{k,1}),'N1'),'the table kept a rejected name on screen');
+assertError(@() insp8.addWave('N1'),'mabr:ui:TraceInspector:badName');
+assertError(@() insp8.addWave('42'),'mabr:ui:TraceInspector:badName');
+fprintf('  PASS: Add/Remove wave, capital-letter names, and name checks\n');
+
+% --- 12. the table (custom waves included) persists; numbering does not ---
+% Keep one custom wave, drop everything lettered, apply, and reopen on a
+% different trace: the custom wave is back, the removed ones are not.
+for nm = {'B','C','D','E','F','G','H','J'}
+    insp8.removeWave(find(strcmp({insp8.Waves.Name},nm{1}),1));
+end
+insp8.setWindow(find(strcmp({insp8.Waves.Name},'N1')),2.0,3.0,'Trough');
+insp8.apply();
+insp9 = mabr.ui.TraceInspector(mabr.ui.Trace(y,t,'again','again'));
+cleanInsp9 = onCleanup(@() delete(insp9)); %#ok<NASGU>
+assert(isequal({insp9.Waves.Name},{'I','II','III','IV','V','N1'}), ...
+    'the saved table did not come back: %s',strjoin({insp9.Waves.Name},','));
+assert(strcmp(insp9.Waves(6).Type,'Trough') && insp9.Waves(6).TMin == 2.0, ...
+    'a custom wave lost its window or type across sessions');
+delete(insp9);
+
+% The organizer's Mark peaks labels markers 1, 2, 3 ...; those are numbering,
+% not waves, and must not become rows -- in the table or in the pref.
+numbered = mabr.ui.Trace(y,t,'numbered','numbered');
+numbered.setMarkers([20 40 60 80 100]);                  % default text: '1'..'5'
+assert(isequal(numbered.MarkerText,{'1','2','3','4','5'}), ...
+    'expected Trace.setMarkers to number the markers (premise of this check)');
+insp10 = mabr.ui.TraceInspector(numbered);
+cleanInsp10 = onCleanup(@() delete(insp10)); %#ok<NASGU>
+assert(~any(cellfun(@mabr.ui.TraceInspector.isAutoNumber,{insp10.Waves.Name})), ...
+    'the organizer''s peak numbering was seeded into the wave table: %s', ...
+    strjoin({insp10.Waves.Name},','));
+delete(insp10);
+
+% A table an older version saved with those rows heals itself on load.
+legacy = mabr.ui.TraceInspector.defaultWaves();
+for k = 1:3
+    legacy(end+1) = legacy(1); %#ok<AGROW>
+    legacy(end).Name = sprintf('%d',k);
+end
+setpref('MABR','TraceInspectorWaves',legacy);
+insp11 = mabr.ui.TraceInspector(mabr.ui.Trace(y,t,'legacy','legacy'));
+cleanInsp11 = onCleanup(@() delete(insp11)); %#ok<NASGU>
+assert(isequal({insp11.Waves.Name},{'I','II','III','IV','V'}), ...
+    'numbered rows saved by an older version were not dropped: %s', ...
+    strjoin({insp11.Waves.Name},','));
+fprintf('  PASS: custom waves persist; the organizer''s numbering is never a wave\n');
+
 fprintf('== verify_trace_inspector PASSED ==\n');
+end
+
+function assertError(fcn,id)
+try
+    fcn();
+catch me
+    assert(strcmp(me.identifier,id),'expected %s but got %s: %s',id,me.identifier,me.message);
+    return
+end
+error('expected %s but nothing was thrown',id);
 end
 
 

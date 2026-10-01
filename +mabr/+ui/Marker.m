@@ -42,7 +42,8 @@ classdef Marker < handle
             obj.MarkerHandle = scatter(ax,obj.X,obj.Y,obj.Size,obj.Color,obj.Style,'filled');
             obj.LabelHandle  = text(ax,obj.X,obj.Y,['  ' obj.Text], ...
                 'FontSize',obj.FontSize,'Color',obj.Color, ...
-                'VerticalAlignment','bottom','Clipping','on');
+                'VerticalAlignment','bottom','Clipping','on', ...
+                'Interpreter','none');   % a wave's name is whatever was typed
         end
 
         function move(obj,x,y)
