@@ -42,8 +42,12 @@ classdef io
 %       ABR_Data.TestMode                 (logical; true = Test Mode, i.e. the
 %                                          samples ARE the stimulus, not a
 %                                          recording of a subject)
-%       ABR_Data.ADC.AmplifierGain        (the external amplifier gain ADC.Data
-%                                          was divided by; 1 = none)
+%       ABR_Data.ADC.AmplifierGain        (the external amplifier gain; 1 = none)
+%       ABR_Data.ADC.InputFullScale       (volts at the recorder input that
+%                                          read as 1.0, i.e. the input gain
+%                                          knob as calibrated; 1 = uncalibrated.
+%                                          ADC.Data was divided by
+%                                          AmplifierGain/InputFullScale)
 %
 %   Save-time ADC decimation (by Recording.DecimationFactor) is preserved
 %   exactly as the legacy save_abr_data did: resample(Data,1,df) and
@@ -282,10 +286,12 @@ classdef io
             if numel(art) ~= numel(onsets), art = false(numel(onsets),1); end
             ABR_Data.ADC.IsArtifact = art;
 
-            % The external amplifier gain ADC.Data was already divided by, so
-            % Data is volts at the electrodes (Data*AmplifierGain recovers the
-            % converter samples). Always written, 1 when no gain was set.
-            ABR_Data.ADC.AmplifierGain = double(block.AmplifierGain);
+            % The external amplifier gain and the input's full scale: ADC.Data
+            % was divided by AmplifierGain/InputFullScale, so it is volts at
+            % the electrodes, and Data*AmplifierGain/InputFullScale recovers
+            % the converter samples. Always written, 1 when unset.
+            ABR_Data.ADC.AmplifierGain  = double(block.AmplifierGain);
+            ABR_Data.ADC.InputFullScale = double(block.InputFullScale);
 
             ABR_Data.StartTime = mabr.data.io.startTimeChar(block.StartTime);
 
@@ -498,6 +504,11 @@ classdef io
             % Files written before the setting existed were never scaled.
             if isfield(D.ADC,'AmplifierGain') && isscalar(D.ADC.AmplifierGain)
                 block.AmplifierGain = double(D.ADC.AmplifierGain);
+            end
+            % Nor calibrated: 1 V per converter unit, which keeps
+            % Data*AmplifierGain/InputFullScale the converter units for them.
+            if isfield(D.ADC,'InputFullScale') && isscalar(D.ADC.InputFullScale)
+                block.InputFullScale = double(D.ADC.InputFullScale);
             end
         end
     end

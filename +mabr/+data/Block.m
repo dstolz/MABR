@@ -46,11 +46,18 @@ classdef Block
         % filename -- and a file that cannot say it holds the stimulus rather
         % than a subject is a file waiting to be analysed as data.
         TestMode  (1,1) logical = false;
-        % External amplifier gain ADC.Data has already been divided by
-        % (mabr.AudioSettings.AmplifierGain), so the data are volts at the
-        % electrodes; multiply back by it for converter units. 1 = none.
-        % Written to the .abr as ADC.AmplifierGain.
+        % External amplifier gain (mabr.AudioSettings.AmplifierGain). ADC.Data
+        % has already been divided by AmplifierGain/InputFullScale, so the
+        % data are volts at the electrodes; Data*AmplifierGain/InputFullScale
+        % gives back the converter units. 1 = none. Written to the .abr as
+        % ADC.AmplifierGain.
         AmplifierGain (1,1) double = 1;
+        % Volts at the recorder's signal input that the converter read as
+        % 1.0 (mabr.AudioSettings.InputFullScale) -- the input gain knob, as
+        % calibrated when this block was recorded. 1 = uncalibrated, which is
+        % also what every file from before the setting holds. Written to the
+        % .abr as ADC.InputFullScale.
+        InputFullScale (1,1) double = 1;
     end
 
     properties (Dependent)

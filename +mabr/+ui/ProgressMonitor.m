@@ -37,7 +37,7 @@ classdef ProgressMonitor < handle
 %
 %   The header
 %   ----------
-%   Beside the big number, three lines, each answering one question:
+%   Beside the big number, four lines, each answering one question:
 %
 %     what      the rig's state, which run of how many (and whether it is an
 %               artifact make-up or a repeat the user asked for), and
@@ -51,6 +51,15 @@ classdef ProgressMonitor < handle
 %               is; and how many sweeps the artifact preview has rejected.
 %               Between runs, how many conditions are complete and the size of
 %               the plan.
+%     stimulus  sweeps per stimulus, over the whole session: for the one
+%               stimulus a run presents ('this stimulus: 128 / 512 sweeps'),
+%               or the range across an intermixed run's conditions ('each
+%               stimulus: 22–24 / 512 sweeps'). Not the same number as the
+%               run's own count: an intermixed run's total is every
+%               condition's sweeps added up, and a make-up or repeat run adds
+%               to a stimulus that already has sweeps from an earlier run.
+%               Between runs, the same range over every condition the plan
+%               holds.
 %     when      elapsed, the time left, and the clock time that comes to
 %               ('done ≈ 14:32'); once the schedule rests, how long it took
 %               and when it finished.
@@ -193,11 +202,12 @@ classdef ProgressMonitor < handle
         % been watched before the measured pace is trusted over the plan's.
         ClockPeriod    = 1;
         CalibrateAfter = 10;
-        % The window with no plot in it: 8 padding + 62 header + 6 spacing +
+        % The window with no plot in it: 8 padding + 80 header + 6 spacing +
         % 1 collapsed plot row + 6 spacing + 66 control strip + 8 padding.
         % Stated rather than measured because uigridlayout offers no way to
         % ask what a 'fit' would come to before it is laid out.
-        CompactHeight     = 157;
+        HeaderHeight      = 80;
+        CompactHeight     = 175;
         DefaultPlotHeight = 500;
     end
 
@@ -247,6 +257,7 @@ classdef ProgressMonitor < handle
         PctLabel
         StateLabel
         DetailLabel
+        StimLabel
         TimeLabel
         Ctrl = struct()
         LayoutKey  (1,:) char = ''
@@ -444,19 +455,21 @@ classdef ProgressMonitor < handle
             obj.newPlan();
         end
 
-        function [pct,state,time,detail] = headerText(obj)
+        function [pct,state,time,detail,stim] = headerText(obj)
             % What the header is actually saying, read back -- the counterpart
             % of Counts/Targets for the top of the window, and how the
             % verification suite checks that Labels reaches it. Outputs in the
             % order they were added, not the order they are drawn: pct is the
             % big number, state the first line, detail the second (this run,
-            % or the plan), time the third.
-            pct = ''; state = ''; time = ''; detail = '';
+            % or the plan), stim the third (sweeps per stimulus), time the
+            % fourth.
+            pct = ''; state = ''; time = ''; detail = ''; stim = '';
             if ~obj.isvalidView(), return; end
             pct    = obj.PctLabel.Text;
             state  = obj.StateLabel.Text;
             time   = obj.TimeLabel.Text;
             detail = obj.DetailLabel.Text;
+            stim   = obj.StimLabel.Text;
         end
 
         function reset(obj)
@@ -571,7 +584,7 @@ classdef ProgressMonitor < handle
         % --- Construction -----------------------------------------------------
         function build(obj)
             g = uigridlayout(obj.Container,[3 1]);
-            g.RowHeight    = {62,'1x',66};
+            g.RowHeight    = {obj.HeaderHeight,'1x',66};
             g.ColumnWidth  = {'1x'};
             g.RowSpacing   = 6;
             g.Padding      = [8 8 8 8];
@@ -640,8 +653,8 @@ classdef ProgressMonitor < handle
             % and how much longer -- in falling order of weight, so the eye
             % finds the state first and the arithmetic last.
             p  = uipanel(g,'BorderType','none','BackgroundColor',obj.PanelColor);
-            hg = uigridlayout(p,[3 3]);
-            hg.RowHeight       = {22,18,18};
+            hg = uigridlayout(p,[4 3]);
+            hg.RowHeight       = {22,18,18,18};
             hg.ColumnWidth     = {24,'fit','1x'};
             hg.Padding         = [4 2 4 2];
             hg.RowSpacing      = 0;
@@ -653,7 +666,7 @@ classdef ProgressMonitor < handle
 
             obj.PctLabel = uilabel(hg,'Text','—','FontSize',24,'FontWeight','bold', ...
                 'FontColor',obj.InkColor,'VerticalAlignment','center');
-            obj.PctLabel.Layout.Row = [1 3]; obj.PctLabel.Layout.Column = 2;
+            obj.PctLabel.Layout.Row = [1 4]; obj.PctLabel.Layout.Column = 2;
 
             obj.StateLabel = uilabel(hg,'Text','Idle','FontSize',12,'FontWeight','bold', ...
                 'FontColor',obj.InkColor,'VerticalAlignment','center');
@@ -663,9 +676,13 @@ classdef ProgressMonitor < handle
                 'FontColor',obj.InkColor,'VerticalAlignment','center');
             obj.DetailLabel.Layout.Row = 2; obj.DetailLabel.Layout.Column = 3;
 
+            obj.StimLabel = uilabel(hg,'Text','','FontSize',11, ...
+                'FontColor',obj.InkColor,'VerticalAlignment','center');
+            obj.StimLabel.Layout.Row = 3; obj.StimLabel.Layout.Column = 3;
+
             obj.TimeLabel = uilabel(hg,'Text','','FontSize',11, ...
                 'FontColor',obj.MutedColor,'VerticalAlignment','center');
-            obj.TimeLabel.Layout.Row = 3; obj.TimeLabel.Layout.Column = 3;
+            obj.TimeLabel.Layout.Row = 4; obj.TimeLabel.Layout.Column = 3;
         end
 
         function buildPlot(obj,g)
@@ -1427,14 +1444,17 @@ classdef ProgressMonitor < handle
             if isempty(sch)
                 state  = 'No schedule yet';
                 detail = 'Start or preview a run, or load a plan.';
+                stim   = '';
                 when   = '';
             else
                 state  = obj.stateLine(txt,sch,D);
                 detail = obj.detailLine(done,target,sch);
+                stim   = obj.stimulusLine(done,target,sch);
                 when   = obj.timeLine(D,T,sch,paused);
             end
             obj.put('state',obj.StateLabel,'Text',state);
             obj.put('detail',obj.DetailLabel,'Text',detail);
+            obj.put('stim',obj.StimLabel,'Text',stim);
             obj.put('time',obj.TimeLabel,'Text',when);
             obj.applyName(D,T,complete,paused);
         end
@@ -1502,6 +1522,36 @@ classdef ProgressMonitor < handle
                             sch.NumRuns,plural(sch.NumRuns))};
             end
             txt = joinBits(bits);
+        end
+
+        function txt = stimulusLine(obj,done,target,sch)
+            % Sweeps per stimulus, counted over the whole session: for what
+            % the run in progress presents while one is, otherwise for every
+            % condition the plan holds -- the same test detailLine makes, so
+            % the two lines change subject together. A range where the
+            % stimuli differ: an intermixed run's conditions creep up side
+            % by side, and the low end is the one the run is waiting on.
+            R    = obj.RunCache;
+            live = obj.inRun() && ~isempty(R.seq);
+            if live, sel = R.active; else, sel = target > 0; end
+            if numel(sel) ~= numel(done) || ~any(sel), txt = ''; return; end
+            d = done(sel); t = target(sel);
+            if nnz(sel) == 1, who = 'this stimulus'; else, who = 'each stimulus'; end
+            noun = 'sweeps';
+            if sch.StimulationOnly, noun = 'presentations'; end
+            if live && ~obj.LiveKnown
+                % Opened mid-run: what this run has added is unknown until the
+                % next update, and a count without it would read as lost.
+                txt = sprintf('%s: %s %s planned',who,spanText(t),noun);
+                return
+            end
+            mark = '';
+            if obj.Estimated && obj.InFlight > 0, mark = '~'; end
+            if strcmp(obj.Labels,'counts')
+                txt = sprintf('%s: %s%s / %s %s',who,mark,spanText(d),spanText(t),noun);
+            else
+                txt = sprintf('%s: %s%s of its %s',who,mark,spanPct(d./t),noun);
+            end
         end
 
         function txt = timeLine(obj,D,T,sch,paused)
@@ -2170,6 +2220,21 @@ function s = pctText(frac)
 p = round(100*frac);
 if frac < 1, p = min(p,99); end
 s = sprintf('%d%%',p);
+end
+
+function s = spanText(v)
+% One number where every entry agrees, the range where they do not: 512, or
+% 22–24.
+lo = min(v); hi = max(v);
+if lo == hi, s = groupDigits(lo);
+else,        s = [groupDigits(lo) '–' groupDigits(hi)];
+end
+end
+
+function s = spanPct(frac)
+% spanText for fractions: 25%, or 4–5%.
+lo = pctText(min(frac)); hi = pctText(max(frac));
+if strcmp(lo,hi), s = lo; else, s = [lo(1:end-1) '–' hi]; end
 end
 
 function s = groupDigits(n)

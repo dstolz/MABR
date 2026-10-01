@@ -342,6 +342,19 @@ assert(after == before + nSweeps, ...
     'a repeat of one stimulus did not accumulate (%d -> %d)',before,after);
 fprintf('  PASS: a repeated stimulus accumulates its sweeps\n');
 
+% --- 6b. the Reset button -------------------------------------------------
+mpR = mabr.ui.MetricPlot();
+mpR.addBlock(make_block(8,30,nSweeps,Fs));
+assert(~isempty(mpR.values()),'setup: the window should hold a condition');
+btn = findall(mpR.Figure,'Style','pushbutton','String','Reset');
+assert(isscalar(btn),'the control strip has no Reset button');
+btn.Callback(btn,[]);
+assert(isempty(mpR.values()),'Reset left conditions in the window');
+mpR.addBlock(make_block(16,60,nSweeps,Fs));
+assert(numel(mpR.values()) == 1,'the window did not start over after Reset');
+delete(mpR);
+fprintf('  PASS: Reset empties the window and it accumulates afresh\n');
+
 % --- 7. aesthetics from the right-click menu ----------------------------
 mp.PlotType = 'line'; mp.XParam = 'Level'; mp.SeriesParam = 'Frequency';
 ax = mp.Axes;

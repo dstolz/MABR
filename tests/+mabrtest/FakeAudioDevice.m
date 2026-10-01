@@ -14,6 +14,11 @@ classdef FakeAudioDevice < matlab.System
 %   the worker keeps its device between runs rather than building a new one.
 %   A spec selects it per Prep through its DeviceFactory field; nothing on a
 %   rig sets that.
+%
+%   verify_input_calibration uses it as a loop-back cable with a gain knob:
+%   Gain scales what it "records" (and, once set, clips it at +/-1 as a real
+%   converter would), and Realtime = false drops the per-frame wait so a
+%   measurement does not take its own length to test.
 
     properties (Nontunable)
         SampleRate             = 192000
@@ -21,6 +26,11 @@ classdef FakeAudioDevice < matlab.System
         RecorderChannelMapping = [1 2]
         BitDepth               = '32-bit float'
         Device                 = 'Fake'
+    end
+
+    properties
+        Gain     = 1        % what the loop "records" per unit played
+        Realtime = true     % pace each call at the device's frame rate
     end
 
     methods
@@ -40,9 +50,10 @@ classdef FakeAudioDevice < matlab.System
 
         function [y,nUnder,nOver] = stepImpl(obj,x)
             y = x;
+            if obj.Gain ~= 1, y = min(max(obj.Gain*x,-1),1); end
             nUnder = 0;
             nOver  = 0;
-            pause(size(x,1)/obj.SampleRate);
+            if obj.Realtime, pause(size(x,1)/obj.SampleRate); end
         end
     end
 end

@@ -110,6 +110,10 @@ function run_all_verifications()
 %                                  .stimlog, and a .torg
 %       verify_audio_settings    - ASIO device/channel settings: prefs,
 %                                  graceful device query, schedule wiring
+%       verify_input_calibration - the recorder input's full scale in volts:
+%                                  the tone fit, and the loop-back
+%                                  measurement's autorange and refusals over
+%                                  a stand-in device with a known gain
 %       verify_view_prefs        - what MABR recalls between sessions beyond
 %                                  those settings: which windows open at
 %                                  Start (mabr.ViewPolicy), the whole window
@@ -145,6 +149,14 @@ function run_all_verifications()
 %                                  no loop-back, no blocks, and no files
 %       verify_timing_selftest   - pre-run timing loop-back self-test does
 %                                  not regress a normal Start
+%       verify_spectrum          - the input spectrum: the Welch estimate and
+%                                  the noise figures read off it (mains and
+%                                  harmonics, floor, in-band RMS, the largest
+%                                  other line), incremental = one-shot, the
+%                                  window driven as a user drives it, and the
+%                                  INPUT MONITOR through a Test Mode worker --
+%                                  silent laps kept out of the run machinery,
+%                                  and a Start straight after it
 %       verify_timing_loopback   - timing pulse recovery: count, jitter, clock
 %                                  drift, and detection margin. Also the rig
 %                                  diagnostic -- see its help for the
@@ -173,8 +185,9 @@ function run_all_verifications()
 %   verify_isi_jitter, verify_strategies, verify_analysis, verify_filters, verify_live_plot,
 %   verify_progress_monitor, verify_presentation_order, verify_metric_plot,
 %   verify_trace_organizer,
-%   verify_trace_inspector, verify_audio_settings, verify_view_prefs,
-%   verify_window_arrange, verify_icons, verify_recent_banks, verify_stimgen_launcher, and
+%   verify_trace_inspector, verify_audio_settings, verify_input_calibration,
+%   verify_view_prefs, verify_window_arrange, verify_icons,
+%   verify_recent_banks, verify_stimgen_launcher, and
 %   verify_calibration_latency).
 %   None require audio hardware.
 %
@@ -191,11 +204,13 @@ tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_p
          @verify_test_mode, ...
          @verify_progress_monitor, @verify_presentation_order, @verify_metric_plot, ...
          @verify_trace_organizer, @verify_trace_inspector, ...
-         @verify_notes, @verify_audio_settings, @verify_view_prefs, ...
+         @verify_notes, @verify_audio_settings, @verify_input_calibration, ...
+         @verify_view_prefs, ...
          @verify_window_arrange, @verify_icons, @verify_recent_banks, ...
          @verify_stimgen_import, @verify_stimgen_launcher, @verify_calibration_latency, ...
          @verify_stimulation_only, ...
-         @verify_timing_selftest, @verify_timing_loopback, @verify_test_runner, ...
+         @verify_timing_selftest, @verify_spectrum, ...
+         @verify_timing_loopback, @verify_test_runner, ...
          @verify_shutdown_pool};
 
 nPass = 0;

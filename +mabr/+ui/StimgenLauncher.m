@@ -928,7 +928,8 @@ classdef StimgenLauncher < handle
         function onAudio(obj)
             a = obj.audio();
             try
-                mabr.ui.AudioSettingsDialog(a,a.config(),@(s) obj.applyAudio(s));
+                mabr.ui.AudioSettingsDialog(a,a.config(),@(s) obj.applyAudio(s), ...
+                    obj.controller());
             catch me
                 obj.fail('Audio settings',me);
             end

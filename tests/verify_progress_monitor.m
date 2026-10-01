@@ -6,7 +6,10 @@ function verify_progress_monitor()
 %       1. the tally -- planned presentations per stimulus, and what a
 %          recorded run credits;
 %       2. the simple view: NO plot at all, and a window sized down to suit --
-%          and grown back when a plot view is asked for;
+%          and grown back when a plot view is asked for -- with sweeps per
+%          stimulus in its header: the run's one stimulus, the range across
+%          an intermixed run's conditions, a make-up run counted with the
+%          sweeps its stimulus already had, and the plan between runs;
 %       3. counts / percent / none, on the bars and in the header;
 %       4. bars grouped by stimulus and by a stimulus parameter, aggregating
 %          the right entries into the right bar;
@@ -80,9 +83,13 @@ sch.advance();
 pm.refresh(true);
 assert(isequal(pm.Counts,[10 0 0 0 0 0]), ...
     'a recorded run did not reach the tally: %s',mat2str(pm.Counts));
-[~,~,~,det] = pm.headerText();
+[~,~,~,det,stm] = pm.headerText();
 assert(contains(det,'1 of 6 conditions complete') && contains(det,'210 presentations in 6 runs'), ...
     'between runs the header should describe the plan; it reads "%s"',det);
+% Between runs the stimulus line spans every condition: 0 to 10 done, of
+% 10 to 60 planned.
+assert(strcmp(stm,'each stimulus: 0–10 / 10–60 sweeps'), ...
+    'between runs the stimulus line should span the plan; it reads "%s"',stm);
 fprintf('  PASS: planned and recorded presentations tallied per stimulus\n');
 
 % --- 2/3. simple view: no plot, a small window, and the header numbers ---
@@ -100,9 +107,11 @@ pct = pm.headerText();
 assert(strcmp(pct,sprintf('%d / %d',10,sum(reps))), ...
     'the header reads "%s" under Counts',pct);
 pm.Labels = 'percent';
-pct = pm.headerText();
+[pct,~,~,~,stm] = pm.headerText();
 assert(strcmp(pct,sprintf('%.0f%%',100*10/sum(reps))), ...
     'the header reads "%s" under Percent',pct);
+assert(strcmp(stm,'each stimulus: 0–100% of its sweeps'), ...
+    'the stimulus line reads "%s" under Percent',stm);
 pm.Labels = 'counts';
 
 % Asking for a plot grows the window; going without one shrinks it again. The
@@ -229,10 +238,15 @@ want = accumarray(seq(1:5)',1,[6 1])';
 assert(isequal(pm.Counts,want), ...
     'mid-run sweeps were attributed as %s, expected %s', ...
     mat2str(pm.Counts),mat2str(want));
-[~,st,~,det] = pm.headerText();
+[~,st,~,det,stm] = pm.headerText();
 assert(contains(st,'run 1 of 1'),'mid-run the header should name the run; it reads "%s"',st);
 assert(contains(det,'6 conditions intermixed') && contains(det,'5 / 12 this run'), ...
     'mid-run the header should describe the run; it reads "%s"',det);
+% The run line counts the run; the stimulus line counts each condition in it,
+% which for an intermixed run is the only place a per-condition count shows.
+wantStm = sprintf('each stimulus: %d–%d / 2 sweeps',min(want),max(want));
+assert(strcmp(stm,wantStm), ...
+    'mid-run the stimulus line reads "%s", expected "%s"',stm,wantStm);
 assert(contains(pm.Figure.Name,'%'), ...
     'the window title should carry the percentage mid-run ("%s")',pm.Figure.Name);
 % Still the heat map from part 6: every condition of an intermixed run is
@@ -271,6 +285,20 @@ pm.refresh(true);
 assert(sum(pm.Targets) == before + 1, ...
     'an appended make-up run did not enlarge the plan (%d -> %d)',before,sum(pm.Targets));
 assert(pm.Targets(1) == 3,'the make-up went to the wrong stimulus: %s',mat2str(pm.Targets));
+
+% The make-up run adds to a stimulus that already has sweeps: the run line
+% counts the run, the stimulus line the stimulus across the session.
+sch2.advance();
+fc.setState(mabr.ui.ProgState.PrepBlock);
+fc.setState(mabr.ui.ProgState.Acquire);
+fc.metrics(1);
+pm.refresh(true);
+[~,st,~,det,stm] = pm.headerText();
+assert(contains(st,'run 2 of 2 (make-up)'),'the state line reads "%s"',st);
+assert(contains(det,'1 / 1 this run'),'the run line reads "%s"',det);
+assert(strcmp(stm,'this stimulus: 3 / 3 sweeps'), ...
+    'a make-up run''s stimulus line should count the stimulus, not the run: "%s"',stm);
+fc.setState(mabr.ui.ProgState.BlockComplete);
 fprintf('  PASS: artifact make-up enlarges the plan the bars are measured against\n');
 
 % --- 9. the refresh rate limit -------------------------------------------
@@ -334,7 +362,11 @@ fprintf('  PASS: always-on-top toggles, and the view embeds in a container\n');
 sch3 = mabr.stim.Schedule(bank,cfg);
 sch3.Strategy        = 'conventional';
 sch3.Repetitions     = 400;
-sch3.ISI             = 0.01;
+% A 20 s run. The pauses below are where MATLAB first draws the bars view,
+% so a "pause(0.5)" can take three seconds on a cold session: a run short
+% enough to finish meanwhile leaves its estimate at its ceiling, and nothing
+% after the resume can then be seen to count.
+sch3.ISI             = 0.05;
 sch3.SilencePad      = 0.05;
 sch3.StimulationOnly = true;
 sch3.build();
@@ -355,9 +387,12 @@ pm.refresh(true);
 k1 = pm.Counts(s1);
 assert(pm.Estimated && k1 > 0 && k1 <= 400, ...
     'half a second into a stimulation-only run the estimate is %d (Estimated = %d)',k1,pm.Estimated);
-[pct,st,tm,det] = pm.headerText();
+[pct,st,tm,det,stm] = pm.headerText();
 assert(startsWith(pct,'~'),'an estimated count should be marked as one: "%s"',pct);
 assert(contains(det,'~') && contains(det,'this run'),'the run line should carry the estimate: "%s"',det);
+% Nothing is recorded, so what is counted per stimulus is presentations played.
+assert(startsWith(stm,'this stimulus: ~') && endsWith(stm,'/ 400 presentations'), ...
+    'the stimulus line should carry the estimate, in presentations: "%s"',stm);
 assert(contains(st,'stimulation only'),'the state line should say stimulation only: "%s"',st);
 assert(contains(tm,'elapsed') && contains(tm,'left'),'the time line reads "%s"',tm);
 
@@ -421,17 +456,21 @@ fc4 = mabrtest.FakeController(sch4,bank);
 fc4.State = mabr.ui.ProgState.Acquire;     % already running when the window opens
 pm.listenTo(fc4);
 assert(pm.clockRunning(),'a window opened mid-run should start its clock');
-[~,st,tm,det] = pm.headerText();
+[~,st,tm,det,stm] = pm.headerText();
 assert(~contains(tm,'elapsed'), ...
     'a window opened mid-session claimed to know how long it had been running: "%s"',tm);
 assert(contains(tm,'left'),'no time left was estimated: "%s"',tm);
 assert(contains(st,'run 2 of 6'),'the state line reads "%s"',st);
 assert(contains(det,'10 presentations this run'), ...
     'before its first update the run''s count is unknown, and should not read as 0: "%s"',det);
+assert(strcmp(stm,'this stimulus: 10 sweeps planned'), ...
+    'before its first update the stimulus''s count is unknown too: "%s"',stm);
 fc4.metrics(3);
 pm.refresh(true);
-[~,~,~,det] = pm.headerText();
+[~,~,~,det,stm] = pm.headerText();
 assert(contains(det,'3 / 10 this run'),'the first update did not reach the run line: "%s"',det);
+assert(strcmp(stm,'this stimulus: 3 / 10 sweeps'), ...
+    'the first update did not reach the stimulus line: "%s"',stm);
 fc4.complete();
 fprintf('  PASS: a window opened mid-session measures from what it has seen\n');
 

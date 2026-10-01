@@ -87,6 +87,18 @@ classdef AcqController < handle
 %   the other direction -- it tells the notebook where the session is, so a
 %   note taken mid-run is stamped with that run and its sweep count.
 %
+%   The INPUT MONITOR (startMonitor/stopMonitor) records with no stimulus at
+%   all: silent blocks streamed through the same worker, device and ring
+%   buffer a run uses, re-armed lap after lap until stopped, so the raw input
+%   can be watched -- mabr.ui.SpectrumViewer's power spectrum -- while
+%   electrical noise is hunted down with the electrodes in place and no
+%   schedule loaded. Like the timing self-test, a monitor block is invisible
+%   to everything a run drives: no ProgState change, no live timer, no
+%   finalization, no Block, no file. inputSamples is what a view reads the
+%   newest raw samples through, whether the monitor, a run, or nothing is
+%   filling the ring. start() stops the monitor first -- a schedule owns
+%   the device.
+%
 %   Events the App can listen to:
 %       StateChanged     - program flow changed (mabr.ui.ProgStateEventData)
 %       MetricsUpdated   - live metrics changed (ProgStateEventData.Info)
@@ -100,6 +112,10 @@ classdef AcqController < handle
 %                          recovered from a recorded run, or once per run for
 %                          the .stimlog of a stimulation-only one
 %       ScheduleComplete - the whole schedule finished
+%       MetricsReset     - resetMetrics() was called: the online analysis
+%                          windows forget the conditions gathered so far
+%       MonitorChanged   - the input monitor started or stopped (Monitoring;
+%                          MonitorError says why, if the worker stopped it)
 %       AlignmentChecked - a finished run's recovered onsets were held
 %                          against the onsets the plan rendered
 %                          (.Info.report, a mabr.metrics.alignment_report).
@@ -114,6 +130,10 @@ classdef AcqController < handle
 
     properties (SetAccess = private)
         Config
+        % How many of Session's blocks resetMetrics() has already put behind
+        % the online analysis: a window attached later backfills from the
+        % block after this one, so a reset is not undone by opening another.
+        MetricsBase (1,1) double = 0
         Engine      mabr.acq.Engine
         Session     mabr.data.Session
         Stimuli     mabr.stim.StimulusSet
@@ -159,6 +179,11 @@ classdef AcqController < handle
         % one-line verdict, and .Text, the report as logged). [] until a
         % recorded run completes. See report_live_timing.
         LastLiveTiming = []
+        % The input monitor is streaming (see startMonitor), and -- once it
+        % has stopped -- why, when it was the worker that stopped it ('' when
+        % it was asked to).
+        Monitoring   (1,1) logical = false
+        MonitorError (1,:) char = ''
     end
 
     properties
@@ -185,13 +210,19 @@ classdef AcqController < handle
         % judged under. See set.Artifacts for the one consequence that cannot
         % simply wait for the next run.
         Artifacts     (1,1) mabr.ArtifactPolicy = mabr.ArtifactPolicy;
-        % External amplifier gain the recorded signal is divided by, so that
-        % everything computed from it -- live view, artifact thresholds,
-        % metrics, and the Data every .abr carries -- is in volts at the
-        % electrodes (mabr.AudioSettings.recordingGain; 1 = none). Applied by
-        % the pipeline, never to the ring, so the timing channel and the
-        % alignment check stay in converter units.
+        % The gain the recorded signal is divided by, so that everything
+        % computed from it -- live view, artifact thresholds, metrics, and
+        % the Data every .abr carries -- is in volts at the electrodes:
+        % mabr.AudioSettings.recordingGain, the external amplifier over the
+        % input's full scale (1 = neither). Applied by the pipeline, never to
+        % the ring, so the timing channel and the alignment check stay in
+        % converter units.
         AmplifierGain (1,1) double {mustBePositive,mustBeFinite} = 1;
+        % The input's full scale inside that divisor (volts at the recorder
+        % input reading as 1.0; mabr.AudioSettings.inputFullScale). Scales
+        % nothing itself: it is recorded on each Block, so a file can state
+        % the external gain and the knob separately.
+        InputFullScale (1,1) double {mustBePositive,mustBeFinite} = 1;
         % How often the LOW-priority views are served (s). The live trace is
         % fixed at 20 Hz and is not negotiable -- this is the other timer, the
         % one carrying the progress tally -- and the most often the online
@@ -223,6 +254,12 @@ classdef AcqController < handle
         % plan of one condition per run (canLoop); under an intermixed one
         % it is ignored, and the log says so. See loop_run.
         Loop (1,1) logical = false;
+        % How long one lap of the input monitor is (s): a block that long is
+        % streamed, then another, until stopMonitor. Each lap restarts the
+        % ring, so a spectrum view briefly has less than its full average to
+        % work with at every boundary -- long laps make that rare. Capped at
+        % the ring's length. Read at startMonitor.
+        MonitorSeconds  (1,1) double {mustBePositive} = 300;
     end
 
     properties (Constant)
@@ -327,6 +364,22 @@ classdef AcqController < handle
         % invisible to on_engine_state/on_block_completed -- it must not
         % touch ProgState, the live timer, or finalize_run.
         SelfTestActive  (1,1) logical = false
+        % Blocks the engine has reported complete, self-test and monitor laps
+        % included. verifyTimingLoop waits for this to move rather than for
+        % the engine's State to read Completed, which it already does after
+        % any earlier block -- a stopped monitor lap, a finished run -- and
+        % would let the check read the ring before its own block was in it.
+        CompletedCount  (1,1) double = 0
+        % The input monitor, while it runs: whether another lap is wanted when
+        % this one ends (cleared by stopMonitor), and the render spec each lap
+        % is prepared from (see startMonitor).
+        MonitorWanted   (1,1) logical = false
+        MonitorSpec     = []
+        % This controller has streamed into the ring (a run or a monitor
+        % lap). Until it has, the ring holds whatever an earlier MATLAB
+        % session left in the files, which inputSamples must not pass off as
+        % this rig's input.
+        HasRecorded     (1,1) logical = false
         % Device/PlayerChannels/RecorderChannels last confirmed by
         % verifyTimingLoop, [] until the first pass. start() re-verifies
         % whenever obj.Schedule's current values no longer match this.
@@ -360,6 +413,8 @@ classdef AcqController < handle
         BlockReady
         BlockSaved
         ScheduleComplete
+        MetricsReset
+        MonitorChanged
         AlignmentChecked
     end
 
@@ -564,6 +619,10 @@ classdef AcqController < handle
             % the next Run resets it.
             assert(~obj.FinalizePending,'mabr:ui:AcqController:finalizing', ...
                 'The previous run is still being finalized; try again in a moment.');
+            % A schedule owns the device: the input monitor gives it up
+            % first, and is waited for, so its last lap is over before the
+            % self-test or the first run is prepared behind it.
+            obj.stopMonitor();
             % One worker is reused across runs that may switch modes between
             % them, so what it is about to spend the session doing is decided
             % here, not at construction.
@@ -613,6 +672,147 @@ classdef AcqController < handle
             obj.Engine.stop();
         end
 
+        % --- Input monitor --------------------------------------------------
+        function startMonitor(obj,audio)
+            % Record the input with no stimulus: silence goes out on both
+            % channels, the input comes back into the ring buffer, and
+            % inputSamples reads it -- which is all a noise hunt needs, and
+            % needs a subject, electrodes and a quiet rig but no bank, no
+            % schedule and no files. audio (optional) names the device and
+            % channel mapping, as mabr.AudioSettings holds them:
+            % .Device, .PlayerChannels, .RecorderChannels.
+            %
+            % Refused while a schedule is running or a run is still being
+            % finalized from the ring -- a monitor lap resets the ring, and a
+            % finalization reads it. Returns at once; the worker streams
+            % laps of MonitorSeconds, re-armed as each ends (on_block_completed),
+            % until stopMonitor. A worker error ends it (on_engine_error),
+            % leaving the reason in MonitorError.
+            if nargin < 2 || isempty(audio), audio = struct(); end
+            if obj.Monitoring, return; end
+            assert(~obj.FinalizePending,'mabr:ui:AcqController:finalizing', ...
+                'The last run is still being finalized; try again in a moment.');
+            assert(mabr.ui.ProgState.isTerminal(obj.State), ...
+                'mabr:ui:AcqController:busy', ...
+                'A schedule is running; the input monitor needs the device to itself.');
+
+            fs = obj.Config.DACSampleRate;
+            fl = obj.Config.frameLength;
+            N  = min(round(obj.MonitorSeconds*fs),obj.Config.maxInputBufferLength);
+            N  = max(fl,fl*floor(N/fl));
+            % A plan with no presentations is silence on both columns: no
+            % signal, and no timing pulse for anything downstream to take
+            % for an onset.
+            spec = struct('Plan',mabr.stim.PlayPlan({},{},[],[],[],N), ...
+                'SampleRate',fs, ...
+                'PlayerChannels',getdef(audio,'PlayerChannels',[1 2]), ...
+                'RecorderChannels',getdef(audio,'RecorderChannels',[1 2]), ...
+                'StimulationOnly',false);
+            dev = getdef(audio,'Device','');
+            if ~isempty(dev), spec.Device = dev; end
+            % No device paces Test Mode: one frame per frame duration, as a
+            % run gets (begin_current_run), so a lap takes as long as it says.
+            if obj.Testing, spec.TestingFrameDelay = fl/fs; end
+
+            obj.MonitorSpec   = spec;
+            obj.MonitorWanted = true;
+            obj.MonitorError  = '';
+            obj.Monitoring    = true;
+            obj.Engine.setRole('acquisition');
+            obj.arm_monitor();
+            mabr.log.vprintf(1,'Input monitor started (%s laps, nothing played, nothing saved).', ...
+                durationWords(N/fs));
+            notify(obj,'MonitorChanged');
+        end
+
+        function stopMonitor(obj,timeout)
+            % Stop the input monitor and wait (bounded, default 3 s) for the
+            % worker to say its lap is over, so whatever is prepared next --
+            % the self-test, a run, a calibration borrowing the device -- is
+            % not queued behind a block still streaming. A no-op when the
+            % monitor is not running.
+            if ~obj.Monitoring, return; end
+            if nargin < 2 || isempty(timeout), timeout = 3; end
+            obj.MonitorWanted = false;
+            try
+                obj.Engine.stop();
+            catch me
+                mabr.log.vprintf(1,1,'Input monitor: could not ask the worker to stop (%s).',me.message);
+            end
+            t0 = tic;
+            while obj.Monitoring && toc(t0) < timeout
+                pause(0.02);            % lets the engine's state callbacks run
+            end
+            if obj.Monitoring
+                % The worker never answered. Nothing more can be done from
+                % here than to stop claiming it is monitoring.
+                mabr.log.vprintf(0,1,'Input monitor: the worker did not confirm the stop within %g s.',timeout);
+                obj.end_monitor('');
+            end
+        end
+
+        function S = inputSamples(obj,n)
+            % The newest n samples of the RAW recorded signal, for a view of
+            % the input itself (mabr.ui.SpectrumViewer) -- as the converter
+            % delivered them, before the display filter and before the
+            % amplifier gain is divided out (S.Gain says what it is, so the
+            % view can refer them to the electrodes). Fewer than n when the
+            % block holds fewer.
+            %
+            %   Samples     [m x 1] single, the newest last
+            %   Head        the block's absolute sample the last one is
+            %   Seq         the block (RingBuffer.BlockSeq); a new one is new data
+            %   SampleRate  Hz (the DAC rate -- the ring is not decimated)
+            %   Gain        AmplifierGain
+            %   Source      'monitor'  the input monitor is streaming
+            %               'run'      a schedule is under way (the ring holds
+            %                          its run in progress, or the last one
+            %                          until the next begins)
+            %               'held'     nothing is streaming; the ring holds
+            %                          the last thing that did
+            %               'none'     nothing this controller streamed
+            %   Testing     Test Mode: the input is the stimulus copied back
+            %   Monitoring  the input monitor is running
+            %   Note        why there is nothing, when there is nothing
+            S = struct('Samples',zeros(0,1,'single'),'Head',0,'Seq',NaN, ...
+                'SampleRate',obj.Config.DACSampleRate,'Gain',obj.AmplifierGain, ...
+                'Source','none','Testing',obj.Testing,'Monitoring',obj.Monitoring, ...
+                'Note',obj.MonitorError);
+            if obj.SelfTestActive
+                S.Note = 'Checking the timing loop-back…';
+                return
+            end
+            inRun = any(obj.State == [mabr.ui.ProgState.PrepBlock, ...
+                mabr.ui.ProgState.Acquire,mabr.ui.ProgState.BlockComplete, ...
+                mabr.ui.ProgState.AdvanceBlock]);
+            if obj.Monitoring
+                S.Source = 'monitor';
+            elseif inRun && ~isempty(obj.Schedule) && obj.Schedule.StimulationOnly
+                S.Note = 'Stimulation only: nothing is recorded.';
+                return
+            elseif inRun && obj.HasRecorded
+                S.Source = 'run';
+            elseif obj.HasRecorded
+                S.Source = 'held';
+            else
+                return
+            end
+            rb = obj.Engine.RingBuffer;
+            % The worker may start a new block between reading the header and
+            % reading the samples; a sequence that moved means the samples may
+            % straddle the two, so read again (the PublishBuffer discipline).
+            for attempt = 1:3
+                seq  = rb.BlockSeq;
+                head = rb.WriteHead;
+                m    = min([n head rb.MaxLength]);
+                x    = rb.readSignal(head-m+1,head);
+                if rb.BlockSeq == seq, break; end
+            end
+            S.Samples = x;
+            S.Head    = head;
+            S.Seq     = seq;
+        end
+
         function ctx = noteContext(obj)
             % Where the session is right now, for stamping a note taken at this
             % moment (mabr.data.SessionNotes.ContextFcn -- mabr.ui.App points
@@ -637,6 +837,30 @@ classdef AcqController < handle
             if ~obj.Schedule.StimulationOnly
                 ctx.Sweep = obj.CurMetrics.numSweeps;
             end
+        end
+
+        function resetMetrics(obj)
+            % Start the online analysis over: every analysis window drops the
+            % conditions it holds (MetricsReset), the metrics worker drops the
+            % session table they share, and windows opened from now on
+            % backfill only from blocks finalized after this. Nothing else is
+            % touched -- the Session keeps its blocks and every file stays as
+            % written -- and the run in progress carries on, its finalized
+            % block joining the fresh table when it lands.
+            if ~isempty(obj.Session) && isvalid(obj.Session)
+                obj.MetricsBase = obj.Session.NumBlocks;
+            else
+                obj.MetricsBase = 0;
+            end
+            if ~isempty(obj.Compute) && isvalid(obj.Compute)
+                try
+                    obj.Compute.clearConditions();
+                catch me
+                    mabr.log.vprintf(1,1,'Could not clear the metrics worker''s table: %s', ...
+                        me.message);
+                end
+            end
+            notify(obj,'MetricsReset');
         end
 
         function snap = liveSnapshot(obj)
@@ -758,6 +982,7 @@ classdef AcqController < handle
             % schedule finished, or Abort halted it) nothing is left driving
             % Schedule.advance() forward, so kick it off here.
             if obj.State == mabr.ui.ProgState.Idle || obj.State == mabr.ui.ProgState.SchedComplete
+                obj.stopMonitor();      % the run needs the device, as start() does
                 obj.Schedule.resumeAt(obj.Schedule.NumRuns);
                 obj.begin_current_run();
             end
@@ -890,16 +1115,21 @@ classdef AcqController < handle
             if ~isempty(obj.Schedule.Device), spec.Device = obj.Schedule.Device; end
 
             obj.SelfTestActive = true;
+            n0 = obj.CompletedCount;
             obj.Engine.prep(spec);
             obj.Engine.run();
 
+            % THIS block's completion, not the engine reading Completed: it
+            % already does after any earlier block (a stopped monitor lap, a
+            % finished run), which would read the ring before this one was in
+            % it -- and pass or fail on somebody else's samples.
             t0 = tic;
-            while obj.Engine.State ~= mabr.acq.State.Completed && toc(t0) < 5
+            while obj.CompletedCount == n0 && toc(t0) < 5
                 pause(0.02);
             end
             obj.SelfTestActive = false;
 
-            if obj.Engine.State ~= mabr.acq.State.Completed
+            if obj.CompletedCount == n0
                 ok = false;
                 return
             end
@@ -912,8 +1142,12 @@ classdef AcqController < handle
 
         function on_engine_state(obj,e)
             if obj.SelfTestActive, return; end   % see verifyTimingLoop
+            if obj.Monitoring, return; end       % see startMonitor
             switch e.State
                 case mabr.acq.State.Acquire
+                    % The ring now holds something this controller streamed.
+                    % Nothing, in stimulation only: that mode writes no input.
+                    if ~obj.Schedule.StimulationOnly, obj.HasRecorded = true; end
                     % The worker resets the ring and THEN reports Acquire, so
                     % from here the ring holds this run and nothing else: the
                     % moment the compute workers can safely start on it. Once
@@ -937,7 +1171,24 @@ classdef AcqController < handle
         end
 
         function on_block_completed(obj)
+            obj.CompletedCount = obj.CompletedCount + 1;
             if obj.SelfTestActive, return; end   % see verifyTimingLoop
+            if obj.Monitoring
+                % A monitor lap: nothing to finalize. Another lap while one is
+                % wanted and this one ran its length; anything else -- a Stop,
+                % from stopMonitor or anybody -- is the end of the monitor.
+                if obj.MonitorWanted && strcmp(obj.Engine.LastStream.reason,'completed')
+                    try
+                        obj.arm_monitor();
+                    catch me
+                        mabr.log.vprintf(0,1,'Input monitor could not start its next lap: %s',me.message);
+                        obj.end_monitor(me.message);
+                    end
+                else
+                    obj.end_monitor('');
+                end
+                return
+            end
             obj.stop_timer();
             obj.report_live_timing();
             % Drop the live snapshot BEFORE anything is finalized: from here
@@ -1216,6 +1467,16 @@ classdef AcqController < handle
         end
 
         function on_engine_error(obj,e)
+            if obj.Monitoring
+                % The monitor's own failure -- most often a device that would
+                % not open. No schedule is running, so there is no program
+                % state to put in Error: the monitor ends and says why, and
+                % the worker (which fails the command, not itself) is ready
+                % for whatever comes next.
+                mabr.log.vprintf(0,1,'Input monitor stopped [%s]: %s',e.Identifier,e.Message);
+                obj.end_monitor(e.Message);
+                return
+            end
             obj.stop_timer();
             obj.set_state(mabr.ui.ProgState.Error);
             mabr.log.vprintf(0,1,'Acquisition error [%s]: %s',e.Identifier,e.Message);
@@ -1754,9 +2015,12 @@ classdef AcqController < handle
                 % know what the audio settings were at the time.
                 blk.TestMode = obj.Testing;
                 % The gain Data was already divided by -- the one the parts
-                % were MADE with, like `made` above -- so the file can say
-                % what the raw converter samples were.
-                blk.AmplifierGain = gain;
+                % were MADE with, like `made` above -- split back into the
+                % external amplifier and the input's full scale, so the file
+                % can say what each was and what the raw converter samples
+                % were. A config control, so it cannot have changed mid-run.
+                blk.InputFullScale = obj.InputFullScale;
+                blk.AmplifierGain  = gain*obj.InputFullScale;
                 % Per-sweep polarity, in the same order as the Recording's
                 % SweepOnsets, so the offline pipeline can average (or split)
                 % the two polarities of an alternating condition.
@@ -1881,6 +2145,27 @@ classdef AcqController < handle
                 obj.Session.Subject.ID);
         end
 
+        % --- Input monitor --------------------------------------------------
+        function arm_monitor(obj)
+            % One lap: the silent block prepared and streamed. The worker
+            % resets the ring at the Run, so what is in it from here is this
+            % controller's.
+            obj.Engine.prep(obj.MonitorSpec);
+            obj.Engine.run();
+            obj.HasRecorded = true;
+        end
+
+        function end_monitor(obj,why)
+            obj.Monitoring    = false;
+            obj.MonitorWanted = false;
+            obj.MonitorSpec   = [];
+            obj.MonitorError  = why;
+            if isempty(why)
+                mabr.log.vprintf(1,'Input monitor stopped.');
+            end
+            notify(obj,'MonitorChanged');
+        end
+
         % --- Helpers --------------------------------------------------------
         function set_state(obj,s)
             if obj.State == s, return; end
@@ -1933,4 +2218,14 @@ classdef AcqController < handle
         end
     end
 
+end
+
+% ======================= local helpers ================================
+function v = getdef(s,f,d)
+% A field of a settings struct, or the default where it is absent or empty.
+if isstruct(s) && isfield(s,f) && ~isempty(s.(f)), v = s.(f); else, v = d; end
+end
+
+function s = durationWords(secs)
+if secs < 90, s = sprintf('%.3g s',secs); else, s = sprintf('%.3g min',secs/60); end
 end

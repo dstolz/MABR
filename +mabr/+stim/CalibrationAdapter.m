@@ -221,8 +221,9 @@ classdef CalibrationAdapter < stimgen.calibration.HwAdapter
 
             assert(~obj.engineHoldsDevice(),'mabr:stim:CalibrationAdapter:deviceBusy', ...
                 ['The acquisition engine currently holds the audio device. Stop the ' ...
-                 'running schedule before calibrating -- only one of them can own ' ...
-                 'the ASIO device at a time.']);
+                 'running schedule (or the input monitor in the spectrum window) ' ...
+                 'before calibrating -- only one of them can own the ASIO device ' ...
+                 'at a time.']);
 
             obj.borrowDevice();
         end
@@ -253,10 +254,14 @@ classdef CalibrationAdapter < stimgen.calibration.HwAdapter
             % its audioPlayerRecorder for as long as a schedule runs, and a
             % second open on the same ASIO device fails -- or worse,
             % half-succeeds -- so the calibration path asks before it opens.
+            % The input monitor streams without any schedule (its laps never
+            % touch State), and a Release sent mid-lap is not acted on, so it
+            % is asked about separately.
             tf = false;
             c = obj.Controller;
             if isempty(c) || ~isvalid(c), return; end
             tf = c.State ~= mabr.ui.ProgState.Idle;
+            if ~tf && isprop(c,'Monitoring'), tf = c.Monitoring; end
         end
     end
 

@@ -248,7 +248,8 @@ classdef MetricPlot < handle
 
             obj.Listeners = [ ...
                 addlistener(controller,'BlockReady',@(~,e) obj.onBlockReady(e)); ...
-                addlistener(controller,'ScheduleComplete',@(~,~) obj.refresh())];
+                addlistener(controller,'ScheduleComplete',@(~,~) obj.refresh()); ...
+                addlistener(controller,'MetricsReset',@(~,~) obj.clearData())];
 
             % A slot on the metrics worker, where there is one: the metric
             % is then evaluated off-process. None free (or no worker) means
@@ -264,7 +265,7 @@ classdef MetricPlot < handle
             if ~isempty(s) && isvalid(s)
                 obj.Suspend = true;
                 try
-                    for i = 1:s.NumBlocks
+                    for i = controller.MetricsBase+1:s.NumBlocks
                         obj.addBlock(s.Blocks(i));
                     end
                 catch me
@@ -301,10 +302,17 @@ classdef MetricPlot < handle
         end
 
         function clearData(obj)
-            % Forget everything -- a fresh subject on the same window.
+            % Forget everything -- a fresh subject on the same window. This
+            % window only; the Reset button goes through the controller
+            % (resetMetrics), which also empties the metrics worker's table
+            % and tells every other analysis window to call this.
             obj.Blocks    = mabr.ui.MetricPlot.emptyStore();
             obj.LiveConds = mabr.ui.MetricPlot.emptyStore();
             obj.Memo      = [];
+            % A worker-served window must not draw the old table's values
+            % under the new one: a fresh job request is answered only after
+            % the worker has taken the clear.
+            obj.pushJob();
             obj.refresh();
         end
 
@@ -510,8 +518,13 @@ classdef MetricPlot < handle
             [obj.Ctrl.refresh,x] = obj.addButton(p,'Refresh',x,y1,66, ...
                 @() obj.refresh(),'Recompute and redraw now.');
 
+            [obj.Ctrl.reset,x] = obj.addButton(p,'Reset',x,y1,54, ...
+                @() obj.onResetControl(), ...
+                ['Forget the conditions gathered so far and start this ' ...
+                 'analysis over. Saved files are not touched.']);
+
             x = x + 8;
-            obj.Ctrl.status = obj.addText(p,'',x,y1,240);
+            obj.Ctrl.status = obj.addText(p,'',x,y1,170);
 
             obj.syncControls();
         end
@@ -543,6 +556,16 @@ classdef MetricPlot < handle
         end
 
         % --- Control-strip callbacks -----------------------------------------
+        function onResetControl(obj)
+            % Through the controller where there is one, so the worker's
+            % table and the other analysis windows agree with this one.
+            if ~isempty(obj.Controller) && isvalid(obj.Controller)
+                obj.Controller.resetMetrics();
+            else
+                obj.clearData();
+            end
+        end
+
         function items = metricItems(obj)
             % The metric menu: the built-ins, then the custom one if a file has
             % been adopted, then the picker. Two entries rather than one so

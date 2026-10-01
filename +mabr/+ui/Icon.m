@@ -74,7 +74,7 @@ classdef Icon
     methods (Static)
         function n = names()
             % Every glyph render() knows, main-window ones first.
-            n = {'live','metrics','traces','stim','progress','order', ...
+            n = {'live','metrics','spectrum','traces','stim','progress','order', ...
                  'notes','front','arrange','pin','help', ...
                  'grow','shrink','spread','squeeze','overlap','separate','peaks','inspect', ...
                  'save','load','trash','keys'};
@@ -177,6 +177,15 @@ classdef Icon
                     c = Cut(c,Disc([12.5 3.5],4.3));
                     c = P(c,Disc([12.5 3.5],3.5),K.Green);
                     c = P(c,Box([12 1 13 6]) | Box([10 3 15 4]),K.Paper);
+
+                case 'spectrum'    % a falling noise floor, and two lines
+                                   % standing out of it: the hum being hunted
+                    c = P(c,Line([1.5 1.5; 1.5 14.5; 14.5 14.5],1.0),K.Ink);
+                    f = @(x) 4.6 + 7.8*(1 - exp(-(x-2.6)/3.4));
+                    x = linspace(2.6,14.0,200);
+                    c = P(c,Line([x(:) f(x(:))],1.2),K.Blue);
+                    c = P(c,Line([5.5 f(5.5); 5.5 2.2],1.4),K.Orange);
+                    c = P(c,Line([10.5 f(10.5); 10.5 5.4],1.4),K.Orange);
 
                 case 'traces'      % a level series: the organizer's stack,
                                    % smaller and later as the level falls

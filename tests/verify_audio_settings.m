@@ -24,6 +24,12 @@ function verify_audio_settings()
 %   rest, is ignored in Test Mode, divides the recorded signal in
 %   mabr.compute.Pipeline's live step and finalization without moving a
 %   single onset, and is written to (and read back from) ADC.AmplifierGain.
+%   Part G (input full scale): the input's calibrated full scale and its
+%   output reference persist the same way (NaN and all), fold into
+%   recordingGain as AmplifierGain/InputFullScale (1 in Test Mode), put the
+%   finalized Data in volts at the electrodes, and reach the .abr as
+%   ADC.InputFullScale beside the external ADC.AmplifierGain, from which the
+%   converter samples are recovered exactly.
 %
 %   No hardware, no parallel pool. Run:  >> verify_audio_settings
 %
@@ -272,6 +278,84 @@ save(tmp,'ABR_Data','-mat');
 assert(mabr.data.io.importLegacy(tmp).AmplifierGain == G, ...
     'importLegacy did not read ADC.AmplifierGain back');
 fprintf('  PASS Part F: amplifier gain persists, scales live and saved data, reaches the .abr\n');
+
+% ---- Part G: input full scale ----------------------------------------------
+% G1: the four settings persist both ways; junk and old files fall back.
+h = mabr.AudioSettings;
+assert(h.InputFullScale == 1 && isnan(h.OutputFullScale) && ...
+    isempty(h.InputCalibrated) && isempty(h.OutputCalibrated), ...
+    'defaults: InputFullScale 1, OutputFullScale NaN, no calibration dates');
+assert(~h.hasOutputReference(),'an unmeasured output is not a reference');
+h.Testing = false; h.AmplifierGain = 10000;
+h.InputFullScale = 2.5;  h.InputCalibrated  = mabr.AudioSettings.stamp();
+h.OutputFullScale = 3.1; h.OutputCalibrated = '2026-09-30 10:00:00';
+mabr.AudioSettings.savePrefs(h);
+hp = mabr.AudioSettings.loadPrefs();
+assert(hp.InputFullScale == 2.5 && hp.OutputFullScale == 3.1 && ...
+    strcmp(hp.InputCalibrated,h.InputCalibrated) && ...
+    strcmp(hp.OutputCalibrated,h.OutputCalibrated), ...
+    'the input calibration did not survive a setpref/getpref round-trip');
+h0 = h; h0.OutputFullScale = NaN; mabr.AudioSettings.savePrefs(h0);
+assert(isnan(mabr.AudioSettings.loadPrefs().OutputFullScale), ...
+    'a saved NaN OutputFullScale (not measured) must stay NaN');
+setpref('MABR','AudioInputFullScale',0);
+setpref('MABR','AudioOutputFullScale','loud');
+setpref('MABR','AudioInputCalibrated',42);
+hj = mabr.AudioSettings.loadPrefs();
+assert(hj.InputFullScale == 1 && isnan(hj.OutputFullScale) && isempty(hj.InputCalibrated), ...
+    'junk calibration prefs should fall back to the defaults');
+t = h.toStruct();
+assert(isequal(mabr.AudioSettings.fromStruct(t).toStruct(),t), ...
+    'the input calibration did not survive a toStruct/fromStruct round-trip');
+old = rmfield(t,{'InputFullScale','OutputFullScale','InputCalibrated','OutputCalibrated'});
+ho = mabr.AudioSettings.fromStruct(old);
+assert(ho.InputFullScale == 1 && isnan(ho.OutputFullScale), ...
+    'a configuration saved before the setting existed should restore uncalibrated');
+assert(contains(h.describe(),'input full scale 2.5 V'), ...
+    'describe should name a calibrated input full scale');
+assert(abs(mabr.acq.InputCalibrator.outputFullScale(1,-20) - 10*sqrt(2)) < 1e-12, ...
+    '1 V RMS read at -20 dBFS is 14.14 V peak at full scale');
+
+% G2: the full scale divides into the recording gain, and Test Mode drops it.
+assert(abs(h.recordingGain() - 10000/2.5) < 1e-9, ...
+    'recordingGain should be AmplifierGain/InputFullScale');
+assert(h.inputFullScale() == 2.5,'inputFullScale should be the setting off Test Mode');
+h.Testing = true;
+assert(h.recordingGain() == 1 && h.inputFullScale() == 1, ...
+    'Test Mode has neither an amplifier nor a converter to calibrate');
+
+% G3: a sine of known converter amplitude comes out of finalization in volts
+% at the electrodes, and the .abr states both factors.
+G = 100; IFS = 4;                   % 1.0 = 4 V at the input; x100 in front
+pV = mabr.compute.Pipeline(cfg);
+pV.configure([0 0.01],mabr.FilterPolicy,mabr.ArtifactPolicy,G/IFS);
+pV.beginRun(info);
+rV = mabrtest.GrowingRing(sig,tim); rV.Head = N;
+FV = pV.finalize(rV,seq);
+dV = double(FV.Parts(1).Data);
+assert(max(abs(dV*G/IFS - d1)) <= 1e-5*max(abs(d1)), ...
+    'finalized Data should be converter units * InputFullScale / AmplifierGain');
+recV = mabr.data.Recording(cfg.ADCSampleRate,FV.Parts(1).Data,FV.Parts(1).Onsets, ...
+    FV.Parts(1).SweepLength,1);
+blkV = mabr.data.Block(struct('Meta',struct('ID','ifs')),recV);
+blkV.AmplifierGain = G; blkV.InputFullScale = IFS;
+ABR_Data = mabr.data.io.buildStruct(blkV);
+assert(ABR_Data.ADC.AmplifierGain == G && ABR_Data.ADC.InputFullScale == IFS, ...
+    'the .abr must carry both ADC.AmplifierGain and ADC.InputFullScale');
+assert(max(abs(double(ABR_Data.ADC.Data)*ABR_Data.ADC.AmplifierGain/ ...
+    ABR_Data.ADC.InputFullScale - d1)) <= 1e-5*max(abs(d1)), ...
+    'Data*AmplifierGain/InputFullScale should recover the converter samples');
+tmpV = [tempname '.abr'];
+cleanTmpV = onCleanup(@() delete(tmpV)); %#ok<NASGU>
+save(tmpV,'ABR_Data','-mat');
+bV = mabr.data.io.importLegacy(tmpV);
+assert(bV.InputFullScale == IFS && bV.AmplifierGain == G, ...
+    'importLegacy did not read ADC.InputFullScale back');
+ABR_Data.ADC = rmfield(ABR_Data.ADC,'InputFullScale');
+save(tmpV,'ABR_Data','-mat');
+assert(mabr.data.io.importLegacy(tmpV).InputFullScale == 1, ...
+    'a file from before the setting reads back uncalibrated');
+fprintf('  PASS Part G: input full scale persists, joins the recording gain, reaches the .abr\n');
 
 fprintf('== verify_audio_settings PASSED ==\n');
 end

@@ -187,6 +187,10 @@ classdef App < handle
         StimViewer  mabr.ui.StimulusViewer
         ProgressMon mabr.ui.ProgressMonitor
         OrderView   mabr.ui.PresentationOrder
+        % The raw input's power spectrum (mabr.ui.SpectrumViewer), for hunting
+        % electrical noise -- during a run, or with the input monitor, which
+        % records with no stimulus and needs no schedule at all.
+        SpectrumView mabr.ui.SpectrumViewer
         TestRunner  mabr.ui.TestRunner
         Listeners
     end
@@ -221,6 +225,7 @@ classdef App < handle
         Toolbar
         LiveTool
         MetricTool
+        SpectrumTool
         AlwaysOnTopTool
         Grid
         SubjectField
@@ -444,6 +449,7 @@ classdef App < handle
             try, delete(app.StimViewer); end %#ok<TRYNC>
             try, delete(app.ProgressMon); end %#ok<TRYNC>
             try, delete(app.OrderView);  end %#ok<TRYNC>
+            try, delete(app.SpectrumView); end %#ok<TRYNC>
             try, delete(app.TestRunner); end %#ok<TRYNC>
             try, delete(app.Launcher);   end %#ok<TRYNC>
             try, delete(app.UIFigure);   end %#ok<TRYNC>
@@ -480,6 +486,7 @@ classdef App < handle
             figs = addFig(figs,viewerFigure(app.StimViewer));
             figs = addFig(figs,viewerFigure(app.ProgressMon));
             figs = addFig(figs,viewerFigure(app.OrderView));
+            figs = addFig(figs,viewerFigure(app.SpectrumView));
             figs = addFig(figs,viewerFigure(app.NotesView));
             figs = addFig(figs,viewerFigure(app.TestRunner,'UIFigure'));
 
@@ -1141,6 +1148,12 @@ classdef App < handle
             app.MetricTool = app.toolButton('metrics', ...
                 'Online analysis — one metric across conditions (new window each press)', ...
                 @() app.onMetricPlot());
+            % The raw input's spectrum, for electrical noise. The third tool
+            % with nothing to show when nothing is recorded, and greyed with
+            % the other two for it.
+            app.SpectrumTool = app.toolButton('spectrum', ...
+                'Input spectrum — the raw signal''s power spectrum, for hunting electrical noise', ...
+                @() app.onSpectrum());
             app.toolButton('traces', ...
                 'Trace organizer — finished conditions, stacked',@() app.onTraceOrg());
             app.toolButton('stim', ...
@@ -1294,6 +1307,8 @@ classdef App < handle
                 app.TestRunner.raise();
                 return
             end
+            % ... nor with the input monitor streaming on this one's worker.
+            app.stopInputMonitor();
             app.TestRunner = mabr.ui.TestRunner();
             app.setStatus('Verification tests opened — nothing there touches saved data.');
         end
@@ -1719,6 +1734,13 @@ classdef App < handle
             % there is no one window to ask, and asking the first of several
             % would be a coin toss.
             cfg.Analysis = mabr.ui.MetricPlot.loadDefaults();
+            % The spectrum window's look, from the open one where there is
+            % one, as for the live view.
+            if isempty(app.SpectrumView) || ~isvalid(app.SpectrumView)
+                cfg.Spectrum = mabr.ui.SpectrumViewer.loadDefaults();
+            else
+                cfg.Spectrum = app.SpectrumView.displaySettings();
+            end
             % Positions are read out of the windows first, so a configuration
             % saves the layout as it is on screen rather than as it was when
             % something last closed.
@@ -1737,6 +1759,10 @@ classdef App < handle
             % setStatus itself -- onLoadConfiguration's own final status
             % overwrites the label the instant this returns, so anything
             % said in here would never be seen otherwise.
+            %
+            % A configuration can replace the device the input monitor is
+            % streaming on, so the monitor goes first.
+            app.stopInputMonitor();
             if isfield(cfg,'Subject') && ~isempty(cfg.Subject)
                 app.setDropValue(app.SubjectField,char(cfg.Subject));
             end
@@ -1872,6 +1898,13 @@ classdef App < handle
                 % (see mabr.ui.MetricPlot.saveDefaults), so this shows up in
                 % the next one opened rather than rewriting the ones up now.
                 mabr.ui.MetricPlot.saveDefaults(cfg.Analysis);
+            end
+            if isfield(cfg,'Spectrum')
+                % Into the pref and the open window, as the live view's look.
+                mabr.ui.SpectrumViewer.saveDefaults(cfg.Spectrum);
+                if ~isempty(app.SpectrumView) && isvalid(app.SpectrumView)
+                    app.SpectrumView.applySettings(cfg.Spectrum);
+                end
             end
             if isfield(cfg,'WindowPos')
                 app.applyWindowPositions(cfg.WindowPos);
@@ -2009,9 +2042,15 @@ classdef App < handle
                         % Built live in the designer and never saved to a
                         % file the configuration can point back to (or the
                         % file has moved). The bank currently loaded, if any,
-                        % is left alone rather than cleared.
+                        % is left alone rather than cleared -- but the saved
+                        % counts still go onto it, matched by ID, so the
+                        % bank the operator loaded by hand keeps the
+                        % repetitions the protocol was saved with.
                         warn = ['Configuration references a stimulus bank with no ' ...
-                            'reloadable file -- load it manually, then re-apply repetitions.'];
+                            'reloadable file -- load it manually.'];
+                        if app.applyConfigReps(cfg) > 0
+                            warn = [warn ' Saved repetitions were matched by ID onto the bank already loaded.'];
+                        end
                     end
                 otherwise
                     % No Kind recorded (an empty bank when saved) -- nothing to restore.
@@ -2026,20 +2065,28 @@ classdef App < handle
             app.adoptStimuli(set,true,file);   % resets Reps to the bank's own defaults
             app.rememberBank(file);
 
-            if isfield(cfg,'Reps') && ~isempty(cfg.Reps)
-                % Matched by ID, not position: a bank regenerated from the
-                % same source reproduces the same IDs, and matching by name is
-                % what survives the bank having gained or dropped an entry
-                % since the configuration was saved.
-                ids = set.IDs();
-                r   = app.Reps;
-                for k = 1:numel(cfg.Reps)
-                    idx = find(strcmp(ids,cfg.Reps(k).ID),1);
-                    if ~isempty(idx), r(idx) = cfg.Reps(k).Count; end
-                end
-                app.Reps = r;
-                if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
+            app.applyConfigReps(cfg);
+        end
+
+        function n = applyConfigReps(app,cfg)
+            % Overlay a configuration's per-stimulus repetition counts onto
+            % the bank that is loaded, and return how many entries took one.
+            % Matched by ID, not position: a bank regenerated from the same
+            % source reproduces the same IDs, and matching by name is what
+            % survives the bank having gained or dropped an entry since the
+            % configuration was saved.
+            n = 0;
+            if ~isfield(cfg,'Reps') || isempty(cfg.Reps), return; end
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
+            ids = app.Stimuli.IDs();
+            r   = app.Reps;
+            for k = 1:numel(cfg.Reps)
+                idx = find(strcmp(ids,cfg.Reps(k).ID),1);
+                if ~isempty(idx), r(idx) = cfg.Reps(k).Count; n = n + 1; end
             end
+            if n == 0, return; end
+            app.Reps = r;
+            if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
         end
 
         function warn = applyConfigCustomStrategy(app,cfg,warn)
@@ -2196,6 +2243,7 @@ classdef App < handle
                 addlistener(app.Controller,'BlockReady',     @(~,e) app.onBlockReady(e)); ...
                 addlistener(app.Controller,'BlockSaved',     @(~,e) app.onBlockSaved(e)); ...
                 addlistener(app.Controller,'AlignmentChecked',@(~,e) app.onAlignment(e)); ...
+                addlistener(app.Controller,'MonitorChanged', @(~,~) app.onMonitorChanged()); ...
                 addlistener(app.Controller,'ScheduleComplete',@(~,~) app.onScheduleComplete())];
             % Before listenTo below: the organizer adopts the session's
             % notebook when it starts tracking a controller, and the session's
@@ -2920,6 +2968,7 @@ classdef App < handle
             end
             app.LiveTool.Enable   = onOff(~stimOnly);
             app.MetricTool.Enable = onOff(~stimOnly);
+            app.SpectrumTool.Enable = onOff(~stimOnly);
             % Advance is a CONFIG control: it is dead for the duration of a
             % schedule whatever the mode, and transport() owns putting it back
             % when one ends. Re-deriving it here mid-run would switch it on
@@ -3136,14 +3185,18 @@ classdef App < handle
             % therefore already applied by the time this returns; the return
             % value is only what the dialog reports it committed (or [] for
             % none), and the standalone caller's route to the same thing.
+            % The controller goes along for the input calibration, which has
+            % to take the device off an idle worker and refuse a busy one.
             mabr.ui.AudioSettingsDialog(app.Audio,app.Config, ...
-                @(p) app.applyAudioSettings(p));
+                @(p) app.applyAudioSettings(p),app.Controller);
             figure(app.UIFigure);
         end
 
         function applyAudioSettings(app,s)
             % One Commit from the audio dialog: adopt the settings, persist
             % them, and re-derive whatever the main window shows from them.
+            % The input monitor is streaming on the settings being replaced.
+            monitorStopped = app.stopInputMonitor();
             app.Audio = s;
             mabr.AudioSettings.savePrefs(app.Audio);
             % The sample rate is the one setting here that is not confined to
@@ -3169,6 +3222,9 @@ classdef App < handle
             % A bank left at the wrong rate outranks all of that: nothing can
             % run until it is fixed.
             if ~isempty(rateWarn), msg = rateWarn; end
+            if monitorStopped
+                msg = [msg ' The input monitor was stopped — start it again from the spectrum window.'];
+            end
             app.setStatus(msg);
             % The dialog is modal and still up, so nothing would flush the
             % queue until it closes -- and the point of committing early is to
@@ -3192,6 +3248,8 @@ classdef App < handle
                                'in Settings ▸ Audio Device first.']);
                 return
             end
+            % Calibration measures through the device the monitor is holding.
+            app.stopInputMonitor();
 
             try
                 adapter = mabr.stim.CalibrationAdapter(app.Audio,app.Config,app.Controller);
@@ -3496,6 +3554,12 @@ classdef App < handle
                 app.setStatus('Nothing to run — every stimulus has 0 repetitions.'); return
             end
 
+            % A schedule owns the device. Stopped here, before the banner and
+            % the status line below are written, so the monitor's own
+            % goodbye cannot overwrite them (AcqController.start would stop
+            % it too, but only after both).
+            app.stopInputMonitor();
+
             % Lock the entire UI up front: bringing the engine up blocks this
             % callback for tens of seconds (parallel pool + worker handshake),
             % and nothing here is safe to re-enter meanwhile. The engine
@@ -3574,7 +3638,10 @@ classdef App < handle
                 c.Filters   = app.Filters;
                 % recordingGain(), not the raw setting: Test Mode has no
                 % amplifier in the path. A config control, so set at Start only.
-                c.AmplifierGain = app.Audio.recordingGain();
+                % It is the amplifier over the input's full scale; the full
+                % scale also goes on its own, for the blocks to record.
+                c.AmplifierGain  = app.Audio.recordingGain();
+                c.InputFullScale = app.Audio.inputFullScale();
                 app.ArtifactCount = 0;        % readout counts this schedule only
                 app.LiveArtifacts = 0;
                 app.StimLogsWritten = 0;
@@ -4058,6 +4125,135 @@ classdef App < handle
             delete(app.OrderView);
         end
 
+        % --- Input spectrum and the input monitor ----------------------------
+        % The spectrum window reads the raw input out of the ring buffer
+        % through the controller (spectrumInput), and asks for the input
+        % monitor through setInputMonitor -- the window knows nothing about
+        % controllers, the App knows everything else a start needs (the
+        % device, the gain, whether a schedule is running, the startup dialog).
+        function onSpectrum(app)
+            if isempty(app.SpectrumView) || ~isvalid(app.SpectrumView) ...
+                    || ~app.SpectrumView.isvalidView()
+                try, delete(app.SpectrumView); end %#ok<TRYNC>
+                app.SpectrumView = mabr.ui.SpectrumViewer( ...
+                    'SourceFcn',@(n) app.spectrumInput(n), ...
+                    'MonitorFcn',@(tf) app.setInputMonitor(tf));
+                f = app.SpectrumView.Figure;
+                mabr.ui.WindowPos.restore(f,'SpectrumViewer', ...
+                    app.defaultViewerPos('SpectrumViewer'),[700 440]);
+                f.CloseRequestFcn = @(~,~) app.closeSpectrum();
+            end
+            figure(app.SpectrumView.Figure);
+        end
+
+        function closeSpectrum(app)
+            mabr.ui.WindowPos.remember(app.SpectrumView.Figure,'SpectrumViewer');
+            % The monitor exists for this window: left streaming with nothing
+            % to show it, it would only keep the device busy.
+            if app.stopInputMonitor()
+                app.setStatus('Input monitor stopped with the spectrum window.');
+            end
+            delete(app.SpectrumView);
+        end
+
+        function S = spectrumInput(app,n)
+            % SpectrumViewer's SourceFcn: the controller's newest raw input,
+            % plus whether the window's Monitor button can do anything now.
+            if app.Audio.isStimulationOnly() && ~app.inputMonitoring()
+                S = mabr.ui.SpectrumViewer.noInput(['Stimulation only is on: nothing ' ...
+                    'is recorded, so there is no input to show (Settings ▸ Audio Device).']);
+                return
+            end
+            c = app.Controller;
+            if isempty(c) || ~isvalid(c)
+                S = mabr.ui.SpectrumViewer.noInput( ...
+                    'Nothing recorded yet. Press Monitor input to record with no stimulus.');
+            else
+                S = c.inputSamples(n);
+            end
+            % A schedule owns the device, and Start stops the monitor itself.
+            S.CanMonitor = ~app.isRunning();
+        end
+
+        function [ok,msg] = setInputMonitor(app,on)
+            % SpectrumViewer's MonitorFcn: start (true) or stop (false) the
+            % input monitor. Starting may have to bring the worker up first,
+            % which the first time in a MATLAB session is the 30-60 s the
+            % startup dialog is there for.
+            ok = true; msg = '';
+            if ~on
+                if app.stopInputMonitor(), app.setStatus('Input monitor stopped.'); end
+                return
+            end
+            if app.isRunning()
+                ok = false;
+                msg = 'A schedule is running: the spectrum is already following its input.';
+                return
+            end
+            if app.Audio.isStimulationOnly()
+                ok = false;
+                msg = ['Stimulation only is on, so nothing can be recorded. Turn it off in ' ...
+                       'Settings ▸ Audio Device to monitor the input.'];
+                return
+            end
+            app.setBusy('Starting the input monitor…');
+            try
+                app.ensureController();
+                c = app.Controller;
+                % The gain the input is referred to the electrodes through;
+                % recordingGain() is 1 in Test Mode, as at Start.
+                c.AmplifierGain  = app.Audio.recordingGain();
+                c.InputFullScale = app.Audio.inputFullScale();
+                c.startMonitor(struct('Device',app.Audio.Device, ...
+                    'PlayerChannels',app.Audio.PlayerChannels, ...
+                    'RecorderChannels',app.Audio.RecorderChannels));
+                app.transport(false);
+                app.setRunTitle(false);
+                if app.Audio.Testing
+                    app.setStatus(['Monitoring the input in TEST MODE: the "input" is the ' ...
+                        'silent stimulus copied back, not the rig.']);
+                else
+                    app.setStatus(['Monitoring the input: silence is played and nothing ' ...
+                        'is saved. Start or Preview stops it.']);
+                end
+            catch me
+                app.transport(false);
+                ok  = false;
+                msg = me.message;
+                app.setStatus(['The input monitor did not start: ' me.message]);
+                mabr.log.vprintf(0,1,'Input monitor failed to start: %s',me.message);
+            end
+        end
+
+        function stopped = stopInputMonitor(app)
+            % Stop the input monitor if it is running, and say whether it
+            % was. Everything that is about to need the device -- Start, a
+            % calibration, new audio settings, a loaded configuration, the
+            % verification suite -- calls this first; the caller writes its
+            % own status line.
+            stopped = false;
+            if ~app.inputMonitoring(), return; end
+            app.Controller.stopMonitor();
+            stopped = true;
+        end
+
+        function tf = inputMonitoring(app)
+            c = app.Controller;
+            tf = ~isempty(c) && isvalid(c) && c.Monitoring;
+        end
+
+        function onMonitorChanged(app)
+            % The monitor started or stopped. The title follows it unless a
+            % schedule has the panel; the status line is the caller's when
+            % the App asked, and only a stop the worker made -- a device that
+            % would not open, most often -- is said here.
+            if ~app.isRunning(), app.setRunTitle(false); end
+            c = app.Controller;
+            if ~isempty(c) && isvalid(c) && ~c.Monitoring && ~isempty(c.MonitorError)
+                app.setStatus(['Input monitor stopped: ' c.MonitorError]);
+            end
+        end
+
         function rememberViewerPositions(app)
             % Analysis windows cascade past one another, so only a lone one is
             % worth storing -- see closeMetricPlot for why remembering a
@@ -4071,6 +4267,7 @@ classdef App < handle
             try, mabr.ui.WindowPos.remember(app.StimViewer.Figure,'StimulusViewer'); end %#ok<TRYNC>
             try, mabr.ui.WindowPos.remember(app.ProgressMon.Figure,'ProgressMonitor'); end %#ok<TRYNC>
             try, mabr.ui.WindowPos.remember(app.OrderView.Figure,'PresentationOrder'); end %#ok<TRYNC>
+            try, mabr.ui.WindowPos.remember(app.SpectrumView.Figure,'SpectrumViewer'); end %#ok<TRYNC>
         end
 
         function applyWindowPositions(app,s)
@@ -4089,6 +4286,7 @@ classdef App < handle
             placeIf(viewerFigure(app.StimViewer), 'StimulusViewer');
             placeIf(viewerFigure(app.ProgressMon),'ProgressMonitor');
             placeIf(viewerFigure(app.OrderView),  'PresentationOrder');
+            placeIf(viewerFigure(app.SpectrumView),'SpectrumViewer');
             app.pruneMetricPlots();
             if isscalar(app.MetricPlots)
                 % Only a lone one, for the same reason only a lone one is
@@ -4127,6 +4325,10 @@ classdef App < handle
                     % On demand and transient, so it cascades off the main
                     % window rather than claiming a slot in the run layout.
                     pos = [a(1)+40, a(2)-40, 820, 500];
+                case 'SpectrumViewer'
+                    % On demand, like the stimulus viewer, and cascaded off the
+                    % main window a step further so the two do not coincide.
+                    pos = [a(1)+80, a(2)-80, 780, 540];
                 case 'ProgressMonitor'
                     % Cascades off the main window rather than claiming a slot
                     % in the run layout: the two acquisition viewers already
@@ -4399,6 +4601,10 @@ classdef App < handle
                 app.RunPanel.Title = 'Run — STIMULATION ONLY (no recording)';
             elseif banner
                 app.RunPanel.Title = 'Run — PREVIEW (nothing is saved)';
+            elseif app.inputMonitoring()
+                % Not a run, but the rig is streaming -- which the Idle lamp
+                % beneath this title would otherwise deny.
+                app.RunPanel.Title = 'Run — INPUT MONITOR (no stimulus; nothing is saved)';
             else
                 app.RunPanel.Title = 'Run';
             end

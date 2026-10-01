@@ -41,6 +41,8 @@ Confirm the software side is fine by ticking **Testing** and running: the check 
 
 **Heavy 60 Hz in the recording** — the notch is applied to the live view as well as to a finalized block's sweeps, so hum you can still see in the live plot is either outside the notch (check its centre frequency: 50 Hz on a 50 Hz supply) or the notch is switched off. Open **Filters…** in the Acquisition panel to check. Note that filtering is a display decision only: line noise is never removed from the saved trace, so persistent 60 Hz there points at grounding in the rig and is what the offline pipeline will see.
 
+**Finding where the noise comes from** — open the **Input Spectrum** from the toolbar and press **Monitor input**. MABR then records with no stimulus, and the window shows the raw input's spectrum with the mains line, its harmonics, the in-band RMS and the largest other line measured in volts at the electrodes. Press **Hold reference**, change one thing (a ground, a cable route, a piece of equipment switched off), and compare. A line at a multiple of the mains frequency is the building's power. A line at tens of kHz that is not a mains multiple is usually a switching supply, a monitor, or a lamp dimmer. See [Viewing Data](Viewing-Data.md#input-spectrum).
+
 ## Data and files
 
 **No files appear in the output folder** — The **Output** field is empty, or points somewhere unwritable. With no output path, blocks are recorded and held in memory but never saved.

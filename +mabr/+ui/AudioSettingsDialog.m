@@ -1,4 +1,4 @@
-function settings = AudioSettingsDialog(settings0,cfg,applyFcn)
+function settings = AudioSettingsDialog(settings0,cfg,applyFcn,controller)
 % mabr.ui.AudioSettingsDialog  Modal editor for Test Mode, the ASIO device,
 % and the channel mapping.
 %
@@ -53,6 +53,16 @@ function settings = AudioSettingsDialog(settings0,cfg,applyFcn)
 %   with the recorder mapping (Test Mode, stimulation only), since it
 %   describes the recorded input.
 %
+%   Input full scale is what the interface's input gain knob has made of the
+%   converter: the volts at the signal input that read as 1.0. The recording
+%   is divided by Amplifier gain over it, so a knob turned up changes nothing
+%   downstream once it is measured again. Calibrate... opens
+%   mabr.ui.InputCalibrationDialog, which measures it through a loop-back
+%   cable against an output read once off a multimeter; a value typed in
+%   (from a spec sheet, say) is kept but marked as not measured. The optional
+%   fourth argument is the acquisition controller, which the calibration
+%   needs to take the device off an idle worker and to refuse a busy one.
+%
 %   Sample rate is the setting with the longest reach, and the one control
 %   here that stays live under Test Mode: it is the rate the device is opened at
 %   AND the rate every stimulus is rendered at and the ring buffer filled at,
@@ -90,19 +100,26 @@ function settings = AudioSettingsDialog(settings0,cfg,applyFcn)
 if nargin < 1 || isempty(settings0), settings0 = mabr.AudioSettings; end
 if nargin < 2 || isempty(cfg),       cfg = mabr.Config; end
 if nargin < 3,                       applyFcn = []; end
+if nargin < 4,                       controller = []; end
 
 settings  = [];                      % [] unless Commit is pressed
+% What an input calibration measured that no control shows: the output
+% reference and the two timestamps. Carried through readControls so a
+% commit keeps them.
+calState  = struct('OutputFullScale',settings0.OutputFullScale, ...
+    'OutputCalibrated',settings0.OutputCalibrated, ...
+    'InputCalibrated',settings0.InputCalibrated);
 committed = [];                      % what the controls last agreed with
 devices   = mabr.AudioSettings.availableDevices();
 
 % ---- layout -------------------------------------------------------------
-fig = uifigure('Name','Audio Device (ASIO)','Position',[100 100 460 588], ...
+fig = uifigure('Name','Audio Device (ASIO)','Position',[100 100 460 628], ...
     'WindowStyle','modal','Resize','off', ...
     'CloseRequestFcn',@(~,~) onCancel());
 mabr.ui.WindowPos.restore(fig,'AudioSettingsDialog',fig.Position);
 
-g = uigridlayout(fig,[14 3]);
-g.RowHeight   = {28,48,28,28,32,32,32,32,32,48,24,32,18,32};
+g = uigridlayout(fig,[15 3]);
+g.RowHeight   = {28,48,28,28,32,32,32,32,32,32,48,24,32,18,32};
 g.ColumnWidth = {100,'1x','fit'};
 g.Padding     = [12 10 12 10];
 g.RowSpacing  = 8;
@@ -239,7 +256,35 @@ gainNote = uilabel(gainRow,'Text','V/V; recordings are divided by this', ...
     'FontColor',[0.4 0.4 0.4]);
 gainNote.Layout.Row = 1; gainNote.Layout.Column = 2;
 
-% Row 9: the rate the device is opened at -- and, because the play matrix is
+% Row 9: what the interface's input gain knob has made of the converter --
+% the volts at the signal input that read as 1.0. The recording is divided by
+% Amplifier gain over this, so the knob is taken out along with the amplifier.
+ifsLabel = uilabel(g,'Text','Input full scale','HorizontalAlignment','right', ...
+    'Tooltip','Volts (peak) at the recorder signal input that read as 1.0 at the input gain knob''s current setting.');
+ifsLabel.Layout.Row = 9; ifsLabel.Layout.Column = 1;
+ifsRow = uigridlayout(g,[1 3]);
+ifsRow.Layout.Row = 9; ifsRow.Layout.Column = [2 3];
+ifsRow.ColumnWidth  = {90,'1x','fit'};
+ifsRow.Padding      = [0 0 0 0];
+ifsRow.ColumnSpacing = 6;
+ifsField = uieditfield(ifsRow,'numeric','Value',settings0.InputFullScale, ...
+    'Limits',[0 Inf],'LowerLimitInclusive','off','ValueDisplayFormat','%.4g V', ...
+    'Tooltip',['Volts peak at the signal input that the converter reads as 1.0 -- ' ...
+        'set by the interface''s input gain knob. Recordings are divided by ' ...
+        'Amplifier gain / this. 1 = uncalibrated. Measure it with Calibrate..., ' ...
+        'or type a value from the interface''s specifications.'], ...
+    'ValueChangedFcn',@(~,~) onFullScaleTyped());
+ifsField.Layout.Row = 1; ifsField.Layout.Column = 1;
+ifsNote = uilabel(ifsRow,'Text','','FontColor',[0.4 0.4 0.4]);
+ifsNote.Layout.Row = 1; ifsNote.Layout.Column = 2;
+calBtn = uibutton(ifsRow,'Text','Calibrate…', ...
+    'Tooltip',['Measure it: a tone through a loop-back cable from the signal ' ...
+        'output to the signal input, against an output read once off a multimeter.'], ...
+    'ButtonPushedFcn',@(~,~) onCalibrate());
+calBtn.Layout.Row = 1; calBtn.Layout.Column = 3;
+refreshFullScaleNote();
+
+% Row 10: the rate the device is opened at -- and, because the play matrix is
 % rendered against it, the rate the whole session runs at. Editable rather
 % than a fixed list: SupportedSampleRates is what is worth offering, not a
 % claim about what hardware exists. The last value that VALIDATED is kept
@@ -248,9 +293,9 @@ gainNote.Layout.Row = 1; gainNote.Layout.Column = 2;
 lastGoodRate = settings0.SampleRate;
 rateLabel = uilabel(g,'Text','Sample rate','HorizontalAlignment','right', ...
     'Tooltip','Hz the ASIO device is opened at, and the rate every stimulus is rendered at.');
-rateLabel.Layout.Row = 9; rateLabel.Layout.Column = 1;
+rateLabel.Layout.Row = 10; rateLabel.Layout.Column = 1;
 rateRow = uigridlayout(g,[1 3]);
-rateRow.Layout.Row = 9; rateRow.Layout.Column = [2 3];
+rateRow.Layout.Row = 10; rateRow.Layout.Column = [2 3];
 rateRow.ColumnWidth  = {90,'1x','fit'};
 rateRow.Padding      = [0 0 0 0];
 rateRow.ColumnSpacing = 8;
@@ -275,36 +320,36 @@ panelBtn = uibutton(rateRow,'Text','ASIO panel…', ...
     'ButtonPushedFcn',@(~,~) onAsioPanel());
 panelBtn.Layout.Row = 1; panelBtn.Layout.Column = 3;
 
-% Row 10: what the rate above costs and constrains -- informational only
+% Row 11: what the rate above costs and constrains -- informational only
 rateLbl = uilabel(g,'WordWrap','on','FontColor',[0.3 0.3 0.3],'Text', ...
     ['The storage rate is derived, not chosen: sweeps are windowed with a whole-' ...
      'sample stride, so it is always the rate above divided by an integer (the ' ...
      'one closest to 12 kHz). Committing a new rate re-renders the stimulus ' ...
      'bank at it and rebuilds the worker.']);
-rateLbl.Layout.Row = 10; rateLbl.Layout.Column = [1 3];
+rateLbl.Layout.Row = 11; rateLbl.Layout.Column = [1 3];
 
-% Row 11: determine the sample rate the selected device actually grants
+% Row 12: determine the sample rate the selected device actually grants
 probeBtn = uibutton(g,'Text','Test Device','ButtonPushedFcn',@(~,~) onProbe());
-probeBtn.Layout.Row = 11; probeBtn.Layout.Column = 1;
+probeBtn.Layout.Row = 12; probeBtn.Layout.Column = 1;
 probeLbl = uilabel(g,'Text','','WordWrap','on');
-probeLbl.Layout.Row = 11; probeLbl.Layout.Column = [2 3];
+probeLbl.Layout.Row = 12; probeLbl.Layout.Column = [2 3];
 
-% Row 12: what this does and does not touch
+% Row 13: what this does and does not touch
 noteLbl = uilabel(g,'WordWrap','on','FontColor',[0.3 0.3 0.3], ...
     'Text','Locked while a schedule is running -- switching devices mid-acquisition is not supported.');
-noteLbl.Layout.Row = 12; noteLbl.Layout.Column = [1 3];
+noteLbl.Layout.Row = 13; noteLbl.Layout.Column = [1 3];
 
-% Row 13: validation / status
+% Row 14: validation / status
 msgLbl = uilabel(g,'Text','','FontColor',[0.8 0.2 0]);
-msgLbl.Layout.Row = 13; msgLbl.Layout.Column = [1 3];
+msgLbl.Layout.Row = 14; msgLbl.Layout.Column = [1 3];
 
-% Row 14: transport. Commit applies without closing (see the header), so the
+% Row 15: transport. Commit applies without closing (see the header), so the
 % pair is Commit/Cancel rather than OK/Cancel.
 commitBtn = uibutton(g,'Text','Commit','BackgroundColor',[0.6 0.9 0.6], ...
     'FontWeight','bold','ButtonPushedFcn',@(~,~) onCommit());
-commitBtn.Layout.Row = 14; commitBtn.Layout.Column = 2;
+commitBtn.Layout.Row = 15; commitBtn.Layout.Column = 2;
 cancelBtn = uibutton(g,'Text','Cancel','ButtonPushedFcn',@(~,~) onCancel());
-cancelBtn.Layout.Row = 14; cancelBtn.Layout.Column = 3;
+cancelBtn.Layout.Row = 15; cancelBtn.Layout.Column = 3;
 
 if isempty(devices)
     msgLbl.Text = 'No ASIO devices found -- check the driver is installed and selected.';
@@ -414,6 +459,10 @@ uiwait(fig);
         p.RecorderChannels = [rcSig.Value rcTim.Value];
         p.MicChannel       = micField.Value;
         p.AmplifierGain    = gainField.Value;
+        p.InputFullScale   = ifsField.Value;
+        p.OutputFullScale  = calState.OutputFullScale;
+        p.InputCalibrated  = calState.InputCalibrated;
+        p.OutputCalibrated = calState.OutputCalibrated;
     end
 
     function syncTestingEnable()
@@ -462,6 +511,10 @@ uiwait(fig);
         % recorder mapping: nothing is recorded under stimulation only, and
         % Test Mode has no amplifier in the path (AudioSettings.recordingGain).
         gainField.Enable = inputs;
+        % The input full scale describes the same input, so it goes with it;
+        % so does measuring it, which needs a device with an input side.
+        ifsField.Enable = inputs;
+        calBtn.Enable   = inputs;
         probeBtn.Enable = onoff;
         if testing
             probeBtn.Tooltip = 'Not available in Test Mode -- there is no device to probe.';
@@ -481,7 +534,9 @@ uiwait(fig);
         % imply committed settings are about to be undone, which they are not
         % -- they have already been applied.
         working = readControls();
-        dirty   = ~isequal(working.toStruct(),committed.toStruct());
+        % isequaln: OutputFullScale is NaN until measured, and NaN is never
+        % equal to itself -- isequal would call every unmeasured rig dirty.
+        dirty   = ~isequaln(working.toStruct(),committed.toStruct());
         commitBtn.Enable = onOff(dirty);
         if dirty
             commitBtn.Tooltip = 'Apply these settings now. The dialog stays open.';
@@ -555,6 +610,45 @@ uiwait(fig);
             probeLbl.FontColor = [0 0.5 0];
         else
             probeLbl.FontColor = [0.8 0.2 0];
+        end
+    end
+
+    function refreshFullScaleNote()
+        if isempty(calState.InputCalibrated)
+            if ifsField.Value == 1
+                ifsNote.Text = 'uncalibrated (1 V assumed)';
+            else
+                ifsNote.Text = 'typed, not measured';
+            end
+        else
+            ifsNote.Text = mabr.AudioSettings.stampText(calState.InputCalibrated);
+        end
+    end
+
+    function onFullScaleTyped()
+        % A number typed in is not a measurement, whatever it replaced.
+        if ~isgraphics(fig), return; end
+        calState.InputCalibrated = '';
+        refreshFullScaleNote();
+        onChange();
+    end
+
+    function onCalibrate()
+        % Measured against the settings as they stand in THIS dialog, since
+        % those are the device and channels the operator is looking at. The
+        % result comes back into the controls like a typed edit, and is
+        % applied by Commit like any other.
+        working = readControls();
+        s = mabr.ui.InputCalibrationDialog(working,working.config(),controller);
+        if ~isgraphics(fig) || isempty(s), return; end
+        ifsField.Value = s.InputFullScale;
+        calState.OutputFullScale  = s.OutputFullScale;
+        calState.OutputCalibrated = s.OutputCalibrated;
+        calState.InputCalibrated  = s.InputCalibrated;
+        refreshFullScaleNote();
+        onChange();
+        if ~isequaln(readControls().toStruct(),committed.toStruct())
+            setMessage('Calibration measured — Commit to apply it.',true);
         end
     end
 

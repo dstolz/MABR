@@ -4,6 +4,8 @@ MABR has three viewers for the data itself: a live plot for the condition being 
 
 A fourth window, the **Progress Monitor**, reports on the *schedule* rather than the data: how much of the plan is done and which conditions are still short. It opens on demand from the toolbar (and by itself for a stimulation-only run, where nothing is recorded and it is the only window with anything in it).
 
+A fifth, the **Input Spectrum**, is for the rig rather than the data: the power spectrum of the raw input, for finding electrical noise. It can record on its own, with no stimulus and no schedule, which is what makes it usable while the electrodes are going in.
+
 ## Live Plot
 
 Opens with the app, and is raised by the monitor toolbar button or by pressing Start. Closing it discards the window; the button builds a fresh one.
@@ -105,10 +107,11 @@ Nothing in this window writes to your data. It is a view over what the acquisiti
 
 Opens from the green-ring toolbar button. Small, cheap to leave open, and pinnable — **Always on top** keeps it above every other window, which is the point of it on a second monitor or in the corner of a busy screen. The setting is remembered per rig, along with where you leave the window.
 
-Across the top, beside the state lamp, is how far along the whole schedule is — the big number, green once it is done — and three lines:
+Across the top, beside the state lamp, is how far along the whole schedule is — the big number, green once it is done — and four lines:
 
 - **What the rig is doing** — the state, which run of how many (marked *make-up* or *repeat* when it is one of those), and *stimulation only* when nothing is being recorded. It says **Paused** while the rig is paused.
 - **This run** — the condition being presented, named by the parameters your bank varies (`8 kHz, 30 dB`) or, for an interleaved run, how many conditions it mixes; how far through the run it is; and how many sweeps the artifact check has rejected so far. Between runs the same line says how many conditions are complete and how big the plan is.
+- **Sweeps per stimulus** — how many sweeps the stimulus being presented has, out of how many it is planned to get: `this stimulus: 128 / 512 sweeps`. For an interleaved run, which presents every condition at once, it gives the range across them — `each stimulus: 22–24 / 512 sweeps` — so you can see how far each condition has got, not just the run as a whole. It counts the whole session, so an artifact make-up run shows the sweeps its stimulus already had plus the new ones. Between runs it gives the same range over every condition in the plan. (In a stimulation-only run it counts *presentations*, since nothing is recorded.)
 - **When** — elapsed time, the time left, and the clock time that comes to (`done ≈ 14:32`). Once the schedule finishes, how long it took and when it finished.
 
 The time left starts from the plan's own timing and, once ten seconds of acquisition have been seen, is corrected by how long the plan's work has actually been taking — which is what picks up the preparation and saving between runs that the plan cannot know about. A pause pushes the finish back by exactly its own length and nothing more. It is still an estimate: a randomized ISI makes a duration an expectation, and an advance criterion can end any run early. If you open the window part-way through a session it shows no elapsed time (it does not know when the session began) and measures the pace from what it sees next.
@@ -128,6 +131,29 @@ Only parameters that actually differ between your stimuli are offered for **Grou
 **What is being counted** is presentations, not files: a condition is complete when every sweep the plan asked for has been presented. Two consequences are worth knowing. Sweeps arriving during a run are counted as they arrive, so a bar moves continuously rather than jumping once per condition — and holds its place while the run is being saved, rather than dropping back until the save completes. And when artifact **Repeat** appends make-up runs, the plan gets *larger* — so overall progress steps back slightly at that moment. That is the truth: the work grew.
 
 In a **stimulation-only** run nothing is recorded, so there are no sweeps to count. The window estimates the run's presentations from the clock instead — the rig plays them at a fixed pace, so this is close — and marks every estimated number with `~`. When the run ends, the count of what was actually played replaces the estimate.
+
+## Input Spectrum
+
+Opens from the toolbar button drawn as a falling spectrum with two lines standing out of it. It shows the **power spectrum of the raw input** — the signal as the converter delivered it, before any display filter — updated once a second. That is where electrical noise shows itself: mains at 50 or 60 Hz and its harmonics, the buzz of a switching power supply at tens of kHz, a monitor or a light dimmer. In the averaged trace the same noise is mostly hidden by the display filter until the average refuses to settle.
+
+**Where the input comes from.** While a schedule is running, the spectrum follows the run (stimulus included, so expect the stimulus's own energy in it). Otherwise press **Monitor input**: MABR records with **no stimulus at all** — silence goes out, nothing is saved, and no bank or schedule is needed — so you can watch the noise while you move cables, tie grounds, and switch equipment off one piece at a time. The Run panel title reads **INPUT MONITOR** while it runs. **Start** or **Preview** stops the monitor and takes the device over; so do opening **Calibration…**, changing the audio settings, loading a configuration, opening the verification tests, and closing the spectrum window. Under **Stimulation only** there is no input, and the button is disabled. In **Test Mode** the "input" is the silent stimulus copied back with its tiny dither. That checks the software path, not the rig.
+
+**The numbers under the plot** are RMS voltages at the electrodes (the amplifier gain from the audio settings is divided out), so they read directly against a microvolt response:
+
+- **RMS total** — the whole input, every frequency. **In** *band* — only the band you set (100 Hz–3 kHz by default, where an ABR lives). The band figure is the one to drive down.
+- **Mains** — the line at the mains frequency, and the root-sum-square of its first ten harmonics. The dotted red lines on the plot mark the harmonics. A clean input shows its mains line at the level of the noise floor, not zero.
+- **Largest other line** — the biggest peak that is *not* a mains harmonic and stands at least 10 dB over the local noise floor, marked on the plot with an orange triangle, with its frequency and RMS. Only the frequencies on the axis are searched, so widen **Up to** to look higher.
+
+**Controls:**
+
+- **Resolution** — the spacing between frequency bins. Finer separates a line from its neighbours but needs a longer piece of input: 1 Hz needs 1 s per segment.
+- **Averages** — how many half-overlapping segments are averaged. More gives a steadier floor over more seconds.
+- **Up to** — the top of the frequency axis, up to the Nyquist frequency. **Scale** — dB re 1 µV²/Hz, or µV/√Hz on a log axis. **Log f** — a logarithmic frequency axis.
+- **Mains** — 50 Hz, 60 Hz, or off. **Band** — the edges of the in-band figure.
+- **Hold reference** — keeps the current spectrum in grey, and its band RMS in the readout, so the next change can be compared against it. **Clear** removes it. **Freeze** stops following the input; the spectrum on screen stays.
+- Right-click the plot to **Export spectrum (CSV)…** or **Save image…**. Export the CSV when you need to show someone else a line.
+
+These settings are remembered for the next window and saved in a configuration file, and the window remembers where you leave it.
 
 ## Trace Organizer
 
@@ -264,6 +290,16 @@ Nothing is accumulated across events, so no missed or duplicated event can put t
 It has one timer of its own: a 1 Hz header clock that runs only while a followed schedule is in flight (`clockRunning()`) and repaints only when nothing else has in the last second. The aux tick fires only while sweeps are being counted, so without it the elapsed time froze between runs and for the whole of a stimulation-only session.
 
 The grouping dimensions come from `StimulusSet.paramTable` — the same `informativeParams` the offline pipeline groups by, less any that are constant across the bank — so what the progress window calls a condition and what `batchABRAnalysis` calls one are the same thing.
+
+### SpectrumViewer
+
+[`mabr.ui.SpectrumViewer`](../+mabr/+ui/SpectrumViewer.m) knows nothing about controllers. The host gives it two function handles: `SourceFcn(n)`, which returns the newest `n` raw samples as a struct (the shape of `mabr.ui.AcqController.inputSamples`: `Samples`, `Head`, `Seq`, `SampleRate`, `Gain`, `Source`, and optionally `Testing`, `Monitoring`, `CanMonitor`, `Note`), and `MonitorFcn(tf)`, which starts or stops the input monitor and returns `[ok,msg]`. `mabr.ui.App` points them at `spectrumInput` and `setInputMonitor`. A 1 s `fixedSpacing` timer calls `refresh`; `'AutoRefresh',false` leaves that to the caller, which is how `tests/verify_spectrum.m` drives it.
+
+The estimate is [`mabr.compute.SpectrumEstimator`](../+mabr/+compute/SpectrumEstimator.m): Welch's method with a periodic Hann window, 50% overlap, and each segment's mean removed, one-sided, in V²/Hz. Segments sit on a fixed grid of absolute ring samples, so a segment's periodogram is cached and a refresh transforms only the segments completed since the last one. That is about two FFTs a second at any averaging, on the GUI thread beside the live view. The average is one sum over the cached columns, so it is bit-identical to `SpectrumEstimator.welch` over the same samples. A new block (`Seq`) starts the cache over. The readout figures are [`mabr.metrics.noise_summary`](../+mabr/+metrics/noise_summary.m), a pure function of `(f,P)`.
+
+What is drawn is a min/max envelope of about 1,500 buckets. A spectrum to Nyquist at 0.5 Hz is 192,000 bins, and the lines being looked for are single bins, so thinning by averaging would erase them. Y limits move in whole 10 dB steps or whole decades, so the floor does not appear to move between refreshes.
+
+The **input monitor** is `mabr.ui.AcqController.startMonitor`/`stopMonitor`. It streams silent `mabr.stim.PlayPlan`s (no presentations, so no timing pulses) of `MonitorSeconds` (default 300 s) through the ordinary `Engine.prep`/`run` path, and re-arms each lap from `on_block_completed` until stopped. Like the timing self-test, a lap is invisible to everything a run drives. It causes no `ProgState` change, no live timer, no finalization, no `Block`, and no file. `start()` and `repeatLastBlock` stop it first. `stopMonitor` waits (bounded) for the lap to end, so the next Prep is not queued behind a block still streaming. `verifyTimingLoop` now waits for its *own* block's completion (a completion counter) rather than for the engine to read `Completed`, which the engine already does after a stopped monitor lap. `mabr.stim.CalibrationAdapter` counts a running monitor as the engine holding the device.
 
 ### TraceOrganizer
 

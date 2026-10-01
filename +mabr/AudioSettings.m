@@ -51,6 +51,25 @@ classdef AudioSettings
 %                         Ignored in Test Mode (recordingGain), where there is
 %                         no amplifier in the path -- the samples are the
 %                         stimulus.
+%       InputFullScale    volts (peak) at RecorderChannels(1) that read as
+%                         1.0 -- the converter's full scale AS THE INTERFACE'S
+%                         INPUT GAIN KNOB HAS SET IT. 1 = the assumption MABR
+%                         always made (one converter unit is one volt), which
+%                         is right for no real sound card. recordingGain
+%                         divides by AmplifierGain/InputFullScale, so both
+%                         the knob and the amplifier are taken out before
+%                         anything is shown, judged, or saved. Measured by
+%                         mabr.acq.InputCalibrator (Settings > Audio Device >
+%                         Calibrate...), or typed in from a spec sheet.
+%       OutputFullScale   volts (peak) at PlayerChannels(1) for 1.0 (NaN = not
+%                         measured). The reference InputFullScale is measured
+%                         against: read once with a multimeter, it lets every
+%                         later knob change be recalibrated with a loop-back
+%                         cable and no meter. Nothing else reads it.
+%       InputCalibrated / OutputCalibrated
+%                         when each was last measured ('' = never), so the
+%                         dialog can say whether a full scale is a
+%                         measurement or an assumption.
 %
 %   mabr.ui.AudioSettingsDialog edits one; mabr.ui.App owns it (loaded via
 %   loadPrefs at startup) and hands Device/PlayerChannels/RecorderChannels to
@@ -116,6 +135,26 @@ classdef AudioSettings
         % ring buffer itself stays in converter units, so the timing channel,
         % the loop-back self-test and the alignment check are untouched.
         AmplifierGain    (1,1) double = 1
+
+        % Volts (peak) at the recorder's signal input that the converter
+        % reports as 1.0, wherever the interface's input gain knob now sits.
+        % The recording is divided by AmplifierGain/InputFullScale
+        % (recordingGain), so a knob turned up by 6 dB halves this and
+        % nothing downstream changes scale. 1 = uncalibrated (the old
+        % assumption that one converter unit is one volt).
+        InputFullScale   (1,1) double = 1
+
+        % Volts (peak) at the player's signal output for 1.0 -- the reference
+        % mabr.acq.InputCalibrator measures InputFullScale against. NaN = not
+        % yet read off a meter. The output has no knob in the path (the
+        % acoustic calibration already depends on that), so it is measured
+        % once per rig.
+        OutputFullScale  (1,1) double = NaN
+
+        % When each full scale was last measured, 'yyyy-mm-dd HH:MM:SS'
+        % ('' = never: InputFullScale is then an assumption or a typed value).
+        InputCalibrated  (1,:) char = ''
+        OutputCalibrated (1,:) char = ''
     end
 
     methods
@@ -132,10 +171,24 @@ classdef AudioSettings
 
         function g = recordingGain(obj)
             % The gain to divide the recording by, as everything downstream
-            % should ask it. Test Mode wins here too: the "recording" is the
-            % stimulus copied into the buffer, with no amplifier in between,
-            % so dividing it by a rig's gain would only mis-scale it.
-            if obj.Testing, g = 1; else, g = obj.AmplifierGain; end
+            % should ask it: converter units per volt AT THE ELECTRODES, i.e.
+            % the external amplifier over the input's full scale. Test Mode
+            % wins here too: the "recording" is the stimulus copied into the
+            % buffer, with no amplifier or converter in between, so dividing
+            % it by a rig's gain would only mis-scale it.
+            if obj.Testing, g = 1; else, g = obj.AmplifierGain/obj.InputFullScale; end
+        end
+
+        function v = inputFullScale(obj)
+            % InputFullScale as a recording should state it: 1 in Test Mode,
+            % for the same reason recordingGain is.
+            if obj.Testing, v = 1; else, v = obj.InputFullScale; end
+        end
+
+        function tf = hasOutputReference(obj)
+            % Whether the output's full scale has been read off a meter --
+            % what measuring the input against it requires.
+            tf = isfinite(obj.OutputFullScale) && obj.OutputFullScale > 0;
         end
 
         function cfg = config(obj)
@@ -182,6 +235,9 @@ classdef AudioSettings
                 dev,rate,obj.PlayerChannels,obj.RecorderChannels);
             if obj.AmplifierGain ~= 1
                 s = sprintf('%s, amplifier gain %g',s,obj.AmplifierGain);
+            end
+            if obj.InputFullScale ~= 1
+                s = sprintf('%s, input full scale %.4g V',s,obj.InputFullScale);
             end
         end
 
@@ -249,7 +305,11 @@ classdef AudioSettings
                        'RecorderChannels',obj.RecorderChannels,'Testing',obj.Testing, ...
                        'StimulationOnly',obj.StimulationOnly, ...
                        'MicChannel',obj.MicChannel, ...
-                       'AmplifierGain',obj.AmplifierGain);
+                       'AmplifierGain',obj.AmplifierGain, ...
+                       'InputFullScale',obj.InputFullScale, ...
+                       'OutputFullScale',obj.OutputFullScale, ...
+                       'InputCalibrated',obj.InputCalibrated, ...
+                       'OutputCalibrated',obj.OutputCalibrated);
         end
     end
 
@@ -282,6 +342,12 @@ classdef AudioSettings
             obj.MicChannel       = mabr.AudioSettings.getChannel('AudioMicChannel',obj.MicChannel);
             obj.AmplifierGain    = mabr.AudioSettings.coerceGain( ...
                 getpref('MABR','AudioAmplifierGain',obj.AmplifierGain),obj.AmplifierGain);
+            obj.InputFullScale   = mabr.AudioSettings.coerceGain( ...
+                getpref('MABR','AudioInputFullScale',obj.InputFullScale),obj.InputFullScale);
+            obj.OutputFullScale  = mabr.AudioSettings.coerceFullScale( ...
+                getpref('MABR','AudioOutputFullScale',obj.OutputFullScale),obj.OutputFullScale);
+            obj.InputCalibrated  = mabr.AudioSettings.getChar('AudioInputCalibrated',obj.InputCalibrated);
+            obj.OutputCalibrated = mabr.AudioSettings.getChar('AudioOutputCalibrated',obj.OutputCalibrated);
         end
 
         function savePrefs(obj)
@@ -293,6 +359,10 @@ classdef AudioSettings
             setpref('MABR','AudioStimulationOnly',  obj.StimulationOnly);
             setpref('MABR','AudioMicChannel',       obj.MicChannel);
             setpref('MABR','AudioAmplifierGain',    obj.AmplifierGain);
+            setpref('MABR','AudioInputFullScale',   obj.InputFullScale);
+            setpref('MABR','AudioOutputFullScale',  obj.OutputFullScale);
+            setpref('MABR','AudioInputCalibrated',  obj.InputCalibrated);
+            setpref('MABR','AudioOutputCalibrated', obj.OutputCalibrated);
         end
 
         function obj = fromStruct(s)
@@ -325,6 +395,18 @@ classdef AudioSettings
             if isfield(s,'AmplifierGain')
                 obj.AmplifierGain = mabr.AudioSettings.coerceGain(s.AmplifierGain,obj.AmplifierGain);
             end
+            if isfield(s,'InputFullScale')
+                obj.InputFullScale = mabr.AudioSettings.coerceGain(s.InputFullScale,obj.InputFullScale);
+            end
+            if isfield(s,'OutputFullScale')
+                obj.OutputFullScale = mabr.AudioSettings.coerceFullScale(s.OutputFullScale,obj.OutputFullScale);
+            end
+            if isfield(s,'InputCalibrated')
+                obj.InputCalibrated = mabr.AudioSettings.coerceChar(s.InputCalibrated,obj.InputCalibrated);
+            end
+            if isfield(s,'OutputCalibrated')
+                obj.OutputCalibrated = mabr.AudioSettings.coerceChar(s.OutputCalibrated,obj.OutputCalibrated);
+            end
         end
 
         function v = coerceGain(v,default)
@@ -334,6 +416,34 @@ classdef AudioSettings
                 v = default;
             else
                 v = double(v);
+            end
+        end
+
+        function v = coerceFullScale(v,default)
+            % OutputFullScale's rule: a finite positive scalar, or NaN for
+            % "not measured" -- which coerceGain would refuse.
+            if isnumeric(v) && isscalar(v) && isnan(v)
+                v = NaN;
+            else
+                v = mabr.AudioSettings.coerceGain(v,default);
+            end
+        end
+
+        function s = stamp()
+            % The form InputCalibrated/OutputCalibrated are written in.
+            s = char(datetime('now','Format','yyyy-MM-dd HH:mm:ss'));
+        end
+
+        function s = stampText(stamp)
+            % 'measured 30-Sep-2026' for a stamp, '' for none -- what the
+            % dialogs print beside a full scale.
+            s = '';
+            if isempty(stamp), return; end
+            try
+                d = datetime(stamp,'InputFormat','yyyy-MM-dd HH:mm:ss');
+                s = ['measured ' char(datetime(d,'Format','dd-MMM-yyyy'))];
+            catch
+                s = ['measured ' stamp];
             end
         end
     end
