@@ -21,7 +21,7 @@ classdef PresentationOrder < handle
 %   and dotted verticals mark the run boundaries.
 %
 %   The ACTIVE condition -- the one being presented -- is highlighted three
-%   ways at once: an amber band along its row, its row label in bold amber,
+%   ways at once: an amber band along its row, its row label in amber,
 %   and an amber marker with a cursor line at the presentation itself. The
 %   header names it and says where in the plan the rig is.
 %
@@ -1229,7 +1229,7 @@ classdef PresentationOrder < handle
         end
 
         function paintRows(obj,stim,rowOn)
-            % The row labels (active in bold amber, off greyed) and the band
+            % The row labels (active in amber, off greyed) and the band
             % along the active row.
             row = 0;
             if stim >= 1 && stim <= numel(obj.RowOf), row = obj.RowOf(stim); end
@@ -1246,12 +1246,13 @@ classdef PresentationOrder < handle
             if row > 0
                 obj.ActiveBand.YData   = [row-0.5 row-0.5 row+0.5 row+0.5];
                 obj.ActiveBand.Visible = 'on';
-                % Bold marks the condition now playing; amber is its colour
-                % unless it has been switched off for the runs to come, when
-                % the grey says that and the band and marker still say "now".
+                % Amber marks the condition now playing, unless it has been
+                % switched off for the runs to come, when the grey says that
+                % and the band and marker still say "now". Colour only: bold
+                % is wider, and a wider label makes the axes shrink to fit.
                 c = obj.ActiveInk;
                 if ~rowOn(row), c = obj.OffInk; end
-                lbl{row} = sprintf('\\bf\\color[rgb]{%.3f,%.3f,%.3f}%s',c(1),c(2),c(3), ...
+                lbl{row} = sprintf('\\color[rgb]{%.3f,%.3f,%.3f}%s',c(1),c(2),c(3), ...
                     texEscape(obj.RowLabels{row}));
             else
                 obj.ActiveBand.Visible = 'off';
@@ -1628,7 +1629,7 @@ end
 end
 
 function s = texEscape(s)
-% Tick labels use the TeX interpreter (for the bold active row), so the
+% Tick labels use the TeX interpreter (for the coloured rows), so the
 % characters TeX would act on in an ID are escaped.
 s = regexprep(s,'([\\_^{}])','\\$1');
 end

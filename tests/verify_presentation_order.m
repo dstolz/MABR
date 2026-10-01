@@ -205,7 +205,7 @@ assert(contains(info,'1 condition off'),'the header does not say a condition is 
 lblE = po.Axes.YTickLabel;
 assert(~any(contains(lblE,'off')),'a row label still says "(off)": %s',strjoin(lblE,' | '));
 assert(contains(lblE{row},'\color[rgb]{0.600,0.620,0.650}'),'the switched-off row is not greyed');
-assert(~contains(lblE{row},'\bf'),'a condition that is not playing should not be bold');
+assert(~contains(lblE{row},'\color[rgb]{0.702,0.420,0.000}'),'a condition that is not playing should not be amber');
 
 % The run in progress cannot be switched off.
 cur = sch.Runs{2}(1);
@@ -456,7 +456,7 @@ else
     pick(key1,'');                                      % leave the sort as a new window finds it
 end
 
-% -- A switched-off condition: greyed, no "(off)"; bold grey when it is playing --
+% -- A switched-off condition: greyed, no "(off)"; grey when it is playing --
 fcH = mabrtest.FakeController(schH,bank);
 poH.listenTo(fcH);
 fcH.setState(mabr.ui.ProgState.PrepBlock);
@@ -468,12 +468,12 @@ poH.refresh(true);
 lblH = poH.Axes.YTickLabel;
 rowP = find(poH.Rows == playing);
 assert(~any(contains(lblH,'off')),'a row label still says "(off)": %s',strjoin(lblH,' | '));
-assert(startsWith(lblH{rowP},'\bf\color[rgb]{0.600,0.620,0.650}'), ...
-    'the playing, switched-off condition should be bold grey: "%s"',lblH{rowP});
+assert(startsWith(lblH{rowP},'\color[rgb]{0.600,0.620,0.650}'), ...
+    'the playing, switched-off condition should be grey: "%s"',lblH{rowP});
 schH.setEnabled(playing,true);
 poH.refresh(true);
-assert(startsWith(poH.Axes.YTickLabel{rowP},'\bf\color[rgb]{0.702,0.420,0.000}'), ...
-    'a playing condition that is on should be bold amber');
+assert(startsWith(poH.Axes.YTickLabel{rowP},'\color[rgb]{0.702,0.420,0.000}'), ...
+    'a playing condition that is on should be amber');
 poH.listenTo([]);
 poH.attach(schH,bank);
 
@@ -770,7 +770,7 @@ assert(abs(mean(po.ActiveBand.YData) - row) < 1e-9,'the band is on the wrong row
 assert(po.ActiveMarker.XData == po.Current && po.ActiveMarker.YData == row, ...
     'the marker is not on the active presentation');
 lbl = po.Axes.YTickLabel;
-assert(startsWith(lbl{row},'\bf'),'the active row''s label is not bold');
+assert(startsWith(lbl{row},'\color') && ~contains(lbl{row},'\bf'),'the active row''s label should be coloured, not bold');
 [now,~] = header(po);
 assert(contains(now,po.RowLabels{row}),'the header does not name the active condition: "%s"',now);
 end
