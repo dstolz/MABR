@@ -48,6 +48,15 @@ classdef App < handle
 %   named place a user returns to deliberately (one per protocol on a shared
 %   rig), the pref is the one they land in by doing nothing at all.
 %
+%   File > Offline Analysis… opens the offline analysis window
+%   (mabr.ui.AnalysisApp) on saved .abr files, or brings the open one
+%   forward. It is a neighbour, not a child: it locks with nothing here,
+%   Arrange windows raises it without tiling it, closing this window leaves
+%   it open, and it asks mabr.ui.App.isAcquiring before a heavy step while a
+%   schedule runs. A configuration carries its defaults (cfg.OfflineAnalysis
+%   -- the settings a new project starts from, its tabs' looks, its export
+%   choices), restored only from a configuration the user loads.
+%
 %   The Stimulus panel's Bank dropdown lists the stimulus bank files used
 %   before (mabr.stim.BankHistory), shows which bank is loaded, and loads
 %   whichever listed file is picked; + lists files without loading them and
@@ -230,6 +239,9 @@ classdef App < handle
         SaveConfigMenuItem
         LoadConfigMenuItem
         RecentConfigsMenu
+        % File > Offline Analysis… (mabr.ui.AnalysisApp). In neither control
+        % list: it touches no device and no schedule -- see onOfflineAnalysis.
+        AnalysisMenuItem
         % True only while restoreLastSession is applying the previous
         % session's bank: a bank the app reopens by itself is not one the
         % operator just used, and re-listing it would undo a Remove or a
@@ -504,6 +516,10 @@ classdef App < handle
             try, delete(app.SpectrumView); end %#ok<TRYNC>
             try, delete(app.TestRunner); end %#ok<TRYNC>
             try, delete(app.Launcher);   end %#ok<TRYNC>
+            % Deliberately NOT the offline analysis window: it was only opened
+            % from here, it is not owned. It works on files rather than on
+            % this rig, has its own pending saves and undo history, and is as
+            % much at home in a MATLAB where MABR never opened at all.
             try, delete(app.UIFigure);   end %#ok<TRYNC>
             % Last, and only once every worker above has been killed and
             % waited for -- mabr.shutdownPool leaves a busy pool alone, and
@@ -566,8 +582,17 @@ classdef App < handle
             % the view it is showing (see ProgressMonitor.fitToView). Nothing
             % is remembered here: positions are saved as windows close, as
             % always. Returns how many windows were raised (see bringToFront).
+            %
+            % The offline analysis window and its dialogs (Tag MABR_OFFLINE…)
+            % are raised with everything else but never tiled: that window is
+            % a workspace sized to be worked in (1100 x 700 at the least), and
+            % a cell of the strip beside this one would cut it to a fraction of
+            % that -- nor is it watching this rig, which is what the strip is
+            % for.
             figs = app.windows();
             figs = figs(figs ~= app.UIFigure);
+            tiled = arrayfun(@(f) ~startsWith(get(f,'Tag'),'MABR_OFFLINE'),figs);
+            figs = figs(logical(tiled));
             for i = 1:numel(figs)
                 % A minimized, maximized or full-screen window ignores a
                 % Position assignment, so it is put back to normal first.
@@ -635,6 +660,10 @@ classdef App < handle
                 'AutoResizeChildren','off', ...
                 'Tag',mabr.ui.App.InstanceTag, ...
                 'CloseRequestFcn',@(~,~) app.onClose());
+            % So a static caller holding nothing but the figure can ask this
+            % window something -- mabr.ui.App.isAcquiring, which the offline
+            % analysis window uses to tell whether a schedule is running here.
+            setappdata(app.UIFigure,'MABRApp',app);
             % Only the spot is the user's: the height is whatever the panels
             % need with the folded ones folded, and fitHeight sets it once
             % they are built (see the constructor).
@@ -653,6 +682,18 @@ classdef App < handle
                 'MenuSelectedFcn',@(~,~) app.onLoadConfiguration());
             app.RecentConfigsMenu = uimenu(app.FileMenu,'Text','Recent Configurations', ...
                 'Tooltip','Reload one of the last 9 configurations saved or loaded.');
+            % The offline analysis window (mabr.ui.AnalysisApp) works on saved
+            % .abr files, never on this rig, so it is in neither control list
+            % and opens mid-schedule as readily as between runs. It shares
+            % this MATLAB's one thread, though, which is why it asks before a
+            % heavy step while a schedule runs here (mabr.ui.App.isAcquiring)
+            % and why a long batch belongs in a second MATLAB on a rig.
+            app.AnalysisMenuItem = uimenu(app.FileMenu,'Text','Offline Analysis…', ...
+                'Separator','on', ...
+                'Tooltip',['Open the offline analysis window on saved .abr files, or bring ' ...
+                           'it forward. It runs in this MATLAB: analysing while a schedule ' ...
+                           'runs here slows the live view.'], ...
+                'MenuSelectedFcn',@(~,~) app.onOfflineAnalysis());
 
             app.SettingsMenu = uimenu(app.UIFigure,'Text','&Settings');
             app.AudioMenuItem = uimenu(app.SettingsMenu,'Text','Audio Device (ASIO)…', ...
@@ -1946,6 +1987,25 @@ classdef App < handle
             end
         end
 
+        function onOfflineAnalysis(app)
+            % File > Offline Analysis…: the analysis window, or the one already
+            % open brought forward ('reuse' -- there is only ever one, as
+            % there is only one of this window). It opens on its own last
+            % state; nothing is handed across, because it works on saved
+            % files and this window's settings say nothing about those.
+            try
+                mabr.ui.AnalysisApp("",'Instance',"reuse");
+            catch me
+                app.setStatus(['The offline analysis window could not open: ' me.message]);
+                mabr.log.vprintf(1,'App: offline analysis window failed to open (%s).',me.message);
+                return
+            end
+            if app.isRunning()
+                app.setStatus(['Offline analysis shares this MATLAB with the schedule running ' ...
+                    'here: it asks before any step that would stall the live view.'],false);
+            end
+        end
+
         function addRecentConfig(app,file)
             % Move file to the front of the recent list (dropping any earlier
             % entry for the same path), cap at 9, persist, and rebuild the menu.
@@ -2286,6 +2346,13 @@ classdef App < handle
             cfg.WindowPos = mabr.ui.WindowPos.snapshot();
             % Which of this window's own panels are folded up.
             cfg.CollapsedPanels = app.collapsedNames();
+            % The offline analysis app's defaults: the settings a NEW project
+            % starts from and how its tabs, export and figure-export dialogs
+            % are set to look. Never a project's own settings (those live in
+            % its project.mat) and never its history -- recent folders,
+            % results folders, the last state, the analyst -- which belong to
+            % this machine, as the recent configurations do.
+            cfg.OfflineAnalysis = mabr.ui.App.offlineAnalysisConfig();
         end
 
         function warn = applyConfiguration(app,cfg)
@@ -2448,6 +2515,17 @@ classdef App < handle
                 mabr.ui.SpectrumViewer.saveDefaults(cfg.Spectrum);
                 if ~isempty(app.SpectrumView) && isvalid(app.SpectrumView)
                     app.SpectrumView.applySettings(cfg.Spectrum);
+                end
+            end
+            % The offline analysis defaults, only from a configuration the user
+            % LOADED. At launch the snapshot being restored was taken when MABR
+            % last closed, and the analysis app writes these prefs itself as it
+            % is used -- possibly in another MATLAB since -- so writing the
+            % snapshot back would quietly undo whatever it chose meanwhile.
+            if isfield(cfg,'OfflineAnalysis') && ~app.RestoringSession
+                note = mabr.ui.App.applyOfflineAnalysisConfig(cfg.OfflineAnalysis);
+                if ~isempty(note)
+                    if isempty(warn), warn = note; else, warn = [warn ' ' note]; end
                 end
             end
             if isfield(cfg,'WindowPos')
@@ -5319,6 +5397,151 @@ classdef App < handle
     end
 
     methods (Static)
+        function tf = isAcquiring()
+            % True while the MABR window open in this MATLAB is running a
+            % schedule -- isRunning's test: a controller exists and is not
+            % resting (Idle, SchedComplete or Error). False with no window
+            % open, and false rather than an error on anything unexpected.
+            %
+            % The offline analysis window's acquisition guard
+            % (mabr.ui.analysis.Model.isAcquisitionBusy): both windows share
+            % this MATLAB's one thread, so an analysis step started mid-run
+            % would freeze the live view until it finished. Static, and found
+            % by the window's Tag, because the analysis window holds no
+            % reference to this one and must not need one.
+            tf = false;
+            try
+                figs = findall(groot,'Type','figure','Tag',mabr.ui.App.InstanceTag);
+                for k = 1:numel(figs)
+                    a = getappdata(figs(k),'MABRApp');
+                    if isa(a,'mabr.ui.App') && isscalar(a) && isvalid(a) && a.isRunning()
+                        tf = true;
+                        return
+                    end
+                end
+            catch
+                tf = false;
+            end
+        end
+
+        function c = offlineAnalysisConfig()
+            % What a configuration carries of the offline analysis app
+            % (mabr.ui.AnalysisApp): the analysis settings a NEW project
+            % starts from (pref OfflineAnalysisSettings -- an open project's
+            % settings live in its own project.mat and are never touched from
+            % here), the five tabs' looks, and the export and figure-export
+            % dialogs' choices -- each from its pref, which every one of them
+            % writes only when a user changes a control, so the pref IS the
+            % last choice. Plain structs throughout, like the rest of a
+            % configuration. History (recent folders, results folders, the
+            % last state, the analyst) is deliberately left out.
+            %
+            % Guarded part by part: a configuration must save whatever else
+            % it holds even if one of these cannot be read.
+            c = struct();
+            try
+                c.Settings = mabr.analysis.Settings.loadPrefs().toStruct();
+            catch me
+                mabr.log.vprintf(2,'App: offline analysis settings not captured (%s).',me.message);
+            end
+            v = struct();
+            for n = mabr.ui.AnalysisApp.TabNames
+                try
+                    v.(n) = feval(mabr.ui.AnalysisApp.viewClass(n) + ".loadDefaults");
+                catch me
+                    mabr.log.vprintf(2,'App: offline %s look not captured (%s).',n,me.message);
+                end
+            end
+            c.Views = v;
+            try
+                c.Export = mabr.ui.analysis.ExportDialog.loadDefaults();
+            catch me
+                mabr.log.vprintf(2,'App: offline export choices not captured (%s).',me.message);
+            end
+            try
+                c.FigureExport = mabr.ui.analysis.FigureExport.loadDefaults();
+            catch me
+                mabr.log.vprintf(2,'App: offline figure-export choices not captured (%s).',me.message);
+            end
+        end
+
+        function note = applyOfflineAnalysisConfig(c)
+            % Put a configuration's offline analysis part (offlineAnalysisConfig's
+            % shape) back: into the prefs, so the next project and the next
+            % window start from it, and onto the tabs of an analysis window
+            % that is open now, whose looks change on the spot. An open
+            % PROJECT keeps its settings: they are what its results were
+            % analysed with, and replacing them from a configuration would
+            % turn every session out of date behind the user's back. The
+            % analysis window's status line says so, and so does NOTE (for
+            % this window's), which is '' when no analysis window is open or
+            % nothing was restored.
+            %
+            % Forgiving part by part and field by field, the rule every
+            % fromStruct here follows. A part that is missing -- or is not a
+            % struct at all, which each class's own forgiving reader would
+            % turn into its factory defaults -- is left alone rather than
+            % allowed to reset what the user had.
+            note = '';
+            if ~isstruct(c) || ~isscalar(c), return; end
+            ok = @(v) isstruct(v) && isscalar(v);
+            a = [];
+            try
+                a = mabr.ui.AnalysisApp.findOpen();
+            catch
+            end
+            n = 0;
+            if isfield(c,'Settings') && ok(c.Settings)
+                try
+                    mabr.analysis.Settings.savePrefs(mabr.analysis.Settings.fromStruct(c.Settings));
+                    n = n + 1;
+                catch me
+                    mabr.log.vprintf(1,'App: offline analysis settings not restored (%s).',me.message);
+                end
+            end
+            if isfield(c,'Views') && ok(c.Views)
+                for t = mabr.ui.AnalysisApp.TabNames
+                    if ~isfield(c.Views,t) || ~ok(c.Views.(t)), continue; end
+                    try
+                        cls = mabr.ui.AnalysisApp.viewClass(t);
+                        feval(cls + ".saveDefaults",c.Views.(t));
+                        n = n + 1;
+                        % The pref read back rather than the struct as given:
+                        % loadDefaults is the view's own cleaning, so a value
+                        % the tab cannot draw never reaches it.
+                        if ~isempty(a) && isvalid(a)
+                            view = a.Views.(t);
+                            if ~isempty(view) && isvalid(view)
+                                view.applySettings(feval(cls + ".loadDefaults"));
+                            end
+                        end
+                    catch me
+                        mabr.log.vprintf(1,'App: offline %s look not restored (%s).',t,me.message);
+                    end
+                end
+            end
+            if isfield(c,'Export') && ok(c.Export)
+                try
+                    mabr.ui.analysis.ExportDialog.saveDefaults(c.Export);
+                    n = n + 1;
+                catch me
+                    mabr.log.vprintf(1,'App: offline export choices not restored (%s).',me.message);
+                end
+            end
+            if isfield(c,'FigureExport') && ok(c.FigureExport)
+                try
+                    mabr.ui.analysis.FigureExport.saveDefaults(c.FigureExport);
+                    n = n + 1;
+                catch me
+                    mabr.log.vprintf(1,'App: offline figure-export choices not restored (%s).',me.message);
+                end
+            end
+            if n > 0 && ~isempty(a) && isvalid(a)
+                note = 'Analysis defaults loaded — they apply to new projects.';
+                try, a.setStatus(note,0); end %#ok<TRYNC>
+            end
+        end
+
         function [routed,note] = putDesignerOnRig(sp,source,a,controllerFcn)
             % Put the Design… designer SP on the rig: SOURCE is the stimgen
             % tools' Hardware choice (mabr.ui.StimgenLauncher.Sources), A

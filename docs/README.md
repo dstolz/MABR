@@ -14,7 +14,8 @@ Start here if your job is to record ABRs, not to modify the code.
 | [Viewing Data](Viewing-Data.md) | Live plot, Online Analysis, and Trace Organizer |
 | [Data Files](Data-Files.md) | Where files go, how they're named, what's inside |
 | [Test Mode](Test-Mode.md) | Checking that stimulus and acquisition are aligned, with no hardware |
-| [Offline Analysis](Offline-Analysis.md) | Batch-processing saved recordings into thresholds |
+| [The Analysis App](Analysis-App.md) | Analysing saved recordings: labels, thresholds, peaks, study comparisons, export to R |
+| [Offline Analysis](Offline-Analysis.md) | The original `abr_analysis/` function pipeline |
 | [Troubleshooting](Troubleshooting.md) | Common problems and what they mean |
 
 ## For developers
@@ -27,6 +28,7 @@ Start here if you are extending, embedding, or debugging MABR.
 | [Acquisition Engine](Acquisition-Engine.md) | The parpool worker, ring buffer, command/state protocol |
 | [Compute Workers](Compute-Workers.md) | The pipeline, the DSP and metrics workers, the publish buffers, and how each degrades |
 | [Extending MABR](Extending.md) | Stimulus sources, presentation strategies, advance criteria, embedding the engine, custom UIs |
+| [The `mabr.analysis` classes](Analysis-Classes.md) | The offline analysis model the Analysis App is built on, for scripts |
 | [API Reference](API-Reference.md) | Every class and function, grouped, with links |
 | [Testing](Testing.md) | The no-hardware verification suite |
 

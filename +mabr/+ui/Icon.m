@@ -2,9 +2,10 @@ classdef Icon
 % mabr.ui.Icon  MABR's toolbar pictograms, drawn as anti-aliased vector art.
 %
 %   Every toolbar button MABR puts up -- the main window's, the trace
-%   organizer's, and the notes button both of them carry -- is drawn here,
-%   in one palette, so the toolbars read as one set and each button says
-%   what it does before anyone hovers for its tooltip:
+%   organizer's, the offline analysis window's, and the notes button they
+%   all carry -- is drawn here, in one palette, so the toolbars read as
+%   one set and each button says what it does before anyone hovers for its
+%   tooltip:
 %
 %       cdata = mabr.ui.Icon.toolbar('live',app.Toolbar);
 %       uipushtool(app.Toolbar,'CData',cdata,...);
@@ -39,8 +40,10 @@ classdef Icon
 %       mabr.ui.Icon.preview()            % every glyph, 1x and enlarged
 %       img = mabr.ui.Icon.sheet(names,8);% the same as an RGB image
 %
-%   Used by mabr.ui.App (toolbar and Run panel), mabr.ui.TraceOrganizer and
-%   mabr.ui.Notes.
+%   Used by mabr.ui.App (toolbar and Run panel), mabr.ui.TraceOrganizer,
+%   mabr.ui.Notes, mabr.ui.PresentationOrder, and the offline analysis
+%   window: mabr.ui.AnalysisApp's toolbar, and the buttons of its views and
+%   dialogs (mabr.ui.analysis.*, through Style.setButtonIcon).
 %
 % Daniel Stolzberg (c) 2019-2026
 
@@ -84,13 +87,17 @@ classdef Icon
 
     methods (Static)
         function n = names()
-            % Every glyph render() knows, main-window ones first.
+            % Every glyph render() knows, main-window ones first and the
+            % offline analysis window's last.
             n = {'live','metrics','spectrum','traces','stim','progress','order', ...
                  'notes','front','arrange','pin','help', ...
                  'play','preview','repeat','loop','pause','advance','abort', ...
                  'skipnext','offabove','offbelow','enableall', ...
                  'grow','shrink','spread','squeeze','overlap','separate','peaks','inspect', ...
-                 'save','load','trash','keys'};
+                 'save','load','trash','keys', ...
+                 'gear','export','figure','script','batch','accept','noresponse', ...
+                 'exclude','threshold','retrack','reject','restore','undo','redo', ...
+                 'study','raster','pool','copy'};
         end
 
         function c = toolbar(name,bg)
@@ -488,6 +495,162 @@ classdef Icon
                     c = P(c,Box([2 5 3 6]),K.Orange);
                     c = P(c,Box([4 9 12 10]),K.Ink);
 
+                % ------------------------------------------- offline analysis
+                % mabr.ui.AnalysisApp and its views. The same colours: blue
+                % the recording, orange what the button does to it, green a
+                % decision taken or a sweep brought back, red one thrown out.
+                case 'gear'        % a cog: the settings the analysis runs on.
+                                   % Teeth two pixels wide, so the four
+                                   % square to the grid stay crisp.
+                    p = [8 8];
+                    m = Disc(p,5.2);
+                    for a = 0:45:315
+                        [U,V] = mabr.ui.Icon.along(X,Y,p,[cosd(a) -sind(a)]);
+                        m = m | (U >= 0 & U <= 7 & abs(V) <= 1);
+                    end
+                    c = P(c,m & ~Disc(p,2.2),K.Ink);
+
+                case 'export'      % a table, and an arrow out of it: the
+                                   % results written to files
+                    c = P(c,Box([0 1 12 13]),K.Ink);
+                    c = P(c,Box([1 2 11 12]),K.Paper);
+                    c = P(c,Box([1 2 11 4]),K.Blue);
+                    c = P(c,Box([1 6 11 7]) | Box([1 9 11 10]) | Box([5 4 6 12]),K.Ink);
+                    c = mabr.ui.Icon.outArrow(c,X,Y);
+
+                case 'figure'      % a chart, and the same arrow out of it
+                    c = P(c,Line([1.5 0.5; 1.5 14.5; 6 14.5],1.0),K.Ink);
+                    c = P(c,Line([3.5 9.5; 6 4.5; 8.5 7; 12 1.5],1.4),K.Blue);
+                    c = mabr.ui.Icon.outArrow(c,X,Y);
+
+                case 'script'      % a page of code, </>: the analysis written
+                                   % out as a script that does it again. The
+                                   % chevrons run at 45 degrees through pixel
+                                   % centres, which is what keeps them crisp;
+                                   % the page is a little wide to fit them.
+                    c = mabr.ui.Icon.page(c,X,Y,[1 0 15 16],4,K.Ink,K.Paper);
+                    c = P(c,Line([5.5 7.5; 3.5 9.5; 5.5 11.5],1.4) | ...
+                            Line([9.0 6.5; 7.0 12.5],1.3) | ...
+                            Line([10.5 7.5; 12.5 9.5; 10.5 11.5],1.4),K.Blue);
+
+                case 'batch'       % a stack of sessions, and go: every one
+                                   % of them analysed
+                    for o = [4 2 0]
+                        r = [1+o 5-o 11+o 15-o];
+                        c = P(c,Box(r),K.Ink);
+                        c = P(c,Box(r + [1 1 -1 -1]),K.Paper);
+                    end
+                    c = P(c,Box([3 8 8 9]) | Box([3 10 7 11]) | Box([3 12 8 13]),K.Grey);
+                    t = Poly([9 8; 15.6 12; 9 16]);
+                    c = Cut(c,mabr.ui.Icon.grow(t,1));
+                    c = P(c,t,K.Green);
+
+                case 'accept'      % a check mark: the fit taken as it stands
+                    c = P(c,Line([2.0 8.6; 6.0 12.6; 14.0 3.8],2.6),K.Green);
+
+                case 'noresponse'  % the null sign over a flat trace: no
+                                   % response at any level
+                    c = P(c,Box([0 13 16 14]),K.Blue);
+                    p = [8 6];
+                    [U,V] = mabr.ui.Icon.along(X,Y,p,[1 -1]);
+                    c = P(c,Ring(p,3.4,5.0) | (abs(U) <= 6.6 & abs(V) <= 0.8),K.Red);
+
+                case 'exclude'     % a prohibition sign: left out altogether
+                    p = [8 8];
+                    [U,V] = mabr.ui.Icon.along(X,Y,p,[1 1]);
+                    c = P(c,Ring(p,5.0,7.5) | (abs(U) <= 5.5 & abs(V) <= 1.2),K.Red);
+
+                case 'threshold'   % a level series, and the line drawn under
+                                   % the last level that responds
+                    x = linspace(0.5,15.5,200);
+                    t = (x-0.5)/15;
+                    base = [3.5 7.5 14.5];
+                    amp  = [2.8 1.6 0];
+                    for k = 1:3
+                        y = base(k) - amp(k)*Bump(t,0.36+0.06*k,0.07) ...
+                                    + 0.4*amp(k)*Bump(t,0.56+0.06*k,0.07);
+                        c = P(c,Line([x(:) y(:)],1.2),K.Blue);
+                    end
+                    c = P(c,Box([0 10 16 12]),K.Green);
+
+                case 'retrack'     % the peaks, followed down the level series
+                    x = linspace(0.5,10.5,160);
+                    t = (x-0.5)/10;
+                    yA = 6.5 - 2.2*Bump(t,0.40,0.09) + 0.7*Bump(t,0.65,0.09);
+                    yB = 14.5 - 2.0*Bump(t,0.50,0.09) + 0.6*Bump(t,0.75,0.09);
+                    c = P(c,Line([x(:) yA(:)],1.2) | Line([x(:) yB(:)],1.2),K.Blue);
+                    for pk = [4.5 4.3; 5.5 12.5].'           % each trace's peak
+                        c = P(c,Poly([pk(1)-1.9 pk(2)-4.0; pk(1)+1.9 pk(2)-4.0; ...
+                                      pk(1) pk(2)-1.2]),K.Orange);
+                    end
+                    c = P(c,mabr.ui.Icon.arrow(X,Y,[13 1],[13 15],2,4.5,3),K.Orange);
+
+                case 'reject'      % a sweep, crossed out
+                    c = mabr.ui.Icon.response(c,X,Y,[0.5 15.5],12,3.2,K.Blue);
+                    m = Line([8.5 1.5; 14.5 7.5],2.2) | Line([8.5 7.5; 14.5 1.5],2.2);
+                    c = Cut(c,mabr.ui.Icon.grow(m,1));
+                    c = P(c,m,K.Red);
+
+                case 'restore'     % a sweep, and the arrow that brings it
+                                   % back: anticlockwise, the way back
+                    c = mabr.ui.Icon.response(c,X,Y,[0.5 15.5],12,3.2,K.Blue);
+                    m = mabr.ui.Icon.curl(X,Y,[11.6 4.6],3.4,1.6,165,75,3.4,3.0);
+                    c = Cut(c,mabr.ui.Icon.grow(m,1));
+                    c = P(c,m,K.Green);
+
+                case 'undo'        % an arrow arching back over itself
+                    c = P(c,mabr.ui.Icon.curl(X,Y,[9 10.5],4.8,2.0,-15,180,4.2,3.6),K.Ink);
+
+                case 'redo'        % undo in a mirror -- flipped rather than
+                                   % drawn again, so the pair cannot drift
+                    [rgb,alpha] = mabr.ui.Icon.render('undo');
+                    rgb = flip(rgb,2);
+                    alpha = flip(alpha,2);
+                    return;
+
+                case 'study'       % an audiogram: two groups' thresholds
+                                   % across frequency, an octave a step
+                    c = P(c,Line([1.5 1.5; 1.5 14.5; 14.5 14.5],1.0),K.Ink);
+                    xs = [4 7 10 13];
+                    yA = [4.5 3.5 4.5 6.5];
+                    yB = [7.5 8.5 11 10.5];
+                    col = mabr.ui.Icon.Series;
+                    c = P(c,Line([xs(:) yA(:)],1.2),col(1,:));
+                    c = P(c,Line([xs(:) yB(:)],1.2),col(2,:));
+                    for k = 1:4
+                        c = P(c,Disc([xs(k) yA(k)],1.4),col(1,:));
+                        c = P(c,Disc([xs(k) yB(k)],1.4),col(2,:));
+                    end
+
+                case 'raster'      % sweeps as an image, a row each, and the
+                                   % response the dark band down them all.
+                                   % The rows stand apart, or the picture is
+                                   % a solid square and reads as nothing.
+                    rows = [1 4 7 10 13];
+                    gain = [1.0 0.8 1.1 0.6 0.9];
+                    for k = 1:5
+                        for j = 0:15
+                            r = exp(-0.5*((j-5.5)/1.2)^2) - 0.7*exp(-0.5*((j-9.5)/1.4)^2);
+                            h = mod(sin(12.9898*j + 78.233*k)*43758.5453,1) - 0.5;  % fixed speckle
+                            v = min(max(0.3 + 0.7*gain(k)*r + 0.18*h,0),1);
+                            c = P(c,Box([j rows(k) j+1 rows(k)+2]),K.Sky*(1-v) + K.Ink*v);
+                        end
+                    end
+
+                case 'pool'        % two runs' sweeps merging into one
+                    x = linspace(0.5,8,120);
+                    s = (x-0.5)/7.5;
+                    s = s.^2.*(3-2*s);
+                    c = P(c,Line([x(:) 2+6*s(:)],2.0) | Line([x(:) 14-6*s(:)],2.0),K.Blue);
+                    c = P(c,mabr.ui.Icon.arrow(X,Y,[7 8],[16 8],2,5,4.5),K.Orange);
+
+                case 'copy'        % two pages, one laid over the other
+                    c = P(c,RBox([1 0 11 12],1),K.Ink);
+                    c = P(c,Box([2 1 10 11]),K.Paper);
+                    c = P(c,RBox([5 4 15 16],1),K.Ink);
+                    c = P(c,Box([6 5 14 15]),K.Paper);
+                    c = P(c,Box([7 7 13 8]) | Box([7 9 13 10]) | Box([7 11 11 12]),K.Grey);
+
                 otherwise
                     error('mabr:ui:Icon:unknown','No icon named "%s".',name);
             end
@@ -657,6 +820,66 @@ classdef Icon
             c = mabr.ui.Icon.paint(c,body & U > 1.6 & U <= 2.4,K.Steel);
             c = mabr.ui.Icon.paint(c,cone,K.Wood);
             c = mabr.ui.Icon.paint(c,cone & U > L-1.2,K.Ink);
+        end
+
+        function [U,V] = along(X,Y,p,u)
+            % The grid in a frame turned to direction U about P: U runs
+            % along it, V across it.
+            u = u/norm(u);
+            U =  (X-p(1))*u(1) + (Y-p(2))*u(2);
+            V = -(X-p(1))*u(2) + (Y-p(2))*u(1);
+        end
+
+        function m = grow(m,d)
+            % MASK grown by D pixels all round: the clear margin cut around
+            % a shape so it reads over whatever lies beneath it.
+            r = d*mabr.ui.Icon.Supersample;
+            [u,v] = meshgrid(-ceil(r):ceil(r));
+            m = conv2(double(m),double(hypot(u,v) <= r),'same') > 0;
+        end
+
+        function m = arrow(X,Y,a,b,w,hl,hw)
+            % A straight arrow from A to its point B: a shaft W wide, and a
+            % head HL long and 2*HW across.
+            L = norm(b-a);
+            [U,V] = mabr.ui.Icon.along(X,Y,a,(b-a)/L);
+            m = (U >= 0 & U <= L-hl & abs(V) <= w/2) | ...
+                (U >= L-hl & U <= L & abs(V) <= hw*(L-U)/hl);
+        end
+
+        function m = curl(X,Y,p,r,w,a0,a1,hl,hw)
+            % A curved arrow about P: a stroke W wide along radius R,
+            % counter-clockwise from A0 to A1 (degrees, y up), and a head
+            % HL long and 2*HW across at A1, pointing on round the circle.
+            m = mabr.ui.Icon.arc(X,Y,p,r,w,a0,a1);
+            q = p + r*[cosd(a1) -sind(a1)];      % where the stroke ends
+            u = [-sind(a1) -cosd(a1)];           % the way it is heading
+            n = [-u(2) u(1)];
+            h = [q + hl*u; q - 0.5*u + hw*n; q - 0.5*u - hw*n];
+            m = m | inpolygon(X,Y,h(:,1),h(:,2));
+        end
+
+        function c = outArrow(c,X,Y)
+            % The arrow 'export' and 'figure' share: along the bottom
+            % right and out of the picture, with a clear margin cut round
+            % it. One drawing, so the two buttons read as a pair.
+            a = mabr.ui.Icon.arrow(X,Y,[7 12],[16 12],2,4.5,3.5);
+            c = mabr.ui.Icon.cut(c,mabr.ui.Icon.grow(a,1));
+            c = mabr.ui.Icon.paint(c,a,mabr.ui.Icon.Palette.Orange);
+        end
+
+        function c = page(c,X,Y,r,fold,edge,body)
+            % A sheet of paper over R = [x0 y0 x1 y1]: a one-pixel EDGE,
+            % BODY inside, and its top right corner folded down FOLD
+            % pixels.
+            x0 = r(1);  y0 = r(2);  x1 = r(3);  y1 = r(4);
+            d = sqrt(2) - 1;      % the inner fold line, a pixel in from the outer
+            outer = inpolygon(X,Y,[x0 x1-fold x1 x1 x0],[y0 y0 y0+fold y1 y1]);
+            inner = inpolygon(X,Y,[x0+1 x1-fold-d x1-1 x1-1 x0+1], ...
+                                  [y0+1 y0+1 y0+fold+d y1-1 y1-1]);
+            c = mabr.ui.Icon.paint(c,outer,edge);
+            c = mabr.ui.Icon.paint(c,inner,body);
+            c = mabr.ui.Icon.paint(c,inpolygon(X,Y,[x1-fold x1-fold x1],[y0 y0+fold y0+fold]),edge);
         end
 
         function img = place(img,src,mask,r0,c0)

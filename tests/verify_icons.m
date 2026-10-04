@@ -1,10 +1,13 @@
 function verify_icons()
 % verify_icons  Confirm the toolbar pictograms (mabr.ui.Icon) render, and
-%               that every toolbar names a glyph that exists.
+%               that every toolbar and button names a glyph that exists.
 %
 %   Part A: every glyph renders to 16x16 colour in [0,1] and coverage in
 %   [0,1], with something drawn and something left clear, and no two glyphs
-%   are the same picture.
+%   are the same picture; redo is undo in a mirror, and the offline
+%   analysis glyphs wear the colours their meaning calls for (an orange
+%   arrow on export, figure and retrack, green on accept, batch, threshold
+%   and restore, red on reject, exclude and noresponse).
 %   Part B: toolbar() CData is what a uipushtool takes -- 16x16x3, finite
 %   in [0,1] where drawn, NaN in all three planes together where not, and
 %   transparent exactly where coverage is below MinAlpha; a fully covered
@@ -12,17 +15,32 @@ function verify_icons()
 %   blended edge depends on it; a repeat call returns the cached array.
 %   Part C: an unknown name is refused, and background() reads a toolbar's
 %   colour where it has one and falls back where it does not.
-%   Part D: every glyph name the toolbars ask for (mabr.ui.App,
-%   mabr.ui.TraceOrganizer, mabr.ui.Notes, mabr.ui.PresentationOrder) is
-%   one render() knows, and every
-%   glyph is asked for by some toolbar -- a misspelt name would otherwise
-%   surface only when that window was opened.
+%   Part D: every glyph name the toolbars and buttons ask for is one
+%   render() knows -- mabr.ui.App, mabr.ui.TraceOrganizer, mabr.ui.Notes,
+%   mabr.ui.PresentationOrder, and the offline analysis window:
+%   mabr.ui.AnalysisApp and every file in +mabr/+ui/+analysis, found with
+%   dir so a view added later is scanned without editing this list (a file
+%   not written yet is skipped) -- and every glyph is asked for by one of
+%   them. A glyph is asked for by a literal: toolButton('glyph',...),
+%   Icon.toolbar/Icon.file('glyph'), setButtonIcon(button,'glyph',...),
+%   viewIcon(button,'glyph'), or an action's Glyph field -- the button any
+%   name, field or indexed element, the call free to run over lines with
+%   "...", and a call's literal read whatever it holds, so 'no-response' is
+%   reported rather than skipped. Comments, whole-line and block, are not
+%   read, so a help example asks for nothing. The scanner is itself checked
+%   first, on source written to exercise every one of those forms and the
+%   look-alikes it must pass over (glyphRequests, checkScanner). A misspelt
+%   name would otherwise surface only when that window was opened -- and
+%   not even then on an analysis button, which quietly keeps its text --
+%   while a glyph nothing asks for is a misspelt caller or dead art. That
+%   second half is judged last, after Parts E and F, so a glyph still
+%   waiting for its caller cannot hide a broken toolbar or PNG.
 %   Part E: a trace organizer's toolbar is built from them: every tool
 %   carries 16x16x3 CData and a tooltip.
-%   Part F: the Run panel's buttons use the same art as PNGs (Icon.file):
+%   Part F: every glyph is also a PNG (Icon.file), as a button uses it:
 %   16x16, the glyph's own coverage as alpha rather than a baked-in
-%   background (a uibutton's colour changes), cached by content, and
-%   every run-control glyph is one a button in App.m asks for -- and the
+%   background (a uibutton's colour changes), cached by content -- and
+%   every run-control glyph is one a button in App.m asks for, and the
 %   presentation-order window's (skip next, disable above / below, enable
 %   all, stay on top) are the same, asked for in PresentationOrder.m.
 %
@@ -59,7 +77,33 @@ for i = 1:numel(names)
         assert(d > 0.05,'%s and %s are (nearly) the same shape',names{i},names{j});
     end
 end
-fprintf('  PASS Part A: %d glyphs render, each its own picture\n',numel(names));
+% Undo and redo are one arrow and its mirror image, so the pair cannot drift
+% apart.
+[ru,au] = mabr.ui.Icon.render('undo');
+[rr,ar] = mabr.ui.Icon.render('redo');
+assert(isequal(ar,fliplr(au)) && isequal(rr,flip(ru,2)), ...
+    'redo must be undo in a mirror, pixel for pixel');
+% The offline analysis glyphs wear the colour their meaning calls for (blue
+% the data, orange the action, green done or brought back, red thrown out):
+% each named colour is a visible part of the picture, at least SeenArea
+% pixels' worth of it, not a stray edge. A pixel keeps its shape's own
+% colour however little of it is covered, so the colour is matched exactly
+% and weighted by coverage.
+K = mabr.ui.Icon.Palette;
+wears = {'export','Orange'; 'figure','Orange'; 'retrack','Orange'; ...
+         'accept','Green'; 'batch','Green'; 'threshold','Green'; 'restore','Green'; ...
+         'reject','Red'; 'exclude','Red'; 'noresponse','Red'};
+SeenArea = 6;
+for k = 1:size(wears,1)
+    [rgb,alpha] = mabr.ui.Icon.render(wears{k,1});
+    hit = all(abs(rgb - reshape(K.(wears{k,2}),1,1,3)) < 1e-6,3);
+    area = sum(alpha(hit));
+    assert(area >= SeenArea, ...
+        '%s must wear %s for its meaning, but has %.1f pixels of it (fewer than %d)', ...
+        wears{k,1},wears{k,2},area,SeenArea);
+end
+fprintf(['  PASS Part A: %d glyphs render, each its own picture; redo mirrors undo, ' ...
+         'and %d analysis glyphs wear their colour\n'],numel(names),size(wears,1));
 
 % ---- Part B: toolbar CData ------------------------------------------------
 bgs = {mabr.ui.Icon.Background,[1 1 1],[0.2 0.2 0.22]};
@@ -117,30 +161,45 @@ assert(isequal(size(c),[N N 3]),'toolbar() must accept the toolbar itself');
 clear cleanF
 fprintf('  PASS Part C: unknown glyph refused, toolbar colour read or defaulted\n');
 
-% ---- Part D: the names the toolbars ask for ------------------------------
+% ---- Part D: the names the toolbars and buttons ask for -------------------
+% The scanner is checked first: a pattern that stopped matching a form the
+% callers use would make every glyph look unrequested or, worse, let a
+% misspelling through, and nothing else here would say which.
+nScan = checkScanner();
 root = fileparts(fileparts(mfilename('fullpath')));
-files = {fullfile(root,'+mabr','+ui','App.m'), ...
-         fullfile(root,'+mabr','+ui','TraceOrganizer.m'), ...
-         fullfile(root,'+mabr','+ui','Notes.m'), ...
-         fullfile(root,'+mabr','+ui','PresentationOrder.m')};
+uiDir = fullfile(root,'+mabr','+ui');
+files = fullfile(uiDir,{'App.m','TraceOrganizer.m','Notes.m','PresentationOrder.m'});
+% The offline analysis window and every view and dialog of it, found with
+% dir so that one added later is scanned without touching this list. One
+% not written yet is skipped rather than failed: only the four above must
+% exist.
+d = dir(fullfile(uiDir,'+analysis','*.m'));
+analysisFiles = [{fullfile(uiDir,'AnalysisApp.m')}, fullfile({d.folder},{d.name})];
+analysisFiles = analysisFiles(cellfun(@isfile,analysisFiles));
+files = [files analysisFiles];
 used = {};
+from = {};
 for i = 1:numel(files)
-    src = fileread(files{i});
-    t = regexp(src,'(?:toolButton|Icon\.toolbar)\(\s*''([A-Za-z]+)''','tokens');
-    used = [used, cellfun(@(x) x{1},t,'UniformOutput',false)]; %#ok<AGROW>
-    % The Run panel's buttons: setButtonIcon(button,'glyph'), a glyph named
-    % as the second argument, with the button (app.PauseButton) before it.
-    t = regexp(src,'setButtonIcon\(\s*[A-Za-z_.]+\s*,\s*''([A-Za-z]+)''','tokens');
-    used = [used, cellfun(@(x) x{1},t,'UniformOutput',false)]; %#ok<AGROW>
+    g = glyphRequests(fileread(files{i}));
+    [~,fn,ext] = fileparts(files{i});
+    used = [used, g]; %#ok<AGROW>
+    from = [from, repmat({[fn ext]},1,numel(g))]; %#ok<AGROW>
 end
-used = unique(used);
 missing = setdiff(used,names);
-assert(isempty(missing),'toolbars ask for glyphs Icon does not draw: %s', ...
-    strjoin(missing,', '));
+where = cellfun(@(g) sprintf('%s (in %s)',g,strjoin(unique(from(strcmp(used,g))),', ')), ...
+    missing,'UniformOutput',false);
+assert(isempty(missing),'toolbars and buttons ask for glyphs Icon does not draw: %s', ...
+    strjoin(where,'; '));
+used = unique(used);
 orphan = setdiff(names,used);
-assert(isempty(orphan),'Icon draws glyphs no toolbar uses: %s',strjoin(orphan,', '));
-fprintf('  PASS Part D: the %d glyphs the toolbars name are the %d Icon draws\n', ...
-    numel(used),numel(names));
+fprintf(['  PASS Part D: the %d glyphs the toolbars and buttons name are all drawn ' ...
+         '(%d files scanned, %d of them the offline analysis window''s; the scanner ' ...
+         'read %d forms right first)\n'], ...
+    numel(used),numel(files),numel(analysisFiles),nScan);
+if ~isempty(orphan)
+    fprintf('  .... Part D: %d glyph(s) nothing asks for yet, judged after Part F: %s\n', ...
+        numel(orphan),strjoin(orphan,', '));
+end
 
 % ---- Part E: a toolbar built from them -----------------------------------
 to = mabr.ui.TraceOrganizer();
@@ -161,12 +220,13 @@ fprintf('  PASS Part E: the trace organizer''s %d tools all carry an icon\n',num
 % ---- Part F: the same art as a button's PNG ------------------------------
 % A uibutton takes a file, and sits on a background that changes (disabled,
 % pressed, Loop on), so file() must keep real transparency rather than blend.
+% Every glyph is checked: any of them can go on a button, and the offline
+% analysis window puts most of its own there (Style.setButtonIcon).
 runGlyphs   = {'play','preview','repeat','loop','pause','advance','abort'};
 % The presentation-order window's buttons (Stay on top wears the toolbar's pin).
 orderGlyphs = {'skipnext','offabove','offbelow','enableall','pin'};
-pngGlyphs   = [runGlyphs orderGlyphs];
-for k = 1:numel(pngGlyphs)
-    g = pngGlyphs{k};
+for k = 1:numel(names)
+    g = names{k};
     f = mabr.ui.Icon.file(g);
     assert(ischar(f) && isfile(f),'%s: file() must name a PNG that exists',g);
     assert(strcmp(f,mabr.ui.Icon.file(g)), ...
@@ -205,9 +265,107 @@ for k = 1:numel(orderGlyphs)
     assert(~isempty(regexp(orderSrc,['setButtonIcon\(\s*[A-Za-z_.]+\s*,\s*''' orderGlyphs{k} ''''],'once')), ...
         'no presentation-order button asks for "%s"',orderGlyphs{k});
 end
-fprintf(['  PASS Part F: the %d run-control and %d presentation-order glyphs are PNGs ' ...
-         'with their own alpha, and every one is on a button\n'], ...
-    numel(runGlyphs),numel(orderGlyphs));
+fprintf(['  PASS Part F: all %d glyphs are PNGs with their own alpha, and the %d ' ...
+         'run-control and %d presentation-order glyphs are each on a button\n'], ...
+    numel(names),numel(runGlyphs),numel(orderGlyphs));
+
+% ---- Part D, second half: nothing drawn that nobody asks for ---------------
+rel = strrep(files,[root filesep],'');
+assert(isempty(orphan), ['Icon draws %d glyph(s) that no toolbar or button asks for: ' ...
+    '%s. Each must be requested -- toolButton/Icon.toolbar/Icon.file(''glyph''), ' ...
+    'setButtonIcon/viewIcon(button,''glyph'') or an action''s Glyph field -- in one ' ...
+    'of the %d files scanned (%s); a glyph nothing asks for is a misspelt caller or ' ...
+    'dead art.'], ...
+    numel(orphan),strjoin(orphan,', '),numel(rel),strjoin(rel,', '));
+fprintf('  PASS Part D: every one of the %d glyphs is asked for by a toolbar or button\n', ...
+    numel(names));
 
 fprintf('== verify_icons: PASS ==\n');
+end
+
+% ===========================================================================
+function g = glyphRequests(src)
+% The glyph names the MATLAB source SRC asks mabr.ui.Icon for, one per
+% request, in the forms Part D accepts:
+%   toolButton('glyph',...), Icon.toolbar('glyph',...), Icon.file('glyph')
+%   setButtonIcon(button,'glyph',...), viewIcon(button,'glyph')
+%   an action's Glyph field: 'Glyph','glyph' / a.Glyph = 'glyph' / Glyph="glyph"
+% in either kind of quote. The button may be any name, field or indexed
+% element (b2, obj.Ctrl.onTop, obj.Buttons(k)), and a call may run over
+% lines with "...", as a long one usually does here -- either missed would
+% leave a request unread, and its glyph would look unasked for or, if it is
+% misspelt, slip through. For the same reason a call's literal is read
+% whatever it holds ('no-response' comes back, to be reported as no glyph):
+% those calls take nothing but a glyph. Only a Glyph field is held to
+% letters, since a field of that name may carry a status mark (a filled
+% circle, char(9679)) rather than an Icon name. Comments are dropped first, block and whole-line: an
+% example in a help block, or a request commented out, is not a button.
+src = regexprep(src,'^[ \t]*%\{[ \t]*\r?$.*?^[ \t]*%\}[ \t]*\r?$','','lineanchors');
+src = regexprep(src,'^[ \t]*%[^\n]*','','lineanchors');
+ws   = '(?:\s|\.\.\.[^\n]*\n)*';                     % blanks, or a continuation
+any_ = '["'']([^"''\r\n]+)["'']';                     % any quoted text
+word = '["'']([A-Za-z]+)["'']';                       % letters only
+arg  = '[A-Za-z_][\w.]*(?:\([^()]*\)|\{[^{}]*\})?';   % the button
+pats = {['(?:toolButton|Icon\.toolbar|Icon\.file)\(' ws any_], ...
+        ['(?:setButtonIcon|viewIcon)\(' ws arg ws ',' ws any_], ...
+        ['(?<!\w)Glyph["'']?' ws '[,=]' ws word]};
+g = {};
+for p = 1:numel(pats)
+    t = regexp(src,pats{p},'tokens');
+    g = [g, cellfun(@(x) x{1},t,'UniformOutput',false)]; %#ok<AGROW>
+end
+end
+
+function n = checkScanner()
+% glyphRequests on source written to exercise it: every form a caller may
+% use is read, and nothing that only looks like one. Returns how many
+% snippets it judged.
+nl = newline;
+crlf = [char(13) newline];
+pos = { ...
+    'app.toolButton(''load'',''Open data folder... (Ctrl+O)'',@(s,e) app.openRoot(""));', {'load'}
+    'uipushtool(tb,''CData'',mabr.ui.Icon.toolbar(''gear'',tb))',                          {'gear'}
+    'b.Icon = mabr.ui.Icon.file("copy");',                                                 {'copy'}
+    'mabr.ui.analysis.Style.setButtonIcon(obj.AcceptButton,''accept'',''left'');',         {'accept'}
+    'mabr.ui.analysis.Style.setButtonIcon(h.btn2,"retrack","left")',                       {'retrack'}
+    'obj.setButtonIcon(obj.Ctrl.onTop,''pin'');',                                          {'pin'}
+    'mabr.ui.analysis.View.viewIcon(obj.Buttons(k), ''restore'')',                         {'restore'}
+    ['mabr.ui.analysis.Style.setButtonIcon(obj.PoolButton, ... the long form' nl ...
+     '        ''pool'',''left'');'],                                                       {'pool'}
+    ['mabr.ui.analysis.Style.setButtonIcon( ...' crlf '    obj.NoResponseButton, ...' ...
+     crlf '    ''noresponse'');'],                                                         {'noresponse'}
+    'actions = struct(''Text'',"Load raw data",''Fcn'',@() obj.load(),''Glyph'',''load'');', {'load'}
+    'a.Glyph = "raster";',                                                                 {'raster'}
+    'obj.addAction(Text="Analyse",Glyph="batch")',                                         {'batch'}
+    'mabr.ui.analysis.Style.setButtonIcon(b,''no-response'',''left'');',                   {'no-response'}
+    ['% help: setButtonIcon(b,''accept'')' crlf 'x = 1;' crlf '  % toolButton(''undo'')' ...
+     crlf 'obj.viewIcon(b,''redo''); app.toolButton(''save'',''Save'',@() 1);' crlf],      {'redo','save'}
+    };
+neg = { ...
+    '%       mabr.ui.analysis.Style.setButtonIcon(btn,''accept'',''left'')'
+    ['x = 1;' nl '%{' nl 'obj.toolButton(''undo'',''Undo'',@() 1);' nl '%}' nl 'y = 2;']
+    ['x = 1;' crlf '  %{' crlf 'Style.setButtonIcon(b,''redo'');' crlf '  %}' crlf]
+    'function ok = setButtonIcon(btn,glyph,align)'
+    'ok = mabr.ui.analysis.Style.setButtonIcon(btn,glyph,''left'');'
+    'f = mabr.ui.Icon.file(char(glyph));'
+    'mabr.ui.analysis.View.viewIcon(b,string(a.Glyph));'
+    'if isfield(a,''Glyph'') && strlength(string(a.Glyph)) > 0, end'
+    ['GlyphNoResponse  = "' char(8709) '"']
+    ['s.Glyph = "' char(9679) '";']
+    'a.Glyph = "";'
+    'if a.Glyph == "load", end'
+    'uialert(fig,msg,''Title'',''Icon'',''warning'')'
+    };
+for i = 1:size(pos,1)
+    g = glyphRequests(pos{i,1});
+    assert(isequal(sort(g),sort(pos{i,2})), ...
+        'Part D scanner: expected {%s} from "%s", read {%s}', ...
+        strjoin(pos{i,2},','),pos{i,1},strjoin(g,','));
+end
+for i = 1:numel(neg)
+    g = glyphRequests(neg{i});
+    assert(isempty(g),'Part D scanner: "%s" asks for no glyph, yet {%s} was read', ...
+        neg{i},strjoin(g,','));
+end
+n = size(pos,1) + numel(neg);
 end
