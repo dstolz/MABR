@@ -35,6 +35,50 @@ function run_all_verifications()
 %                                  reload, with the recovered thresholds
 %                                  checked against the level the response was
 %                                  built to appear at
+%       verify_offline_files     - the offline file reader (AbrFile) over
+%                                  every naming style, layout and units era,
+%                                  plus Stats and the prefGuard test helper
+%       verify_offline_stats     - single-trial statistics (SingleTrial) under
+%                                  H0 and with a response, and wave picking
+%                                  and tracking (Peaks) against the truth
+%       verify_offline_thresholds- the named threshold methods
+%                                  (SeriesThreshold) on real permutation
+%                                  p-values, censoring, curation values, the
+%                                  Firth GLM, and the analysis Settings
+%       verify_offline_session   - Session part A: pools, condition keys,
+%                                  acquisition modes, windowed processing,
+%                                  atomic steps, results v2
+%       verify_offline_analyze   - Session part B and Batch: measures,
+%                                  thresholds, curation surviving
+%                                  re-analysis, peaks, edits, replication,
+%                                  conduction delay, the batch loop
+%       verify_offline_catalog   - study discovery (Catalog) and the project
+%                                  store (Project): sessions, notes, where
+%                                  results go, the cache, labels, pools,
+%                                  study aggregation -- nothing written
+%                                  under the data
+%       verify_offline_export    - the tidy tables (Export): censoring
+%                                  columns, CSV/XLSX/Parquet/MAT, the R
+%                                  script, the dictionary, raw tables
+%       verify_offline_script    - the replication script (ScriptWriter):
+%                                  exact literals, and a generated script
+%                                  reproducing an edited analysis bit for bit
+%       verify_offline_app       - the analysis window's shell (AnalysisApp,
+%                                  Model): events, keys, autosave, undo,
+%                                  busy/cancel, prefs, static scans
+%       verify_offline_browser   - the analysis window's browser and Session
+%                                  tab: tree, filter, labels, files, overrides
+%       verify_offline_grid      - the Grid tab: columns, dividers,
+%                                  significance, overlays, gestures, keys
+%       verify_offline_series    - the Series tab: threshold and peak curation
+%                                  by button, key and gesture, side plots
+%       verify_offline_trials    - the Trials tab: single sweeps, hand
+%                                  rejection, the single-trial panels
+%       verify_offline_study     - the Study tab: labels, duplicates,
+%                                  threshold, growth and waveform plots
+%       verify_offline_dialogs   - the analysis window's dialogs (settings,
+%                                  export, batch, batch report, review,
+%                                  levels), driven by their Tags
 %       verify_online_advance    - online correlation-threshold early stop
 %       verify_custom_advance    - the custom advance-function contract:
 %                                  context, validator, template, and a
@@ -198,7 +242,13 @@ function run_all_verifications()
 %   parses the calls below rather than keeping a second copy of them.
 %
 %   Requires the Parallel Computing Toolbox (all but verify_logging,
-%   verify_isi_jitter, verify_strategies, verify_analysis, verify_filters, verify_live_plot,
+%   verify_isi_jitter, verify_strategies, verify_analysis,
+%   verify_offline_files, verify_offline_stats, verify_offline_thresholds,
+%   verify_offline_session, verify_offline_analyze, verify_offline_catalog,
+%   verify_offline_export, verify_offline_script, verify_offline_app,
+%   verify_offline_browser, verify_offline_grid, verify_offline_series,
+%   verify_offline_trials, verify_offline_study, verify_offline_dialogs,
+%   verify_filters, verify_live_plot,
 %   verify_progress_monitor, verify_presentation_order, verify_metric_plot,
 %   verify_trace_organizer,
 %   verify_trace_inspector, verify_audio_settings, verify_input_calibration,
@@ -214,6 +264,11 @@ function run_all_verifications()
 tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_plan, ...
          @verify_engine_loopback, @verify_device_reuse, @verify_data_roundtrip, ...
          @verify_legacy_import,  @verify_analysis, ...
+         @verify_offline_files, @verify_offline_stats, @verify_offline_thresholds, ...
+         @verify_offline_session, @verify_offline_analyze, @verify_offline_catalog, ...
+         @verify_offline_export, @verify_offline_script, @verify_offline_app, ...
+         @verify_offline_browser, @verify_offline_grid, @verify_offline_series, ...
+         @verify_offline_trials, @verify_offline_study, @verify_offline_dialogs, ...
          @verify_online_advance, ...
          @verify_custom_advance, @verify_custom_strategy, ...
          @verify_artifact_rejection, @verify_loop_mode, @verify_filters, ...
