@@ -5,10 +5,13 @@
 % at a time: draws the level series the fit was made from (mabr.analysis.Plot.
 % detection) plus the sweep-stack context for that frequency (Session.plotStack),
 % prints the fitted value, and asks for a curated one. The fit itself is never
-% touched -- mabr.analysis.Session.setThreshold only ever writes the parallel
-% Curated/IsCurated columns, so the model's own answer stays on the record next
-% to whatever a human decided. See mabr.analysis.Threshold and
-% docs/Analysis-Classes.md.
+% touched -- mabr.analysis.Session.setThreshold records a decision (a manual
+% value, or "no response") whose answer lands in Final, mirrored in the
+% Curated/IsCurated columns, so the model's own answer stays on the record
+% next to whatever a human decided. (Session.setDecision/acceptFit are the
+% fuller form: accept the fit, the lowest level with a response, ...) The
+% rows are identified by Session.groupColumns(), the columns that name a
+% series. See mabr.analysis.SeriesThreshold and docs/Analysis-Classes.md.
 %
 % At each row, typed at the "curated value" prompt:
 %   Enter (blank)   leave this row uncurated (Curated stays at the fitted value)
@@ -40,12 +43,17 @@ end
 
 
 %% ------------------------------------------------------------------ CURATE
-idCols = setdiff(string(s.Thresholds.Properties.VariableNames), ...
-    ["Threshold","CILower","CIUpper","Curated","IsCurated","Type","FitTarget", ...
-     "NumLevels","NumSig","Fit","LevelParam"],'stable');
+% The columns that name a series (Stimulus, AcqMode, Frequency, ...): asked
+% of the session rather than guessed from what Thresholds happens to hold,
+% which has grown many result columns since this script was written.
+idCols = s.groupColumns();
 
 fp = "";
-try, fp = s.frequencyParam(); catch, end %#ok<CTCH>
+try
+    fp = s.frequencyParam();
+catch
+    % no frequency axis (a click series): no stack context
+end
 
 fig     = figure('Name',sprintf('Curate thresholds -- %s',s.Name),'NumberTitle','off');
 axFit   = subplot(1,2,1,'Parent',fig);

@@ -290,7 +290,17 @@ classdef Plot
             %   opts.MarkerSize  scatter marker size (default 60)
             %   opts.Parent      axes to draw into (default: a new figure's axes)
             %   opts.Hold        overlay onto Parent instead of clearing it first (default false)
+            %   opts.XLabel      x-axis label (default "Frequency (kHz)")
+            %   opts.YLabel      y-axis label (default "Threshold (dB SPL)"); a
+            %                    caller whose levels are not calibrated says so
+            %                    here ("Threshold (dB)", "Threshold (dB re max)")
+            %   opts.XScale      "log" (default) or "linear"
             %   ax  (returned) the axes
+            %
+            %   A point whose x is not finite -- a click series has no
+            %   frequency -- is skipped, and so is x <= 0 on a log axis: a NaN
+            %   on a log axis is not a point anyone can read. The defaults draw
+            %   exactly what this function always drew.
             arguments
                 freqs (1,:) double
                 thresh (1,:) double
@@ -304,6 +314,22 @@ classdef Plot
                 opts.MarkerSize (1,1) double = 60
                 opts.Parent = []
                 opts.Hold (1,1) logical = false
+                opts.XLabel (1,1) string = "Frequency (kHz)"
+                opts.YLabel (1,1) string = "Threshold (dB SPL)"
+                opts.XScale (1,1) string {mustBeMember(opts.XScale,["log","linear"])} = "log"
+            end
+            if numel(thresh) ~= numel(freqs)
+                error('mabr:analysis:Plot:sizeMismatch', ...
+                    '%d frequencies but %d thresholds.',numel(freqs),numel(thresh));
+            end
+            keep = isfinite(freqs);
+            if opts.XScale == "log", keep = keep & freqs > 0; end
+            if ~all(keep)
+                n0 = numel(freqs);
+                freqs  = freqs(keep);
+                thresh = thresh(keep);
+                if ~isempty(opts.CI) && size(opts.CI,2) == n0, opts.CI = opts.CI(:,keep); end
+                if ~isempty(opts.Colors) && size(opts.Colors,1) == n0, opts.Colors = opts.Colors(keep,:); end
             end
             if isempty(opts.Parent)
                 ax = axes(figure('Name','ABR audiogram','Color','w'));
@@ -311,6 +337,16 @@ classdef Plot
                 ax = opts.Parent;
             end
             if ~opts.Hold, cla(ax); end
+            if isempty(freqs)
+                % Nothing drawable (every x skipped -- a click series on a
+                % frequency axis): labelled, empty axes rather than an error.
+                set(ax,'XScale',char(opts.XScale));
+                grid(ax,'on'); box(ax,'on');
+                xlabel(ax,char(opts.XLabel));
+                ylabel(ax,char(opts.YLabel));
+                mabr.analysis.Plot.plainAxes(ax);
+                return
+            end
             hold(ax,'on');
 
             ceiling = opts.Ceiling;
@@ -357,11 +393,24 @@ classdef Plot
             end
             hold(ax,'off');
 
-            set(ax,'XScale','log','XTick',freqs);
-            xlim(ax,[min(freqs)*2^-0.25 max(freqs)*2^0.25]);
+            set(ax,'XScale',char(opts.XScale));
+            if ~isempty(freqs)
+                % unique() is freqs itself for the sorted, distinct values an
+                % audiogram has, and keeps a repeated or unsorted x from
+                % refusing to draw.
+                set(ax,'XTick',unique(freqs));
+                if opts.XScale == "log"
+                    xlim(ax,[min(freqs)*2^-0.25 max(freqs)*2^0.25]);
+                else
+                    span = max(freqs) - min(freqs);
+                    pad  = 0.05*span;
+                    if pad == 0, pad = max(1,abs(min(freqs))*0.1); end
+                    xlim(ax,[min(freqs)-pad max(freqs)+pad]);
+                end
+            end
             grid(ax,'on'); box(ax,'on');
-            xlabel(ax,'Frequency (kHz)');
-            ylabel(ax,'Threshold (dB SPL)');
+            xlabel(ax,char(opts.XLabel));
+            ylabel(ax,char(opts.YLabel));
             mabr.analysis.Plot.plainAxes(ax);
         end
 

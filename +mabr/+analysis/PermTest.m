@@ -31,6 +31,20 @@ classdef PermTest
 %   threshold is fitted to these p-values, so an unseeded test makes the
 %   threshold itself jitter between re-analyses of the same data.
 %
+%   TFCE IS BOUNDED. TFCE integrates each map in steps of TFCE.dh up to its
+%   largest |t|, and near-noiseless sweeps (a loop-back, a Test Mode file,
+%   data written without noise) have a |t| of 1e8 -- a billion steps, which
+%   is a hang. So no map is integrated over more than MaxTFCESteps steps:
+%   where its |t| would need more, that call's step is raised to |t| over
+%   MaxTFCESteps, a coarser Riemann sum of the same integral (within about
+%   1/MaxTFCESteps of it). It is a backstop for direct calls, applied per
+%   call, so a raised observed map and an unraised null block are summed on
+%   different grids; mabr.analysis.Threshold.detect raises the step for the
+%   observed map and the null alike before it ever comes to that, and says
+%   so. At the default step of 0.1 the cap is a |t| of 1000, well above
+%   what a recording with noise in it reaches, so below it nothing
+%   changes, bit for bit.
+%
 %   Requires no Statistics toolbox -- the t threshold comes from
 %   mabr.metrics.t_quantile.
 %
@@ -39,6 +53,17 @@ classdef PermTest
 %   NeuroImage, 67, 111-118.
 %
 %   See also mabr.analysis.Threshold, mabr.analysis.Session
+
+    properties (Constant)
+        % Most threshold steps one TFCE map is integrated over, per sign and
+        % per call (TFCE.MaxSteps overrides it). 10000 keeps every map whose
+        % |t| stays under 1000 at the default step of 0.1 exactly as it was,
+        % and is ten times mabr.analysis.Threshold.MaxTFCESteps, so a step
+        % detect() has already raised never meets this cap. At the cap an
+        % observed map costs ~0.1 s, a 512-permutation block of maps that
+        % all reach it a few seconds.
+        MaxTFCESteps = 10000
+    end
 
     methods (Static)
         function [pVal,result] = run(X,opts)
@@ -49,7 +74,8 @@ classdef PermTest
             %   opts.NumPermutations   number of sign-flip permutations (default 1000)
             %   opts.Alpha             two-sided per-sample alpha (default 0.05)
             %   opts.MinClusterSize    minimum run length counted as a cluster (default 1)
-            %   opts.TFCE              struct('E',.,'H',.,'dh',.) TFCE parameters
+            %   opts.TFCE              struct('E',.,'H',.,'dh',.) TFCE parameters, and
+            %                          optionally 'MaxSteps' (default MaxTFCESteps)
             %   opts.Seed              [] (default, uses global rng) or an integer seed
             %   opts.BlockSize         permutations generated per batch (default 512)
             %   pVal    (returned) global p-value for the chosen max-statistic
@@ -197,10 +223,13 @@ classdef PermTest
             % Returns a map the same size as T: for each threshold step h, every
             % sample inside a supra-h run gains extent^E * h^H * dh. The
             % accumulation is done with a difference array so a run is two
-            % writes rather than a loop over its samples.
+            % writes rather than a loop over its samples. Each sign takes at
+            % most MaxSteps steps (see the class help): dh is raised to the
+            % largest |t| over MaxSteps where it would take more.
             %
             %   T      [nRows x nSamples] double (t-maps)
-            %   par    struct('E',.,'H',.,'dh',.) TFCE parameters (defaults 0.5,2.0,0.1)
+            %   par    struct('E',.,'H',.,'dh',.) TFCE parameters (defaults 0.5,2.0,0.1),
+            %          optionally 'MaxSteps' (a finite count >= 1, default MaxTFCESteps)
             %   minSz  minimum run length counted (default 1)
             %   A      (returned) [nRows x nSamples] double, TFCE-enhanced map
             arguments
@@ -211,9 +240,15 @@ classdef PermTest
             E  = mabr.analysis.PermTest.getdef(par,'E',0.5);
             H  = mabr.analysis.PermTest.getdef(par,'H',2.0);
             dh = mabr.analysis.PermTest.getdef(par,'dh',0.1);
+            nh = mabr.analysis.PermTest.getdef(par,'MaxSteps',mabr.analysis.PermTest.MaxTFCESteps);
+            if ~(isnumeric(nh) && isscalar(nh) && isreal(nh) && nh >= 1 && isfinite(nh))
+                % Inf or NaN would take the bound away again.
+                error('mabr:analysis:PermTest:maxSteps', ...
+                    'TFCE.MaxSteps must be a finite number of steps, at least 1.');
+            end
 
-            A = mabr.analysis.PermTest.tfceOneSided(max(T,0),E,H,dh,minSz);
-            B = mabr.analysis.PermTest.tfceOneSided(max(-T,0),E,H,dh,minSz);
+            A = mabr.analysis.PermTest.tfceOneSided(max(T,0),E,H,dh,minSz,nh);
+            B = mabr.analysis.PermTest.tfceOneSided(max(-T,0),E,H,dh,minSz,nh);
             A = max(A,B);
         end
 
@@ -302,6 +337,10 @@ classdef PermTest
             d = diff([false(nr,1) mask false(nr,1)],1,2);   % nr x (ns+1)
             [rs,cs] = find(d ==  1);
             [re,ce] = find(d == -1);
+            % On a one-row map find() returns ROW vectors, and [rs cs] would be
+            % one row to sortrows -- every run after the first silently lost.
+            % The observed map of every run is one row, so this matters.
+            rs = rs(:); cs = cs(:); re = re(:); ce = ce(:);
 
             % find() walks column-major; sort both by (row,column) so the k-th
             % start and the k-th end belong to the same run.
@@ -310,24 +349,34 @@ classdef PermTest
 
             len  = ce - cs;                                  % samples in the run
             mass = C(sub2ind([nr ns+1],rs,ce)) - C(sub2ind([nr ns+1],rs,cs));
+            mass = mass(:);                                  % a one-row C indexes as a row
 
             keep = len >= minSz;
             if ~any(keep), return; end
             m = accumarray(rs(keep),mass(keep),[nr 1],@max,0);
         end
 
-        function A = tfceOneSided(X,E,H,dh,minSz)
+        function A = tfceOneSided(X,E,H,dh,minSz,maxSteps)
             % TFCE of a non-negative map, per row.
             %
-            %   X      [nRows x nSamples] double, non-negative
-            %   E,H    TFCE extent/height exponents
-            %   dh     threshold step size
-            %   minSz  minimum run length counted
-            %   A      (returned) [nRows x nSamples] double
+            %   X         [nRows x nSamples] double, non-negative
+            %   E,H       TFCE extent/height exponents
+            %   dh        threshold step size
+            %   minSz     minimum run length counted
+            %   maxSteps  most steps taken; dh is raised to mx/maxSteps
+            %             where mx/dh would exceed it
+            %   A         (returned) [nRows x nSamples] double
             [nr,ns] = size(X);
             A = zeros(nr,ns);
             mx = max(X(:));
             if mx <= 0 || dh <= 0, return; end
+
+            % The backstop. Compared, not recomputed, below the cap, so dh --
+            % and with it every threshold h and every increment -- is the
+            % caller's own to the bit wherever the cap is not reached.
+            if mx > maxSteps*dh
+                dh = mx/maxSteps;
+            end
 
             for h = dh:dh:mx
                 mask = X > h;
@@ -336,6 +385,7 @@ classdef PermTest
                 d = diff([false(nr,1) mask false(nr,1)],1,2);
                 [rs,cs] = find(d ==  1);
                 [re,ce] = find(d == -1);
+                rs = rs(:); cs = cs(:); re = re(:); ce = ce(:);   % one-row map: see maxPositiveMass
                 [~,i] = sortrows([rs cs]); rs = rs(i); cs = cs(i);
                 [~,i] = sortrows([re ce]); ce = ce(i);
 
@@ -348,9 +398,11 @@ classdef PermTest
 
                 % Difference array: add at the run's first sample, subtract one
                 % past its last, then integrate along the row.
-                D = zeros(nr,ns+1);
-                D(sub2ind([nr ns+1],rs,cs)) = D(sub2ind([nr ns+1],rs,cs)) + inc;
-                D(sub2ind([nr ns+1],rs,ce)) = D(sub2ind([nr ns+1],rs,ce)) - inc;
+                % (accumarray, not D(sub2ind(...)) + inc: on a one-row D that
+                % indexing returns a ROW while inc is a column. A run's start
+                % and another's end never share a cell, so every cell is
+                % exactly +inc, -inc or 0, as before.)
+                D = accumarray([rs cs],inc,[nr ns+1]) - accumarray([rs ce],inc,[nr ns+1]);
                 Dc = cumsum(D,2);
                 A = A + Dc(:,1:ns);
             end

@@ -31,6 +31,24 @@ classdef Filter
 %
 %       f.HighPass = [];      % low pass only
 %
+%   THE WINDOWED OPERATOR. An intermixed run is saved COMPACT -- each
+%   condition's 10 ms windows back to back, with no pre-onset sample and a step
+%   at every junction -- and a whole-trace filter would smear each junction's
+%   step onto the response. applyWindowed(X) filters each window ON ITS OWN
+%   instead: a linear detrend, an explicit padding (odd reflection, or zeros
+%   on the left), and a zero-phase Butterworth pair whose corners are this FIR
+%   chain's REALIZED -6 dB points (corners6dB) -- not its nominal pass edges,
+%   at which the FIR is barely -0.25 dB -- so a windowed and a continuous
+%   condition of one study are filtered to the same band:
+%
+%       f = f.design(12000);
+%       [fHP6,fLP6] = f.corners6dB();          % about 240 and 3400 Hz
+%       [Y,info]    = f.applyWindowed(X);      % X: [L x nWindows], raw
+%
+%   Every stage is linear, so filtering each window and then averaging equals
+%   filtering the average -- which is what lets the operator be validated on
+%   averages against the continuous chain.
+%
 %   See also mabr.analysis.Session, mabr.FilterPolicy, filtfilt
 
     properties
@@ -161,6 +179,211 @@ classdef Filter
             tf = ~obj.IsDesigned || n >= obj.MinLength;
         end
 
+        % --- the windowed operator --------------------------------------------
+        function [fHP6,fLP6] = corners6dB(obj)
+            % The chain's realized -6 dB points, one per section.
+            %
+            %   [fHP6,fLP6] = corners6dB(obj)
+            %
+            %   fHP6  (returned) Hz, the lowest frequency at which the high
+            %         pass section's response RISES through -6 dB; NaN when
+            %         the high pass is off
+            %   fLP6  (returned) Hz, the lowest frequency above the low pass's
+            %         pass band at which that section FALLS through -6 dB; NaN
+            %         when the low pass is off
+            %
+            %   Each section is evaluated on its own over linspace(0,Fs/2,8192)
+            %   and squared under "filtfilt" -- the response AS APPLIED -- and
+            %   the crossing is interpolated linearly between grid points. These
+            %   are the corners the windowed operator is designed at, because a
+            %   zero-phase Butterworth is exactly -6 dB at its design corner:
+            %   matching them is what makes a windowed condition and a
+            %   continuous one carry the same band.
+            if ~obj.IsDesigned
+                error('mabr:analysis:Filter:notDesigned', ...
+                    'Filter has not been designed. Call design(Fs) first.');
+            end
+            f = linspace(0,obj.SampleRate/2,8192).';
+            fHP6 = NaN;
+            fLP6 = NaN;
+            if ~isempty(obj.HighNum)
+                dB = obj.sectionDB(obj.HighNum,obj.HighDen,f);
+                k  = find(dB(1:end-1) < -6 & dB(2:end) >= -6,1,'first');
+                if ~isempty(k), fHP6 = mabr.analysis.Filter.crossing(f,dB,k); end
+            end
+            if ~isempty(obj.LowNum)
+                dB = obj.sectionDB(obj.LowNum,obj.LowDen,f);
+                k0 = 1;
+                if ~isempty(obj.LowPass)
+                    % "Above the pass band": an equiripple pass band never
+                    % comes near -6 dB, but a custom design might wobble, and
+                    % only the edge past the pass band is the corner.
+                    kk = find(f >= min(obj.LowPass),1,'first');
+                    if ~isempty(kk), k0 = max(1,kk-1); end
+                end
+                k = find(dB(k0:end-1) >= -6 & dB(k0+1:end) < -6,1,'first');
+                if ~isempty(k), fLP6 = mabr.analysis.Filter.crossing(f,dB,k + k0 - 1); end
+            end
+        end
+
+        function [Y,info] = applyWindowed(obj,X,opts)
+            % Filter short windows, one per column, each on its own.
+            %
+            %   [Y,info] = applyWindowed(obj,X,Order=2,PadMode="reflect")
+            %
+            %   X             [L x N] RAW windows, one per column (any numeric
+            %                 class; cast to double)
+            %   opts.Order    Butterworth order of each section (default 2)
+            %   opts.PadMode  "reflect" (default): odd reflection at both ends;
+            %                 "zeroleft": zeros before the window (what was
+            %                 before the onset is unknown, and after the detrend
+            %                 zero is its expected value), odd reflection after
+            %   Y             (returned) [L x N] double
+            %   info          (returned) struct: HP6, LP6 (Hz, NaN = off), Pad
+            %                 (samples each side), Order, PadMode, Skipped
+            %                 (true when L < 4 or the padded window is too
+            %                 short for filtfilt: Y is then only detrended and
+            %                 the caller should say so), Description
+            %
+            %   1. each column is linearly detrended (detrend(X,1)) -- linear,
+            %      unlike subtracting the window's mean, which would remove the
+            %      response's own mean;
+            %   2. Butterworth sections at this chain's corners6dB(): HP
+            %      butter(Order,fHP6/(Fs/2),'high') and LP
+            %      butter(Order,fLP6/(Fs/2),'low'), each where this chain has
+            %      that band;
+            %   3. P samples padded on each side, P = min(L-1, max(6*Order,
+            %      ceil(5*tau*Fs))) with tau = sqrt(2)/(2*pi*fHP6) the high
+            %      pass's time constant (min(L-1,6*Order) without one) --
+            %      filtfilt's own padding is a fraction of a millisecond, far
+            %      shorter than the ~3 ms a 250 Hz high pass takes to settle, so
+            %      its edge transient would otherwise land on waves I and II;
+            %   4. filtfilt high pass then low pass over the padded block, and
+            %      the middle L rows kept.
+            %   Requires a designed filter (the corners are the design's).
+            arguments
+                obj
+                X {mustBeNumeric}
+                opts.Order (1,1) double {mustBeInteger,mustBeInRange(opts.Order,1,8)} = 2
+                opts.PadMode (1,1) string {mustBeMember(opts.PadMode,["reflect","zeroleft"])} = "reflect"
+            end
+            if ~obj.IsDesigned
+                error('mabr:analysis:Filter:notDesigned', ...
+                    'Filter has not been designed. Call design(Fs) first.');
+            end
+            if ~ismatrix(X)
+                error('mabr:analysis:Filter:notMatrix', ...
+                    'applyWindowed takes an [L x N] matrix of windows, one per column.');
+            end
+            [hp6,lp6] = obj.corners6dB();
+            info = struct('HP6',hp6,'LP6',lp6,'Pad',0,'Order',opts.Order, ...
+                'PadMode',opts.PadMode,'Skipped',false,'Description',"");
+
+            X = double(X);
+            [L,N] = size(X);
+            Y = X;
+            if L == 0 || N == 0
+                info.Description = mabr.analysis.Filter.windowedText(hp6,lp6,opts.Order,opts.PadMode,0);
+                return
+            end
+
+            % 1. Linear detrend, column by column (a single sample has no
+            % trend: its own value goes).
+            if L >= 2
+                Y = detrend(X,1);
+            else
+                Y = X - X;
+            end
+
+            hasHP = isfinite(hp6);
+            hasLP = isfinite(lp6);
+            if L < 4
+                info.Skipped = true;
+                info.Description = mabr.analysis.Filter.windowedText(hp6,lp6,opts.Order,opts.PadMode,0) + ...
+                    " (skipped: window shorter than 4 samples)";
+                return
+            end
+            if ~hasHP && ~hasLP
+                % Both bands off is "reprocess without filtering": the detrend
+                % is all there is to do.
+                info.Description = mabr.analysis.Filter.windowedText(hp6,lp6,opts.Order,opts.PadMode,0);
+                return
+            end
+
+            % 3. The padding.
+            Fs = obj.SampleRate;
+            n  = opts.Order;
+            if hasHP
+                tau = sqrt(2)/(2*pi*hp6);
+                P = min(L-1, max(6*n, ceil(5*tau*Fs)));
+            else
+                P = min(L-1, 6*n);
+            end
+            right = 2*Y(end,:) - Y(end-1:-1:end-P,:);
+            if opts.PadMode == "zeroleft"
+                left = zeros(P,N);
+            else
+                left = 2*Y(1,:) - Y(P+1:-1:2,:);
+            end
+            Z = [left; Y; right];
+            info.Pad = P;
+            info.Description = mabr.analysis.Filter.windowedText(hp6,lp6,n,opts.PadMode,P);
+
+            % filtfilt needs more than 3*(nfilt-1) = 3*Order samples.
+            if size(Z,1) <= 3*n
+                info.Skipped = true;
+                info.Description = info.Description + " (skipped: window too short for this order)";
+                return
+            end
+
+            % 2 and 4. The Butterworth pair, zero phase.
+            nyq = Fs/2;
+            if hasHP
+                [b,a] = butter(n,hp6/nyq,'high');
+                Z = filtfilt(b,a,Z);
+            end
+            if hasLP
+                [b,a] = butter(n,lp6/nyq,'low');
+                Z = filtfilt(b,a,Z);
+            end
+            Y = Z(P+1:P+L,:);
+        end
+
+        function s = describeWindowed(obj,opts)
+            % One-line summary of the windowed operator applyWindowed runs.
+            %
+            %   s = describeWindowed(obj,Order=2,PadMode="reflect")
+            %
+            %   opts.Order, opts.PadMode  as applyWindowed
+            %   s  (returned) 1x1 string, e.g. "Butterworth order 2, -6 dB at
+            %      237-3418 Hz (filtfilt), linear detrend, reflect pad 57". The
+            %      pad is the one an unclipped window gets; a window shorter
+            %      than the pad is padded by L-1 (applyWindowed's info says
+            %      which). Undesigned, the corners are not known yet and the
+            %      text says whose they will be.
+            arguments
+                obj
+                opts.Order (1,1) double {mustBeInteger,mustBeInRange(opts.Order,1,8)} = 2
+                opts.PadMode (1,1) string {mustBeMember(opts.PadMode,["reflect","zeroleft"])} = "reflect"
+            end
+            n = opts.Order;
+            if ~obj.IsDesigned
+                s = sprintf(['Butterworth order %d at the -6 dB points of %s, linear detrend, ' ...
+                    '%s pad'],n,obj.describe(),opts.PadMode);
+                s = string(s);
+                return
+            end
+            [hp6,lp6] = obj.corners6dB();
+            if ~isfinite(hp6) && ~isfinite(lp6)
+                P = 0;
+            elseif isfinite(hp6)
+                P = max(6*n, ceil(5*sqrt(2)/(2*pi*hp6)*obj.SampleRate));
+            else
+                P = 6*n;
+            end
+            s = mabr.analysis.Filter.windowedText(hp6,lp6,n,opts.PadMode,P);
+        end
+
         % --- description ----------------------------------------------------
         function [f,mag] = response(obj,n)
             % Magnitude response of the chain AS APPLIED, in dB.
@@ -219,7 +442,13 @@ classdef Filter
             % One-line summary, e.g. "300-3000 Hz FIR (filtfilt, order 214)".
             %
             %   s  (returned) 1x1 string
-            if isempty(obj.HighNum) && isempty(obj.LowNum) && ~obj.Custom
+            %
+            %   Read from the BANDS, so an undesigned filter says what it will
+            %   do -- "300-3000 Hz FIR (filtfilt, undesigned)" -- rather than
+            %   reading its still-empty coefficients as "no filtering", which is
+            %   what a Session showed before segment() designed it. "no
+            %   filtering" means both bands are off.
+            if ~obj.Custom && isempty(obj.HighPass) && isempty(obj.LowPass)
                 s = "no filtering";
                 return
             end
@@ -269,6 +498,44 @@ classdef Filter
             else
                 y = filter(b,a,x);
             end
+        end
+
+        function dB = sectionDB(obj,b,a,f)
+            % One section's magnitude AS APPLIED (squared under filtfilt), dB.
+            %
+            %   b, a  the section's coefficients
+            %   f     [n x 1] frequencies, Hz
+            %   dB    (returned) [n x 1] 20*log10(|H|) (|H|^2 under filtfilt)
+            H = abs(freqz(b,a,f,obj.SampleRate));
+            if obj.Method == "filtfilt", H = H.^2; end
+            dB = 20*log10(max(H,eps));
+        end
+    end
+
+    methods (Static, Access = private)
+        function fc = crossing(f,dB,k)
+            % Where dB crosses -6 between grid points k and k+1, interpolated
+            % linearly. f, dB: [n x 1]; k: index. fc: (returned) Hz.
+            d = dB(k+1) - dB(k);
+            if d == 0
+                fc = f(k);
+            else
+                fc = f(k) + (-6 - dB(k))*(f(k+1) - f(k))/d;
+            end
+        end
+
+        function s = windowedText(hp6,lp6,order,padMode,pad)
+            % The windowed operator in one line (see describeWindowed).
+            % hp6/lp6: Hz or NaN; order, padMode, pad: as applyWindowed.
+            % s: (returned) 1x1 string.
+            if ~isfinite(hp6) && ~isfinite(lp6)
+                s = "no filtering, linear detrend";
+                return
+            end
+            if isfinite(hp6), lo = sprintf('%.0f',hp6); else, lo = 'DC'; end
+            if isfinite(lp6), hi = sprintf('%.0f',lp6); else, hi = 'Nyq'; end
+            s = string(sprintf(['Butterworth order %d, -6 dB at %s-%s Hz (filtfilt), ' ...
+                'linear detrend, %s pad %d'],order,lo,hi,padMode,pad));
         end
     end
 
@@ -340,9 +607,11 @@ classdef Filter
             b = []; a = 1;
             if isempty(hd), return; end
             if isnumeric(hd), b = hd(:).'; return; end
-            if isprop(hd,'Numerator') || (isstruct(hd) && isfield(hd,'Numerator'))
+            if (isstruct(hd) && isfield(hd,'Numerator')) || (~isstruct(hd) && isprop(hd,'Numerator'))
                 b = hd.Numerator(:).';
-                if isprop(hd,'Denominator'), a = hd.Denominator(:).'; end
+                if (isstruct(hd) && isfield(hd,'Denominator')) || (~isstruct(hd) && isprop(hd,'Denominator'))
+                    a = hd.Denominator(:).';
+                end
                 return
             end
             try

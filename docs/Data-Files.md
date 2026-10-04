@@ -87,7 +87,7 @@ The parts you are likely to want:
 
 | Field | Contents |
 |-------|----------|
-| `ABR_Data.ADC.Data` | The full recorded trace for this condition, one continuous vector |
+| `ABR_Data.ADC.Data` | The recorded trace for this condition: one continuous vector for a run of one stimulus, or this stimulus's sweep windows placed end to end for an intermixed run (see [Compact files](#compact-files-from-intermixed-runs)) |
 | `ABR_Data.ADC.SampleRate` | Sample rate of that trace, in Hz (12000 by default) |
 | `ABR_Data.ADC.SweepOnsets` | Sample index of each sweep's start, for cutting the trace into sweeps |
 | `ABR_Data.ADC.SweepLength` | Sweep length in samples |
@@ -96,7 +96,18 @@ The parts you are likely to want:
 | `ABR_Data.TestMode` | `true` if the file came out of [Test Mode](Test-Mode.md) — the samples are the stimulus, not a recording of a subject. Always present; `false` for an ordinary run |
 | `ABR_Data.SoftwareVersion` | The MABR version that wrote the file |
 
-The file stores the **whole continuous recording plus the onset indices**, not pre-cut sweeps. This means you can re-window, re-filter, or re-reject artifacts later without re-recording — the offline pipeline does exactly that.
+For a run of one stimulus, the file stores the **whole continuous recording plus the onset indices**, not pre-cut sweeps. You can re-window, re-filter or re-reject artifacts later without re-recording, and the offline pipeline does exactly that. Files from an intermixed run are the exception (next section).
+
+## Compact files from intermixed runs
+
+An **intermixed** run presents every stimulus in one recording: the interleaved and shuffled strategies. MABR still writes one `.abr` per stimulus. Repeating the whole shared trace in every file would multiply its size by the number of stimuli, so each stimulus's file holds only **its own sweep windows, placed end to end**:
+
+- Each window is `ADC.SweepLength` samples starting **at** the onset: 0 to +9.917 ms at 12 kHz, 120 samples. There is no pre-stimulus baseline.
+- `ADC.SweepOnsets` is `1, L+1, 2L+1, …`, where `L` is `SweepLength`, so `numel(ADC.Data)` is exactly the number of sweeps × `L`.
+- Successive windows were not recorded back to back. Other stimuli played between them, so the trace steps at every junction. Filtering such a file as one trace would smear each step into its neighbours' samples.
+- Every file of one intermixed run carries the run's start as its `StartTime`.
+
+The offline tools recognise these files. `mabr.analysis.Session` and the [analysis app](Analysis-App.md) call such a condition *interleaved*, and filter each window on its own (*windowed* processing), never across a junction. They keep it a separate series from a conventional run of the same stimulus unless you pool the two, whatever series grouping you choose. A trace cut from one of these files before 0 ms, or beyond the window, is not data: the analysis marks those times as empty. The `abr_analysis/` functions predate the layout and treat every file as one continuous trace.
 
 To get an averaged waveform out of a file in two lines:
 
@@ -134,6 +145,25 @@ The `.mat` extension keeps these files out of anything that reads a folder of `.
 ## Sample rates
 
 Sound is played and recorded at 192 kHz, but stored at 12 kHz. ABRs contain nothing above a few kHz, so the recording is downsampled before saving — a 40-fold reduction in file size with no loss of relevant signal. The stored `SampleRate` always reflects what is actually in `Data`.
+
+## Analysis results (`MABR_Analysis\`)
+
+The [analysis app](Analysis-App.md) and `mabr.analysis.Batch` never write next to the recordings. Opening a data folder writes nothing at all. The first edit or save creates one results folder for the whole study, `<study>\MABR_Analysis\`; **Settings ▸ Results Folder…** can put it elsewhere, for example for a read-only data drive. It holds:
+
+| Path | Contents |
+|---|---|
+| `project.mat` | One variable, `MABRAnalysisProject`: timepoint and group labels, your own columns, pools, in-study flags, per-session overrides, the duplicate policy, and the project's analysis settings |
+| `<subject>\<session>.mat` | One session's results, as **results v2**. The variables are `Version` (= 2), `Provenance`, `Settings`, `StepState`, `StepOptions`, `Summary`, `Files`, `Conditions`, `Means`, `SweepInfo`, `Detection`, `Thresholds`, `CurationArchive`, `Peaks`, `PeakOverrides`, `ManualRejections`, `DetectionOverrides`, `Messages`, `EditLog`. They are separate, so the small ones load on their own. `Means` holds the condition averages in double precision, so a session opened from its results picks exactly the peaks its raw files give. The app and the batch write no raw sweeps (`Sweeps` only when a script asks for them): the `.abr` files stay the data. |
+| `<subject>\pooled\…mat` | the results of a pool of sessions |
+| `.history\` | the previous results file of a session, kept before a re-analysis replaced it (newest three); and `<session>_unreadable_<yyMMddTHHmmss>.mat`, a results file the app could not read, copied aside before anything could overwrite it (never pruned) |
+| `logs\batch_<yyMMddTHHmmss>.csv` | one line per session per batch, written as each finishes |
+| `figures\`, `exports\<yyMMddTHHmmss>\`, `scripts\` | batch summary figures, exports (tables, the R script, the column dictionary, a replication script) and replication scripts |
+
+All of it can be regenerated from the `.abr` files and your curation. The curation itself — decisions, peak picks, manual rejections — lives only in the results files and `project.mat`, so **back the folder up with the data**. See [Files written](Analysis-App.md#files-written) for the details.
+
+Neither kind of file is overwritten unseen when it cannot be read. A session whose results file is damaged opens from its `.abr` files, and a batch analyses it afresh; either way the damaged file is kept in `.history\`. A `project.mat` that cannot be read, or that a newer MABR wrote, makes the whole store read-only until you choose another results folder.
+
+`mabr.analysis.Session.fromResults(file)` reads a results file back into a session without its sweeps, and `loadRaw()` reads the sweeps again from the `.abr` files.
 
 ## Runtime files (safe to ignore)
 
