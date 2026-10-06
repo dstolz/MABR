@@ -360,6 +360,14 @@ Part M holds the **R2021b floor**: no post-R2021b UI identifier outside `Compat.
   - click and double-click.
 - **Growth & latency** in µV, % of reference, and dB re threshold.
 - **The grand average** as the mean of per-subject means.
+- **The waveform grid** (All levels / All series):
+  - every level stacked, loudest at the top, in a column per series, and a click family as one column;
+  - each row's mean equal to the mean of its subjects' curves, offset by its row at its column's spacing;
+  - the row spacing per column, global, or a fixed number of µV;
+  - one legend outside the last column, which does not narrow that column;
+  - Copy data in µV, not stacked positions;
+  - colour by subject, and a column per subject and series;
+  - All series at one level as a panel per series.
 - **Banners**: the different-settings banner and Re-analyse them, and the clean-sweeps banner.
 - **Blind review** switching the tab off.
 - **The empty state.**

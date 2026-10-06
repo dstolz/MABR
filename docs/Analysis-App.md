@@ -426,7 +426,12 @@ Click a point to read it ("SUBJ-ID-1254 · Baseline · 8 kHz · 35 dB, manual, r
 
 **Growth & latency** sub-tab: a wave's amplitude, latency or interpeak interval against level, or against level re the animal's threshold. Amplitudes are in µV or as % of the animal's reference timepoint. Latencies are the reported ones, re sound arrival when a conduction delay is set.
 
-**Waveforms** sub-tab: the grand average of one condition, the mean of per-subject means ± SEM across subjects.
+**Waveforms** sub-tab: the grand average of one condition, the mean of per-subject means ± SEM across subjects. **Series** and **Level** each have an *All* item, which shows the whole family at once:
+
+- **All levels** stacks every level, loudest at the top, as the Grid tab does for one session. Each row holds every subject's curve and each colour group's summary. Choose *All series* as well for one column per series, a frequency × level grid. A click family has one series, so *All levels* draws every click level in one column.
+- **All series** at one level draws a panel per series, each in µV, with one legend.
+
+**Colour by** *Subject* or *Group* tells animals or groups apart; **Show** and **Layout** work as on the other plots, and *One panel per subject* gives the grid a column per subject and series. In the grid, **Scale** sets how far apart the rows are: the largest curve of each column, of the whole grid, or a fixed number of µV. Each column's corner says the spacing ("rows 2 µV apart"). The grid's **Copy data** copies the curves in µV, one column per series, level and group, not their stacked positions.
 
 **Banners** (one at a time). Each names what it counts and what it leaves out:
 

@@ -14,7 +14,15 @@ classdef StudyView < mabr.ui.analysis.View
 %                       line), and what the comparison needs to know of each:
 %                       status, review count, processing, noise, rejection,
 %                       the fewest clean sweeps, units, the settings hash
-%                       (a cell differing from the majority is highlighted).
+%                       (a cell differing from the majority is highlighted),
+%                       the Duration of the recording and the number of
+%                       stimuli presented. Dropdowns filter the rows by In
+%                       study, Subject, Day, Group, Stimuli and Status, and
+%                       Sort by / then by order them by any column (the
+%                       sort is remembered; filters are not). The table's own
+%                       header sort stays off: every callback maps a row to
+%                       its session through SessionKeys, so the view orders
+%                       the rows itself.
 %                       Beneath, the subjects: Group, In study and their own
 %                       columns in place, the Comment through the table's
 %                       Edit comment… (no note is typed into a table cell).
@@ -34,6 +42,16 @@ classdef StudyView < mabr.ui.analysis.View
 %                       arrival when a session has a conduction delay (13 A9).
 %     Waveforms         the grand average of one condition across subjects:
 %                       the mean of per-subject means, ± SEM across subjects.
+%                       Series and Level each offer All: All levels stacks
+%                       every level, loudest at the top, as the Grid tab
+%                       does for one session -- a column per series (All
+%                       series too: a frequency x level grid; a click family
+%                       is one column), each subject's curve and each colour
+%                       group's summary in its row, the row spacing from
+%                       Scale (per column, global, fixed µV) written in each
+%                       column's corner. All series at one level is a panel
+%                       per series. One panel per subject makes a column per
+%                       subject and series.
 %
 %   DUPLICATES. When two in-study sessions measured the same series of one
 %   animal at one visit, Project.DuplicatePolicy decides which one the study
@@ -49,14 +67,15 @@ classdef StudyView < mabr.ui.analysis.View
 %   differ by more than 20% between the plotted groups, duplicated series.
 %
 %   The look (family, x axis, colouring, summary, layout, reference,
-%   no-response rule, measure, y and x modes) persists in the pref
+%   no-response rule, measure, y and x modes, the waveforms' All series /
+%   All levels and their row scale) persists in the pref
 %   OfflineAnalysisStudy, written ONLY from these controls' callbacks.
 %
 %   FOR TESTS (no clicks needed): showSub(name), selectSessions(keys),
 %   clickPoint(k,Open=,Plot=), clickAt(x,y,Plot=,Tile=,Open=) (what a click
 %   on the axes does), thresholdTable(), growthTable(), waveTable(),
-%   the read-only ThrPoints/GrowthPoints/WaveCurves/Readout/BannerKind/
-%   PlotNotes, the pure statics thresholdUnits and settingsOdd, and
+%   the read-only ThrPoints/GrowthPoints/WaveCurves/WaveGrid/Readout/
+%   BannerKind/PlotNotes, the pure statics thresholdUnits and settingsOdd, and
 %   UseDialogs = false, which makes the Analyse and Review buttons call the
 %   Model directly instead of opening their dialogs.
 %
@@ -81,6 +100,11 @@ classdef StudyView < mabr.ui.analysis.View
         YModeCodes   = ["uv","percent"]
         XModeItems   = ["dB","dB re threshold"]
         XModeCodes   = ["db","re-threshold"]
+        WaveScaleItems = ["Per column","Global","Fixed µV"]
+        WaveScaleCodes = ["column","global","fixed"]      % GridView.ScaleIds
+        WaveAllCode  = "(all)"        % the waveforms' Series / Level item "All …"
+        FilterNames  = ["InStudy","Subject","Day","Group","Stimuli","Status"]   % the Sessions table's filters
+        FilterTitles = ["In study","Subject","Day","Group","Stimuli","Status"]
         SubTabNames  = ["Sessions","Thresholds","Growth","Waveforms"]
         SubTabTitles = ["Sessions","Thresholds","Growth & latency","Waveforms"]
         SweepTolerance = 0.2          % groups whose median clean sweeps differ by more: banner
@@ -102,6 +126,11 @@ classdef StudyView < mabr.ui.analysis.View
         ThrPoints = table()           % the threshold points drawn (one per unit)
         GrowthPoints = table()        % the growth points drawn
         WaveCurves = table()          % the per-subject curves the waveforms draw
+        % What the stacked waveform grid (All levels) last drew: Columns
+        % (titles, left to right), Levels (bottom to top), RowY, RowScale
+        % (µV between two rows, per column), Groups (colour groups);
+        % struct() when the waveforms are not a grid.
+        WaveGrid = struct()
         Readout (1,1) string = ""     % the last point's readout
         BannerKind (1,1) string = ""  % "" | units | settings | processing | sweeps | duplicates
         PlotNotes = struct('Thresholds',"",'Growth',"",'Waveforms',"")   % each plot's subtitle
@@ -114,6 +143,9 @@ classdef StudyView < mabr.ui.analysis.View
         SubDirty = struct('Sessions',true,'Thresholds',true,'Growth',true,'Waveforms',true)
         SessionKeys (:,1) string = strings(0,1)  % the Sessions table's rows
         SessionCols (1,:) string = strings(1,0)  % label name per column ("" = read-only)
+        % The Sessions table's filters ("" = all): a facet's code. Not part
+        % of the look -- the values on offer belong to one study.
+        SessFilter = struct('InStudy',"",'Subject',"",'Day',"",'Group',"",'Stimuli',"",'Status',"")
         SubjectKeys (:,1) string = strings(0,1)
         SubjectCols (1,:) string = strings(1,0)
         SelectedSubjects (:,1) string = strings(0,1)  % rows selected in the Subjects table
@@ -235,6 +267,7 @@ classdef StudyView < mabr.ui.analysis.View
                 case "RootChanged"
                     % another folder: its own "no results yet" state
                     obj.EmptyDismissed = false;
+                    for nm = obj.FilterNames, obj.SessFilter.(nm) = ""; end   % (its sessions are not these)
                 case "SessionChanged"
                     % Blind review starts and ends with one: draw again. The
                     % study itself is not changed by which session is open
@@ -386,7 +419,9 @@ classdef StudyView < mabr.ui.analysis.View
             % The look a new window opens with.
             d = struct('Family',"",'X',"",'ColorBy',"timepoint",'Show',"both", ...
                 'Layout',"overlay",'Reference',"none",'NoResponse',"step", ...
-                'Measure',"amp-pt",'YMode',"uv",'XMode',"db");
+                'Measure',"amp-pt",'YMode',"uv",'XMode',"db", ...
+                'WaveAllSeries',false,'WaveAllLevels',false,'WaveScale',"column",'WaveFixed',5, ...
+                'SessSort1',"",'SessDir1',"ascending",'SessSort2',"",'SessDir2',"ascending");
         end
 
         function d = loadDefaults()
@@ -402,13 +437,28 @@ classdef StudyView < mabr.ui.analysis.View
                 'NoResponse',mabr.ui.analysis.StudyView.NoRespCodes; ...
                 'Measure',mabr.ui.analysis.StudyView.MeasureCodes; ...
                 'YMode',mabr.ui.analysis.StudyView.YModeCodes; ...
-                'XMode',mabr.ui.analysis.StudyView.XModeCodes};
+                'XMode',mabr.ui.analysis.StudyView.XModeCodes; ...
+                'WaveScale',mabr.ui.analysis.StudyView.WaveScaleCodes};
             for i = 1:size(chk,1)
                 if ~any(string(d.(chk{i,1})) == chk{i,2}), d.(chk{i,1}) = f.(chk{i,1}); end
             end
-            for n = ["Family","X","Reference"]
+            for n = ["Family","X","Reference","SessSort1","SessSort2"]
                 d.(n) = string(d.(n));
                 if ~isscalar(d.(n)) || ismissing(d.(n)), d.(n) = f.(n); end
+            end
+            for n = ["SessDir1","SessDir2"]
+                d.(n) = string(d.(n));
+                if ~isscalar(d.(n)) || ~any(d.(n) == ["ascending","descending"]), d.(n) = f.(n); end
+            end
+            for n = ["WaveAllSeries","WaveAllLevels"]
+                v = d.(n);
+                if (islogical(v) || isnumeric(v)) && isscalar(v), d.(n) = logical(v); else, d.(n) = f.(n); end
+            end
+            v = d.WaveFixed;
+            if isnumeric(v) && isscalar(v) && isfinite(v) && v > 0
+                d.WaveFixed = double(v);
+            else
+                d.WaveFixed = f.WaveFixed;
             end
         end
 
@@ -678,8 +728,8 @@ classdef StudyView < mabr.ui.analysis.View
             % Two button rows, not one: the labelling tools above the
             % table, the actions beneath -- seven buttons in one row do not
             % fit the tab at the window's minimum width (Export… fell off).
-            g = uigridlayout(tab,[5 1],'Padding',[4 4 4 4],'RowSpacing',4,'BackgroundColor',S.Panel);
-            g.RowHeight = {30,'1x',18,130,30};
+            g = uigridlayout(tab,[7 1],'Padding',[4 4 4 4],'RowSpacing',4,'BackgroundColor',S.Panel);
+            g.RowHeight = {30,40,26,'1x',18,130,30};
             a = uigridlayout(g,[1 4],'Padding',[0 0 0 0],'ColumnSpacing',6,'BackgroundColor',S.Panel);
             a.Layout.Row = 1;
             a.ColumnWidth = {'fit','fit','fit','1x'};
@@ -692,20 +742,63 @@ classdef StudyView < mabr.ui.analysis.View
             obj.Handles.Timepoints = uibutton(a,'Text','Timepoint order…','Tag','AnalysisStudyTimepoints', ...
                 'Tooltip','The order of the timepoints (the plots'' x axis and the reference choices)', ...
                 'ButtonPushedFcn',obj.viewWrap(@(~,~) obj.timepointOrder()));
+            % Filters: a small caption over each dropdown (a dropdown shows
+            % only its value, and at this width there is no room beside it).
+            fg = uigridlayout(g,[2 7],'Padding',[0 0 0 0],'ColumnSpacing',6,'RowSpacing',0,'BackgroundColor',S.Panel);
+            fg.Layout.Row = 2;
+            fg.RowHeight = {14,24};
+            fg.ColumnWidth = {'1x','1x','1x','1x','1x','1x',90};
+            obj.Handles.Filter = struct();
+            for k = 1:numel(obj.FilterNames)
+                nm = obj.FilterNames(k);
+                l = uilabel(fg,'Text',char(obj.FilterTitles(k)),'FontSize',10,'FontColor',S.Muted);
+                l.Layout.Row = 1;  l.Layout.Column = k;
+                d = uidropdown(fg,'Items',{'All'},'ItemsData',{''},'Tag',char("AnalysisStudyFilter" + nm), ...
+                    'Tooltip',char("Show only the sessions whose " + obj.FilterTitles(k) + " is…"), ...
+                    'ValueChangedFcn',obj.viewWrap(@(s,~) obj.onSessionFilter(nm,s.Value)));
+                d.Layout.Row = 2;  d.Layout.Column = k;
+                obj.Handles.Filter.(nm) = d;
+            end
+            obj.Handles.FilterCount = uilabel(fg,'Text','','Tag','AnalysisStudyFilterCount', ...
+                'FontSize',10,'FontColor',S.Muted,'HorizontalAlignment','right');
+            obj.Handles.FilterCount.Layout.Row = 1;  obj.Handles.FilterCount.Layout.Column = 7;
+            obj.Handles.FilterClear = uibutton(fg,'Text','Clear filters','Tag','AnalysisStudyFilterClear', ...
+                'Tooltip','Show every session again','ButtonPushedFcn',obj.viewWrap(@(~,~) obj.onClearFilters()));
+            obj.Handles.FilterClear.Layout.Row = 2;  obj.Handles.FilterClear.Layout.Column = 7;
+
+            % Sort: the table's own header sort is off (see renderSessions).
+            sg = uigridlayout(g,[1 5],'Padding',[0 0 0 0],'ColumnSpacing',6,'BackgroundColor',S.Panel);
+            sg.Layout.Row = 3;
+            sg.ColumnWidth = {'fit','1x',100,'1x',100};
+            sl = uilabel(sg,'Text','Sort by','FontColor',S.Muted,'HorizontalAlignment','right');
+            sl.Layout.Column = 1;
+            dirItems = {'Ascending','Descending'};  dirCodes = {'ascending','descending'};
+            sortSpec = {2,'SessSort1','AnalysisStudySortBy1','Sort the sessions by this column'; ...
+                3,'SessDir1','AnalysisStudySortDir1','The direction of the first sort'; ...
+                4,'SessSort2','AnalysisStudySortBy2','Then, among equal values, by this column'; ...
+                5,'SessDir2','AnalysisStudySortDir2','The direction of the second sort'};
+            for k = 1:4
+                col = sortSpec{k,1};  fld = sortSpec{k,2};
+                d = uidropdown(sg,'Items',{'(table order)'},'ItemsData',{''},'Tag',sortSpec{k,3}, ...
+                    'Tooltip',sortSpec{k,4},'ValueChangedFcn',obj.viewWrap(@(s,~) obj.onSessionSort(fld,s.Value)));
+                d.Layout.Column = col;
+                if startsWith(fld,"SessDir"), set(d,'Items',dirItems,'ItemsData',dirCodes); end
+                obj.Handles.(erase(sortSpec{k,3},'AnalysisStudy')) = d;   % SortBy1 SortDir1 SortBy2 SortDir2
+            end
             t = uitable(g,'Tag','AnalysisStudySessions','RowName',{}, ...
                 'Tooltip','Every session; edit In study, Timepoint, Group and your own columns in place (Ctrl+Z undoes)');
-            t.Layout.Row = 2;
+            t.Layout.Row = 4;
             t.CellEditCallback = obj.viewWrap(@(s,e) obj.onSessionEdit(e));
             t.CellSelectionCallback = obj.viewWrap(@(s,e) obj.onSessionSelect(s,e));
             mabr.ui.analysis.Compat.setSortable(t,false);
             obj.tableMenu(t,"sessions");
             obj.Handles.Sessions = t;
             l = uilabel(g,'Text','Subjects','FontWeight','bold','FontColor',S.Ink);
-            l.Layout.Row = 3;
+            l.Layout.Row = 5;
             u = uitable(g,'Tag','AnalysisStudySubjects','RowName',{}, ...
                 'Tooltip',['The animals: edit Group, In study and your own subject columns in place; ' ...
                 'right-click for Edit comment…']);
-            u.Layout.Row = 4;
+            u.Layout.Row = 6;
             u.CellEditCallback = obj.viewWrap(@(s,e) obj.onSubjectEdit(e));
             u.CellSelectionCallback = obj.viewWrap(@(s,e) obj.onSubjectSelect(s,e));
             mabr.ui.analysis.Compat.setSortable(u,false);
@@ -713,7 +806,7 @@ classdef StudyView < mabr.ui.analysis.View
             obj.Handles.Subjects = u;
 
             b = uigridlayout(g,[1 5],'Padding',[0 0 0 0],'ColumnSpacing',6,'BackgroundColor',S.Panel);
-            b.Layout.Row = 5;
+            b.Layout.Row = 7;
             b.ColumnWidth = {'1x','fit','fit','fit','fit'};
             sp = uilabel(b,'Text','');
             sp.Layout.Column = 1;
@@ -802,17 +895,38 @@ classdef StudyView < mabr.ui.analysis.View
 
         function buildWaveforms(obj,tab)
             S = mabr.ui.analysis.Style;
-            g = uigridlayout(tab,[2 1],'Padding',[4 4 4 4],'RowSpacing',4,'BackgroundColor',S.Panel);
-            g.RowHeight = {30,'1x'};
-            c = uigridlayout(g,[1 5],'Padding',[0 2 0 2],'ColumnSpacing',6,'BackgroundColor',S.Panel);
-            c.ColumnWidth = {'fit','1x','fit','1x','2x'};
+            g = uigridlayout(tab,[3 1],'Padding',[4 4 4 4],'RowSpacing',4,'BackgroundColor',S.Panel);
+            g.RowHeight = {30,'1x',0};
+            obj.Handles.WavesGrid = g;
+            c = uigridlayout(g,[1 9],'Padding',[0 2 0 2],'ColumnSpacing',6,'BackgroundColor',S.Panel);
+            c.ColumnWidth = {'fit','1x','fit','1x','fit','1x',56,'fit','0.5x'};
             obj.Handles.WaveSeries = obj.dropdown(c,1,"Series","AnalysisStudyWaveSeries","","", ...
-                @(s,~) obj.onChoice("WaveSeries",s.Value),"The series whose grand average is drawn");
+                @(s,~) obj.onWaveChoice("WaveSeries",s.Value), ...
+                "The series whose grand average is drawn (All series: one column, or panel, per series)");
             obj.Handles.WaveLevel = obj.dropdown(c,3,"Level","AnalysisStudyWaveLevel","","", ...
-                @(s,~) obj.onChoice("WaveLevel",s.Value),"The level whose grand average is drawn");
+                @(s,~) obj.onWaveChoice("WaveLevel",s.Value), ...
+                "The level whose grand average is drawn (All levels: every level stacked, loudest at the top, as on the Grid tab)");
+            obj.Handles.WaveScale = obj.dropdown(c,5,"Scale","AnalysisStudyWaveScale",obj.WaveScaleItems, ...
+                obj.WaveScaleCodes,@(s,~) obj.onLook("WaveScale",s.Value), ...
+                ['Row spacing of the stacked levels (Level: All levels): the largest curve of each ' ...
+                'column, of the whole grid, or a fixed number of microvolts']);
+            fixed = mabr.ui.analysis.StudyView.factoryDefaults().WaveFixed;
+            if isfield(obj.ViewLook,'WaveFixed'), fixed = double(obj.ViewLook.WaveFixed); end
+            f = uieditfield(c,'numeric','Value',fixed, ...
+                'Limits',[1e-3 1e6],'LowerLimitInclusive','on','Tag','AnalysisStudyWaveFixed', ...
+                'Tooltip','Microvolts between two rows when Scale is Fixed µV', ...
+                'ValueChangedFcn',obj.viewWrap(@(s,~) obj.onLook("WaveFixed",s.Value)));
+            f.Layout.Row = 1;  f.Layout.Column = 7;
+            obj.Handles.WaveFixed = f;
+            u = uilabel(c,'Text','µV','FontColor',S.Muted);
+            u.Layout.Row = 1;  u.Layout.Column = 8;
             p = obj.plotPanel(g,"AnalysisStudyWavesPanel");
             p.Layout.Row = 2;
             obj.Handles.WavesPanel = p;
+            % (the grid's note: its columns are too narrow for a subtitle)
+            n = uilabel(g,'Text','','Tag','AnalysisStudyWaveNote','FontColor',S.Muted,'FontSize',10);
+            n.Layout.Row = 3;
+            obj.Handles.WaveNote = n;
         end
 
         function p = plotPanel(~,g,tag)
@@ -1083,7 +1197,16 @@ classdef StudyView < mabr.ui.analysis.View
             obj.Choice.At = obj.firstOr(obj.Choice.At,codes);
             obj.setChoice('at',obj.Handles.At,items,codes,obj.Choice.At);
             obj.Choice.WaveSeries = obj.firstOr(obj.Choice.WaveSeries,codes);
-            obj.setChoice('wseries',obj.Handles.WaveSeries,items,codes,obj.Choice.WaveSeries);
+            wv = obj.Choice.WaveSeries;
+            if numel(codes) > 1
+                % (a family of one series has nothing to put side by side)
+                if logical(L.WaveAllSeries), wv = obj.WaveAllCode; end
+                items = ["All series",items];
+                codes = [obj.WaveAllCode,codes];
+            end
+            obj.setChoice('wseries',obj.Handles.WaveSeries,items,codes,wv);
+            obj.setChoice('wscale',obj.Handles.WaveScale,obj.WaveScaleItems,obj.WaveScaleCodes,L.WaveScale);
+            obj.put('wave_fixed',obj.Handles.WaveFixed,'Value',double(L.WaveFixed));
         end
 
         function setChoice(obj,key,h,items,codes,value)
@@ -1110,7 +1233,9 @@ classdef StudyView < mabr.ui.analysis.View
 
         function onLook(obj,field,value)
             % A look control: remember it (the user chose it) and redraw.
-            obj.ViewLook.(field) = string(value);
+            % (a dropdown's text as a string; a number stays one)
+            if ischar(value) || isstring(value), value = string(value); end
+            obj.ViewLook.(field) = value;
             obj.savePrefs();
             obj.Readout = "";
             if any(field == ["Family","Measure"])
@@ -1124,6 +1249,31 @@ classdef StudyView < mabr.ui.analysis.View
         function onChoice(obj,field,value)
             % A choice that is not part of the look (it depends on the data).
             obj.Choice.(field) = string(value);
+            obj.Readout = "";
+            obj.renderGuarded(@() obj.renderSub());
+            obj.userDrawn();
+        end
+
+        function onWaveChoice(obj,field,value)
+            % The waveforms' Series or Level. Which series or level is a
+            % choice that depends on the data (Choice); "All" is part of
+            % the look (WaveAllSeries / WaveAllLevels), remembered when the
+            % user changes it, and the one series or level last picked is
+            % kept for when they go back to one.
+            %   field  "WaveSeries" | "WaveLevel"
+            value = string(value);
+            if field == "WaveSeries"
+                flag = "WaveAllSeries";  key = "wseries";
+            else
+                flag = "WaveAllLevels";  key = "wlevel";
+            end
+            obj.forgetWritten(char("dd_" + key + "_value"));
+            isAll = value == obj.WaveAllCode;
+            if ~isAll, obj.Choice.(field) = value; end
+            if logical(obj.ViewLook.(flag)) ~= isAll
+                obj.ViewLook.(flag) = isAll;
+                obj.savePrefs();
+            end
             obj.Readout = "";
             obj.renderGuarded(@() obj.renderSub());
             obj.userDrawn();
@@ -1170,11 +1320,12 @@ classdef StudyView < mabr.ui.analysis.View
             n = height(V);
             [free,flevel,ftype] = obj.freeColumns();
             names = ["In study","Subject","Session","Day","Timepoint","Group",free, ...
-                "Stimuli","Status","Reviewed","Processing","Noise (µV)","% rejected","Min N", ...
-                "Units","Settings"];
-            cols = ["InStudy","","","","Timepoint","Group",free,strings(1,9)];
+                "Stimuli","N presented","Duration","Status","Reviewed","Processing","Noise (µV)", ...
+                "% rejected","Min N","Units","Settings"];
+            cols = ["InStudy","","","","Timepoint","Group",free,strings(1,11)];
             C = cell(n,numel(names));
             txt = @mabr.ui.analysis.StudyView.cellText;
+            [dur,npres] = mabr.ui.analysis.StudyView.sessionExtent(V);
             for i = 1:n
                 C{i,1} = logical(V.InStudy(i));
                 C{i,2} = txt(V.Subject(i));
@@ -1188,25 +1339,38 @@ classdef StudyView < mabr.ui.analysis.View
                 end
                 c0 = 6 + numel(free);
                 C{i,c0+1} = txt(V.Stimuli(i));
+                if isnan(npres(i)), C{i,c0+2} = ''; else, C{i,c0+2} = sprintf('%d',npres(i)); end
+                C{i,c0+3} = mabr.ui.analysis.StudyView.durationText(dur(i));
                 full = V.NumSeries(i) > 0 && V.Reviewed(i) >= V.NumSeries(i);
                 st = S.statusGlyph(V.Status(i),full) + " " + V.StatusText(i);
                 if V.TestMode(i) == "all", st = S.BadgeTest + " " + st; end
-                C{i,c0+2} = char(st);
-                if V.NumSeries(i) > 0, C{i,c0+3} = sprintf('%d/%d',V.Reviewed(i),V.NumSeries(i));
-                else, C{i,c0+3} = ''; end
-                C{i,c0+4} = txt(V.Processing(i));
+                C{i,c0+4} = char(st);
+                if V.NumSeries(i) > 0, C{i,c0+5} = sprintf('%d/%d',V.Reviewed(i),V.NumSeries(i));
+                else, C{i,c0+5} = ''; end
+                C{i,c0+6} = txt(V.Processing(i));
                 r = find(D.Stats.Session == V.Key(i),1);
                 if isempty(r)
-                    C(i,c0+5:c0+7) = {''};
+                    C(i,c0+7:c0+9) = {''};
                 else
-                    C{i,c0+5} = obj.numText(D.Stats.Noise(r)*1e6,3);
-                    C{i,c0+6} = obj.numText(D.Stats.PctRejected(r),3);
-                    C{i,c0+7} = obj.numText(D.Stats.MinN(r),6);
+                    C{i,c0+7} = obj.numText(D.Stats.Noise(r)*1e6,3);
+                    C{i,c0+8} = obj.numText(D.Stats.PctRejected(r),3);
+                    C{i,c0+9} = obj.numText(D.Stats.MinN(r),6);
                 end
                 uu = [string(txt(V.Units(i))), string(txt(V.LevelUnit(i)))];
-                C{i,c0+8} = char(strjoin(uu(uu ~= ""),", "));
-                C{i,c0+9} = txt(V.SettingsHash(i));
+                C{i,c0+10} = char(strjoin(uu(uu ~= ""),", "));
+                C{i,c0+11} = txt(V.SettingsHash(i));
             end
+
+            % Filter, then sort: the rows shown, in order. The table's own
+            % header sort stays off (every callback maps a row to its
+            % session through SessionKeys), so the order is decided here.
+            facets = obj.sessionFacets(V);
+            obj.syncSessionControls(facets,names);
+            ord = find(obj.sessionMask(facets,n));
+            ord = obj.sortedRows(ord,V,names,C,dur);
+            obj.put('sess_count',obj.Handles.FilterCount,'Text', ...
+                char(obj.pick(numel(ord) == n,sprintf('%d sessions',n),sprintf('Showing %d of %d',numel(ord),n))));
+            C = C(ord,:);
             t = obj.Handles.Sessions;
             ed = cols ~= "";
             fmt = repmat({'char'},1,numel(names));
@@ -1215,16 +1379,17 @@ classdef StudyView < mabr.ui.analysis.View
             obj.put('sess_fmt',t,'ColumnFormat',fmt);
             obj.put('sess_edit',t,'ColumnEditable',ed);
             obj.put('sess_data',t,'Data',C);
-            obj.SessionKeys = string(V.Key);
+            obj.SessionKeys = string(V.Key(ord));
             obj.SessionCols = cols;
             % Styles: rows out of the study muted; a settings hash that is
-            % not the majority's highlighted.
+            % not the majority's highlighted (the majority of the whole
+            % study, not of the rows showing).
             hc = numel(names);
             h = V.SettingsHash;
             maj = mabr.ui.analysis.StudyView.mostCommon(h(h ~= ""));
-            odd = find(h ~= "" & h ~= maj);
-            out = find(~(V.InStudy & V.SubjectInStudy));
-            sig = {reshape(odd,1,[]),reshape(out,1,[]),n,hc};
+            odd = find(h(ord) ~= "" & h(ord) ~= maj);
+            out = find(~(V.InStudy(ord) & V.SubjectInStudy(ord)));
+            sig = {reshape(odd,1,[]),reshape(out,1,[]),numel(ord),hc};
             if ~isfield(obj.Written,'sess_styles') || ~isequal(obj.Written.sess_styles,sig)
                 try
                     removeStyle(t);
@@ -1270,6 +1435,212 @@ classdef StudyView < mabr.ui.analysis.View
             obj.put('subj_data',u,'Data',C2);
             obj.SubjectKeys = string(U.Subject);
             obj.SubjectCols = scols;
+        end
+
+        % ---- Sessions table: filters and sort ----------------------------
+        function F = sessionFacets(obj,V)
+            % What each filter offers and what each session holds for it
+            % (pure over V): F.(name) = struct Values (n-by-1 cell of string
+            % arrays -- a session may hold several stimuli), Items, Codes
+            % (the choices, "All" first with the code "").
+            n = height(V);
+            nat = @(s) reshape(mabr.analysis.Stats.naturalSort(reshape(string(s),[],1)),[],1);
+            clean = @(s) reshape(s(~ismissing(s) & s ~= ""),[],1);
+            lastOf = @(u,tail) [u(u ~= tail); u(u == tail)];
+            none = "(none)";  unk = "(unknown date)";
+            F = struct();
+
+            v = repmat("no",n,1);  v(logical(V.InStudy)) = "yes";
+            codes = ["yes";"no"];  items = ["Yes";"No"];
+            keep = ismember(codes,v);
+            F.InStudy = obj.facet(num2cell(v),items(keep),codes(keep));
+
+            v = string(V.Subject);  v(ismissing(v)) = "";
+            u = nat(unique(clean(v)));
+            F.Subject = obj.facet(num2cell(v),u,u);
+
+            v = repmat(unk,n,1);  ok = ~isnat(V.Day);
+            v(ok) = string(V.Day(ok),'yyyy-MM-dd');
+            u = lastOf(sort(unique(v)),unk);
+            F.Day = obj.facet(num2cell(v),u,u);
+
+            v = string(V.Group);  v(ismissing(v) | v == "") = none;
+            u = lastOf(nat(unique(v)),none);
+            F.Group = obj.facet(num2cell(v),u,u);
+
+            toks = cell(n,1);
+            for i = 1:n
+                t = strtrim(split(string(V.Stimuli(i)),","));
+                toks{i} = reshape(t(t ~= "" & ~ismissing(t)),[],1);
+            end
+            u = nat(unique(clean(vertcat(strings(0,1),toks{:}))));
+            F.Stimuli = obj.facet(toks,u,u);
+
+            v = string(V.Status);  v(ismissing(v)) = "";
+            codes = ["current";"stale";"none";"failed"];
+            items = ["Up to date";"Out of date";"Not analysed";"Failed"];
+            keep = ismember(codes,v);
+            F.Status = obj.facet(num2cell(v),items(keep),codes(keep));
+        end
+
+        function s = facet(~,values,items,codes)
+            s = struct('Values',{values},'Items',["All";reshape(string(items),[],1)], ...
+                'Codes',["";reshape(string(codes),[],1)]);
+        end
+
+        function keep = sessionMask(obj,F,n)
+            % The sessions the filters let through.
+            keep = true(n,1);
+            for nm = obj.FilterNames
+                code = string(obj.SessFilter.(nm));
+                if code == "", continue; end
+                v = F.(nm).Values;
+                hit = false(n,1);
+                for i = 1:n, hit(i) = any(string(v{i}) == code); end
+                keep = keep & hit;
+            end
+        end
+
+        function syncSessionControls(obj,F,names)
+            % The filter and sort dropdowns' items and values. A filter
+            % value the data no longer holds (another study, a label
+            % edited away) goes back to All.
+            for nm = obj.FilterNames
+                f = F.(nm);
+                code = string(obj.SessFilter.(nm));
+                if ~any(f.Codes == code), code = ""; obj.SessFilter.(nm) = ""; end
+                obj.setChoice(char("sf_" + nm),obj.Handles.Filter.(nm),f.Items,f.Codes,code);
+            end
+            anyOn = any(structfun(@(c) string(c) ~= "",obj.SessFilter));
+            obj.put('sf_clear',obj.Handles.FilterClear,'Enable',obj.pick(anyOn,'on','off'));
+
+            L = obj.ViewLook;
+            s1 = string(L.SessSort1);
+            if ~any(names == s1), s1 = ""; end
+            s2 = string(L.SessSort2);
+            if s1 == "" || s2 == s1 || ~any(names == s2), s2 = ""; end
+            obj.setChoice('ss_by1',obj.Handles.SortBy1,["(table order)",names],["",names],s1);
+            rest = names(names ~= s1);
+            obj.setChoice('ss_by2',obj.Handles.SortBy2,["(then by)",rest],["",rest],s2);
+            dirs = ["Ascending","Descending"];  dcodes = ["ascending","descending"];
+            obj.setChoice('ss_dir1',obj.Handles.SortDir1,dirs,dcodes,L.SessDir1);
+            obj.setChoice('ss_dir2',obj.Handles.SortDir2,dirs,dcodes,L.SessDir2);
+            obj.put('ss_en_by2',obj.Handles.SortBy2,'Enable',obj.pick(s1 ~= "",'on','off'));
+            obj.put('ss_en_dir1',obj.Handles.SortDir1,'Enable',obj.pick(s1 ~= "",'on','off'));
+            obj.put('ss_en_dir2',obj.Handles.SortDir2,'Enable',obj.pick(s2 ~= "",'on','off'));
+        end
+
+        function ord = sortedRows(obj,ord,V,names,C,dur)
+            % ORD (rows of V, in table order) put in the order of the two
+            % sort columns; ties keep table order, descending included.
+            L = obj.ViewLook;
+            keys = zeros(numel(ord),0);
+            used = strings(1,0);
+            for j = 1:2
+                nm = string(L.("SessSort" + j));
+                col = find(names == nm,1);
+                if nm == "" || isempty(col) || any(used == nm), continue; end
+                used(end+1) = nm; %#ok<AGROW>
+                txt = strings(size(C,1),1);                  % (In study holds logicals, not text)
+                if nm ~= "In study", txt = string(C(:,col)); end
+                [k,miss] = obj.sessionSortKey(nm,V,txt,dur);
+                k = k(ord);  miss = miss(ord);
+                if string(L.("SessDir" + j)) == "descending", k = -k; end
+                k(miss) = Inf;                    % what has no value goes last, either way
+                keys(:,end+1) = k; %#ok<AGROW>
+            end
+            if isempty(keys) || isempty(ord), return; end
+            [~,i] = sortrows([keys,(1:numel(ord)).']);
+            ord = ord(i);
+        end
+
+        function [k,miss] = sessionSortKey(obj,name,V,txt,dur)
+            % A number per session to sort NAME by (over every row of V; txt
+            % is the column's cell text, in V's order), and which sessions
+            % have no value. Numbers sort as numbers, dates as dates,
+            % timepoints in the study's timepoint order, the rest the way a
+            % person reads numbers in text (SUBJ-ID-959 before 1254).
+            n = height(V);
+            miss = false(n,1);
+            switch name
+                case "In study"
+                    k = double(V.InStudy);
+                case "Day"
+                    k = posixtime(V.Day);  miss = isnan(k);
+                case "Duration"
+                    k = dur;  miss = isnan(k);
+                case "Reviewed"
+                    k = double(V.Reviewed)./max(double(V.NumSeries),1);  miss = V.NumSeries == 0;
+                case "Timepoint"
+                    tps = obj.studyTimepoints();
+                    k = numel(tps) + obj.textRank(txt);
+                    [tf,loc] = ismember(lower(string(V.Timepoint)),lower(tps));
+                    k(tf) = loc(tf);
+                    miss = txt == "";
+                case "Status"
+                    codes = ["failed","none","stale","current"];   % the labels' alphabetical order
+                    [~,k] = ismember(string(V.Status),codes);
+                otherwise
+                    miss = txt == "";
+                    num = str2double(txt);
+                    if any(~miss) && all(~isnan(num(~miss)))
+                        k = num;
+                    else
+                        k = obj.textRank(txt);
+                    end
+            end
+            k = reshape(double(k),[],1);
+            k(isnan(k)) = 0;
+            if isempty(k), k = zeros(n,1); end
+        end
+
+        function k = textRank(~,txt)
+            % Equal texts share a rank; ranks follow natural order.
+            txt = reshape(string(txt),[],1);
+            txt(ismissing(txt)) = "";
+            n = numel(txt);
+            k = ones(n,1);
+            if n < 2, return; end
+            [s,i] = mabr.analysis.Stats.naturalSort(txt);
+            g = [1; 1 + cumsum(lower(s(2:end)) ~= lower(s(1:end-1)))];
+            k(i) = g;
+        end
+
+        function onSessionFilter(obj,name,code)
+            % A filter dropdown. Not part of the look (it belongs to this
+            % study), so nothing is remembered.
+            obj.SessFilter.(char(name)) = string(code);
+            obj.afterSessionView();
+        end
+
+        function onClearFilters(obj)
+            for nm = obj.FilterNames, obj.SessFilter.(nm) = ""; end
+            obj.afterSessionView();
+        end
+
+        function onSessionSort(obj,field,value)
+            % A sort dropdown: the user's choice, so remembered (pref).
+            obj.ViewLook.(char(field)) = string(value);
+            obj.savePrefs();
+            obj.afterSessionView();
+        end
+
+        function afterSessionView(obj)
+            % The dropdown just showed what the user picked, not what put()
+            % last wrote: forget those records, then redraw the table.
+            for nm = obj.FilterNames, obj.forgetWritten(char("dd_sf_" + nm + "_value")); end
+            for nm = ["by1","by2","dir1","dir2"], obj.forgetWritten(char("dd_ss_" + nm + "_value")); end
+            obj.renderGuarded(@() obj.renderSessions());
+            obj.restoreSessionSelection();
+            obj.syncButtons();
+            obj.userDrawn();
+        end
+
+        function restoreSessionSelection(obj)
+            % Rows moved or went: select the same sessions again (those
+            % still showing; renderSessions dropped the rest).
+            [~,rows] = ismember(obj.SelectedKeys,obj.SessionKeys);
+            mabr.ui.analysis.Compat.setSelectedRows(obj.Handles.Sessions,rows(rows > 0));
         end
 
         function onSessionEdit(obj,evt)
@@ -2058,17 +2429,34 @@ classdef StudyView < mabr.ui.analysis.View
             [W,t,info] = obj.waveData();
             obj.WaveCurves = W;
             obj.PlotNotes.Waveforms = info.Note;
+            stacked = info.Mode == "levels";
+            obj.syncWaveControls(stacked,info.Note);
             if height(W) == 0
+                obj.WaveGrid = struct();
                 obj.emptyAxes("waveforms",panel,"No averaged waveforms of this series and level are in the study.");
                 return
             end
+            if stacked
+                obj.renderWaveGrid(W,t,info);
+                return
+            end
             perSubject = string(L.Layout) == "subject";
-            if perSubject, W.Tile = W.Subject; else, W.Tile = repmat("",height(W),1); end
+            bySeries = info.Mode == "series";          % every series at one level: a panel each
+            if bySeries && perSubject
+                W.Tile = W.Subject + " · " + W.Series;
+            elseif bySeries
+                W.Tile = W.Series;
+            elseif perSubject
+                W.Tile = W.Subject;
+            else
+                W.Tile = repmat("",height(W),1);
+            end
             obj.WaveCurves = W;
             tiles = obj.tileOrder(W);
             glabels = obj.groupOrder(W);
             sig = {W,t,L,tiles,glabels,info};
             if obj.sameDrawn("waveforms",sig), return; end
+            obj.WaveGrid = struct();
             ax = obj.tiles("waveforms",panel,numel(tiles));
             ng = numel(glabels);
             showInd = perSubject || any(string(L.Show) == ["individuals","both"]);
@@ -2097,16 +2485,7 @@ classdef StudyView < mabr.ui.analysis.View
                             'HitTest','off','DisplayName',char(glabels(gi)));
                     end
                     if showSum
-                        if string(L.Show) == "median"
-                            Q = mabr.analysis.Stats.percentileCols(Yg.',[0.25 0.5 0.75]);
-                            mu = Q(2,:).';  lo = Q(1,:).';  hi = Q(3,:).';
-                        else
-                            mu = mean(Yg,2,'omitnan');
-                            nn = sum(isfinite(Yg),2);
-                            se = std(Yg,0,2,'omitnan')./sqrt(max(nn,1));
-                            se(nn < 2) = NaN;
-                            lo = mu - se;  hi = mu + se;
-                        end
+                        [mu,lo,hi] = mabr.ui.analysis.StudyView.curveSummary(Yg,string(L.Show) == "median");
                         ok = isfinite(lo) & isfinite(hi);
                         if any(ok)
                             tb = t(ok);
@@ -2130,15 +2509,329 @@ classdef StudyView < mabr.ui.analysis.View
                 ylabel(a,"Amplitude (µV)");
                 if tiles(k) ~= "", title(a,tiles(k),'Interpreter','none','FontWeight','normal'); end
             end
-            obj.placeLegends(ax,tH,tL,tG,glabels,perSubject);
+            % a panel per series is one plot cut in pieces: one legend, its
+            % n counted over every panel
+            names = obj.groupNames(W,glabels,perSubject);
+            obj.placeLegends(ax,tH,tL,tG,glabels,perSubject || bySeries,names);
             obj.tileNote(ax,info.Note);
             obj.DrawnSig.waveforms = sig;
         end
 
+        function renderWaveGrid(obj,W,t,info)
+            % All levels: a column per series (per subject and series under
+            % One panel per subject) with its levels stacked, loudest at
+            % the top -- the Grid tab's layout -- and in every row each
+            % subject's curve and each colour group's summary across
+            % subjects, coloured as every other Study plot colours them.
+            % The drawn traces are offset into their rows, so they carry
+            % hidden handles; Copy data copies invisible lines holding the
+            % same curves in µV, one per column x row x group.
+            S = mabr.ui.analysis.Style;
+            L = obj.ViewLook;
+            panel = obj.Handles.WavesPanel;
+            perSubject = string(L.Layout) == "subject";
+            ser = reshape(info.Series,[],1);
+            if perSubject
+                subj = reshape(mabr.analysis.Stats.naturalSort(unique(W.Subject)),[],1);
+                [si,ui] = ndgrid(1:numel(ser),1:numel(subj));      % series fastest
+                cSubj = subj(ui(:));  cSer = ser(si(:));
+                ckey = cSubj + " · " + cSer;
+                W.Tile = W.Subject + " · " + W.Series;
+            else
+                cSubj = strings(numel(ser),1);  cSer = ser;
+                ckey = cSer;
+                W.Tile = W.Series;
+            end
+            have = ismember(ckey,W.Tile);
+            cSubj = cSubj(have);  cSer = cSer(have);  ckey = ckey(have);
+            obj.WaveCurves = W;
+            % the rows, bottom to top: loudest at the top (on an attenuation
+            % axis the largest number is the quietest)
+            lv = sort(reshape(info.Levels,[],1));
+            if obj.familyDescending(), lv = flipud(lv); end
+            glabels = obj.groupOrder(W);
+            sig = {W,t,L,ckey,lv,glabels,info,"grid"};
+            if obj.sameDrawn("waveforms",sig), return; end
+
+            nc = numel(ckey);  ng = numel(glabels);  nR = numel(lv);
+            rowY = (0:nR-1).';
+            showInd = perSubject || any(string(L.Show) == ["individuals","both"]);
+            showSum = ~perSubject && any(string(L.Show) == ["mean","median","both"]);
+            useMedian = string(L.Show) == "median";
+            fade = showInd && showSum;
+            [~,ci] = ismember(W.Tile,ckey);
+            [~,gi] = ismember(W.Color,glabels);
+            [~,ri] = ismember(W.Level,lv);
+            t = t(:);
+            Y = 1e6*cell2mat(cellfun(@(y) y(:),reshape(W.Y,1,[]),'UniformOutput',false));   % [nt x nW] µV
+
+            % the summaries across subjects, per column x group x row
+            [Mu,Lo,Hi] = deal(cell(nc,ng,nR));
+            if showSum
+                for c = 1:nc
+                    for g = 1:ng
+                        for k = 1:nR
+                            q = ci == c & gi == g & ri == k;
+                            if any(q)
+                                [Mu{c,g,k},Lo{c,g,k},Hi{c,g,k}] = ...
+                                    mabr.ui.analysis.StudyView.curveSummary(Y(:,q),useMedian);
+                            end
+                        end
+                    end
+                end
+            end
+            % the row spacing (µV between two rows): the largest curve drawn
+            % in each column, of the grid, or the fixed number
+            amp = zeros(nc,1);
+            for c = 1:nc
+                v = zeros(0,1);
+                if showInd
+                    v = Y(:,ci == c);
+                end
+                if showSum
+                    v = [v(:); vertcat(Mu{c,:,:})];
+                end
+                v = abs(v(isfinite(v)));
+                if ~isempty(v), amp(c) = max(v); end
+            end
+            switch string(L.WaveScale)
+                case "global", den = repmat(max(amp),nc,1);
+                case "fixed",  den = repmat(double(L.WaveFixed),nc,1);
+                otherwise,     den = amp;
+            end
+            den(~(den > 0 & isfinite(den))) = 1;
+
+            names = obj.groupNames(W,glabels,perSubject);
+            ax = obj.tiles("waveforms",panel,nc);
+            [pos,colPx] = obj.waveGridPositions(panel,nc,names);
+            xl = [min(t) max(t)];
+            yl = [-1.1, rowY(end) + 1.1 + 0.45];    % (+ headroom for the row spacing in the corner)
+            levTxt = compose("%g",lv);
+            what = obj.pick(useMedian,"median","mean");
+            drawn = false(1,ng);
+            for c = 1:nc
+                a = ax(c);
+                a.UserData = struct('Plot',"waveforms",'Tile',ckey(c));
+                set(a,'Position',pos(c,:),'XLim',xl,'YLim',yl,'YTick',rowY.');
+                if c == 1
+                    a.YTickLabel = cellstr(levTxt);
+                    ylabel(a,obj.growthLevelLabel());
+                    xlabel(a,info.XLabel);
+                else
+                    a.YTickLabel = {};
+                end
+                if perSubject
+                    title(a,{char(cSubj(c)),char(cSer(c))},'Interpreter','none','FontWeight','normal');
+                else
+                    title(a,char(cSer(c)),'Interpreter','none','FontWeight','normal');
+                end
+                % individuals first, the summaries over them
+                for g = 1:ng
+                    q = find(ci == c & gi == g);
+                    if isempty(q) || ~showInd, continue; end
+                    drawn(g) = true;
+                    col = S.colorFor(g,ng);
+                    if fade, col = col + (1 - col)*0.55; end
+                    X = repmat([t; NaN],numel(q),1);
+                    Yd = [reshape(rowY(ri(q)),1,[]) + Y(:,q)/den(c); NaN(1,numel(q))];
+                    line(a,X,Yd(:),'Color',col,'LineWidth',0.7,'Tag','AnalysisStudyWaveGridIndividuals', ...
+                        'HitTest','off','HandleVisibility','off','DisplayName',char(glabels(g)));
+                end
+                for g = 1:ng
+                    if ~showSum || all(cellfun(@isempty,Mu(c,g,:))), continue; end
+                    drawn(g) = true;
+                    col = S.colorFor(g,ng);
+                    Xm = zeros(0,1);  Ym = zeros(0,1);  Vb = zeros(0,2);  faces = {};
+                    for k = 1:nR
+                        mu = Mu{c,g,k};
+                        if isempty(mu), continue; end
+                        Xm = [Xm; t; NaN]; %#ok<AGROW>
+                        Ym = [Ym; rowY(k) + mu/den(c); NaN]; %#ok<AGROW>
+                        lo = Lo{c,g,k};  hi = Hi{c,g,k};
+                        ok = isfinite(lo) & isfinite(hi);
+                        if any(ok)
+                            tb = t(ok);
+                            v0 = size(Vb,1);
+                            Vb = [Vb; tb, rowY(k) + lo(ok)/den(c); flipud(tb), rowY(k) + flipud(hi(ok))/den(c)]; %#ok<AGROW>
+                            faces{end+1} = v0 + (1:2*nnz(ok)); %#ok<AGROW>
+                        end
+                    end
+                    if ~isempty(faces)
+                        % one patch, a face per row (shorter faces NaN-padded)
+                        F = NaN(numel(faces),max(cellfun(@numel,faces)));
+                        for f = 1:numel(faces), F(f,1:numel(faces{f})) = faces{f}; end
+                        patch(a,'Vertices',Vb,'Faces',F,'FaceColor',col,'FaceAlpha',0.18, ...
+                            'EdgeColor','none','Tag','AnalysisStudyWaveGridBand','HitTest','off', ...
+                            'HandleVisibility','off','DisplayName',char(glabels(g)));
+                    end
+                    line(a,Xm,Ym,'Color',col,'LineWidth',1.6,'Tag','AnalysisStudyWaveGridMean', ...
+                        'HitTest','off','HandleVisibility','off','DisplayName',char(glabels(g)));
+                end
+                % the values themselves, for Copy data (and a row nobody has)
+                for k = 1:nR
+                    qk = find(ci == c & ri == k);
+                    if isempty(qk)
+                        text(a,mean(xl),rowY(k),'not recorded','HorizontalAlignment','center', ...
+                            'Color',S.Muted,'FontSize',8,'FontAngle','italic','HitTest','off', ...
+                            'Tag','AnalysisStudyWaveGridMissing');
+                        continue
+                    end
+                    for g = 1:ng
+                        nm = ckey(c) + " · " + levTxt(k) + " dB · " + glabels(g);
+                        qg = qk(gi(qk) == g);
+                        if showInd && ~isempty(qg)
+                            Yc = [Y(:,qg); NaN(1,numel(qg))];
+                            obj.copyCarrier(a,repmat([t; NaN],numel(qg),1),Yc(:),nm + " · individuals (µV)");
+                        end
+                        if showSum && ~isempty(Mu{c,g,k})
+                            obj.copyCarrier(a,t,Mu{c,g,k},nm + " · " + what + " (µV)");
+                        end
+                    end
+                end
+                if c == 1 || string(L.WaveScale) == "column"
+                    text(a,0.01,1,char(obj.rowScaleText(den(c),colPx)),'Units','normalized', ...
+                        'FontSize',7.5,'Color',S.Muted,'HorizontalAlignment','left', ...
+                        'VerticalAlignment','top','HitTest','off','Interpreter','none', ...
+                        'BackgroundColor',[1 1 1],'Margin',1,'Tag','AnalysisStudyWaveGridScale');
+                end
+                if c < nc, obj.setLegend(a,gobjects(0),strings(0,1)); end
+            end
+            % one legend for the grid, right of its last column
+            keys = gobjects(1,0);
+            for g = find(drawn)
+                keys(end+1) = line(ax(nc),NaN,NaN,'Color',S.colorFor(g,ng), ...
+                    'LineWidth',obj.pick(showSum,1.6,0.8),'Tag','AnalysisStudyLegendKey', ...
+                    'HitTest','off','DisplayName',char(names(g))); %#ok<AGROW>
+            end
+            obj.gridLegend(ax(nc),keys,names(drawn),pos(nc,:));
+            obj.WaveGrid = struct('Columns',ckey,'Levels',lv,'RowY',rowY,'RowScale',den, ...
+                'Groups',glabels);
+            obj.DrawnSig.waveforms = sig;
+        end
+
+        function syncWaveControls(obj,stacked,note)
+            % The row Scale acts on the stacked grid only (Fixed µV with
+            % it); the grid's note goes beneath the plot, where the other
+            % plots carry theirs as a subtitle.
+            L = obj.ViewLook;
+            obj.put('wave_scale_en',obj.Handles.WaveScale,'Enable',obj.pick(stacked,'on','off'));
+            obj.put('wave_fixed_en',obj.Handles.WaveFixed,'Enable', ...
+                obj.pick(stacked && string(L.WaveScale) == "fixed",'on','off'));
+            txt = "";
+            if stacked, txt = string(note); end
+            obj.put('wave_note',obj.Handles.WaveNote,'Text',char(txt));
+            obj.put('wave_rows',obj.Handles.WavesGrid,'RowHeight',{30,'1x',obj.pick(txt ~= "",18,0)});
+        end
+
+        function [pos,colPx] = waveGridPositions(~,panel,n,names)
+            % The grid's columns in one row of the panel: the level labels'
+            % margin on the left, the legend's room on the right (from its
+            % longest name), the titles' above -- in pixels, turned into
+            % normalized positions for the panel's size now.
+            %   colPx  (returned) a column's width, pixels
+            W = 0;  H = 0;
+            try
+                pp = getpixelposition(panel);
+                W = pp(3);  H = pp(4);
+            catch
+            end
+            if W < 400 || H < 250
+                % not laid out yet (a sub-tab drawn in the callback that
+                % shows it): the plot panel's size in the window's default
+                % layout rather than a new component's placeholder size
+                W = 1100;  H = 560;
+            end
+            leg = 0;
+            if ~isempty(names)
+                leg = min(0.35*W,7*double(max(strlength(names))) + 52);
+            end
+            ml = 62;  mb = 46;  mt = 44;  gap = 10;  mr = max(leg,14);
+            colPx = max((W - ml - mr - (n - 1)*gap)/n,24);
+            h = max(H - mt - mb,40);
+            pos = zeros(n,4);
+            for j = 1:n
+                pos(j,:) = [(ml + (j - 1)*(colPx + gap))/W, mb/H, colPx/W, h/H];
+            end
+        end
+
+        function gridLegend(~,a,H,labs,pos)
+            % The grid's legend outside its last column (top right), the
+            % column put back where it was placed: an outside legend must
+            % not narrow it.
+            if isempty(H)
+                try
+                    if ~isempty(a.Legend), delete(a.Legend); end
+                catch
+                end
+                return
+            end
+            try
+                legend(a,H,cellstr(labs),'Location','northeastoutside','Interpreter','none', ...
+                    'AutoUpdate','off','Box','off');
+                a.Position = pos;
+            catch me
+                mabr.log.vprintf(2,'Study view: no grid legend (%s).',me.message);
+            end
+        end
+
+        function s = rowScaleText(~,uv,colPx)
+            % How many microvolts apart two rows are (a curve one row tall
+            % is that big): "rows 2 µV apart", "↕ 2 µV" in a narrow column.
+            u = mabr.ui.analysis.Style.formatUV(uv*1e-6,2);
+            s = "rows " + u + " apart";
+            if strlength(s)*0.66*7.5 > colPx - 8
+                s = "↕ " + u;
+            end
+        end
+
+        function copyCarrier(~,a,x,y,name)
+            % An invisible line holding values for Copy data (the drawn
+            % traces are offset into their rows).
+            h = line(a,x,y,'Visible','off','HandleVisibility','off','HitTest','off', ...
+                'Tag','AnalysisStudyWaveGridData','DisplayName',char(name));
+            mabr.ui.analysis.FigureExport.markForCopy(h);
+        end
+
+        function names = groupNames(~,W,glabels,perSubject)
+            % Each colour group's legend entry for a plot that has ONE
+            % legend: its name, with the subjects it holds anywhere in the
+            % plot (none under one panel per subject, where a panel is one).
+            names = reshape(glabels,[],1);
+            if perSubject, return; end
+            for g = 1:numel(glabels)
+                names(g) = glabels(g) + " (n = " + numel(unique(W.Subject(W.Color == glabels(g)))) + ")";
+            end
+        end
+
+        function tf = familyDescending(obj)
+            % Whether the family's levels get quieter as they grow (an
+            % attenuation axis): what most of its series say.
+            tf = false;
+            T = obj.familyThresholds();
+            if height(T) == 0, return; end
+            dirn = "auto";
+            try
+                dirn = string(obj.Model.Settings.LevelDirection);
+            catch
+            end
+            s = mabr.ui.analysis.StudyView.levelSigns(T,dirn);
+            tf = nnz(s < 0) > nnz(s > 0);
+        end
+
         function [W,t,info] = waveData(obj)
-            % Per-subject curves of the chosen series and level on one time
-            % grid (the majority's; others resampled), in ear time.
-            info = struct('XLabel',"Time re onset (ms)",'Note',"",'Resampled',0);
+            % Per-subject curves on one time grid (the majority's; others
+            % resampled), in ear time: of the chosen series at the chosen
+            % level -- or, with All series and/or All levels, of each of
+            % them. One curve per subject, colour group, series and level
+            % (its sessions averaged).
+            %   info.Mode    "single" (one series, one level), "series"
+            %                (every series at one level: a panel each) or
+            %                "levels" (every level stacked: the grid)
+            %   info.Series  the series drawn, in parameter order
+            %   info.Levels  the levels drawn, ascending
+            L = obj.ViewLook;
+            info = struct('XLabel',"Time re onset (ms)",'Note',"",'Resampled',0, ...
+                'Mode',"single",'Series',strings(0,1),'Levels',zeros(0,1));
             W = table();  t = zeros(0,1);
             A = obj.Data.A;
             M = A.Means;
@@ -2160,16 +2853,20 @@ classdef StudyView < mabr.ui.analysis.View
                 if any(isL), lev(i) = str2double(extractAfter(parts(find(isL,1)),strlength(lp(i)) + 1)); end
                 sk(i) = join(parts(~isL),"|");
             end
+            % each series' name and first parameter value (once per series)
             params = obj.familyParams();
-            short = strings(height(M),1);
-            for i = 1:height(M)
-                [~,short(i)] = mabr.ui.analysis.StudyView.seriesValue(sk(i),params);
+            [usk,~,jsk] = unique(sk);
+            ux = NaN(numel(usk),1);  un = strings(numel(usk),1);
+            for i = 1:numel(usk)
+                [ux(i),un(i)] = mabr.ui.analysis.StudyView.seriesValue(usk(i),params);
             end
+            short = reshape(un(jsk),[],1);  xs = reshape(ux(jsk),[],1);
             used = obj.usedSeries(sess,sk);
             inFam = mabr.ui.analysis.StudyView.keyField2(sk,"Stimulus") == stim;
             if acq ~= "", inFam = inFam & mabr.ui.analysis.StudyView.keyField2(sk,"AcqMode") == acq; end
-            ser = obj.Choice.WaveSeries;
-            r = used & inFam & short == ser;
+            allSer = logical(L.WaveAllSeries) && numel(codes) > 1;
+            if allSer, ser = codes; else, ser = obj.Choice.WaveSeries; end
+            r = used & inFam & ismember(short,ser);
             lv = unique(lev(r & isfinite(lev)));
             if isempty(lv)
                 obj.setChoice('wlevel',obj.Handles.WaveLevel,"","","");
@@ -2179,20 +2876,38 @@ classdef StudyView < mabr.ui.analysis.View
             want = obj.Choice.WaveLevel;
             if ~any(lvTxt == want), want = lvTxt(end); end
             obj.Choice.WaveLevel = want;
-            obj.setChoice('wlevel',obj.Handles.WaveLevel,lvTxt + " dB",lvTxt,want);
-            % by the item, not by str2double of its text: string(level)
-            % keeps five significant digits, so 1/3 would not come back
-            r = find(r & lev == lv(find(lvTxt == want,1)));
+            allLev = logical(L.WaveAllLevels) && numel(lv) > 1;
+            items = lvTxt + " dB";  lcodes = lvTxt;  val = want;
+            if numel(lv) > 1
+                items = ["All levels"; items];
+                lcodes = [obj.WaveAllCode; lcodes];
+                if allLev, val = obj.WaveAllCode; end
+            end
+            obj.setChoice('wlevel',obj.Handles.WaveLevel,items,lcodes,val);
+            if allLev
+                info.Mode = "levels";
+                r = find(r & isfinite(lev));
+            else
+                if allSer, info.Mode = "series"; end
+                % by the item, not by str2double of its text: string(level)
+                % keeps five significant digits, so 1/3 would not come back
+                r = find(r & lev == lv(find(lvTxt == want,1)));
+            end
             if isempty(r), return; end
             % the sessions' latency offsets (raw - offset = ear time)
             off = zeros(numel(r),1);
             Pk = A.Peaks;
             if height(Pk) > 0 && ismember('LatencyOffset',Pk.Properties.VariableNames)
-                for i = 1:numel(r)
-                    o = double(Pk.LatencyOffset(string(Pk.Session) == sess(r(i))));
+                [us,~,ju] = unique(sess(r));
+                ou = zeros(numel(us),1);
+                ps = string(Pk.Session);
+                po = double(Pk.LatencyOffset);
+                for i = 1:numel(us)
+                    o = po(ps == us(i));
                     o = o(isfinite(o));
-                    if ~isempty(o), off(i) = o(1); end
+                    if ~isempty(o), ou(i) = o(1); end
                 end
+                off = reshape(ou(ju),[],1);
             end
             if any(off ~= 0), info.XLabel = "Time re sound arrival (ms)"; end
             % the majority grid
@@ -2225,11 +2940,12 @@ classdef StudyView < mabr.ui.analysis.View
             tp(tf)   = string(A.Sessions.Timepoint(loc(tf)));
             grp(tf)  = string(A.Sessions.Group(loc(tf)));
             tpo(tf)  = double(A.Sessions.TimepointOrder(loc(tf)));
-            S = table(subj,tp,tpo,grp,sess(r),curves,'VariableNames', ...
-                {'Subject','Timepoint','TimepointOrder','Group','Session','Y'});
+            S = table(subj,tp,tpo,grp,sess(r),curves,short(r),lev(r),xs(r),'VariableNames', ...
+                {'Subject','Timepoint','TimepointOrder','Group','Session','Y','Series','Level','X'});
             [S.Color,~] = obj.colourKeys(S);
-            % one curve per subject and colour group (its sessions averaged)
-            uk = S.Subject + "|" + S.Color;
+            % one curve per subject, colour group, series and level (its
+            % sessions averaged)
+            uk = S.Subject + "|" + S.Color + "|" + S.Series + "|" + compose("%.10g",S.Level);
             [g,first,j] = unique(uk,'stable');
             W = S(first,:);
             W.Sessions = W.Session;
@@ -2241,6 +2957,8 @@ classdef StudyView < mabr.ui.analysis.View
                 end
             end
             W.Time = repmat({t},height(W),1);
+            info.Series = reshape(codes(ismember(codes,W.Series)),[],1);
+            info.Levels = reshape(unique(W.Level),[],1);
             parts = strings(1,0);
             if info.Resampled > 0
                 parts(end+1) = info.Resampled + " session(s) resampled onto the majority time grid";
@@ -2947,18 +3665,21 @@ classdef StudyView < mabr.ui.analysis.View
             s = "Level (" + u + ")";
         end
 
-        function placeLegends(obj,ax,tH,tL,tG,glabels,perSubject)
-            % Each panel's own legend -- or, one panel per subject, ONE
-            % legend on the first panel naming every colour group drawn in
-            % ANY panel: a subject seen at fewer timepoints than another
-            % would otherwise leave colours on the page no legend names. A
-            % group the first panel lacks is keyed by a copy of its key from
-            % the panel that has it, emptied of data (so Copy data passes
-            % it by).
+        function placeLegends(obj,ax,tH,tL,tG,glabels,oneLegend,names)
+            % Each panel's own legend -- or, with oneLegend (one panel per
+            % subject; a panel per series), ONE legend on the first panel
+            % naming every colour group drawn in ANY panel: a subject seen
+            % at fewer timepoints than another would otherwise leave
+            % colours on the page no legend names. A group the first panel
+            % lacks is keyed by a copy of its key from the panel that has
+            % it, emptied of data (so Copy data passes it by).
             %   tH{t}, tL{t}, tG{t}  panel t's legend handles, labels and
             %                        colour-group indices
+            %   names                what the one legend calls each group
+            %                        (default glabels)
+            if nargin < 8, names = glabels; end
             n = numel(ax);
-            if ~perSubject || n == 1
+            if ~oneLegend || n == 1
                 for t = 1:n, obj.setLegend(ax(t),tH{t},tL{t}); end
                 return
             end
@@ -2979,7 +3700,7 @@ classdef StudyView < mabr.ui.analysis.View
                 obj.setLegend(ax(t),gobjects(0),strings(0,1));
             end
             [G,o] = sort(G);
-            obj.setLegend(ax(1),H(o),glabels(G));
+            obj.setLegend(ax(1),H(o),names(G));
         end
 
         function tileNote(~,ax,note)
@@ -3383,6 +4104,22 @@ classdef StudyView < mabr.ui.analysis.View
             end
         end
 
+        function [mu,lo,hi] = curveSummary(Y,useMedian)
+            % A summary of curves across subjects, one per column of Y
+            % [nt x ns]: the mean ± SEM (no band below two subjects), or the
+            % median and its interquartile range.
+            if useMedian
+                Q = mabr.analysis.Stats.percentileCols(Y.',[0.25 0.5 0.75]);
+                mu = Q(2,:).';  lo = Q(1,:).';  hi = Q(3,:).';
+            else
+                mu = mean(Y,2,'omitnan');
+                nn = sum(isfinite(Y),2);
+                se = std(Y,0,2,'omitnan')./sqrt(max(nn,1));
+                se(nn < 2) = NaN;
+                lo = mu - se;  hi = mu + se;
+            end
+        end
+
         function [Y,P] = interpeak(P,w1,w2)
             % lat(w2) - lat(w1) per condition (the offset cancels); P is
             % reduced to one row per condition (the first wave's).
@@ -3507,6 +4244,37 @@ classdef StudyView < mabr.ui.analysis.View
             % A timepoint as the plots name it: "(no timepoint)" for none.
             s = string(tp);
             s(ismissing(s) | strtrim(s) == "") = "(no timepoint)";
+        end
+
+        function [dur,npres] = sessionExtent(V)
+            % Per session of V: its duration in seconds -- first start to
+            % last end of its files (an intermixed run's end is estimated by
+            % the Catalog), a pool's the sum of its members' (the span
+            % between their days is not recording) -- and the number of
+            % stimuli presented (sweeps in the files a Session includes).
+            % NaN where the catalog could not say.
+            n = height(V);
+            dur = NaN(n,1);  npres = NaN(n,1);
+            vn = V.Properties.VariableNames;
+            if all(ismember({'Start','Stop'},vn))
+                dur = reshape(seconds(V.Stop - V.Start),[],1);
+                if all(ismember({'IsPool','Members','Key'},vn))
+                    for i = reshape(find(V.IsPool),1,[])
+                        [tf,loc] = ismember(split(string(V.Members(i)),"|"),string(V.Key));
+                        d = dur(loc(tf));
+                        dur(i) = NaN;
+                        if any(~isnan(d)), dur(i) = sum(d,'omitnan'); end
+                    end
+                end
+            end
+            if ismember('NumSweeps',vn), npres = reshape(double(V.NumSweeps),[],1); end
+        end
+
+        function s = durationText(sec)
+            % "1:23:45" ('' when unknown).
+            if isnan(sec), s = ''; return; end
+            sec = round(max(sec,0));
+            s = sprintf('%d:%02d:%02d',floor(sec/3600),floor(mod(sec,3600)/60),mod(sec,60));
         end
 
         function c = cellText(v)

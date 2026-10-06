@@ -33,6 +33,14 @@ function verify_offline_study()
 %             dB re threshold, latency, interpeak
 %     Part G  waveforms: the grand average is the mean of per-subject means,
 %             with a band, n in the legend
+%     Part L  the waveform grid: All levels stacks every level (loudest at
+%             the top) in a column per series -- All series too: a
+%             frequency x level grid; a click family is one column -- each
+%             row's summary the mean of its subjects' curves, offset by the
+%             row and scaled by the column's row spacing (per column,
+%             global, fixed µV), one legend outside the last column, Copy
+%             data in µV; colour by subject; one column per subject and
+%             series; All series at one level is a panel per series
 %     Part H  a session re-analysed with other settings: the settings
 %             banner, its latencies re sound arrival (13 A9), [Re-analyse
 %             them] clears it
@@ -70,10 +78,12 @@ fprintf('  (window opened on the fixture and the Study tab built in %.1f s)\n',l
 
 partB_prefs(app,v);
 partC_tables(app,v,stub,F);
+partM_sessionView(app,v,F);
 partD_duplicates(app,v,stub);
 partE_thresholds(app,v);
 partF_growth(app,v);
 partG_waveforms(app,v);
+partL_waveGrid(app,v);
 partH_settings(app,v,F);
 partI_blind(app,v,F);
 partK_sweeps(app,v);
@@ -198,7 +208,8 @@ drive(app,dd,'both');
 assert(ispref('MABR','OfflineAnalysisStudy'),'The Show control did not remember the look.');
 p = getpref('MABR','OfflineAnalysisStudy');
 assert(string(p.Show) == "both" && all(isfield(p,{'Family','X','ColorBy','Show','Layout', ...
-    'Reference','NoResponse','Measure','YMode','XMode'})),'The look pref lacks fields or the new Show.');
+    'Reference','NoResponse','Measure','YMode','XMode','WaveAllSeries','WaveAllLevels', ...
+    'WaveScale','WaveFixed'})),'The look pref lacks fields or the new Show.');
 d = mabr.ui.analysis.StudyView.loadDefaults();
 assert(string(d.Show) == "both",'loadDefaults does not read the pref back.');
 fprintf('  PASS Part B: a script-driven Study view (refresh, sub-tabs, applySettings) writes no pref; a control writes OfflineAnalysisStudy with every look field (%.1f s)\n',lap());
@@ -341,6 +352,118 @@ L = splitlines(txt);
 assert(startsWith(L(1),"In study" + char(9) + "Subject") && numel(L) == numel(F.Keys) + 1,'Copy table text.');
 assert(numel(findall(app.Figure,'Tag','AnalysisStudyCopyTable')) == 2,'Not every table has Copy table.');
 fprintf('  PASS Part C: Sessions/Subjects tables -- columns, status, review counts, noise, Min N; edits through Model.label (coercion note on the status line, Group set for the animal, In study), the subject Comment through Edit comment… (not typed into a cell; undo), Add/Remove column (selected or asked; undo), a refused number put back, selection counts, Export… on the selection, icons, Copy table (%.1f s)\n',lap());
+end
+
+% =========================================================================
+%  Part M -- the Sessions table's Duration / N presented columns, filters, sort
+% =========================================================================
+function partM_sessionView(app,v,F)
+m = app.Model;
+v.showSub("Sessions");
+t = control(app,'AnalysisStudySessions');
+col = @(name) find(string(t.ColumnName) == name,1);
+n = numel(F.Keys);
+pick = @(tag,val) setDropdown(control(app,tag),val);
+cells = @(name) string(t.Data(:,col(name)));
+
+% the two columns: duration as h:mm:ss, the stimuli presented as the catalog's sweep count
+assert(~isempty(col("Duration")) && ~isempty(col("N presented")),'The Sessions table lacks Duration / N presented.');
+d = cells("Duration");
+assert(all(d == "" | ~cellfun(@isempty,regexp(cellstr(d),'^\d+:\d\d:\d\d$','once'))),'Duration is not h:mm:ss: %s',strjoin(d,' | '));
+tk = v.tableKeys();
+S = m.Catalog.Sessions;
+np = str2double(cells("N presented"));
+for i = 1:numel(tk)
+    r = find(S.Key == tk(i),1);
+    if ~isempty(r), assert(np(i) == S.NumSweeps(r),'N presented of %s is %g, the catalog has %g.',tk(i),np(i),S.NumSweeps(r)); end
+end
+assert(all(np > 0),'A session shows no stimuli presented.');
+
+% every filter offers All and exactly the values the sessions hold
+subj = control(app,'AnalysisStudyFilterSubject');
+us = unique(string(m.projectView().Subject));
+assert(isequal(sort(string(subj.ItemsData(:))),sort(["";us(:)])),'The Subject filter does not offer the study''s subjects.');
+dayItems = string(control(app,'AnalysisStudyFilterDay').ItemsData);
+assert(numel(dayItems) == 1 + numel(unique(string(S.Day,'yyyy-MM-dd'))),'The Day filter offers %d choices.',numel(dayItems));
+assert(~any(string(control(app,'AnalysisStudyFilterStatus').ItemsData) == "stale"),'Status offers a value no session has.');
+assert(string(control(app,'AnalysisStudyFilterClear').Enable) == "off",'Clear filters is live with no filter set.');
+
+% a filter shows the matching sessions only, and a row still edits ITS session
+order0 = v.tableKeys();
+target = us(end);
+pick('AnalysisStudyFilterSubject',target);
+tk = v.tableKeys();
+assert(~isempty(tk) && all(startsWith(tk,target + "/")) && size(t.Data,1) == numel(tk) && numel(tk) < n, ...
+    'The Subject filter did not narrow the table (%d of %d rows).',numel(tk),n);
+assert(contains(string(control(app,'AnalysisStudyFilterCount').Text),"Showing " + numel(tk) + " of " + n),'The count label: %s',control(app,'AnalysisStudyFilterCount').Text);
+assert(string(control(app,'AnalysisStudyFilterClear').Enable) == "on",'Clear filters is not live.');
+k1 = tk(1);
+was = projectLogical(m,k1,"InStudy");
+editCell(t,rowOf(t,v,k1),col("In study"),~was);
+assert(projectLogical(m,k1,"InStudy") == ~was,'An edit in a filtered table reached another session.');
+editCell(t,rowOf(t,v,k1),col("In study"),was);
+assert(projectLogical(m,k1,"InStudy") == was,'Restoring In study failed.');
+
+% two filters narrow together (when some session is out of the study, In study = No offers itself)
+if any(string(control(app,'AnalysisStudyFilterInStudy').ItemsData) == "no")
+    pick('AnalysisStudyFilterInStudy','no');
+    PV = m.projectView();
+    assert(numel(v.tableKeys()) == nnz(PV.Subject == target & ~PV.InStudy),'Subject and In study filters did not narrow together.');
+    pick('AnalysisStudyFilterInStudy','');
+end
+assert(numel(v.tableKeys()) == numel(tk),'Clearing one filter did not bring its rows back.');
+
+% a selection survives a filter for the rows still showing, and only those
+v.selectSessions(tk(1));
+other = us(1);
+pick('AnalysisStudyFilterSubject',other);
+assert(isempty(v.SelectedKeys),'A selected session that is filtered out is still selected.');
+pick('AnalysisStudyFilterSubject',target);
+v.selectSessions(tk(1));
+pick('AnalysisStudyFilterGroup','');
+assert(isequal(v.SelectedKeys,tk(1)),'A selection did not survive a redraw of the same rows.');
+c = control(app,'AnalysisStudyFilterClear');
+c.ButtonPushedFcn(c,[]);
+assert(isequal(v.tableKeys(),order0) && string(c.Enable) == "off",'Clear filters did not restore the table.');
+assert(string(control(app,'AnalysisStudyFilterSubject').Value) == "",'Clear filters left a dropdown on a value.');
+
+% sort: by a text column (natural order), then a numeric one; direction; ties keep table order
+by1 = 'AnalysisStudySortBy1';  dir1 = 'AnalysisStudySortDir1';
+pick(by1,'Subject');
+sj = cells("Subject");
+assert(isequal(sj,mabr.analysis.Stats.naturalSort(sj)),'Sort by Subject is not in natural order.');
+pick(dir1,'descending');
+sj2 = cells("Subject");
+assert(isequal(sj2,flipud(mabr.analysis.Stats.naturalSort(sj2))),'Descending Subject is not descending.');
+assert(isequal(sort(v.tableKeys()),sort(order0)),'Sorting changed which sessions show.');
+pick(by1,'N presented');
+np = str2double(cells("N presented"));
+assert(issorted(-np),'Descending N presented is not descending: %s',strjoin(string(np),', '));
+% a second key breaks ties of the first
+pick('AnalysisStudySortBy2','Session');
+assert(string(control(app,'AnalysisStudySortBy2').Enable) == "on",'Then by is not live under a first sort.');
+% a sorted table still edits the right session
+r = 2;  kk = v.tableKeys();  kk = kk(r);
+was = projectLogical(m,kk,"InStudy");
+editCell(t,r,col("In study"),~was);
+assert(projectLogical(m,kk,"InStudy") == ~was,'An edit in a sorted table reached another session.');
+editCell(t,rowOf(t,v,kk),col("In study"),was);
+% the sort is the user's look: remembered in the study look (the pref guard puts the pref back)
+L = v.displaySettings();
+assert(string(L.SessSort1) == "N presented" && string(L.SessDir1) == "descending" && string(L.SessSort2) == "Session", ...
+    'The sort choice is not in the look.');
+% back to the table order for the parts that follow
+pick('AnalysisStudySortBy2','');
+pick(by1,'');
+pick(dir1,'ascending');
+assert(isequal(v.tableKeys(),order0),'The table order did not come back with the sort cleared.');
+fprintf('  PASS Part M: Sessions table -- Duration and N presented, six filters (values from the data, narrowing together, Clear, an empty result), sort by one and two columns in both directions (natural text, numbers), edits and selection following the rows shown, the sort remembered in the look (%.1f s)\n',lap());
+end
+
+function setDropdown(h,val)
+% A person choosing VAL (an ItemsData code) in a dropdown.
+h.Value = char(val);
+h.ValueChangedFcn(h,[]);
 end
 
 % =========================================================================
@@ -767,6 +890,175 @@ assert(string(ax.XLabel.String) == "Time re onset (ms)" && string(ax.YLabel.Stri
 drive(app,lev,'60');
 assert(string(lev.Value) == "60" && height(v.waveTable()) > 0,'The level control does not choose the level.');
 fprintf('  PASS Part G: waveforms -- the grand average is the mean of per-subject means, an SEM band per group, n in the legend, the level control (%.1f s)\n',lap());
+end
+
+% =========================================================================
+%  Part L -- the waveform grid
+% =========================================================================
+function partL_waveGrid(app,v)
+v.showSub("Waveforms");
+panel = v.Handles.WavesPanel;
+ser = control(app,'AnalysisStudyWaveSeries');
+lev = control(app,'AnalysisStudyWaveLevel');
+sc  = control(app,'AnalysisStudyWaveScale');
+fx  = control(app,'AnalysisStudyWaveFixed');
+ALL = char(mabr.ui.analysis.StudyView.WaveAllCode);
+assert(isequal(string(ser.Items),["All series","4 kHz","16 kHz"]) && string(lev.Items{1}) == "All levels", ...
+    'Series / Level do not offer All: %s / %s',strjoin(string(ser.Items),', '),strjoin(string(lev.Items),', '));
+assert(string(sc.Enable) == "off" && string(fx.Enable) == "off" && isempty(fieldnames(v.WaveGrid)), ...
+    'The row scale is live for a single condition.');
+
+% All levels: one column, the five levels stacked, loudest at the top
+drive(app,ser,'4 kHz');
+drive(app,lev,ALL);
+G = v.WaveGrid;
+ax = axesOf(panel);
+assert(isscalar(ax) && isequal(G.Columns,"4 kHz") && isequal(G.Levels(:).',0:20:80) && ...
+    isequal(ax.YTick,0:4) && isequal(string(ax.YTickLabel(:)).',["0","20","40","60","80"]), ...
+    'All levels: %d column(s), levels %s.',numel(ax),mat2str(G.Levels(:).'));
+assert(string(ax.Title.String) == "4 kHz" && string(ax.YLabel.String) == "Level (dB SPL)", ...
+    'Grid labels: "%s" / "%s".',string(ax.Title.String),string(ax.YLabel.String));
+assert(string(sc.Enable) == "on" && string(fx.Enable) == "off",'The row scale is not live for the grid.');
+p = getpref('MABR','OfflineAnalysisStudy');
+assert(p.WaveAllLevels && ~p.WaveAllSeries,'All levels was not remembered.');
+checkGridMeans(v,panel);
+W = v.waveTable();
+Y = 1e6*cell2mat(reshape(W.Y,1,[]));
+assert(abs(G.RowScale - max(abs(Y(:)))) < 1e-9,'Per column, rows are not the largest curve apart.');
+assert(~isempty(ax.Legend) && strcmp(ax.Legend.Location,'northeastoutside') && ...
+    isequal(sort(string(ax.Legend.String)),sort(["Baseline (n = 2)","2weeks (n = 2)"])), ...
+    'Grid legend: %s',strjoin(string(ax.Legend.String),' | '));
+% Copy data copies the curves in µV, not their places in the stack
+txt = mabr.ui.analysis.FigureExport.copyData(panel);
+hdr = split(extractBefore(string(txt) + newline,newline),char(9));
+assert(all(contains(hdr,"(µV)")) && any(hdr == "4 kHz · 80 dB · Baseline · mean (µV) y"), ...
+    'Copy data of the grid: %s',strjoin(hdr(1:min(4,end)),' | '));
+
+% All series too: a frequency x level grid, one legend outside the last column
+drive(app,ser,ALL);
+G = v.WaveGrid;
+ax = byPosition(axesOf(panel));
+assert(numel(ax) == 2 && isequal(G.Columns(:).',["4 kHz","16 kHz"]) && ...
+    isequal(titlesOf(ax).',["4 kHz","16 kHz"]),'All series: columns %s.',strjoin(G.Columns,', '));
+assert(~isempty(ax(1).YTickLabel) && isempty(ax(2).YTickLabel) && isequal(ax(1).YLim,ax(2).YLim), ...
+    'Only the first column names the levels, and every column shares the rows.');
+nl = arrayfun(@(a) ~isempty(a.Legend) && isvalid(a.Legend),ax);
+assert(isequal(nl(:).',[false true]) && abs(ax(1).Position(3) - ax(2).Position(3)) < 1e-9, ...
+    'The legend is not outside the last column alone, or it narrowed that column.');
+p = getpref('MABR','OfflineAnalysisStudy');
+assert(p.WaveAllSeries && p.WaveAllLevels,'All series was not remembered.');
+checkGridMeans(v,panel);
+W = v.waveTable();
+for c = 1:2
+    Y = 1e6*cell2mat(reshape(W.Y(W.Tile == G.Columns(c)),1,[]));
+    assert(abs(G.RowScale(c) - max(abs(Y(:)))) < 1e-9,'Column %s is not scaled to its largest curve.',G.Columns(c));
+end
+assert(numel(findall(panel,'Tag','AnalysisStudyWaveGridScale')) == 2,'Per column, each column does not say its row spacing.');
+% Global, then a fixed number of microvolts
+drive(app,sc,'global');
+G2 = v.WaveGrid;
+assert(all(G2.RowScale == max(G.RowScale)) && isscalar(findall(panel,'Tag','AnalysisStudyWaveGridScale')), ...
+    'Global: rows %s µV apart.',mat2str(G2.RowScale(:).'));
+drive(app,sc,'fixed');
+assert(string(fx.Enable) == "on",'Fixed µV does not open the µV field.');
+drive(app,fx,2);
+st = findall(panel,'Tag','AnalysisStudyWaveGridScale');
+assert(all(v.WaveGrid.RowScale == 2) && isscalar(st) && contains(string(st.String),"2 µV"), ...
+    'Fixed 2 µV: rows %s apart (%s).',mat2str(v.WaveGrid.RowScale(:).'),strjoin(string(get(st,'String')),' | '));
+checkGridMeans(v,panel);
+drive(app,sc,'column');
+% colour by subject: one curve per subject in every row, named in the legend
+cb = control(app,'AnalysisStudyColorBy');
+drive(app,cb,'subject');
+W = v.waveTable();
+assert(numel(unique(W.Subject + "|" + W.Series + "|" + string(W.Level))) == height(W) && all(W.Color == W.Subject), ...
+    'Colour by subject does not make one curve per subject in each slot.');
+assert(isequal(sort(legendStrings(panel)),["SUBJ-ID-9001 (n = 1)","SUBJ-ID-9002 (n = 1)"]), ...
+    'Colour by subject: %s',strjoin(legendStrings(panel),' | '));
+checkGridMeans(v,panel);
+drive(app,cb,'timepoint');
+% one panel per subject: a column per subject and series, no summaries
+lay = control(app,'AnalysisStudyLayout');
+drive(app,lay,'subject');
+G = v.WaveGrid;
+ax = byPosition(axesOf(panel));
+assert(isequal(G.Columns(:).',["SUBJ-ID-9001 · 4 kHz","SUBJ-ID-9001 · 16 kHz","SUBJ-ID-9002 · 4 kHz", ...
+    "SUBJ-ID-9002 · 16 kHz"]) && numel(ax) == 4 && isequal(string(ax(1).Title.String(:)).',["SUBJ-ID-9001","4 kHz"]), ...
+    'Per subject: columns %s.',strjoin(G.Columns,', '));
+assert(isempty(findall(panel,'Tag','AnalysisStudyWaveGridMean')) && ...
+    ~isempty(findall(panel,'Tag','AnalysisStudyWaveGridIndividuals')) && ...
+    isequal(sort(legendStrings(panel)),sort(["Baseline","2weeks"])), ...
+    'Per subject: summaries drawn, or the legend is %s.',strjoin(legendStrings(panel),' | '));
+drive(app,lay,'overlay');
+
+% All series at one level: a panel per series, in µV, one legend
+drive(app,lev,'80');
+ax = byPosition(axesOf(panel));
+assert(isempty(fieldnames(v.WaveGrid)) && numel(ax) == 2 && isequal(titlesOf(ax).',["4 kHz","16 kHz"]) && ...
+    string(ax(1).YLabel.String) == "Amplitude (µV)" && string(sc.Enable) == "off", ...
+    'All series at 80 dB is not a panel per series.');
+assert(numel(findall(panel,'Tag','AnalysisStudyGrandMean')) == 4,'A panel per series does not draw each timepoint''s grand mean.');
+lg = legendStrings(panel);
+assert(numel(lg) == 2 && all(contains(lg,"(n = 2)")),'A panel per series: legend %s.',strjoin(lg,' | '));
+
+% a family of one series (clicks) has no All series: every level is one column
+fam = control(app,'AnalysisStudyFamily');
+drive(app,fam,'ClickTrain');
+assert(isequal(string(ser.Items),"ClickTrain"),'Click series: %s',strjoin(string(ser.Items),', '));
+drive(app,lev,ALL);
+G = v.WaveGrid;
+assert(isequal(G.Columns,"ClickTrain") && numel(G.Levels) > 1 && isscalar(axesOf(panel)), ...
+    'Every click level is not one column (%d levels).',numel(G.Levels));
+checkGridMeans(v,panel);
+drive(app,fam,'Tone|conventional');
+
+% back to one condition, as Part G left it
+drive(app,ser,'4 kHz');
+drive(app,lev,'80');
+p = getpref('MABR','OfflineAnalysisStudy');
+assert(isempty(fieldnames(v.WaveGrid)) && numel(findall(panel,'Tag','AnalysisStudyGrandMean')) == 2 && ...
+    ~p.WaveAllSeries && ~p.WaveAllLevels,'One series at one level is not the single plot again.');
+fprintf('  PASS Part L: the waveform grid -- All levels stacks every level in a column per series (All series: frequency x level), each row''s mean that of its subjects'' curves, offset by its row at the column''s spacing (per column, global, fixed µV), one legend outside the last column, Copy data in µV; colour by subject; a column per subject and series; All series at one level is a panel per series; clicks are one column (%.1f s)\n',lap());
+end
+
+function checkGridMeans(v,panel)
+% Every row's summary in the waveform grid is the mean of that row's
+% subjects' curves -- in µV on its Copy-data line, and drawn offset by its
+% row at its column's row spacing.
+G = v.WaveGrid;
+W = v.waveTable();
+data = findall(panel,'Tag','AnalysisStudyWaveGridData');
+dn = string(get(data,{'DisplayName'}));
+mn = findall(panel,'Tag','AnalysisStudyWaveGridMean');
+assert(~isempty(mn),'The grid draws no summaries.');
+for h = reshape(mn,1,[])
+    a = ancestor(h,'axes');
+    c = find(G.Columns == string(a.UserData.Tile),1);
+    g = string(h.DisplayName);
+    yd = h.YData(:);
+    br = [0; find(isnan(yd))];      % the row segments, in row order
+    s = 0;
+    for k = 1:numel(G.Levels)
+        rows = W.Tile == G.Columns(c) & W.Color == g & W.Level == G.Levels(k);
+        if ~any(rows), continue; end
+        s = s + 1;
+        want = mean(1e6*cell2mat(reshape(W.Y(rows),1,[])),2);
+        nm = G.Columns(c) + " · " + compose("%g",G.Levels(k)) + " dB · " + g + " · mean (µV)";
+        hc = data(dn == nm);
+        assert(isscalar(hc) && max(abs(hc.YData(:) - want)) < 1e-9, ...
+            'The Copy-data mean of %s is not the mean of its subjects'' curves.',nm);
+        seg = yd(br(s)+1:br(s+1)-1);
+        assert(numel(seg) == numel(want) && max(abs(seg - (G.RowY(k) + want/G.RowScale(c)))) < 1e-9, ...
+            'The drawn mean of %s is not offset by its row at its column''s spacing.',nm);
+    end
+end
+end
+
+function ax = byPosition(ax)
+% Axes left to right, then top to bottom.
+p = cell2mat(arrayfun(@(a) a.Position,ax(:),'UniformOutput',false));
+[~,o] = sortrows([-round(p(:,2),6) p(:,1)]);
+ax = ax(o);
 end
 
 % =========================================================================
