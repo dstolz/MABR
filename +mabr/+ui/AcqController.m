@@ -585,6 +585,28 @@ classdef AcqController < handle
         function setLivePlot(obj,lp)
             obj.LivePlot = lp;
             obj.caption_live_plot();
+            if ~isempty(lp) && isvalid(lp)
+                lp.WindowFcn = @(tb) obj.setSweepWindow(tb);
+                lp.requestWindow();      % the view's remembered time base
+            end
+        end
+
+        function setSweepWindow(obj,tb)
+            % Window the live sweeps for a displayed time base [t0 t1] (ms).
+            % A sweep is [baseline; response] of equal lengths, so a window
+            % of w seconds shows -w..w, and the span either end of the base
+            % asks for decides it. Only the live view and the online metrics
+            % follow this: the saved data is described by the pipeline's
+            % FileWindow, never by what was on screen, and the sweeps are
+            % re-extracted from the ring, which still holds the run.
+            w = max([abs(tb(:)); 5])/1000;     % at least 5 ms
+            % The compute buffers hold MaxComputeSamples of [baseline;response]
+            % and refuse more, so the longest window is what they can hold.
+            wMax = floor(obj.Config.MaxComputeSamples/2)/obj.Config.ADCSampleRate;
+            w = min(w,wMax);
+            if w ~= obj.Window(2) || obj.Window(1) ~= 0
+                obj.Window = [0 w];
+            end
         end
 
         function set.Artifacts(obj,p)

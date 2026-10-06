@@ -252,6 +252,11 @@ classdef LivePlot < handle
         % empty the button is there but disabled: an unwired button that
         % opened a window with nothing in it would be worse than a dead one.
         NewAnalysisFcn = []
+        % Called with the time base ([t0 t1] ms) when the operator types one
+        % in the strip, so the host can record far enough to draw it: the
+        % view only crops what was extracted, it cannot show a span that was
+        % never windowed. Unset, the time base is still clamped to the data.
+        WindowFcn = []
     end
 
     properties (SetAccess = private)
@@ -1607,9 +1612,21 @@ classdef LivePlot < handle
             if isfinite(v0) && isfinite(v1) && v1 > v0
                 obj.TimeBase = [v0 v1];
                 obj.savePrefs();
+                obj.requestWindow();
             else
                 obj.syncControls();   % reject: put the old values back
                 obj.TimeBase = t;
+            end
+        end
+
+        function requestWindow(obj)
+            % Tell the host the time base now in force (see WindowFcn). A
+            % host that fails must not take the strip down with it.
+            if isempty(obj.WindowFcn), return; end
+            try
+                obj.WindowFcn(obj.TimeBase);
+            catch ME
+                mabr.log.vprintf(1,0,'Live view: could not apply the time base to the sweep window: %s',ME.message);
             end
         end
 

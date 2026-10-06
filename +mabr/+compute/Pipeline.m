@@ -71,6 +71,13 @@ classdef Pipeline < handle
     properties (SetAccess = private)
         Config
         Window     (1,2) double = [0 0.01];   % ADC window (s) relative to onset
+        % The window the SAVED data is judged and described by: a sweep's
+        % length in the .abr and the span the artifact verdicts are made over.
+        % Deliberately not Window. Window is what the live view and the
+        % online metrics look at and the operator changes it while a run
+        % streams; the file holds the raw recorded stream and must not depend
+        % on what was on screen.
+        FileWindow (1,2) double = [0 0.01];
         % The chain as configured, and the same chain designed at the rate
         % the live sweeps actually arrive at: extract_sweeps windows DAC-rate
         % samples with a decimationFactor stride, so a live sweep is at the
@@ -412,7 +419,7 @@ classdef Pipeline < handle
             adcData   = single(resample(x,1,df)/obj.Gain);
             x         = []; %#ok<NASGU>
             onsets   = max(1,round(onsetsRaw(:)./df));
-            sweepLen = max(1,round(adcFs*diff(obj.Window)));
+            sweepLen = max(1,round(adcFs*diff(obj.FileWindow)));
 
             present = unique(seq,'stable');
             parts   = mabr.compute.Pipeline.emptyParts();

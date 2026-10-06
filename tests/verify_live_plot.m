@@ -302,6 +302,16 @@ c.t0.String = '99';                           % start after the end: refused
 set_control(c.t0,[]);
 assert(isequal(lp.TimeBase,[-3 8]),'an invalid time base was accepted');
 lp.TimeBase = [-2 10];
+% A time base typed in the strip is handed to the host, which windows the
+% sweeps to show it (a view can only crop what was extracted).
+lp.WindowFcn = @(tb) setappdata(0,'verify_live_plot_tb',tb);
+c.t0.String = '-2'; c.t1.String = '12';
+set_control(c.t1,[]);
+assert(isequal(getappdata(0,'verify_live_plot_tb'),[-2 12]), ...
+    'a typed time base was not handed to WindowFcn');
+rmappdata(0,'verify_live_plot_tb');
+lp.WindowFcn = [];
+lp.TimeBase = [-2 10];
 
 set_control(c.amp,1); assert(strcmp(lp.AmpMode,'each'),  'amplitude control (each)');
 set_control(c.amp,2); assert(strcmp(lp.AmpMode,'common'),'amplitude control (shared)');
