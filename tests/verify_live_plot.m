@@ -13,7 +13,7 @@ function verify_live_plot()
 %       5. the time base defaults to [-2 10] ms, follows TimeBase, and is
 %          clamped to what was actually recorded;
 %       6. amplitude scaling: each / shared / manual, plus the latest
-%          sweep's own limit -- quantized to 1-2-5 rungs, stepping up at
+%          sweep's own limit -- quantized to 0.25 uV rungs, stepping up at
 %          once and down only after the smaller rung has held -- and the
 %          means' limits on the same ladder, held off for longer, but
 %          rescaled at once by a setting change;
@@ -166,7 +166,7 @@ lp.TimeBase = [-2 10];
 fprintf('  PASS: time base defaults to [-2 10] ms, follows TimeBase, clamps\n');
 
 % --- 6. amplitude scaling ------------------------------------------------
-% 'each' and 'common' stand on the 1-2-5 ladder (see 6c): the limit is the
+% 'each' and 'common' stand on the 0.25 uV ladder (see 6c): the limit is the
 % rung at or above the peak it frames, not the peak itself.
 lp.AmpMode = 'each';
 lim = arrayfun(@(a) a.YLim(2),lp.axMean);
@@ -198,7 +198,7 @@ fprintf('  PASS: amplitude each / shared / manual\n');
 % A single sweep is redrawn at the live tick rate, and a limit tracking its
 % peak makes the ruler grow with the thing being measured -- every sweep then
 % looks the same size, which is the one comparison a raw sweep is watched for.
-% The limit stands on a 1-2-5 ladder instead: up the instant a sweep would not
+% The limit stands on a 0.25 uV ladder instead: up the instant a sweep would not
 % fit, held while the peak stays inside the rung, and down only after the
 % smaller rung has been enough for several refreshes running.
 lp.AmpMode = 'common';
@@ -209,22 +209,22 @@ qBad  = false(1,4);
 qUpd  = @(pk) lp.update(flat_sweeps(t,pk,4),t,0,4,qBad,qInfo);
 
 qUpd(1.2e-6);
-assert(abs(lp.axLatest.YLim(2) - 2) < 1e-9, ...
-    'the latest axes did not snap to the 2 uV rung: %s',mat2str(lp.axLatest.YLim));
-assert(abs(lp.axLatest.YLim(1) + 2) < 1e-9, ...
+assert(abs(lp.axLatest.YLim(2) - 1.25) < 1e-9, ...
+    'the latest axes did not snap to the 1.25 uV rung: %s',mat2str(lp.axLatest.YLim));
+assert(abs(lp.axLatest.YLim(1) + 1.25) < 1e-9, ...
     'the latest axes is not symmetric about zero: %s',mat2str(lp.axLatest.YLim));
-qUpd(1.9e-6);                       % ... a bigger sweep, still inside the rung
-assert(abs(lp.axLatest.YLim(2) - 2) < 1e-9, ...
+qUpd(1.24e-6);                      % ... a bigger sweep, still inside the rung
+assert(abs(lp.axLatest.YLim(2) - 1.25) < 1e-9, ...
     'the latest axes moved for a peak inside its own rung: %s', ...
     mat2str(lp.axLatest.YLim));
-qUpd(3.0e-6);                       % ... one the rung cannot hold
-assert(abs(lp.axLatest.YLim(2) - 5) < 1e-9, ...
+qUpd(2.9e-6);                       % ... one the rung cannot hold
+assert(abs(lp.axLatest.YLim(2) - 3) < 1e-9, ...
     'the latest axes did not step UP at once: %s',mat2str(lp.axLatest.YLim));
 qUpd(0.3e-6);                       % ... and one far below it
-assert(abs(lp.axLatest.YLim(2) - 5) < 1e-9, ...
+assert(abs(lp.axLatest.YLim(2) - 3) < 1e-9, ...
     'the latest axes shrank on the first quiet sweep');
 nHold = 1;
-while abs(lp.axLatest.YLim(2) - 5) < 1e-9 && nHold < 60
+while abs(lp.axLatest.YLim(2) - 3) < 1e-9 && nHold < 60
     qUpd(0.3e-6); nHold = nHold + 1;
 end
 assert(abs(lp.axLatest.YLim(2) - 0.5) < 1e-9, ...
@@ -237,7 +237,7 @@ assert(nHold > 2,'the step down was not held off at all');
 lp.AmpMode     = 'manual';
 lp.ManualLimit = 2e-6;
 qUpd(3.0e-6);
-assert(abs(lp.axLatest.YLim(2) - 5) < 1e-9, ...
+assert(abs(lp.axLatest.YLim(2) - 3) < 1e-9, ...
     'a manual limit reached the latest sweep: %s',mat2str(lp.axLatest.YLim));
 
 lp.reset();                         % the next run scales on its own evidence
@@ -259,15 +259,15 @@ lp.AmpMode = 'common';
 lp.reset();
 mLim = @() lp.axMean(1).YLim(2);
 qUpd(1.2e-6);
-assert(abs(mLim() - 2) < 1e-9 && abs(lp.axMean(1).YLim(1) + 2) < 1e-9, ...
-    'the mean axes did not snap to the 2 uV rung: %s',mat2str(lp.axMean(1).YLim));
-qUpd(1.9e-6);
-assert(abs(mLim() - 2) < 1e-9, ...
+assert(abs(mLim() - 1.25) < 1e-9 && abs(lp.axMean(1).YLim(1) + 1.25) < 1e-9, ...
+    'the mean axes did not snap to the 1.25 uV rung: %s',mat2str(lp.axMean(1).YLim));
+qUpd(1.24e-6);
+assert(abs(mLim() - 1.25) < 1e-9, ...
     'the mean axes moved for a peak inside its own rung: %g',mLim());
-qUpd(3.0e-6);
-assert(abs(mLim() - 5) < 1e-9,'the mean axes did not step UP at once: %g',mLim());
+qUpd(2.9e-6);
+assert(abs(mLim() - 3) < 1e-9,'the mean axes did not step UP at once: %g',mLim());
 nMean = 0;
-while abs(mLim() - 5) < 1e-9 && nMean < 200
+while abs(mLim() - 3) < 1e-9 && nMean < 200
     qUpd(0.3e-6); nMean = nMean + 1;
 end
 assert(abs(mLim() - 0.5) < 1e-9, ...
@@ -276,9 +276,9 @@ assert(nMean > nHold, ...
     'the means were held off no longer than a single sweep (%d vs %d refreshes)', ...
     nMean,nHold);
 
-qUpd(3.0e-6);                       % up again ...
+qUpd(2.9e-6);                       % up again ...
 qUpd(0.3e-6);                       % ... one quiet refresh: held
-assert(abs(mLim() - 5) < 1e-9,'the mean axes shrank on the first quiet refresh');
+assert(abs(mLim() - 3) < 1e-9,'the mean axes shrank on the first quiet refresh');
 lp.TimeBase = [-2 10];              % ... but a setting change is not held off
 assert(abs(mLim() - 0.5) < 1e-9, ...
     'a setting change waited out the hold instead of rescaling: %g',mLim());
@@ -1165,10 +1165,9 @@ end
 end
 
 function v = rung(x)
-% The 1-2-5 step at or above x, worked out here rather than asked of the
-% view: the smallest of 1, 2, 5, 10 times x's decade that holds it.
-c = [1 2 5 10] * 10^floor(log10(x));
-v = c(find(c >= x*(1 - 1e-9),1));
+% The 0.25 uV step at or above x (x in uV), worked out here rather than asked
+% of the view: the smallest multiple of 0.25 that holds it.
+v = max(1,ceil(x/0.25*(1 - 1e-9))) * 0.25;
 end
 
 function Y = flat_sweeps(t,pk,n)
@@ -1250,7 +1249,7 @@ function [F,info] = stats_frames(nFrames)
 % A 2 x 3 Frequency x Level run's live statistics, frame by frame, shaped as
 % mabr.compute.Pipeline.step publishes them: a running mean and SD per
 % condition, two conditions gaining a sweep a frame. Each condition's peak
-% sits mid-rung on the 1-2-5 ladder and the latest sweep's peak never moves,
+% sits mid-rung on the 0.25 uV ladder and the latest sweep's peak never moves,
 % so every limit is a function of the data alone -- the rung hysteresis a view
 % carries from frame to frame has nothing to hold on to, and two views that
 % differ only in history must land on the same rungs.
@@ -1262,7 +1261,7 @@ w  = w/max(abs(w));
 [Fq,Lv] = ndgrid([8 16],[30 50 70]);
 V   = [Fq(:) Lv(:)];
 nC  = size(V,1);
-amp = [1.4 1.4 3.3 3.3 7 7]*1e-7;            % rungs 2, 5 and 10 x 1e-7
+amp = [1.4 1.4 3.3 3.3 6.1 6.1]*1e-7;        % rungs 0.25, 0.5 and 0.75 uV
 info = struct('Stimuli',1:nC, ...
     'Labels',{arrayfun(@(f,L) sprintf('%gkHz_%gdB',f,L),V(:,1)',V(:,2)', ...
         'UniformOutput',false)}, ...

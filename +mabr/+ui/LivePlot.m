@@ -121,7 +121,7 @@ classdef LivePlot < handle
 %   The latest sweep keeps its own scale under every one of those modes -- a
 %   single sweep is tens of times a mean, and a limit chosen to frame the
 %   averages would clip it off the axes -- and it moves in the same discrete
-%   steps. See LatestLadder.
+%   steps (multiples of LimitStep, 0.25 uV).
 %
 %   Means and Group are greyed while the run on screen presents a single
 %   condition (every run of a blocked strategy): one mean is one axes under
@@ -209,13 +209,14 @@ classdef LivePlot < handle
         % for -- is this one bigger than the last? -- is exactly the one a
         % limit tracking its own peak destroys, since the ruler then grows
         % with the thing being measured and every sweep looks the same size.
-        % The limit therefore stands on a 1-2-5 ladder and moves in whole
+        % The limit therefore stands on a ladder of equal steps (LimitStep,
+        % 0.25 uV: 0.25, 0.5, 0.75, 1.0, ...) and moves in whole
         % rungs: UP the instant a sweep would not fit (clipping the signal is
         % never the better trade) and DOWN only after the smaller rung has
         % been enough for LatestShrinkHold consecutive refreshes, so one big
         % sweep does not leave the scale walking back down over the quiet ones
-        % behind it. The rungs are also where MATLAB puts readable ticks.
-        LatestLadder     = [1 2 5 10];
+        % behind it.
+        LimitStep        = 0.25e-6;   % volts: every limit is a multiple of this
         LatestShrinkHold = 15;   % refreshes (~0.75 s at the 20 Hz live tick)
         % The MEANS stand on the same ladder under 'each' and 'common' (a
         % limit tracking the data rescaled every mean at every refresh, so
@@ -323,7 +324,7 @@ classdef LivePlot < handle
         Last = [];            % last update() payload, for re-render on a control change
         % The latest-sweep axes' current +/- limit in VOLTS (0 = none chosen
         % yet) and how many consecutive refreshes have asked for a smaller
-        % rung than it. See LatestLadder.
+        % rung than it. See LimitStep.
         LatestLim    (1,1) double = 0
         LatestShrink (1,1) double = 0
         % The same for the mean axes: one rung per axes under 'each', per
@@ -1320,7 +1321,7 @@ classdef LivePlot < handle
             % times a second, for an answer that changes a few times a run.
             %
             % The labels are a function of what is here: the limits written
-            % (rungs of the 1-2-5 ladder, or the manual one, so they move in
+            % (multiples of LimitStep, or the manual one, so they move in
             % whole steps), the unit and band the y labels name, which tiles
             % show numbers (the amplitude mode and the column), the stacks'
             % own label text (its length -- a count ticking from 136 to 137 is
@@ -1867,7 +1868,7 @@ classdef LivePlot < handle
 
             D      = obj.stimulusMeans(S,G);
             latest = S.latest;
-            % Both limits in VOLTS, and both on the 1-2-5 ladder. The latest
+            % Both limits in VOLTS, and both multiples of LimitStep (0.25 uV). The latest
             % sweep scales on its own even under AmpMode 'manual': it is a
             % single sweep, tens of times the size of a mean, and a limit
             % chosen to frame the averages would clip it off the axes. The
@@ -2336,7 +2337,7 @@ classdef LivePlot < handle
             % it sets the offset between traces instead -- in VOLTS, from A:
             % the mean plus its band, so a band is framed rather than
             % clipped. 'manual' is the fixed limit. 'each' and 'common' are
-            % rungs of the 1-2-5 ladder, held the way the latest sweep's are
+            % multiples of LimitStep, held the way the latest sweep's are
             % (holdMeanRungs): a mean is watched for a response EMERGING, and
             % that is invisible on an axes that rescales to it at every
             % refresh. Overlaid means share one axes and so cannot be scaled
@@ -2431,7 +2432,7 @@ classdef LivePlot < handle
 
         function lim = latestLimit(obj,peak)
             % The +/- limit for the latest-sweep axes, in VOLTS, quantized to
-            % the LatestLadder rungs and hysteretic on the way down. Called
+            % multiples of LimitStep and hysteretic on the way down. Called
             % once per render and the only thing that moves that axis --
             % nothing else writes LatestLim.
             if isempty(peak), peak = NaN; end
@@ -2945,18 +2946,15 @@ classdef LivePlot < handle
         end
 
         function v = ladderStep(x)
-            % The smallest 1-2-5-decade value at or above x -- the rungs the
-            % latest-sweep and mean axes are allowed to stand on. x is assumed finite
-            % and positive; climbLadder is the only caller and checks.
-            rungs = mabr.ui.LivePlot.LatestLadder;
-            d = floor(log10(x));
-            m = x / 10^d;                     % in [1,10)
+            % The smallest multiple of LimitStep (0.25 uV) at or above x --
+            % the rungs the latest-sweep and mean axes are allowed to stand
+            % on. x is assumed finite and positive; climbLadder is the only
+            % caller and checks.
+            step = mabr.ui.LivePlot.LimitStep;
             % The tolerance keeps a peak that IS a rung on that rung: the
-            % division above is not exact, and 2e-6 landing on 5e-6 would be
-            % a visible jump for a rounding error.
-            k = find(rungs >= m - 1e-9,1);
-            if isempty(k), k = numel(rungs); end
-            v = rungs(k) * 10^d;
+            % division is not exact, and 0.75 landing on 0.7500000001 would
+            % be a visible jump for a rounding error.
+            v = max(1,ceil(x/step - 1e-9)) * step;
         end
 
         function [lim,shrink] = climbLadder(peak,lim,shrink,nHold)
