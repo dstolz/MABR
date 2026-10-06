@@ -682,6 +682,38 @@ assert(height(Sr) == 1 && Sr.Key == "SUBJ-ID-31" && Sr.NumFiles == 3 && Sr.NumIn
 assert(Sr.InferredLabel == string(Sr.Day,'yyyy-MM-dd') && Sr.InferredLabel == "2026-10-01", ...
     'A folder named for its subject alone is labelled by its day ("%s").',Sr.InferredLabel);
 
+% ... but a PROJECT does not use the day as a timepoint: an animal's unlabelled
+% visits are numbered in date order, two folders of one day are one visit, and
+% a visit added later that falls before the others takes no number in use.
+unRoot = fullfile(work,"unlabelled");
+Lu = load(fullfile(SP("SUBJ-ID-1254_Baseline"),fb),'-mat');
+ABR_Data = Lu.ABR_Data;
+for u = {"261001T100000","2026-10-01T10:00:00"; "261001T140000","2026-10-01T14:00:00"; ...
+        "261015T100000","2026-10-15T10:00:00"}.'
+    fu = fullfile(unRoot,"SUBJ-ID-31_" + u{1});
+    mkdir(fu);
+    ABR_Data.StartTime = char(u{2});
+    save(fullfile(fu,"SUBJ-ID-31_real.abr"),'ABR_Data','-v6');
+end
+cUn = mabr.analysis.Catalog(unRoot,CacheFolder=fullfile(work,"cacheUnlabelled"));
+cUn.scan();
+pUn = mabr.analysis.Project.open(fullfile(work,"unlabelledStore"));
+pUn.ensureSessions(cUn);
+tpU = @(k) pUn.Sessions.Timepoint(pUn.Sessions.Key == k);
+assert(tpU("SUBJ-ID-31_261001T100000") == "Session 1" && tpU("SUBJ-ID-31_261001T140000") == "Session 1" && ...
+    tpU("SUBJ-ID-31_261015T100000") == "Session 2",'Unlabelled visits are not numbered per animal and day: %s.', ...
+    strjoin(pUn.Sessions.Timepoint,', '));
+% an earlier day found later does not take "Session 1" again
+mkdir(fullfile(unRoot,"SUBJ-ID-31_260920T100000"));
+ABR_Data.StartTime = '2026-09-20T10:00:00';
+save(fullfile(unRoot,"SUBJ-ID-31_260920T100000","SUBJ-ID-31_real.abr"),'ABR_Data','-v6');
+cUn.scan();
+pUn.ensureSessions(cUn);
+tpE = pUn.Sessions.Timepoint(pUn.Sessions.Key == "SUBJ-ID-31_260920T100000");
+assert(tpE == "Session 3" && tpU("SUBJ-ID-31_261001T100000") == "Session 1" && ...
+    tpU("SUBJ-ID-31_261015T100000") == "Session 2", ...
+    'A visit added before the others took a label in use or moved one (%s).',tpE);
+
 % Every session against mabr.analysis.Session over its folder: the files it
 % would include, their sweeps and conditions, units, acquisition modes, and
 % whether any run is short.

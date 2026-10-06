@@ -48,8 +48,10 @@ classdef Project < handle
 %
 %   TIMEPOINTS. A new session's Timepoint is the one its animal's other
 %   sessions that day already have -- two sessions on one day are one visit
-%   -- else the label its folder name suggests (Catalog.inferLabel). Their
-%   order (Columns.Levels of Timepoint) is by median visit date unless set
+%   -- else the label its folder name suggests (Catalog.inferLabel); when the
+%   folder says only the day, the animal's visits are numbered "Session 1",
+%   "Session 2", ... in date order. Rows already in a project are never
+%   relabelled. Their order (Columns.Levels of Timepoint) is by median visit date unless set
 %   with setLevels; ReferenceTimepoint ("" = the first) is what
 %   DaysFromReference counts from.
 %
@@ -1431,7 +1433,14 @@ classdef Project < handle
                         pool.Timepoint ~= "" & ~startsWith(pool.Key,"pool:");
                     if any(same), tp = pool.Timepoint(find(same,1)); end
                 end
-                if tp == "", tp = c.InferredLabel; end
+                if tp == ""
+                    tp = c.InferredLabel;
+                    % A label that is only the day says nothing the Day column
+                    % does not: the animal's visits are numbered instead.
+                    if ~isnat(c.Day) && tp == string(c.Day,'yyyy-MM-dd')
+                        tp = visitLabel(c,Cs,[known; N]);
+                    end
+                end
                 R = blankSessionRow(N);
                 R.Key = c.Key;
                 R.Subject = c.Subject;
@@ -2047,6 +2056,19 @@ end
 
 function R = blankSubjectRow(T)
 R = blankSessionRow(T);
+end
+
+function tp = visitLabel(c,Cs,pool)
+% "Session k" for catalog row c, an unlabelled visit: k is the place of its day
+% among the animal's days in the catalog (sessions of one day are one visit).
+% A number the animal already uses for another day is skipped, so a visit
+% added later that falls before the others cannot take a label in use.
+own = Cs.Subject == c.Subject & ~startsWith(Cs.Key,"pool:") & ~isnat(Cs.Day);
+k = max(1,nnz(unique(Cs.Day(own)) <= c.Day));
+taken = pool.Timepoint(effectiveSubject(pool) == c.Subject & pool.Day ~= c.Day & ...
+    ~startsWith(pool.Key,"pool:"));
+while any(taken == "Session " + k), k = k + 1; end
+tp = "Session " + k;
 end
 
 function s = effectiveSubject(T)

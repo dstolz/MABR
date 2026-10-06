@@ -131,7 +131,7 @@ Badges appear only when they apply:
 
 **Labels** go in the details below the tree:
 
-- **Timepoint**: set on a visit, it labels every session of that day. A new session takes the timepoint its animal already has that day, so a visit's sessions share one and the earliest names it. Failing that, the timepoint comes from the folder name (`_Baseline`, `_2weeks`), and failing that, from the date (`2026-10-01`).
+- **Timepoint**: set on a visit, it labels every session of that day. A new session takes the timepoint its animal already has that day, so a visit's sessions share one and the earliest names it. Failing that, the timepoint comes from the folder name (`_Baseline`, `_2weeks`), and failing that, the animal's visits are numbered in date order (`Session 1`, `Session 2`, …). A project made before this keeps the date labels it already has; edit them in the Sessions table if you prefer.
 - **Group** belongs to the animal.
 - **In study** says whether the session counts in the Study tab.
 - **Comment…** adds a note to the session.
