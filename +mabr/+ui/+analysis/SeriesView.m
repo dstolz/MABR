@@ -793,13 +793,18 @@ classdef SeriesView < mabr.ui.analysis.View
             mabr.ui.analysis.Compat.setSortable(ot,false);
             obj.tableMenu(fig,ot,'AnalysisThresholdOtherCopy');
             H.Other = ot;
-            r10 = obj.rowGrid(g,10,{'1x',150});
+            r10 = obj.rowGrid(g,10,{'1x',150,150});
             H.OtherNote = uilabel(r10,'Text','','FontColor',muted,'FontSize',10, ...
                 'Tag','AnalysisThresholdOtherNote');
             H.CompareMethods = obj.button(r10,'Compare methods','AnalysisThresholdCompare', ...
                 'Every built-in method on this series'' stored statistics (changes nothing)', ...
                 @(~,~) obj.onCompareMethods());
             mabr.ui.analysis.Style.setButtonIcon(H.CompareMethods,'threshold','left');
+            H.Suthakar = obj.button(r10,'Suthakar & Liberman…','AnalysisThresholdSuthakar', ...
+                ['This series as Suthakar & Liberman 2019 analysed it: the next-louder ' ...
+                'correlograms, their sigmoid and power-law fits and decision tree, beside this ' ...
+                'method''s answer (a window of its own; changes nothing)'], ...
+                @(~,~) obj.onSuthakar());
             ap = uipanel(g,'BorderType','none','BackgroundColor',[1 1 1],'Tag','AnalysisThresholdAudiogram');
             ap.Layout.Row = 11;
             ax2 = axes('Parent',ap,'Units','normalized','Position',[0.14 0.27 0.80 0.66], ...
@@ -1948,6 +1953,14 @@ classdef SeriesView < mabr.ui.analysis.View
             for f = ["Exclude","Note"]
                 obj.put("thr_en_" + f,H.(f),'Enable',matlab.lang.OnOffSwitchState(has));
             end
+            % (the paper's analysis needs the next-louder correlation the
+            % measures step writes, and more than one level)
+            measured = false;
+            try
+                measured = ismember('XCorrUp0',G.Session.Conditions.Properties.VariableNames);
+            catch
+            end
+            obj.put('thr_en_Suthakar',H.Suthakar,'Enable',matlab.lang.OnOffSwitchState(measured && ~single));
             if has
                 obj.put('thr_state',H.State,'Text',char(mabr.ui.analysis.SeriesView.stateText(row)));
             else
@@ -3270,6 +3283,17 @@ classdef SeriesView < mabr.ui.analysis.View
             obj.Model.setThresholdValue(v);
         end
 
+        function onSuthakar(obj)
+            % The Suthakar & Liberman window on this series (one window,
+            % raised when open; it follows the selection from then on).
+            sk = obj.Model.Selection.SeriesKey;
+            if ~isempty(obj.Host)
+                obj.Host.openDialog("suthakar",sk);
+            else
+                mabr.ui.analysis.SuthakarLibermanWindow(obj.Model,sk);
+            end
+        end
+
         function onCompareMethods(obj)
             % (a short name per method -- the full one is in the table's
             % tooltip -- and the status in words)
@@ -3769,13 +3793,13 @@ classdef SeriesView < mabr.ui.analysis.View
         function s = methodShort(id,label)
             % A threshold method's name for a narrow table (the full label
             % is in the table's tooltip).
-            switch string(id)
+            switch mabr.analysis.SeriesThreshold.canonicalId(id)
                 case "perm-glm",         s = "Permutation + GLM fit";
                 case "perm-descending",  s = "Permutation, descending";
                 case "power-descending", s = "Response power";
                 case "fsp-descending",   s = "Fsp";
                 case "presto",           s = "Split-half r (presto)";
-                case "xcorr",            s = "Next-level correlation";
+                case "suthakar-liberman", s = "Suthakar & Liberman";
                 case "xcorr-dtw",        s = "Next-level correlation (DTW)";
                 otherwise,               s = string(label);
             end

@@ -1568,7 +1568,8 @@ classdef Session < handle
             %
             % METHOD. Method names one of SeriesThreshold.methods() --
             % "perm-glm", "perm-descending", "power-descending",
-            % "fsp-descending", "presto", "xcorr", "xcorr-dtw" or "custom"
+            % "fsp-descending", "presto", "suthakar-liberman" (once "xcorr",
+            % which still resolves), "xcorr-dtw" or "custom"
             % (whose metric, model and criterion are read from
             % MethodSettings). Left "" (the DIRECT, legacy call every script
             % before named methods made), the
@@ -2994,7 +2995,7 @@ classdef Session < handle
                     st(end+1,1) = step; fd(end+1,1) = "(not run)"; ov(end+1,1) = ""; nv(end+1,1) = ""; %#ok<AGROW>
                     continue
                 end
-                old = saved.Settings;
+                old = mabr.analysis.Settings.canonicalStruct(saved.Settings);
                 for f = string(fieldnames(cur)).'
                     if ~isstruct(old) || ~isfield(old,f)
                         a = "(none)";
@@ -4940,7 +4941,9 @@ classdef Session < handle
                         mabr.analysis.SeriesThreshold.formatValue(T.Threshold(i),T.Censored(i), ...
                         T.ThrLo(i),T.ThrHi(i))); %#ok<AGROW>
                 end
-                if T.Decision(i) ~= "" && T.ReviewedMethod(i) ~= "" && T.ReviewedMethod(i) ~= T.Method(i)
+                if T.Decision(i) ~= "" && T.ReviewedMethod(i) ~= "" && ...
+                        mabr.analysis.SeriesThreshold.canonicalId(T.ReviewedMethod(i)) ~= ...
+                        mabr.analysis.SeriesThreshold.canonicalId(T.Method(i))
                     fl(end+1) = "reviewed under " + T.ReviewedMethod(i); %#ok<AGROW>
                 end
                 T.Flags(i) = strjoin(fl,"; ");

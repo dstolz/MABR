@@ -223,7 +223,7 @@ assert(fits{6}.Type == "presto-sigmoid" && fits{7}.Type == "presto-power", ...
     'predictor test fits are not the two presto curves (%s, %s).',fits{6}.Type,fits{7}.Type);
 % a v2 SeriesThreshold fit is rebuilt from its sampled curve
 Ys = struct('XCorrUp',[0.02 0.05 0.1 0.2 0.45 0.7 0.8 0.85 NaN].');
-os = ST.estimate(L,Ys,"xcorr",MinSweeps=0,MinPerPolarity=0);
+os = ST.estimate(L,Ys,"suthakar-liberman",MinSweeps=0,MinPerPolarity=0);
 g = rmfield(os.Fit,'Predict');
 g = mabr.analysis.Threshold.predictor(g);
 assert(max(abs(g.Predict(os.Fit.CurveX) - os.Fit.CurveY)) < 1e-12, 'v2 CurveX predictor does not reproduce CurveY.');
@@ -379,14 +379,14 @@ assert(o.Status == "ok" && o.Censored == "none" && isfinite(o.Threshold) && o.CI
 % level gave 18 dB; descending, it is the 60-70 dB crossing, and the low run
 % is flagged.
 rx = [NaN 0.785 -0.017 -0.147 0.626 0.536 0.520 -0.369 0.211].';    % 80..0 dB
-o = ST.estimate((80:-10:0).',struct('XCorrUp',rx),"xcorr",MinSweeps=0,MinPerPolarity=0);
+o = ST.estimate((80:-10:0).',struct('XCorrUp',rx),"suthakar-liberman",MinSweeps=0,MinPerPolarity=0);
 assert(o.Status == "ok" && o.Threshold > 60 && o.Threshold < 70 && ...
     any(o.Flags == "isolated detection below threshold") && any(o.Flags == "top-level-only run"), ...
-    'xcorr on the 32 kHz series: %g (%s) {%s}, expected the 60-70 dB crossing.',o.Threshold,o.Status, ...
+    'suthakar-liberman on the 32 kHz series: %g (%s) {%s}, expected the 60-70 dB crossing.',o.Threshold,o.Status, ...
     strjoin(o.Flags,'|'));
 xc = o.Threshold;
 fprintf(['  PASS canonical series (monotone, isolated FP, failed top, all, none, top-level-only run, ' ...
-    'runs below one and two misses, top two missed; GLM ends); descending from the top: xcorr 32 kHz ' ...
+    'runs below one and two misses, top two missed; GLM ends); descending from the top: suthakar-liberman 32 kHz ' ...
     '%.1f dB, not 18\n'],xc);
 
 %% ====================================================== H. usable levels
@@ -477,24 +477,24 @@ fprintf('  PASS overrides change D (and count), the legacy gate, range censoring
 
 %% ====================================================== J. graded metrics, bootstrap CI
 Yx = struct('XCorrUp',[0.02 0.05 0.1 0.2 0.45 0.7 0.8 0.85 NaN].');
-o = ST.estimate(L,Yx,"xcorr",MinSweeps=0,MinPerPolarity=0);
+o = ST.estimate(L,Yx,"suthakar-liberman",MinSweeps=0,MinPerPolarity=0);
 assert(abs(o.Threshold - 36) < 1e-12 && o.Censored == "none" && o.FitTarget == "graded" && ...
     ~any(startsWith(o.Flags,"level ignored")) && ~any(o.Flags == "metric undefined at some level"), ...
-    'xcorr crossing %g {%s}; the top level''s NaN is the method, not a defect.',o.Threshold,strjoin(o.Flags,'|'));
-o = ST.estimate(L,Yx,"xcorr",MinSweeps=0,MinPerPolarity=0,Interpolate=false);
-assert(o.Censored == "interval" && o.Threshold == 35,'xcorr without interpolation: %g %s.',o.Threshold,o.Censored);
-o = ST.estimate(L,Yx,"xcorr",MinSweeps=0,MinPerPolarity=0,Interpolate=false,Convention="crossing");
+    'suthakar-liberman crossing %g {%s}; the top level''s NaN is the method, not a defect.',o.Threshold,strjoin(o.Flags,'|'));
+o = ST.estimate(L,Yx,"suthakar-liberman",MinSweeps=0,MinPerPolarity=0,Interpolate=false);
+assert(o.Censored == "interval" && o.Threshold == 35,'suthakar-liberman without interpolation: %g %s.',o.Threshold,o.Censored);
+o = ST.estimate(L,Yx,"suthakar-liberman",MinSweeps=0,MinPerPolarity=0,Interpolate=false,Convention="crossing");
 assert(o.Censored == "interval" && abs(o.Threshold - 36) < 1e-12,'crossing convention: %g.',o.Threshold);
 rs = RandStream('threefry','Seed',3);
 YB = Yx.XCorrUp + 0.05*randn(rs,9,200);
 YB(9,:) = NaN;
-o = ST.estimate(L,Yx,"xcorr",MinSweeps=0,MinPerPolarity=0,YBoot=YB);
+o = ST.estimate(L,Yx,"suthakar-liberman",MinSweeps=0,MinPerPolarity=0,YBoot=YB);
 assert(o.CIMethod == "bootstrap" && o.CILower < o.Threshold && o.Threshold < o.CIUpper, ...
     'Graded bootstrap CI [%g %g] (%s) does not bracket %g.',o.CILower,o.CIUpper,o.CIMethod,o.Threshold);
-o2 = ST.estimate(L,Yx,"xcorr",MinSweeps=0,MinPerPolarity=0,YBoot=YB);
+o2 = ST.estimate(L,Yx,"suthakar-liberman",MinSweeps=0,MinPerPolarity=0,YBoot=YB);
 assert(isequal([o.CILower o.CIUpper],[o2.CILower o2.CIUpper]),'The bootstrap CI is not deterministic.');
 % xcorr-dtw: the same rule on DTWUp, at its own criterion (0.40: noise
-% passes it as often as it passes 0.35 under xcorr's rigid lag), and blind to
+% passes it as often as it passes 0.35 under suthakar-liberman's rigid lag), and blind to
 % XCorrUp -- each method reads its own column.
 Yd = struct('DTWUp',Yx.XCorrUp,'XCorrUp',Yx.XCorrUp - 0.3);
 o = ST.estimate(L,Yd,"xcorr-dtw",MinSweeps=0,MinPerPolarity=0);
@@ -520,12 +520,12 @@ assert(o.Type == "presto-sigmoid" && o.Status == "ok" && abs(o.Threshold - thrTr
 % (40,50] -- or on 30 dB for the second case.)
 Yo = Yx; Yo.Override = nan(9,1); Yo.Override(5) = 0;      % 40 dB, r 0.45: "no response"
 for interp = [true false]
-    o = ST.estimate(L,Yo,"xcorr",MinSweeps=0,MinPerPolarity=0,Interpolate=interp,Convention="crossing");
+    o = ST.estimate(L,Yo,"suthakar-liberman",MinSweeps=0,MinPerPolarity=0,Interpolate=interp,Convention="crossing");
     assert(o.Censored == "interval" && o.Threshold == 45 && o.ThrLo == 40 && o.ThrHi == 50, ...
         'Override 0 against r >= criterion (Interpolate %d): %g %s [%g %g].',interp,o.Threshold,o.Censored,o.ThrLo,o.ThrHi);
 end
 Yo.Override(5) = NaN; Yo.Override(4) = 1;                  % 30 dB, r 0.2: "response"
-o = ST.estimate(L,Yo,"xcorr",MinSweeps=0,MinPerPolarity=0);
+o = ST.estimate(L,Yo,"suthakar-liberman",MinSweeps=0,MinPerPolarity=0);
 assert(o.Censored == "interval" && o.Threshold == 25 && o.ThrLo == 20 && o.ThrHi == 30, ...
     'Override 1 against r < criterion: %g %s [%g %g].',o.Threshold,o.Censored,o.ThrLo,o.ThrHi);
 % presto with fewer than two finite r (the other usable levels are overrides)
@@ -658,13 +658,13 @@ fprintf('  PASS finalValue for every decision, formatValue texts, belowThreshold
 
 %% ====================================================== M. methods, resolve, definitions
 M = ST.methods();
-ids = ["perm-glm","perm-descending","power-descending","fsp-descending","presto","xcorr","xcorr-dtw","custom"];
+ids = ["perm-glm","perm-descending","power-descending","fsp-descending","presto","suthakar-liberman","xcorr-dtw","custom"];
 labels = ["Permutation test " + ARROW + " psychometric fit (GLM, p = 0.5)"
           "Permutation test " + ARROW + " lowest of 2 consecutive detected levels"
           "Response power vs " + PM + " reference (sign-flip test) " + ARROW + " lowest of 2 consecutive"
           "Fsp (multi-point F, estimated df) " + ARROW + " lowest of 2 consecutive"
           "Split-half correlation r " + GE + " 0.30 (ABRpresto-like fit)"
-          "Correlation with next-louder level " + GE + " 0.35 (Suthakar & Liberman 2019)"
+          "Suthakar & Liberman 2019: correlation with next-louder level " + GE + " 0.35 " + ARROW + " lowest of 2 consecutive"
           "Correlation with next-louder level after time warping " + GE + " 0.40 (DTW)"
           "Custom" + ELL].';
 assert(numel(M) == 8 && isequal([M.Id],ids) && isequal(ST.Ids,ids),'methods() Ids or order are wrong.');
@@ -677,6 +677,32 @@ assert(isequal([M.Metric],["detection","detection","power","fsp","splithalf","xc
     isequal([M.NeedsMeasures],[false false true true true true true false]),'methods() table columns are wrong.');
 m = ST.resolve("perm-descending",struct('Alpha',0.01,'MinConsecutive',3));
 assert(m.Criterion == 0.01 && contains(m.Label,"lowest of 3 consecutive"),'resolve did not apply Alpha/K: %s.',m.Label);
+m = ST.resolve("suthakar-liberman",struct('MinConsecutive',3));
+assert(contains(m.Label,"lowest of 3 consecutive") && startsWith(m.Label,"Suthakar & Liberman 2019"), ...
+    'resolve did not apply K to the suthakar-liberman label: %s.',m.Label);
+% The retired Id "xcorr" is the method it was renamed to, wherever it is read:
+% resolve, estimate, Settings (assigned, from a struct, and a saved step's
+% struct compared with today's), so a result made under it is not stale.
+assert(isequal(ST.canonicalId(["xcorr" "presto" "nope"]),["suthakar-liberman" "presto" "nope"]), ...
+    'canonicalId: %s.',strjoin(ST.canonicalId(["xcorr" "presto" "nope"]),', '));
+m = ST.resolve("xcorr");
+assert(m.Id == "suthakar-liberman" && m.Metric == "xcorr" && m.Criterion == 0.35,'resolve("xcorr") gave %s.',m.Id);
+Yr = struct('XCorrUp',[0.05 0.1 0.2 0.3 0.5 0.7 0.8 0.85 NaN].');
+o1 = ST.estimate(L,Yr,"xcorr",MinSweeps=0,MinPerPolarity=0);
+o2 = ST.estimate(L,Yr,"suthakar-liberman",MinSweeps=0,MinPerPolarity=0);
+assert(isequaln(o1.Threshold,o2.Threshold) && o1.Fit.Method == "suthakar-liberman", ...
+    'estimate under "xcorr": %g (%s), under the new Id %g.',o1.Threshold,o1.Fit.Method,o2.Threshold);
+assert(mabr.analysis.Settings(ThresholdMethod="xcorr").ThresholdMethod == "suthakar-liberman", ...
+    'Settings did not store "xcorr" as suthakar-liberman.');
+[sr,wr] = mabr.analysis.Settings.fromStruct(struct('ThresholdMethod',"xcorr"));
+assert(sr.ThresholdMethod == "suthakar-liberman" && isempty(wr),'fromStruct("xcorr"): %s {%s}.', ...
+    sr.ThresholdMethod,strjoin(wr,'|'));
+oldStep = mabr.analysis.Settings(ThresholdMethod="suthakar-liberman").stepSettings("thresholds");
+oldStep.ThresholdMethod = "xcorr";                          % as a results file saved it
+assert(isequaln(mabr.analysis.Settings.canonicalStruct(oldStep),sr.stepSettings("thresholds")) && ...
+    isequaln(mabr.analysis.Settings.canonicalStruct(struct('ThresholdMethod',"presto")),struct('ThresholdMethod',"presto")) && ...
+    isequal(mabr.analysis.Settings.canonicalStruct(7),7), ...
+    'canonicalStruct did not make a saved "xcorr" step equal to today''s, or touched something else.');
 % A named p-method detects at the Alpha estimate is given (10 section 7.2 step
 % 4), whatever it was resolved under; a custom "p" method keeps its criterion.
 Ya = struct('P',[0.5 0.5 0.5 0.03 0.03 0.005 0.005 0.005 0.005].');
@@ -736,7 +762,58 @@ assert(contains(d5,"300 resamples") && contains(d5,"1" + NDASH + "6 ms"),'presto
 for id = ids
     assert(strlength(ST.definition(id)) > 20,'No definition for %s.',id);
 end
-fprintf('  PASS methods() table, resolve refusals (badMethod), definitions carry the numbers in force\n');
+fprintf(['  PASS methods() table, resolve refusals (badMethod), definitions carry the numbers in force, ' ...
+    'the retired "xcorr" read as suthakar-liberman everywhere\n']);
+
+%% ====================================================== S. Suthakar & Liberman 2019's tree, as published
+% mabr.analysis.SuthakarLiberman: the paper's sigmoid and power-law fits and
+% its Fig. 4 decision tree, each path reached by data built for it, the
+% thresholds against their closed forms, and the correlation it is run on.
+SL = mabr.analysis.SuthakarLiberman;
+lastwarn('');
+xs = (20:5:80).';                                   % A: an exact sigm_fit sigmoid
+ys = 0.02 + (0.9 - 0.02)./(1 + 10.^(0.15*(42 - xs)));
+o = SL.decide(xs,ys);
+tA = 42 - log10((0.9 - 0.02)/(0.35 - 0.02) - 1)/0.15;
+assert(o.Path == "A" && o.Fit == "sigmoid" && o.C1 && o.C2 && abs(o.Threshold - tA) < 1e-3 && ...
+    max(abs(o.Sigmoid.Params - [0.02 0.9 42 0.15])) < 1e-3 && startsWith(o.Message,"Path A"), ...
+    'S&L path A: %s %g (want %g) {%s}',o.Path,o.Threshold,tA,o.Message);
+o = SL.decide(xs,ys + 0.02*sin((1:13).'));          % ... its interval brackets it
+assert(o.Path == "A" && o.Interval(1) < o.Threshold && o.Threshold < o.Interval(2) && ...
+    abs(o.Threshold - tA) < 1,'S&L path A with noise: %g [%g %g].',o.Threshold,o.Interval);
+xb = (20:10:80).';                                  % B: exact power2, 10 dB steps
+o = SL.decide(xb,1.0 - 2.4*xb.^-0.35);
+tB = ((0.35 - 1.0)/-2.4)^(1/-0.35);
+assert(o.Path == "B" && o.Fit == "power" && o.C1 && ~o.C2 && o.C3 && abs(o.Threshold - tB) < 1e-3 && ...
+    o.Power.AdjR2 > 0.999,'S&L path B: %s %g (want %g) {%s}',o.Path,o.Threshold,tB,o.Message);
+o = SL.decide((30:5:80).',[0.10 -0.15 0.30 0.05 0.45 0.10 0.40 0.20 0.55 0.15 0.50].');   % C
+assert(o.Path == "C" && o.Noisy && ~o.C1 && ~o.C3 && o.C4 && isfinite(o.Threshold) && ...
+    contains(o.Message,"visual inspection"),'S&L path C: %s {%s}',o.Path,o.Message);
+o = SL.decide(xb,[0.05 -0.02 0.08 0.01 0.06 -0.03 0.04].');                              % D
+assert(o.Path == "D" && o.Fit == "" && isnan(o.Threshold) && ~o.C4,'S&L path D: %s {%s}',o.Path,o.Message);
+o = SL.decide((60:10:80).',[0.2 0.5 0.8].');
+assert(o.Path == "insufficient" && isnan(o.Threshold),'S&L with 3 levels: %s.',o.Path);
+pw = SL.fitPower((-10:10:80).',[0.3; 0.2; 1.0 - 2.4*(10:10:80).'.^-0.35]);
+assert(pw.Ok && pw.Excluded == 2 && abs(pw.Threshold - tB) < 1e-3, ...
+    'power2 does not leave out the levels at or below 0 (%d, %g).',pw.Excluded,pw.Threshold);
+assert(isempty(lastwarn),'The S&L fits warned: %s',lastwarn);
+assert(SL.valueText(38,[36.2 40.7]) == "38.0 (36.2" + NDASH + "40.7)" && ...
+    SL.valueText(35.1,[NaN 48]) == "35.1 (?" + NDASH + "48.0)" && SL.valueText(NaN,[1 2]) == "n/a", ...
+    'S&L valueText.');
+% the correlation: xcov 'coeff', so lag 0 is SingleTrial.xcorrUp's r0, and a
+% quieter mean 3 samples later peaks at +3 samples
+tt = (0:1/12:12).';
+mh = exp(-((tt - 3)/0.4).^2) - 0.6*exp(-((tt - 4.5)/0.5).^2);
+ml = [zeros(3,1); mh(1:end-3)];
+rw = tt >= 0.5 & tt <= 8;
+[lg,rc] = SL.correlogram(ml,mh,rw,1/12);
+[~,ipk] = max(rc);
+[~,~,r0] = mabr.analysis.SingleTrial.xcorrUp(ml,mh,rw,0,1/12);
+assert(abs(lg(ipk) - 3/12) < 1e-12 && abs(rc(lg == 0) - r0) < 1e-12 && isequal(lg,-flipud(lg)) && ...
+    numel(lg) == 2*nnz(rw) - 1,'S&L correlogram: peak at %g ms, lag 0 %g vs r0 %g.',lg(ipk),rc(lg == 0),r0);
+fprintf(['  PASS Suthakar & Liberman 2019 as published: paths A (sigmoid %.2f = closed form), B (power2 ' ...
+    '%.2f = closed form), C (flagged), D, insufficient; the interval brackets; power2 leaves out levels ' ...
+    '<= 0; no warning; the correlogram is xcov ''coeff'' (lag 0 = xcorrUp''s r0, a 3-sample delay at +3)\n'],tA,tB);
 
 %% ====================================================== N. Settings
 S = mabr.analysis.Settings();
@@ -768,9 +845,10 @@ assert(isequal([S.Waves.Name],["I","II","III","IV","V"]) && isequal([S.Waves.TMi
     isequal([S.Waves.Expected],([S.Waves.TMin]+[S.Waves.TMax])/2),'Settings default Waves are wrong.');
 assert(isempty(S.problems()),'Default settings report problems: %s',strjoin(S.problems(),' | '));
 % Settings' validators spell the vocabularies of the classes that read them;
-% held equal here so that neither can grow a value the other refuses.
+% held equal here so that neither can grow a value the other refuses. (A
+% method's reader, resolve, takes the retired Ids too, listed last.)
 src = fileread(which('mabr.analysis.Settings'));
-vocab = {'ThresholdMethod',ST.Ids; 'ThresholdMetric',ST.Metrics; 'ThresholdModel',ST.Models; ...
+vocab = {'ThresholdMethod',[ST.Ids ST.RetiredIds]; 'ThresholdMetric',ST.Metrics; 'ThresholdModel',ST.Models; ...
          'CriterionMode',ST.CriterionModes; 'RejectFeature',mabr.analysis.Artifacts.Features};
 for k = 1:size(vocab,1)
     tok = regexp(src,[vocab{k,1} ' \(1,1\) string \{mustBeMember\(' vocab{k,1} ',\[([^\]]*)\]\)\}'],'tokens','once');

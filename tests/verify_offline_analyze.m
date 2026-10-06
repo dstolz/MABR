@@ -16,7 +16,7 @@ function verify_offline_analyze()
 %           every series "ok"; perm-descending's interval within one level
 %           step of the truth and the default perm-glm within one step of it;
 %           StepState filled, isStale false, a Criterion change stale for
-%           thresholds only, a touched file stale for the data; xcorr and
+%           thresholds only, a touched file stale for the data; suthakar-liberman and
 %           xcorr-dtw within one step of the truth; results made before
 %           DTWUp existed stale from measure for xcorr-dtw, and only for it
 %   Part C  curation survives re-analysis: accepted / manual level /
@@ -185,19 +185,19 @@ descTxt = strjoin(mabr.analysis.SeriesThreshold.formatValue(Tp.Final(tone),Tp.Fi
 permTxt = strjoin(mabr.analysis.SeriesThreshold.formatValue(Td.Final(tone),Td.FinalCensored(tone),Td.FinalLo(tone),Td.FinalHi(tone)),", ");
 % The next-louder correlation, rigid and warped: each reads its own measure
 % at its own criterion and finds every tone series within a step of the truth.
-sd.ThresholdMethod = "xcorr";
+sd.ThresholdMethod = "suthakar-liberman";
 s.analyze(sd,From="thresholds");
 Tx = s.Thresholds;
 sd.ThresholdMethod = "xcorr-dtw";
 s.analyze(sd,From="thresholds");
 Tw = s.Thresholds;
 assert(all(Tw.Method == "xcorr-dtw" & Tw.Metric == "dtw" & Tw.Criterion == 0.40) && ...
-    all(Tx.Method == "xcorr" & Tx.Metric == "xcorr" & Tx.Criterion == 0.35), ...
-    'xcorr / xcorr-dtw rows do not name their own metric and criterion.');
+    all(Tx.Method == "suthakar-liberman" & Tx.Metric == "xcorr" & Tx.Criterion == 0.35), ...
+    'suthakar-liberman / xcorr-dtw rows do not name their own metric and criterion.');
 for r = find(Tw.Stimulus == "Tone").'
     tr = truthOf(r);
     assert(abs(Tx.Final(r) - tr) <= step && abs(Tw.Final(r) - tr) <= step, ...
-        '%s: xcorr %s / xcorr-dtw %s is not within one step of the truth %g.',Tw.Key(r), ...
+        '%s: suthakar-liberman %s / xcorr-dtw %s is not within one step of the truth %g.',Tw.Key(r), ...
         mabr.analysis.SeriesThreshold.formatValue(Tx.Final(r),Tx.FinalCensored(r),Tx.FinalLo(r),Tx.FinalHi(r)), ...
         mabr.analysis.SeriesThreshold.formatValue(Tw.Final(r),Tw.FinalCensored(r),Tw.FinalLo(r),Tw.FinalHi(r)),tr);
 end
@@ -236,6 +236,43 @@ catch ME
     id = string(ME.identifier);
 end
 assert(id == "mabr:analysis:Session:noMeasures",'A thresholds re-run without DTWUp gave "%s".',id);
+% Results analysed under the method's retired Id "xcorr" are current for
+% suthakar-liberman, the name it was given -- to the session and to Batch.
+sx = st;  sx.ThresholdMethod = "suthakar-liberman";
+s.analyze(sx,From="thresholds");
+fx = fullfile(root,"under_xcorr.mat");
+R = load(s.saveResults(fx,IncludeSweeps=false));
+R.StepState.thresholds.Settings.ThresholdMethod = "xcorr";
+R.Settings.ThresholdMethod = "xcorr";
+R.Thresholds.Method(:) = "xcorr";
+save(fx,'-struct','R');
+so = mabr.analysis.Session.fromResults(fx,Verbose=false);
+[tf,D] = so.isStale(sx);
+assert(~tf && mabr.analysis.Batch.isCurrent(fx,sx), ...
+    'Results saved under "xcorr" are stale for suthakar-liberman: %s.',strjoin(D.Step + "." + D.Field,', '));
+% Suthakar & Liberman's own reading of a series (the analysis app's window):
+% the r it fits is XCorrUp0, each pair's correlogram at lag 0 is that r, over
+% the window and lag allowance the measures used -- from the sweeps and from
+% a results file alike.
+skA = s.seriesKeys();
+for iq = 1:numel(skA)
+    Ds = mabr.analysis.SuthakarLiberman.fromSession(s,skA(iq));
+    Dr = mabr.analysis.SuthakarLiberman.fromSession(so,skA(iq));
+    rq = s.rowOf(Ds.Keys);
+    x0 = s.Conditions.XCorrUp0(rq);
+    assert(Ds.Problem == "" && isequaln(Ds.R0,x0) && numel(Ds.Pairs) == nnz(isfinite(x0)) && ...
+        isequal(Ds.Window,st.ResponseWindow) && Ds.MaxLag == st.MaxLag && numel(Dr.Pairs) == numel(Ds.Pairs), ...
+        'S&L reading of %s: %s (%d pairs for %d values).',skA(iq),Ds.Problem,numel(Ds.Pairs),nnz(isfinite(x0)));
+    for pq = 1:numel(Ds.Pairs)
+        prq = Ds.Pairs(pq);
+        assert(abs(prq.R(prq.LagMs == 0) - x0(Ds.Levels == prq.Level)) < 1e-12 && ...
+            max(abs(prq.R - Dr.Pairs(pq).R)) < 1e-12,'%s at %g: the correlogram is not XCorrUp0 at lag 0.', ...
+            skA(iq),prq.Level);
+    end
+    oq = mabr.analysis.SuthakarLiberman.decide(Ds.Levels,Ds.R0);
+    assert(ismember(oq.Path,mabr.analysis.SuthakarLiberman.Paths),'S&L path "%s".',oq.Path);
+end
+s.analyze(st,From="thresholds");
 % A touched file changes the data fingerprint (its own small session).
 fz = fullfile(root,"SUBJ-ID-9001_touch");
 tz = truth;  tz.Freqs = 8;  tz.Threshold = 20;  tz.Levels = [40 80];  tz.nSweeps = 16;
@@ -250,9 +287,10 @@ fidT = fopen(ffn,'w');  fwrite(fidT,bytes);  fclose(fidT);     % same bytes, a n
 assert(tf && any(D.Step == "data" & D.Field == "files"),'A touched file did not make the data stale.');
 fprintf(['  PASS Part B: analyze: 4 perm-glm series "ok" (%s); per frequency power-descending %s within ' ...
     'one step of the truth, perm-descending %s never below it and within one step of perm-glm; ' ...
-    'xcorr %s and xcorr-dtw %s within one step of the truth; StepState filled, not stale, a ' ...
+    'suthakar-liberman %s and xcorr-dtw %s within one step of the truth; StepState filled, not stale, a ' ...
     'Criterion change stale for thresholds only, results without DTWUp stale from measure for ' ...
-    'xcorr-dtw only, a touched file stale for the data (%.1f s)\n'], ...
+    'xcorr-dtw only, results saved under the retired "xcorr" current, a touched file stale for ' ...
+    'the data (%.1f s)\n'], ...
     strjoin(compose('%.1f',T.Threshold),", "),descTxt,permTxt,xTxt,wTxt,toc(tp));
 
 % =========================================================================

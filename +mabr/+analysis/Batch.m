@@ -279,7 +279,7 @@ classdef Batch
                 if ~isfield(R.StepState,st), return; end
                 x = R.StepState.(st);
                 if isempty(x) || ~isstruct(x) || ~isfield(x,'Settings'), return; end
-                if ~isequaln(x.Settings,s.stepSettings(st)), return; end
+                if ~isequaln(mabr.analysis.Settings.canonicalStruct(x.Settings),s.stepSettings(st)), return; end
             end
             if fingerprint ~= ""
                 seg = R.StepState.segment;

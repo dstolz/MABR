@@ -21,19 +21,32 @@ classdef SeriesThreshold
 %     power-descending  response power vs the ± reference (sign-flip p) -> same
 %     fsp-descending    Fsp with estimated df (F p) -> same
 %     presto            split-half r -> ABRpresto-like fit, r = 0.30
-%     xcorr             correlation with the next-louder level >= 0.35 -> same rule
+%     suthakar-liberman correlation with the next-louder level >= 0.35 -> same rule
 %     xcorr-dtw         the same after dynamic time warping >= 0.40 -> same rule
 %     custom            metric, model and criterion read from the settings
 %
-%   xcorr-dtw EXTENDS xcorr. xcorr advances the quieter level's average by one
-%   lag (0 to MaxLag) to meet the louder one's, so it can line up wave I or
-%   wave V but not both: a quieter response's later waves are delayed more.
-%   xcorr-dtw lets the lag change along the response -- each sample's lag
-%   from dtw (0 to MaxLag), smoothed over 2 ms -- before correlating
-%   (SingleTrial.dtwUp). Its criterion is not xcorr's because the warp lines
-%   noise up too: 0.40 is where pairs of independent noise averages pass as
-%   often (about 3%) as they pass 0.35 under xcorr's rigid lag (default band,
-%   window and lag allowance).
+%   suthakar-liberman is named for the paper its statistic and criterion come
+%   from: Suthakar & Liberman 2019, Hear Res 381:107782
+%   (doi:10.1016/j.heares.2019.107782) -- each level's average correlated
+%   with the next-louder level's, the value belonging to the quieter level of
+%   the pair, a response where it reaches 0.35. Its threshold RULE is not
+%   theirs: they fit a sigmoid and a power law to r against level and read
+%   the crossing off the better fit (their Fig. 4), where here the descending
+%   rule decides, as for every "-descending" method, and the crossing is
+%   interpolated between the two bracketing levels. Nor is r quite theirs:
+%   theirs is at lag 0, this one the best of lags 0..MaxLag (MaxLag = 0 gives
+%   theirs). It was called "xcorr", the name of its metric, and that Id still
+%   resolves to it (canonicalId).
+%
+%   xcorr-dtw EXTENDS suthakar-liberman, which advances the quieter level's
+%   average by one lag (0 to MaxLag) to meet the louder one's, so it can line
+%   up wave I or wave V but not both: a quieter response's later waves are
+%   delayed more. xcorr-dtw lets the lag change along the response -- each
+%   sample's lag from dtw (0 to MaxLag), smoothed over 2 ms -- before
+%   correlating (SingleTrial.dtwUp). Its criterion is not suthakar-liberman's
+%   because the warp lines noise up too: 0.40 is where pairs of independent
+%   noise averages pass as often (about 3%) as they pass 0.35 under the rigid
+%   lag (default band, window and lag allowance).
 %
 %   A named method's criterion is FIXED (a p-method's is Alpha: the
 %   settings' in resolve, and in estimate the Alpha estimate is given);
@@ -84,7 +97,14 @@ classdef SeriesThreshold
     properties (Constant)
         % Method Ids, in dropdown order.
         Ids = ["perm-glm","perm-descending","power-descending","fsp-descending", ...
-               "presto","xcorr","xcorr-dtw","custom"]
+               "presto","suthakar-liberman","xcorr-dtw","custom"]
+
+        % Ids a method was once called, each with the Id it is called now
+        % (canonicalId). Settings, results and scripts saved before a rename
+        % say the old one; they still resolve and compare as the method (a
+        % settings hash RECORDED under the old Id differs).
+        RetiredIds = "xcorr"
+        RetiredAs  = "suthakar-liberman"
 
         % Per-level metrics, models and criterion modes a custom method takes.
         Metrics        = ["detection","power","fsp","splithalf","xcorr","dtw","snr","strength"]
@@ -121,17 +141,30 @@ classdef SeriesThreshold
                      "fsp","descending","p",0.05)
                 mrow("presto","Split-half correlation r ≥ 0.30 (ABRpresto-like fit)", ...
                      "splithalf","presto","absolute",0.30)
-                mrow("xcorr","Correlation with next-louder level ≥ 0.35 (Suthakar & Liberman 2019)", ...
+                mrow("suthakar-liberman","Suthakar & Liberman 2019: correlation with next-louder level ≥ 0.35 → lowest of 2 consecutive", ...
                      "xcorr","descending","absolute",0.35)
                 mrow("xcorr-dtw","Correlation with next-louder level after time warping ≥ 0.40 (DTW)", ...
                      "dtw","descending","absolute",0.40)
                 mrow("custom","Custom…","detection","glm","probability",0.5)];
         end
 
+        function id = canonicalId(id)
+            % The Id a method is called now: a retired Id (RetiredIds) becomes
+            % the one it was renamed to (RetiredAs); anything else, known or
+            % not, is returned as it is.
+            %
+            %   id  method Id(s), text of any shape
+            %   id  (returned) string array of the same size
+            id = string(id);
+            [tf,k] = ismember(id,mabr.analysis.SeriesThreshold.RetiredIds);
+            id(tf) = mabr.analysis.SeriesThreshold.RetiredAs(k(tf));
+        end
+
         function m = resolve(id,settings)
             % The method a settings object asks for, with its numbers filled in.
             %
-            %   id        method Id (methods().Id)
+            %   id        method Id (methods().Id; a retired Id, RetiredIds,
+            %             resolves to the method it was renamed to)
             %   settings  a mabr.analysis.Settings, a plain struct with the same
             %             field names, or [] (defaults); only these fields are
             %             read: Alpha, MinConsecutive, ThresholdMetric,
@@ -148,7 +181,7 @@ classdef SeriesThreshold
                 id {mustBeTextScalar}
                 settings = []
             end
-            id = string(id);
+            id = mabr.analysis.SeriesThreshold.canonicalId(id);
             M  = mabr.analysis.SeriesThreshold.methods();
             k  = find([M.Id] == id,1);
             if isempty(k)

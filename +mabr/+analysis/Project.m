@@ -1813,7 +1813,8 @@ classdef Project < handle
                     s = SS.(k);
                     if isfield(s,'At') && string(s.At) > stamp, stamp = string(s.At); end
                     if ~isempty(settings)
-                        if ~isfield(s,'Settings') || ~isequaln(s.Settings,settings.stepSettings(k))
+                        if ~isfield(s,'Settings') || ~isequaln(mabr.analysis.Settings.canonicalStruct(s.Settings), ...
+                                settings.stepSettings(k))
                             setChanged = true;
                         end
                     end

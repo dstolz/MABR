@@ -803,7 +803,7 @@ M('amp_unit') = ["string" "" "What the *_uv columns are: uV (volts at the electr
 M('input_full_scale') = ["double" "V" "Input full scale the recording was scaled by (NA when not recorded)."];
 M('flags') = ["string" "" "Flags, ; separated."];
 M('level_param') = ["string" "" "The parameter the series is swept along (e.g. Level)."];
-M('method') = ["string" "" "Threshold method: perm-glm, perm-descending, power-descending, fsp-descending, presto, xcorr, xcorr-dtw or custom."];
+M('method') = ["string" "" "Threshold method: perm-glm, perm-descending, power-descending, fsp-descending, presto, suthakar-liberman, xcorr-dtw or custom."];
 M('metric') = ["string" "" "Per-level statistic: detection, power, fsp, splithalf, xcorr, dtw, snr or strength."];
 M('model') = ["string" "" "Model actually used: descending, glm, presto-sigmoid, presto-power, isotonic, sigmoid or minimum."];
 M('criterion') = ["double" "" "Criterion the metric was judged at (unit in criterion_unit)."];
@@ -1520,7 +1520,9 @@ for i = 1:n
     enc = encodeFinal(fin,scalarDbl(getf(row,'LevelStep',NaN)), ...
         scalarDbl(getf(row,'MinLevel',NaN)),scalarDbl(getf(row,'MaxLevel',NaN)));
     r = base;
-    r.method = scalarStr(getf(row,'Method',""));
+    % (a results file analysed under a retired Id exports the one it became,
+    % so a study's rows name one method one way)
+    r.method = mabr.analysis.SeriesThreshold.canonicalId(scalarStr(getf(row,'Method',"")));
     r.metric = scalarStr(getf(row,'Metric',""));
     r.model = scalarStr(getf(row,'Type',""));
     r.criterion = scalarDbl(getf(row,'Criterion',NaN));

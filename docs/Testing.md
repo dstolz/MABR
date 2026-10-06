@@ -153,8 +153,9 @@ The template amplitude averages 1 over a condition with a response and is NaN fo
 [tests/verify_offline_thresholds.m](../tests/verify_offline_thresholds.m) — the threshold layer with no file or session:
 
 - `SeriesThreshold`'s named methods on the **real permutation p-values** of the reference session (perm-descending's intervals, the lowest_level convention, and perm-glm within one step of them);
-- the canonical series and the one-level cases, with exact Status / Censored / bounds. The descending rule walks down from the loudest level: a run of detections below two misses is only flagged, and the real 32 kHz xcorr series no longer reads 18 dB;
+- the canonical series and the one-level cases, with exact Status / Censored / bounds. The descending rule walks down from the loudest level: a run of detections below two misses is only flagged, and the real 32 kHz `suthakar-liberman` (next-louder correlation) series no longer reads 18 dB; the retired Id `xcorr` resolves, estimates and stores as `suthakar-liberman`;
 - `xcorr-dtw`: the methods table (eight methods, labels, metrics, criteria), the descending rule on `DTWUp` at 0.40 and blind to `XCorrUp`, its bootstrap interval, a custom method on the `dtw` metric, and its definition sentence following `MaxLag`;
+- Suthakar & Liberman 2019's own tree (`SuthakarLiberman`): paths A–D and "insufficient", each reached by data built for it; the sigmoid and power2 thresholds against their closed forms; the interval bracketing the threshold; power2 leaving out levels at or below 0; no warning; the correlogram as xcov 'coeff', with lag 0 equal to `xcorrUp`'s r0 and a 3-sample delay peaking at +3;
 - usable levels, each ignored level flagged with its reason ("level ignored at 0 dB: 10 clean sweeps, fewer than the minimum of 100"), and borderline detections flagged at 1000 permutations but not without a permutation count or at 10⁵;
 - overrides, conventions and the curated value for every decision;
 - an attenuation axis;
@@ -185,7 +186,7 @@ The regression checks for defects 7, 9, 10, 12, 13, 14, 15 and 17 are here, alon
 [tests/verify_offline_analyze.m](../tests/verify_offline_analyze.m) — everything after detection, and `mabr.analysis.Batch`:
 
 - **Measures**: the RN and its ± reference agree where there is no response. `XCorrUp` and `DTWUp` are NaN at each series' loudest level, and `DTWUp`'s lag stays within the allowance.
-- **Named thresholds**: within one level step of the truth, `xcorr` and `xcorr-dtw` included.
+- **Named thresholds**: within one level step of the truth, `suthakar-liberman` and `xcorr-dtw` included; results saved under the retired `xcorr` are current for `suthakar-liberman`. `SuthakarLiberman.fromSession` reads `XCorrUp0` and each pair's correlogram, at lag 0 that pair's `XCorrUp0`, identically from the sweeps and from a results file.
 - **Staleness**: a Criterion change makes thresholds alone stale; a touched file makes the data stale. Results saved without `DTWUp` are stale from the measures for `xcorr-dtw` and current for every other method, and re-fitting only their thresholds refuses with `noMeasures`.
 - **Curation survives re-analysis**: accepted, manual level, no response and excluded decisions are kept. A moved fit loses its acceptance with "fit changed since review", and a GroupBy change archives decisions and restores them. A typed GroupBy keeps the stimuli apart (Part C): "Frequency" gives the default series keys, and "Level" on a Frequency axis mixes no stimuli.
 - **A single-level session**: "insufficient" or "all-respond", never "no-response".
@@ -322,6 +323,7 @@ Part M holds the **R2021b floor**: no post-R2021b UI identifier outside `Compat.
 - **The conduction delay** (Part H): traces, picks and wave windows drawn 0.25 ms earlier on the ear-time axis, each window holding its pick; a drag stores raw time; "Use current picks as wave windows" stores recording-time windows, drawn centred on their picks.
 - **An attenuation-axis session** (Part J), with NR and the evidence arrows on the right side.
 - **Level parameter = Frequency** (Part K): no series on the audiogram, each listed beneath after the reason, the level axis in kHz; set back to Level, the audiogram returns.
+- **The Suthakar & Liberman window** (Part N): its button is off on a single-level series. It opens one window on the series, where each correlogram at lag 0 is its level's `XCorrUp0`, lag 0 and the lag allowance are marked, both fits are drawn on `XCorrUp0` with the 0.35 line, and the path is stated and its threshold marked. The window follows the selection, the button raises it rather than opening a second, it changes no threshold, and Close closes it.
 
 ### verify_offline_trials
 

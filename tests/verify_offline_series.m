@@ -123,6 +123,7 @@ t0 = tic;  partJ_attenuation(app,v,k);       took(end+1) = sprintf("J %.1f",toc(
 t0 = tic;  partK_levelAxis(app,v,k);         took(end+1) = sprintf("K %.1f",toc(t0));
 t0 = tic;  partL_drag(app,v,k);              took(end+1) = sprintf("L %.1f",toc(t0));
 t0 = tic;  partM_report(app,k);              took(end+1) = sprintf("M %.1f",toc(t0));
+t0 = tic;  partN_suthakar(app,v,k);          took(end+1) = sprintf("N %.1f",toc(t0));
 d = changedPrefs(prefs0,allPrefs());
 assert(isempty(d),'Script-driven Series use (gestures, keys, buttons) wrote a pref: %s',strjoin(d,', '));
 fprintf('  PASS prefs: gestures, keys and curation buttons wrote no pref\n');
@@ -592,15 +593,15 @@ assert(vf.Value == seedOf(m,s1),'The value field did not follow the re-fitted Fi
     vf.Value,seedOf(m,s1));
 
 % a graded method: the metric beside its criterion, no p axis
-drive(H.Method,'xcorr');
+drive(H.Method,'suthakar-liberman');
 S = m.Session;
-assert(vf.Value == seedOf(m,s1),'The value field did not follow the xcorr Final (%g, want %g).', ...
+assert(vf.Value == seedOf(m,s1),'The value field did not follow the suthakar-liberman Final (%g, want %g).', ...
     vf.Value,seedOf(m,s1));
 vf.Value = 55.5;                           % typed, not yet Set: no re-fit may overwrite it
 y = double(S.Conditions.XCorrUp(rows));
 assert(isempty(findall(H.Evidence,'Tag','EvidenceRulerLabel')),'A graded method shows the p ruler.');
 cl = findobj(H.Evidence,'Tag','EvidenceCriterion');
-assert(isscalar(cl) && isequal(cl.YData,[0.35 0.35]),'xcorr''s criterion line is not at 0.35.');
+assert(isscalar(cl) && isequal(cl.YData,[0.35 0.35]),'suthakar-liberman''s criterion line is not at 0.35.');
 ml = findobj(H.Evidence,'Tag','EvidenceMetric');
 got = zeros(0,2);
 for h = reshape(ml,1,[]), got = [got; h.XData(:) h.YData(:)]; end %#ok<AGROW>
@@ -659,7 +660,7 @@ assert(isempty(H.Other.Data) && H.ThresholdGrid.RowHeight{9} == 0,'The compare t
 m.selectSeries(s1);
 fprintf(['  PASS Part E: the dropdown opens on perm-glm and changes the project''s method (refit here, ' ...
     'detection kept, others out of date and not re-run); custom row and units; evidence per family ' ...
-    '(-log10 p + alpha, curve and 0.5; xcorr metric + 0.35); the value field follows a re-fit but ' ...
+    '(-log10 p + alpha, curve and 0.5; suthakar-liberman: xcorr metric + 0.35); the value field follows a re-fit but ' ...
     'never a typed value; Compare methods\n']);
 end
 
@@ -1409,6 +1410,83 @@ assert(ismember('Flags',C.Properties.VariableNames) && isstring(C.Flags), ...
     'Compare methods does not give each method''s flags.');
 fprintf(['  PASS Part M: a time offset alone -- "peak latencies ... latency offset ...; no threshold ' ...
     'changed" (none did), and back; Compare methods carries the flags\n']);
+end
+
+% =========================================================================
+%  Part N -- the Suthakar & Liberman window
+% =========================================================================
+function partN_suthakar(app,v,k)
+% The button opens ONE window on the series; what it draws is the session's
+% (each pair's correlogram at lag 0 is that level's XCorrUp0, the points the
+% paper fits are XCorrUp0); it follows the selection, changes nothing, and
+% closes. Off on a single-level series.
+m = app.Model;
+H = v.Handles;
+m.openSession(k.Single);
+sk = m.seriesKeys();
+m.selectSeries(sk(1));
+assert(strcmp(H.Suthakar.Enable,'off'),'The Suthakar & Liberman button is on for a single-level series.');
+m.openSession(k.Base);
+sk = m.seriesKeys();
+m.selectSeries(sk(1));
+assert(strcmp(H.Suthakar.Enable,'on'),'The Suthakar & Liberman button is off on a measured series.');
+T0 = m.Session.Thresholds;
+push(H.Suthakar);
+wf = findall(groot,'Tag','MABR_OFFLINE_SUTHAKAR');
+assert(isscalar(wf),'The Suthakar & Liberman window did not open once (%d).',numel(wf));
+w = getappdata(wf,'SuthakarLibermanWindow');
+assert(w.SeriesKey == sk(1) && ~isempty(w.Data) && w.Data.Problem == "", ...
+    'The window is not on the selected series (%s): %s',w.SeriesKey,w.Data.Problem);
+S = m.Session;
+[ck,lv] = seriesLevels(m,sk(1));
+r0 = double(S.Conditions.XCorrUp0(rowsOf(S,ck)));
+fin = isfinite(r0);
+axC = findall(wf,'Tag','AnalysisSuthakarCorrelogramAxes');
+axS = findall(wf,'Tag','AnalysisSuthakarSigmoidAxes');
+axP = findall(wf,'Tag','AnalysisSuthakarPowerAxes');
+assert(isscalar(axC) && isscalar(axS) && isscalar(axP),'The window does not have its three plots.');
+pairs = findobj(axC,'Tag','AnalysisSuthakarPair');
+assert(numel(pairs) == nnz(fin),'%d correlograms for %d level pairs.',numel(pairs),nnz(fin));
+for h = reshape(pairs,1,[])
+    lo = sscanf(h.DisplayName,'%g',1);
+    y0 = h.YData(h.XData == 0);
+    assert(isscalar(y0) && abs(y0 - r0(lv == lo)) < 1e-12, ...
+        'The %g dB correlogram at lag 0 (%g) is not its XCorrUp0 (%g).',lo,y0,r0(lv == lo));
+end
+lz = findobj(axC,'Tag','AnalysisSuthakarLagZero');
+la = findobj(axC,'Tag','AnalysisSuthakarLagAllowance');
+assert(isscalar(lz) && isscalar(la) && isequal(unique(la.XData(:)).',[0 m.Settings.MaxLag]), ...
+    'The correlograms do not mark lag 0 and the lag allowance.');
+for ax = [axS axP]
+    pt = findobj(ax,'Tag','AnalysisSuthakarR0');
+    cl = findobj(ax,'Tag','AnalysisSuthakarCriterion');
+    assert(isscalar(pt) && isequal(pt.XData(:),lv(fin)) && max(abs(pt.YData(:) - r0(fin))) < 1e-12 && ...
+        isscalar(cl) && isequal(cl.YData,[0.35 0.35]),'%s: the points are not XCorrUp0, or no 0.35 line.',ax.Tag);
+    assert(isscalar(ax.ContextMenu) && ~isempty(findall(ax.ContextMenu,'Tag','AnalysisMenuFigureExportItem')), ...
+        '%s has no Export figure… item.',ax.Tag);
+end
+res = w.Result;
+assert(ismember(res.Path,mabr.analysis.SuthakarLiberman.Paths) && ...
+    startsWith(string(findall(wf,'Tag','AnalysisSuthakarDecision').Text),"Path " + res.Path), ...
+    'The decision does not say its path (%s).',res.Path);
+if res.Fit ~= "" && isfinite(res.Threshold)
+    axT = axS;  if res.Fit == "power", axT = axP; end
+    th = findobj(axT,'Tag','AnalysisSuthakarThreshold');
+    assert(isscalar(th) && abs(th.XData - res.Threshold) < 1e-12,'The threshold is not marked in the chosen fit.');
+end
+% it follows the selection; the button again raises the same window
+m.selectSeries(sk(2));
+assert(w.SeriesKey == sk(2) && contains(string(wf.Name),m.seriesLabel(sk(2))), ...
+    'The window did not follow the selection to %s (%s).',sk(2),wf.Name);
+push(H.Suthakar);
+assert(isscalar(findall(groot,'Tag','MABR_OFFLINE_SUTHAKAR')),'The button opened a second window.');
+assert(isequaln(m.Session.Thresholds,T0),'The Suthakar & Liberman window changed the thresholds.');
+push(findall(wf,'Tag','AnalysisSuthakarClose'));
+assert(isempty(findall(groot,'Tag','MABR_OFFLINE_SUTHAKAR')),'The Suthakar & Liberman window did not close.');
+fprintf(['  PASS Part N: the Suthakar & Liberman window -- off on one level; one window on the series: ' ...
+    '%d correlograms each its XCorrUp0 at lag 0, lag 0 and the %g ms allowance marked, both fits on ' ...
+    'XCorrUp0 with the 0.35 line, path %s said and marked; follows the selection, raised not doubled, ' ...
+    'changes nothing, closes\n'],numel(pairs),m.Settings.MaxLag,res.Path);
 end
 
 % =========================================================================

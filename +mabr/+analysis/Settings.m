@@ -159,14 +159,17 @@ classdef Settings
         % Fewest sweeps of each polarity per half.
         SplitHalfMinPerPolarity (1,1) double {mustBeInteger,mustBeNonnegative} = 25
         % Largest lag of the next-louder-level correlation, ms: the most the
-        % quieter level's response may be later than the louder one's. xcorr
-        % takes one lag for the whole window; xcorr-dtw a lag in [0 MaxLag]
-        % that changes along the response.
+        % quieter level's response may be later than the louder one's.
+        % suthakar-liberman takes one lag for the whole window (0 is the
+        % paper's); xcorr-dtw a lag in [0 MaxLag] that changes along the
+        % response.
         MaxLag (1,1) double {mustBeNonnegative,mustBeFinite} = 0.3
 
         % ---- thresholds --------------------------------------------------
-        % Named method (SeriesThreshold.methods() Ids).
-        ThresholdMethod (1,1) string {mustBeMember(ThresholdMethod,["perm-glm","perm-descending","power-descending","fsp-descending","presto","xcorr","xcorr-dtw","custom"])} = "perm-glm"
+        % Named method (SeriesThreshold.methods() Ids). A retired Id
+        % (SeriesThreshold.RetiredIds, the last ones listed) is accepted and
+        % stored as the Id it became (set.ThresholdMethod).
+        ThresholdMethod (1,1) string {mustBeMember(ThresholdMethod,["perm-glm","perm-descending","power-descending","fsp-descending","presto","suthakar-liberman","xcorr-dtw","custom","xcorr"])} = "perm-glm"
         % Custom method: metric, model and criterion mode.
         ThresholdMetric (1,1) string {mustBeMember(ThresholdMetric,["detection","power","fsp","splithalf","xcorr","dtw","snr","strength"])} = "detection"
         ThresholdModel (1,1) string {mustBeMember(ThresholdModel,["descending","glm","presto","isotonic","sigmoid","minimum"])} = "glm"
@@ -312,6 +315,14 @@ classdef Settings
                     'SplitHalfWindow is [] (the response window) or [t0 t1] ms.');
             end
             obj.SplitHalfWindow = reshape(double(v),1,2);
+        end
+
+        function obj = set.ThresholdMethod(obj,v)
+            % A retired Id is stored as the Id it became, so settings saved
+            % under it (a pref, a .mabraset, a project, a results file, a
+            % replication script) resolve and compare as that method. They
+            % hash as it too, so a hash RECORDED under the old Id differs.
+            obj.ThresholdMethod = mabr.analysis.SeriesThreshold.canonicalId(v);
         end
 
         function obj = set.GroupBy(obj,v)
@@ -804,6 +815,22 @@ classdef Settings
             else
                 error('mabr:analysis:Settings:unknownField', ...
                     '"%s" is not an analysis setting.',name);
+            end
+        end
+
+        function st = canonicalStruct(st)
+            % A saved settings struct (toStruct's, or one step's) with a
+            % retired ThresholdMethod Id renamed as a Settings would store it
+            % (set.ThresholdMethod). Saved step settings are compared with
+            % today's field by field (isequaln) -- Session.isStale,
+            % Batch.isCurrent, Project's status -- and without this a rename
+            % alone would put every result made under the old Id out of date.
+            %   st  any value; a scalar struct comes back renamed, anything
+            %       else as it is
+            if ~isstruct(st) || ~isscalar(st) || ~isfield(st,'ThresholdMethod'), return; end
+            v = st.ThresholdMethod;
+            if (isstring(v) || ischar(v)) && any(ismember(string(v),mabr.analysis.SeriesThreshold.RetiredIds))
+                st.ThresholdMethod = mabr.analysis.SeriesThreshold.canonicalId(v);
             end
         end
 

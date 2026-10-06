@@ -405,7 +405,8 @@ classdef AnalysisApp < handle
 
         function d = openDialog(app,name,varargin)
             % Open one of the app's dialogs: "settings", "export", "batch",
-            % "batchReport", "review", "levels", "figureExport". A dialog
+            % "batchReport", "review", "levels", "figureExport", "suthakar"
+            % (the Suthakar & Liberman window, on a series key). A dialog
             % this MABR does not have yet says so on the status line.
             arguments
                 app
@@ -474,6 +475,21 @@ classdef AnalysisApp < handle
                     if ~isempty(varargin), col = string(varargin{1}); varargin(1) = []; end
                     cls = "LevelsDialog";
                     args = [{m,col},vis,varargin];
+                case "suthakar"
+                    % one window: an open one is raised and shown the series
+                    sk = "";
+                    if ~isempty(varargin), sk = string(varargin{1}); varargin(1) = []; end
+                    for k = 1:numel(app.Dialogs)
+                        w = app.Dialogs{k};
+                        if isa(w,'mabr.ui.analysis.SuthakarLibermanWindow') && isvalid(w) && w.isopen()
+                            if sk ~= "", w.showSeries(sk); end
+                            if strcmp(w.Figure.Visible,'on'), figure(w.Figure); end
+                            d = w;
+                            return
+                        end
+                    end
+                    cls = "SuthakarLibermanWindow";
+                    args = [{m,sk},vis,{'Host',app},varargin];
                 case "figureExport"
                     if ~isempty(varargin)
                         target = varargin{1};
@@ -594,7 +610,7 @@ classdef AnalysisApp < handle
             names = ["OfflineAnalysis","OfflineAnalysisSettings","OfflineAnalysisExport", ...
                 "OfflineAnalysisBatch","OfflineAnalysisBatchReport","OfflineAnalysisReview", ...
                 "OfflineAnalysisLevels","OfflineAnalysisPrompt","OfflineAnalysisFigureExport", ...
-                "OfflineAnalysisKeys"];
+                "OfflineAnalysisKeys","OfflineAnalysisSuthakar"];
         end
 
         function app = findOpen()
