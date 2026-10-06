@@ -22,7 +22,18 @@ classdef SeriesThreshold
 %     fsp-descending    Fsp with estimated df (F p) -> same
 %     presto            split-half r -> ABRpresto-like fit, r = 0.30
 %     xcorr             correlation with the next-louder level >= 0.35 -> same rule
+%     xcorr-dtw         the same after dynamic time warping >= 0.40 -> same rule
 %     custom            metric, model and criterion read from the settings
+%
+%   xcorr-dtw EXTENDS xcorr. xcorr advances the quieter level's average by one
+%   lag (0 to MaxLag) to meet the louder one's, so it can line up wave I or
+%   wave V but not both: a quieter response's later waves are delayed more.
+%   xcorr-dtw lets the lag change along the response -- each sample's lag
+%   from dtw (0 to MaxLag), smoothed over 2 ms -- before correlating
+%   (SingleTrial.dtwUp). Its criterion is not xcorr's because the warp lines
+%   noise up too: 0.40 is where pairs of independent noise averages pass as
+%   often (about 3%) as they pass 0.35 under xcorr's rigid lag (default band,
+%   window and lag allowance).
 %
 %   A named method's criterion is FIXED (a p-method's is Alpha: the
 %   settings' in resolve, and in estimate the Alpha estimate is given);
@@ -73,10 +84,10 @@ classdef SeriesThreshold
     properties (Constant)
         % Method Ids, in dropdown order.
         Ids = ["perm-glm","perm-descending","power-descending","fsp-descending", ...
-               "presto","xcorr","custom"]
+               "presto","xcorr","xcorr-dtw","custom"]
 
         % Per-level metrics, models and criterion modes a custom method takes.
-        Metrics        = ["detection","power","fsp","splithalf","xcorr","snr","strength"]
+        Metrics        = ["detection","power","fsp","splithalf","xcorr","dtw","snr","strength"]
         Models         = ["descending","glm","presto","isotonic","sigmoid","minimum"]
         CriterionModes = ["p","probability","absolute","fraction"]
 
@@ -94,7 +105,7 @@ classdef SeriesThreshold
         function M = methods()
             % The named methods, one row each, in dropdown order.
             %
-            %   M  (returned) [7 x 1] struct array: Id, Label, Metric, Model,
+            %   M  (returned) [8 x 1] struct array: Id, Label, Metric, Model,
             %      CriterionMode, Criterion, CriterionUnit, NeedsMeasures.
             %      Criterion is the method's default (p-methods: the default
             %      Alpha, 0.05); the custom row shows the default settings'
@@ -112,6 +123,8 @@ classdef SeriesThreshold
                      "splithalf","presto","absolute",0.30)
                 mrow("xcorr","Correlation with next-louder level ≥ 0.35 (Suthakar & Liberman 2019)", ...
                      "xcorr","descending","absolute",0.35)
+                mrow("xcorr-dtw","Correlation with next-louder level after time warping ≥ 0.40 (DTW)", ...
+                     "dtw","descending","absolute",0.40)
                 mrow("custom","Custom…","detection","glm","probability",0.5)];
         end
 
@@ -275,6 +288,7 @@ classdef SeriesThreshold
             %             PowerP    power-test p          FspP   Fsp p
             %             SplitR    split-half r          SplitRSD  its SD
             %             XCorrUp   r with the next-louder level
+            %             DTWUp     the same after time warping
             %             SNR       dB                    NClean NPos NNeg
             %             Override  NaN none, 1 response, 0 no response
             %             ZeroVariance  true where the sweeps hold no
@@ -366,7 +380,7 @@ classdef SeriesThreshold
             % The next-louder correlation has nothing to correlate the
             % loudest level with: NaN there is the method, not a defect.
             exempt = false(n,1);
-            if m.Metric == "xcorr" && any(finLev)
+            if ismember(m.Metric,["xcorr","dtw"]) && any(finLev)
                 exempt = finLev & ~okVal & levels == max(levels(finLev));
             end
             usable = (finLev & okN & okPol & okVal) | (finLev & hasOv);
@@ -785,7 +799,7 @@ end
 
 function tf = needsMeasures(metric)
 % Metrics that Session.measure computes (detect computes the others).
-tf = ismember(metric,["power","fsp","splithalf","xcorr","snr"]);
+tf = ismember(metric,["power","fsp","splithalf","xcorr","dtw","snr"]);
 end
 
 function u = criterionUnit(mode,metric)
@@ -796,8 +810,8 @@ switch mode
     case "fraction",    u = "fraction of range";
     otherwise
         switch metric
-            case {"splithalf","xcorr"}, u = "r";
-            case "snr",                 u = "dB";
+            case {"splithalf","xcorr","dtw"}, u = "r";
+            case "snr",                       u = "dB";
             case "strength",            u = "statistic";
             otherwise,                  u = "p";
         end
@@ -814,6 +828,7 @@ switch mode
         switch metric
             case "splithalf", c = 0.30;
             case "xcorr",     c = 0.35;
+            case "dtw",       c = 0.40;   % xcorr's noise pass rate at 0.35 (see the class header)
             case "snr",       c = 3;      % dB: response power equal to the residual noise
             otherwise,        c = NaN;    % the permutation statistic has no natural scale
         end
@@ -848,8 +863,8 @@ switch model
             why = '"glm" needs criterion mode "probability".';
         end
     case "presto"
-        if ~ismember(metric,["splithalf","xcorr"])
-            why = sprintf('"presto" fits a correlation (splithalf or xcorr), not "%s".',metric);
+        if ~ismember(metric,["splithalf","xcorr","dtw"])
+            why = sprintf('"presto" fits a correlation (splithalf, xcorr or dtw), not "%s".',metric);
         elseif mode ~= "absolute"
             why = '"presto" needs criterion mode "absolute".';
         end
@@ -867,7 +882,7 @@ switch mode
     otherwise
         if ~isfinite(crit)
             why = sprintf('an absolute criterion on "%s" needs a value.',metric);
-        elseif ismember(metric,["splithalf","xcorr"]) && ~(crit > -1 && crit < 1)
+        elseif ismember(metric,["splithalf","xcorr","dtw"]) && ~(crit > -1 && crit < 1)
             why = sprintf('criterion %g is not a correlation in (-1,1).',crit);
         elseif metric == "strength" && crit < 0
             why = sprintf('criterion %g is below 0, where no permutation statistic lies.',crit);
@@ -903,7 +918,7 @@ function Y = normalizeY(Y,n)
 % Every Y column as [n x 1] double: missing values NaN, missing counts Inf
 % (an unknown count does not make a level unusable), IsSig as 0/1/NaN,
 % ZeroVariance as 0/1/NaN (NaN: not said).
-names  = ["P","IsSig","Strength","PowerP","FspP","SplitR","SplitRSD","XCorrUp", ...
+names  = ["P","IsSig","Strength","PowerP","FspP","SplitR","SplitRSD","XCorrUp","DTWUp", ...
           "SNR","NClean","NPos","NNeg","Override","ZeroVariance"];
 counts = ["NClean","NPos","NNeg"];
 for f = names
@@ -934,6 +949,7 @@ switch metric
     case "fsp",       v = Y.FspP;
     case "splithalf", v = Y.SplitR;
     case "xcorr",     v = Y.XCorrUp;
+    case "dtw",       v = Y.DTWUp;
     case "snr",       v = Y.SNR;
     otherwise,        v = Y.Strength;
 end
@@ -1469,6 +1485,10 @@ switch metric
     case "xcorr"
         q = sprintf("the correlation with the next-louder level's average (lag ≤ %g ms)", ...
             double(setting(settings,'MaxLag',0.3)));
+    case "dtw"
+        q = sprintf(['the correlation with the next-louder level''s average after time warping ' ...
+            '(dtw, lag 0–%g ms changing along the response, smoothed over %g ms)'], ...
+            double(setting(settings,'MaxLag',0.3)),mabr.analysis.SingleTrial.DTWLagSmoothMs);
     case "snr"
         q = 'the response SNR re the ± reference noise';
     case "strength"

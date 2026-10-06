@@ -64,6 +64,8 @@ classdef SingleTrial
 %     blocks         consecutive polarity-balanced sub-averages
 %     bootstrapBand  pointwise bootstrap band of the balanced mean
 %     xcorrUp        correlation with the next-louder level's mean
+%     dtwUp          the same after dynamic time warping, the lag changing
+%                    smoothly along the response (Signal Processing's dtw)
 %     zeroVariance   whether the sweeps hold any noise at all
 %     summary        all of the above that one condition needs, at once
 %
@@ -113,6 +115,18 @@ classdef SingleTrial
         % leave-one-out average must stand for TemplateAmp to be defined
         % (features): below it there is no response to scale by.
         TemplateMinT = 3
+
+        % Span, ms, of the moving mean dtwUp smooths the warp's lag with. A
+        % latency shift changes slowly along a response (wave I's per dB is
+        % half wave V's, 3.4 ms later), noise changes every few samples, and
+        % a lag free to change at every sample lines noise up: on pairs of
+        % independent noise means (default band and window, 0.3 ms
+        % allowance) the unsmoothed warp gave a median r of 0.60, against
+        % 0.14 for xcorrUp. Over 2 ms the median is 0.14 again, while a
+        % noiseless synthetic series whose waves shift by 0.15-0.30 ms per
+        % 10 dB still comes to r 0.995 (xcorrUp: 0.90). 1 ms let noise
+        % back in (median 0.28); 3 ms gave some of the alignment up (0.987).
+        DTWLagSmoothMs = 2
     end
 
     methods (Static)
@@ -806,6 +820,105 @@ classdef SingleTrial
                 [r,i] = max(rr);
                 lagMs = (i-1)*dtMs;
             end
+        end
+
+        function [r,lagMs,rangeMs] = dtwUp(mLow,mHigh,rows,maxLagSamples,dtMs,smoothMs)
+            % xcorrUp with a lag that changes along the response: the
+            % correlation after dynamic time warping (Signal Processing's
+            % dtw), with the warp smoothed.
+            %
+            % xcorrUp advances the quieter mean by ONE lag for the whole
+            % window. A quieter response is not the louder one shifted,
+            % though: its later waves are delayed more than its early ones
+            % (wave V by about twice wave I's latency shift per dB), so one
+            % lag can line up wave I or wave V but not both, and the part
+            % left out of line reads as a loss of morphology. Here the lag
+            % follows the response:
+            %
+            %   1. The louder mean over the rows, Y = mHigh(J), and the
+            %      quieter one advanced by half the allowance, X = mLow(J+s),
+            %      s = floor(maxLagSamples/2), each z-scored (r ignores scale
+            %      and offset, so the warp should too).
+            %   2. [~,ix,iy] = dtw(X,Y,s): a path within s samples of the
+            %      diagonal, so with the advance a lag of 0 to 2s samples at
+            %      each louder sample (the mean of the quieter samples the
+            %      path pairs it with). One direction only, as in xcorrUp: a
+            %      quieter response is later, never earlier. dtw pairs the
+            %      two ends, so the path starts and ends at lag s and reaches
+            %      any lag in s samples (0.17 ms at 12 kHz and the default
+            %      0.3 ms allowance).
+            %   3. That lag smoothed by a moving mean over smoothMs (default
+            %      DTWLagSmoothMs, 2 ms) and held to [0, 2s]. A warp free to
+            %      move at every sample lines noise up -- see DTWLagSmoothMs
+            %      for the numbers -- while a latency shift changes slowly
+            %      from wave to wave.
+            %   4. The quieter mean read at each louder sample plus its lag
+            %      (linear interpolation), and r = its Pearson correlation
+            %      with Y: one pair per louder sample, as many as the lag-0
+            %      correlation has.
+            %
+            % With an allowance under 2 samples there is nothing to warp
+            % (s = 0) and r is the lag-0 correlation.
+            %
+            %   mLow, mHigh    nT x 1 means of the quieter and louder level
+            %   rows           nT x 1 logical ([] = all), read as one
+            %                  sequence; a row is dropped where either mean
+            %                  is not finite or the lag runs past the end
+            %   maxLagSamples  largest delay of the quieter mean (default 0),
+            %                  rounded down to an even number of samples
+            %   dtMs           sample interval (ms)
+            %   smoothMs       moving-mean span of the lag, ms (default
+            %                  DTWLagSmoothMs; 0 = the path's own lag)
+            %   r        (returned) correlation after warping (NaN with fewer
+            %            than 3 rows or a flat mean)
+            %   lagMs    (returned) mean lag over the rows, ms (NaN with r)
+            %   rangeMs  (returned) largest minus smallest lag, ms: 0 when
+            %            the warp is one rigid shift (NaN with r)
+            arguments
+                mLow (:,1) double
+                mHigh (:,1) double
+                rows = []
+                maxLagSamples (1,1) double {mustBeInteger,mustBeNonnegative} = 0
+                dtMs (1,1) double {mustBePositive} = 1
+                smoothMs (1,1) double {mustBeNonnegative,mustBeFinite} = mabr.analysis.SingleTrial.DTWLagSmoothMs
+            end
+            n = numel(mLow);
+            if numel(mHigh) ~= n
+                error('mabr:analysis:SingleTrial:xcorrSize', ...
+                    'mLow has %d samples and mHigh %d.',n,numel(mHigh));
+            end
+            if isempty(rows), rows = true(n,1); end
+            if ~islogical(rows), r_ = false(n,1); r_(rows) = true; rows = r_; end
+            r = NaN; lagMs = NaN; rangeMs = NaN;
+            s = floor(maxLagSamples/2);
+            J = find(rows(:));
+            J = J(J + 2*s <= n);
+            J = J(isfinite(mHigh(J)) & isfinite(mLow(J + s)));
+            m = numel(J);
+            if m < 3, return; end
+            X = mLow(J + s);
+            Y = mHigh(J);
+            sx = std(X);  sy = std(Y);
+            if ~(sx > 0 && sy > 0), return; end
+            if s > 0
+                [~,ix,iy] = dtw(((X - mean(X))/sx).',((Y - mean(Y))/sy).',s);
+                ix = ix(:);  iy = iy(:);
+                lag = accumarray(iy,J(ix) + s,[m 1])./accumarray(iy,1,[m 1]) - J;
+                span = round(smoothMs/dtMs);
+                if span > 1
+                    lag = movmean(lag,span,'Endpoints','shrink');
+                end
+                lag = min(max(lag,0),2*s);
+                Xw  = interp1((1:n).',mLow,J + lag,'linear');
+            else
+                Xw  = X;
+                lag = zeros(m,1);
+            end
+            ok = isfinite(Xw);
+            if nnz(ok) < 3, return; end
+            r = mabr.analysis.SingleTrial.pearsonCols(Xw(ok),Y(ok));
+            lagMs   = mean(lag(ok))*dtMs;
+            rangeMs = (max(lag(ok)) - min(lag(ok)))*dtMs;
         end
 
         % =================================================================

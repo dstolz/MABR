@@ -158,14 +158,17 @@ classdef Settings
         SplitHalfWindow double = []
         % Fewest sweeps of each polarity per half.
         SplitHalfMinPerPolarity (1,1) double {mustBeInteger,mustBeNonnegative} = 25
-        % Largest lag of the next-louder-level correlation, ms.
+        % Largest lag of the next-louder-level correlation, ms: the most the
+        % quieter level's response may be later than the louder one's. xcorr
+        % takes one lag for the whole window; xcorr-dtw a lag in [0 MaxLag]
+        % that changes along the response.
         MaxLag (1,1) double {mustBeNonnegative,mustBeFinite} = 0.3
 
         % ---- thresholds --------------------------------------------------
         % Named method (SeriesThreshold.methods() Ids).
-        ThresholdMethod (1,1) string {mustBeMember(ThresholdMethod,["perm-glm","perm-descending","power-descending","fsp-descending","presto","xcorr","custom"])} = "perm-glm"
+        ThresholdMethod (1,1) string {mustBeMember(ThresholdMethod,["perm-glm","perm-descending","power-descending","fsp-descending","presto","xcorr","xcorr-dtw","custom"])} = "perm-glm"
         % Custom method: metric, model and criterion mode.
-        ThresholdMetric (1,1) string {mustBeMember(ThresholdMetric,["detection","power","fsp","splithalf","xcorr","snr","strength"])} = "detection"
+        ThresholdMetric (1,1) string {mustBeMember(ThresholdMetric,["detection","power","fsp","splithalf","xcorr","dtw","snr","strength"])} = "detection"
         ThresholdModel (1,1) string {mustBeMember(ThresholdModel,["descending","glm","presto","isotonic","sigmoid","minimum"])} = "glm"
         CriterionMode (1,1) string {mustBeMember(CriterionMode,["p","probability","absolute","fraction"])} = "probability"
         % Custom method's criterion; NaN = the criterion mode's default.

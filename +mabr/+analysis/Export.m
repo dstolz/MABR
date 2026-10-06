@@ -682,7 +682,8 @@ O.conditions = [ID,"stimulus","acq_mode","<params>","condition_key","series_key"
     "perm_strength","rn_uv","rn_pm_uv","response_rms_uv","baseline_rms_uv","power_f", ...
     "power_p","snr_db","snr_corr_db","fsp","fsp_df1","fsp_df2","fsp_p","split_r", ...
     "split_r_sd","split_r_p025","split_r_p975","split_n_per_half","split_avg_mode", ...
-    "xcorr_up","xcorr_lag_ms","xcorr_up_lag0","amp_unit","input_full_scale","flags",TAIL];
+    "xcorr_up","xcorr_lag_ms","xcorr_up_lag0","dtw_up","dtw_lag_ms","dtw_lag_range_ms", ...
+    "amp_unit","input_full_scale","flags",TAIL];
 O.thresholds = [ID,"stimulus","acq_mode","<group params>","series_key","level_param", ...
     "method","metric","model","criterion","criterion_unit","threshold_db","cens","thr_lo_db", ...
     "thr_hi_db","thr_upper_db","convention","threshold_fit_db","fit_status","ci_lo_db", ...
@@ -795,12 +796,15 @@ M('split_avg_mode') = ["string" "" "Sub-average of each half: median or mean."];
 M('xcorr_up') = ["double" "r" "Correlation with the next-louder level's average at the best lag in [0, max lag]; NA at the loudest level."];
 M('xcorr_lag_ms') = ["double" "ms" "Lag of xcorr_up (this level later)."];
 M('xcorr_up_lag0') = ["double" "r" "Correlation with the next-louder level's average at lag 0."];
+M('dtw_up') = ["double" "r" "Correlation with the next-louder level's average after dynamic time warping: a lag in [0, max lag] that changes along the response, smoothed over 2 ms; NA at the loudest level."];
+M('dtw_lag_ms') = ["double" "ms" "Mean lag of the warp behind dtw_up (this level later)."];
+M('dtw_lag_range_ms') = ["double" "ms" "Largest minus smallest lag of that warp: 0 when it is one rigid shift."];
 M('amp_unit') = ["string" "" "What the *_uv columns are: uV (volts at the electrodes x 1e6), uV-unscaled (input full scale assumed 1), converter-x1e6 (converter units x 1e6), or mixed."];
 M('input_full_scale') = ["double" "V" "Input full scale the recording was scaled by (NA when not recorded)."];
 M('flags') = ["string" "" "Flags, ; separated."];
 M('level_param') = ["string" "" "The parameter the series is swept along (e.g. Level)."];
-M('method') = ["string" "" "Threshold method: perm-glm, perm-descending, power-descending, fsp-descending, presto, xcorr or custom."];
-M('metric') = ["string" "" "Per-level statistic: detection, power, fsp, splithalf, xcorr, snr or strength."];
+M('method') = ["string" "" "Threshold method: perm-glm, perm-descending, power-descending, fsp-descending, presto, xcorr, xcorr-dtw or custom."];
+M('metric') = ["string" "" "Per-level statistic: detection, power, fsp, splithalf, xcorr, dtw, snr or strength."];
 M('model') = ["string" "" "Model actually used: descending, glm, presto-sigmoid, presto-power, isotonic, sigmoid or minimum."];
 M('criterion') = ["double" "" "Criterion the metric was judged at (unit in criterion_unit)."];
 M('criterion_unit') = ["string" "" "p, probability, r, dB, statistic or fraction of range."];
@@ -1488,6 +1492,9 @@ fx.split_avg_mode = sm;
 fx.xcorr_up = toDbl(tcol(C,'XCorrUp',NaN),n);
 fx.xcorr_lag_ms = toDbl(tcol(C,'XCorrLag',NaN),n);
 fx.xcorr_up_lag0 = toDbl(tcol(C,'XCorrUp0',NaN),n);
+fx.dtw_up = toDbl(tcol(C,'DTWUp',NaN),n);
+fx.dtw_lag_ms = toDbl(tcol(C,'DTWLag',NaN),n);
+fx.dtw_lag_range_ms = toDbl(tcol(C,'DTWLagRange',NaN),n);
 fx.amp_unit = c.AmpUnits;
 fx.input_full_scale = inputFullScale(R,cf,n);
 fx.flags = flagText(tcol(C,'Flags',""),n);
@@ -1619,7 +1626,7 @@ levels = toDbl(tcol(C,lp,NaN),height(C));
 levels = levels(idx);
 Y = struct();
 map = ["P","p"; "IsSig","isSig"; "Strength","strength"; "PowerP","PowerP"; "FspP","FspP"; ...
-       "SplitR","SplitR"; "SplitRSD","SplitRSD"; "XCorrUp","XCorrUp"; "SNR","SNR"; ...
+       "SplitR","SplitR"; "SplitRSD","SplitRSD"; "XCorrUp","XCorrUp"; "DTWUp","DTWUp"; "SNR","SNR"; ...
        "NClean","nClean"; "NPos","nPos"; "NNeg","nNeg"];
 for k = 1:size(map,1)
     if ismember(map(k,2),string(C.Properties.VariableNames))
@@ -3475,6 +3482,7 @@ switch metric
     case "fsp",       c = "FspP";
     case "splithalf", c = "SplitR";
     case "xcorr",     c = "XCorrUp";
+    case "dtw",       c = "DTWUp";
     case "snr",       c = "SNR";
     case "detection", c = "p";
     otherwise,        c = "";

@@ -3776,6 +3776,7 @@ classdef SeriesView < mabr.ui.analysis.View
                 case "fsp-descending",   s = "Fsp";
                 case "presto",           s = "Split-half r (presto)";
                 case "xcorr",            s = "Next-level correlation";
+                case "xcorr-dtw",        s = "Next-level correlation (DTW)";
                 otherwise,               s = string(label);
             end
         end
@@ -3903,6 +3904,7 @@ classdef SeriesView < mabr.ui.analysis.View
             switch string(metric)
                 case "splithalf", c = "SplitR";
                 case "xcorr",     c = "XCorrUp";
+                case "dtw",       c = "DTWUp";
                 case "snr",       c = "SNR";
                 case "strength",  c = "strength";
                 case "power",     c = "PowerP";
@@ -3915,6 +3917,7 @@ classdef SeriesView < mabr.ui.analysis.View
             switch string(metric)
                 case "splithalf", s = "Split-half r";
                 case "xcorr",     s = "r with next louder";
+                case "dtw",       s = "r with next louder (DTW)";
                 case "snr",       s = "SNR (dB)";
                 case "strength",  s = "Permutation statistic";
                 otherwise,        s = string(metric);
@@ -3928,10 +3931,10 @@ classdef SeriesView < mabr.ui.analysis.View
                 case "fraction",    u = "fraction of range";
                 otherwise
                     switch string(metric)
-                        case {"splithalf","xcorr"}, u = "r";
-                        case "snr",                 u = "dB";
-                        case "strength",            u = "statistic";
-                        otherwise,                  u = "p";
+                        case {"splithalf","xcorr","dtw"}, u = "r";
+                        case "snr",                       u = "dB";
+                        case "strength",                  u = "statistic";
+                        otherwise,                        u = "p";
                     end
             end
         end

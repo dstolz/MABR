@@ -9,14 +9,16 @@ function verify_offline_analyze()
 %   (where the response starts, where each wave is) is known.
 %
 %   Part A  measure: every column; on conditions without a response the RN
-%           and its ± reference agree and the SNR is about 0 dB; XCorrUp is
-%           NaN at each series' loudest level; the split-half K is one per
-%           series
+%           and its ± reference agree and the SNR is about 0 dB; XCorrUp and
+%           DTWUp are NaN at each series' loudest level, and DTWUp's lag is
+%           within the allowance; the split-half K is one per series
 %   Part B  analyze(Settings) on the default synthetic grid (+ clicks):
 %           every series "ok"; perm-descending's interval within one level
 %           step of the truth and the default perm-glm within one step of it;
 %           StepState filled, isStale false, a Criterion change stale for
-%           thresholds only, a touched file stale for the data
+%           thresholds only, a touched file stale for the data; xcorr and
+%           xcorr-dtw within one step of the truth; results made before
+%           DTWUp existed stale from measure for xcorr-dtw, and only for it
 %   Part C  curation survives re-analysis: accepted / manual level /
 %           noresponse / excluded kept by analyze(From="detect"); an accepted
 %           fit that moves loses its acceptance with "fit changed since
@@ -128,10 +130,14 @@ for k = unique(sk).'
     [~,top] = max(C.(lp)(r));
     assert(isnan(C.XCorrUp(r(top))),'XCorrUp is not NaN at the loudest level of %s.',k);
     assert(all(isfinite(C.XCorrUp(r([1:top-1 top+1:end])))),'XCorrUp missing below the top of %s.',k);
+    assert(isnan(C.DTWUp(r(top))) && isnan(C.DTWLag(r(top))),'DTWUp is not NaN at the loudest level of %s.',k);
+    below = r([1:top-1 top+1:end]);
+    assert(all(isfinite(C.DTWUp(below))) && all(C.DTWLag(below) >= 0 & C.DTWLag(below) <= st.MaxLag + dt) && ...
+        all(C.DTWLagRange(below) >= 0),'DTWUp missing below the top of %s, or its lag out of [0 MaxLag].',k);
     assert(isscalar(unique(C.SplitN(r))),'The split-half K differs within %s.',k);
 end
 fprintf(['  PASS Part A: measure writes every column (Features one row per sweep); no-response ' ...
-    'conditions: median RN/RNPM %.3f, median SNR %+.2f dB; XCorrUp NaN at each top level; ' ...
+    'conditions: median RN/RNPM %.3f, median SNR %+.2f dB; XCorrUp and DTWUp NaN at each top level; ' ...
     'one split-half K per series (%s) (analyze %.1f s)\n'], ...
     median(ratio),median(C.SNR(quiet)),mat2str(unique(C.SplitN).'),tAnalyze);
 
@@ -177,6 +183,26 @@ end
 tone = Td.Stimulus == "Tone";
 descTxt = strjoin(mabr.analysis.SeriesThreshold.formatValue(Tp.Final(tone),Tp.FinalCensored(tone),Tp.FinalLo(tone),Tp.FinalHi(tone)),", ");
 permTxt = strjoin(mabr.analysis.SeriesThreshold.formatValue(Td.Final(tone),Td.FinalCensored(tone),Td.FinalLo(tone),Td.FinalHi(tone)),", ");
+% The next-louder correlation, rigid and warped: each reads its own measure
+% at its own criterion and finds every tone series within a step of the truth.
+sd.ThresholdMethod = "xcorr";
+s.analyze(sd,From="thresholds");
+Tx = s.Thresholds;
+sd.ThresholdMethod = "xcorr-dtw";
+s.analyze(sd,From="thresholds");
+Tw = s.Thresholds;
+assert(all(Tw.Method == "xcorr-dtw" & Tw.Metric == "dtw" & Tw.Criterion == 0.40) && ...
+    all(Tx.Method == "xcorr" & Tx.Metric == "xcorr" & Tx.Criterion == 0.35), ...
+    'xcorr / xcorr-dtw rows do not name their own metric and criterion.');
+for r = find(Tw.Stimulus == "Tone").'
+    tr = truthOf(r);
+    assert(abs(Tx.Final(r) - tr) <= step && abs(Tw.Final(r) - tr) <= step, ...
+        '%s: xcorr %s / xcorr-dtw %s is not within one step of the truth %g.',Tw.Key(r), ...
+        mabr.analysis.SeriesThreshold.formatValue(Tx.Final(r),Tx.FinalCensored(r),Tx.FinalLo(r),Tx.FinalHi(r)), ...
+        mabr.analysis.SeriesThreshold.formatValue(Tw.Final(r),Tw.FinalCensored(r),Tw.FinalLo(r),Tw.FinalHi(r)),tr);
+end
+xTxt = strjoin(compose('%.1f',Tx.Final(tone)),", ");
+wTxt = strjoin(compose('%.1f',Tw.Final(tone)),", ");
 s.analyze(st,From="thresholds");
 assert(isequaln(s.Thresholds.Threshold,T.Threshold),'Going back to perm-glm did not give the same thresholds.');
 for stp = mabr.analysis.Session.StepNames
@@ -190,6 +216,26 @@ s2 = st;  s2.Criterion = 0.7;  s2.ThresholdMethod = "custom";
 [tf,D] = s.isStale(s2);
 assert(tf && all(D.Step == "thresholds") && all(ismember(["Criterion","ThresholdMethod"],D.Field)), ...
     'A Criterion change is not stale for thresholds only: %s.',strjoin(D.Step + "." + D.Field,', '));
+% Results made before DTWUp existed: every step's settings match, and only
+% the method reading the missing measure makes them stale -- from measure,
+% since a thresholds re-run could only refuse (noMeasures).
+R = load(s.saveResults(fullfile(root,"pre_dtw.mat"),IncludeSweeps=false));
+R.Conditions = removevars(R.Conditions,["DTWUp","DTWLag","DTWLagRange"]);
+so = mabr.analysis.Session.fromResults(R,Verbose=false);
+sw = st;  sw.ThresholdMethod = "xcorr-dtw";
+[tf,D] = so.isStale(st);
+assert(~tf && so.missingMeasure(st) == "", ...
+    'Results without DTWUp are stale for perm-glm: %s.',strjoin(D.Step + "." + D.Field,', '));
+[tf,D] = so.isStale(sw);
+assert(tf && so.missingMeasure(sw) == "DTWUp" && any(D.Step == "measure" & D.Field == "DTWUp"), ...
+    'Results without DTWUp are not stale from measure for xcorr-dtw: %s.',strjoin(D.Step + "." + D.Field,', '));
+id = "";
+try
+    so.analyze(sw,From="thresholds");
+catch ME
+    id = string(ME.identifier);
+end
+assert(id == "mabr:analysis:Session:noMeasures",'A thresholds re-run without DTWUp gave "%s".',id);
 % A touched file changes the data fingerprint (its own small session).
 fz = fullfile(root,"SUBJ-ID-9001_touch");
 tz = truth;  tz.Freqs = 8;  tz.Threshold = 20;  tz.Levels = [40 80];  tz.nSweeps = 16;
@@ -204,8 +250,10 @@ fidT = fopen(ffn,'w');  fwrite(fidT,bytes);  fclose(fidT);     % same bytes, a n
 assert(tf && any(D.Step == "data" & D.Field == "files"),'A touched file did not make the data stale.');
 fprintf(['  PASS Part B: analyze: 4 perm-glm series "ok" (%s); per frequency power-descending %s within ' ...
     'one step of the truth, perm-descending %s never below it and within one step of perm-glm; ' ...
-    'StepState filled, not stale, a Criterion change stale for thresholds only, a touched file ' ...
-    'stale for the data (%.1f s)\n'],strjoin(compose('%.1f',T.Threshold),", "),descTxt,permTxt,toc(tp));
+    'xcorr %s and xcorr-dtw %s within one step of the truth; StepState filled, not stale, a ' ...
+    'Criterion change stale for thresholds only, results without DTWUp stale from measure for ' ...
+    'xcorr-dtw only, a touched file stale for the data (%.1f s)\n'], ...
+    strjoin(compose('%.1f',T.Threshold),", "),descTxt,permTxt,xTxt,wTxt,toc(tp));
 
 % =========================================================================
 %  Part C -- curation survives re-analysis

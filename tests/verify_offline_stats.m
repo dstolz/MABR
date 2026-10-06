@@ -21,7 +21,10 @@ function verify_offline_stats()
 %   (+)-(-) and polarity-following signs show it.
 %   Part E (convergence): RN falls as N^-0.5 on noise.
 %   Part F (features, blocks, bootstrap band, xcorrUp -- bounded even on the
-%   vanishing tails of a noiseless template).
+%   vanishing tails of a noiseless template -- and dtwUp: a rigid shift
+%   recovered exactly, waves shifted by different amounts lined up where one
+%   lag cannot, one direction only, the lag-0 r with no room to warp, and on
+%   noise no higher than xcorrUp, as it is not without its smoothing).
 %   Part G (picking): parabolic refinement is unbiased to well under 20 us;
 %   pick() finds waves I-V of the synthetic template; track() follows them
 %   down to threshold without swapping labels; manual and absent anchors and
@@ -307,9 +310,50 @@ assert(r0 < r && r > 0.99,'xcorrUp: r0 %.3f should be below r %.3f.',r0,r);
 [rF,lagF] = mabr.analysis.SingleTrial.xcorrUp(yLow,y80,resp,100,dtms);
 assert(isfinite(rF) && rF <= 1 && abs(lagF - ks*dtms) < 1e-12, ...
     'xcorrUp over 100 lags gave r %g at %.4f ms.',rF,lagF);
+
+% dtwUp. A rigid shift equal to the warp's centre (half the allowance) is a
+% straight path: r 1, the lag exactly, no spread.
+[r,lagMs,rngMs] = mabr.analysis.SingleTrial.dtwUp(yLow,y80,resp,6,dtms);
+assert(abs(r - 1) < 1e-12 && abs(lagMs - ks*dtms) < 1e-12 && rngMs == 0, ...
+    'dtwUp on a rigid %d-sample shift: r %.15g, lag %.4f ms, range %.4f ms.',ks,r,lagMs,rngMs);
+% The case it exists for: 10 dB down, wave I is 0.15 ms later and wave V 0.30
+% ms. One lag lines up one of them; the warp lines up both, with a lag that
+% spreads by about their difference.
+y70 = mabrtest.SyntheticABR.template(tAll,70,16,truth);
+rX = mabr.analysis.SingleTrial.xcorrUp(y70,y80,resp,4,dtms);
+[rD,lagD,rngD] = mabr.analysis.SingleTrial.dtwUp(y70,y80,resp,4,dtms);
+assert(rD > 0.99 && rX < 0.95 && rngD > 0.1 && rngD <= 4*dtms + 1e-12 && lagD > 0 && lagD < 4*dtms, ...
+    'dtwUp 70 vs 80 dB: r %.4f (xcorrUp %.4f), lag %.3f ms, spread %.3f ms.',rD,rX,lagD,rngD);
+% One direction, as xcorrUp: a quieter response is never earlier.
+yE = [y80(ks+1:end); zeros(ks,1)];
+rE = mabr.analysis.SingleTrial.dtwUp(yE,y80,resp,6,dtms);
+assert(rE < 0.5,'dtwUp lined up an EARLIER response: r %.3f.',rE);
+% No room to warp (an allowance under 2 samples): the lag-0 correlation.
+[~,~,r00] = mabr.analysis.SingleTrial.xcorrUp(y70,y80,resp,0,dtms);
+assert(isequal(mabr.analysis.SingleTrial.dtwUp(y70,y80,resp,1,dtms),r00), ...
+    'dtwUp with no room to warp is not the lag-0 r.');
+assert(isnan(mabr.analysis.SingleTrial.dtwUp(NaN(size(y80)),y80,resp,4,dtms)) && ...
+    isnan(mabr.analysis.SingleTrial.dtwUp(y70,y80,find(resp,2),4,dtms)),'dtwUp on < 3 rows is not NaN.');
+% Noise: the smoothed warp is no more willing to line up two independent
+% noise averages than one rigid lag is; unsmoothed it lines most of them up.
+gN = RandStream('threefry','Seed',616);
+nP = 300;
+EN = filtfilt(bb,aa,randn(gN,numel(tAll)+200,2*nP));
+EN = EN(101:100+numel(tAll),:);
+rN = NaN(nP,3);
+for i = 1:nP
+    a = EN(:,2*i-1);  b = EN(:,2*i);
+    rN(i,1) = mabr.analysis.SingleTrial.xcorrUp(a,b,resp,4,dtms);
+    rN(i,2) = mabr.analysis.SingleTrial.dtwUp(a,b,resp,4,dtms);
+    rN(i,3) = mabr.analysis.SingleTrial.dtwUp(a,b,resp,4,dtms,0);
+end
+mN = median(rN);
+assert(abs(mN(2) - mN(1)) < 0.05 && mN(3) > 0.4, ...
+    'dtwUp on noise: median r %.3f (xcorrUp %.3f, unsmoothed %.3f).',mN(2),mN(1),mN(3));
 fprintf(['  PASS Part F: mean TemplateAmp = 1 (NaN on noise alone); %d balanced blocks, %d dropped; band brackets %.1f%%, ' ...
-    'width %.2f x 1.96 SEM; xcorrUp lag %d samples, r bounded over 100 lags\n'], ...
-    height(Tb),Tb.Properties.UserData.Dropped,100*inside,wRatio,ks);
+    'width %.2f x 1.96 SEM; xcorrUp lag %d samples, r bounded over 100 lags; dtwUp r %.3f where xcorrUp gives %.3f ' ...
+    '(lag spread %.2f ms), noise median %.2f (xcorrUp %.2f, unsmoothed %.2f)\n'], ...
+    height(Tb),Tb.Properties.UserData.Dropped,100*inside,wRatio,ks,rD,rX,rngD,mN(2),mN(1),mN(3));
 
 % ---- Part G: picking --------------------------------------------------------
 % parabolic refinement: unbiased on Gaussian peaks with sub-sample centres

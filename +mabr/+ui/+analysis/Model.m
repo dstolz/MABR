@@ -712,7 +712,10 @@ classdef Model < handle
                     changed.Fields = string(mabr.analysis.Settings.diff(S.Settings,s).Field);
                 catch
                 end
-                if ismember(k,["thresholds","peaks"])
+                % (a method reading a measure these results were made
+                % without is a measure step, not a re-fit: Session.isStale
+                % says so, and Analyse re-runs from there)
+                if ismember(k,["thresholds","peaks"]) && S.missingMeasure(s) == ""
                     try
                         S.analyze(s,'From',k);
                         obj.HistoryPending = true;
@@ -4178,7 +4181,8 @@ classdef Model < handle
             col = @(name,def) mabr.ui.analysis.Model.column(C,rows,name,def);
             Y = struct('P',col('p',NaN),'IsSig',col('isSig',false),'Strength',col('strength',NaN), ...
                 'PowerP',col('PowerP',NaN),'FspP',col('FspP',NaN),'SplitR',col('SplitR',NaN), ...
-                'SplitRSD',col('SplitRSD',NaN),'XCorrUp',col('XCorrUp',NaN),'SNR',col('SNR',NaN), ...
+                'SplitRSD',col('SplitRSD',NaN),'XCorrUp',col('XCorrUp',NaN),'DTWUp',col('DTWUp',NaN), ...
+                'SNR',col('SNR',NaN), ...
                 'NClean',col('nClean',NaN),'NPos',col('nPos',NaN),'NNeg',col('nNeg',NaN), ...
                 'Override',nan(numel(ck),1));
             for i = 1:numel(ck)

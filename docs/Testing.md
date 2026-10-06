@@ -137,6 +137,8 @@ Warnings are captured rather than printed, and the caller's warning state is unt
 
 The template amplitude averages 1 over a condition with a response and is NaN for every sweep of one holding noise alone.
 
+**The next-louder correlations** (Part F): `xcorrUp` finds a later, quieter response at its lag and stays bounded over 100 lags. `dtwUp` recovers a rigid shift exactly (r 1, the lag, no spread). On the synthetic template 10 dB down, where wave I is 0.15 ms later and wave V 0.30 ms, it lines up both (r above 0.99, against `xcorrUp`'s 0.90). It never lines up an *earlier* response, gives the lag-0 r when there is no room to warp, and on pairs of independent noise averages its median r is within 0.05 of `xcorrUp`'s. Without its smoothing the median is above 0.4, so removing the smoothing fails the test.
+
 **Peak picking:**
 
 - parabolic refinement is unbiased to well under 20 µs;
@@ -152,6 +154,7 @@ The template amplitude averages 1 over a condition with a response and is NaN fo
 
 - `SeriesThreshold`'s named methods on the **real permutation p-values** of the reference session (perm-descending's intervals, the lowest_level convention, and perm-glm within one step of them);
 - the canonical series and the one-level cases, with exact Status / Censored / bounds. The descending rule walks down from the loudest level: a run of detections below two misses is only flagged, and the real 32 kHz xcorr series no longer reads 18 dB;
+- `xcorr-dtw`: the methods table (eight methods, labels, metrics, criteria), the descending rule on `DTWUp` at 0.40 and blind to `XCorrUp`, its bootstrap interval, a custom method on the `dtw` metric, and its definition sentence following `MaxLag`;
 - usable levels, each ignored level flagged with its reason ("level ignored at 0 dB: 10 clean sweeps, fewer than the minimum of 100"), and borderline detections flagged at 1000 permutations but not without a permutation count or at 10⁵;
 - overrides, conventions and the curated value for every decision;
 - an attenuation axis;
@@ -181,9 +184,9 @@ The regression checks for defects 7, 9, 10, 12, 13, 14, 15 and 17 are here, alon
 
 [tests/verify_offline_analyze.m](../tests/verify_offline_analyze.m) — everything after detection, and `mabr.analysis.Batch`:
 
-- **Measures**: the RN and its ± reference agree where there is no response.
-- **Named thresholds**: within one level step of the truth.
-- **Staleness**: a Criterion change makes thresholds alone stale; a touched file makes the data stale.
+- **Measures**: the RN and its ± reference agree where there is no response. `XCorrUp` and `DTWUp` are NaN at each series' loudest level, and `DTWUp`'s lag stays within the allowance.
+- **Named thresholds**: within one level step of the truth, `xcorr` and `xcorr-dtw` included.
+- **Staleness**: a Criterion change makes thresholds alone stale; a touched file makes the data stale. Results saved without `DTWUp` are stale from the measures for `xcorr-dtw` and current for every other method, and re-fitting only their thresholds refuses with `noMeasures`.
 - **Curation survives re-analysis**: accepted, manual level, no response and excluded decisions are kept. A moved fit loses its acceptance with "fit changed since review", and a GroupBy change archives decisions and restores them. A typed GroupBy keeps the stimuli apart (Part C): "Frequency" gives the default series keys, and "Level" on a Frequency axis mixes no stimuli.
 - **A single-level session**: "insufficient" or "all-respond", never "no-response".
 - **Peaks** against the truth.

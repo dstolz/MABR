@@ -32,7 +32,7 @@ classdef Session < handle
 %     reject(...)           flag artifact sweeps (flags, never deletions)
 %     detect(...)           permutation-test each condition for a response
 %     measure(...)          the single-trial measures (RN, power test, Fsp,
-%                           split-half r, XCorrUp, per-sweep features)
+%                           split-half r, XCorrUp, DTWUp, per-sweep features)
 %     estimateThresholds()  a threshold per series, by a named method
 %                           (mabr.analysis.SeriesThreshold), curation kept
 %     pickPeaks(...)        waves I-V picked and tracked down each series
@@ -283,7 +283,7 @@ classdef Session < handle
         % The per-condition columns measure() writes (beside Features).
         MeasureColumns = ["RN","RNPM","ResponseRMS","BaselineRMS","F","PowerP","PowerF95", ...
             "SNR","SNRCorr","Fsp","FspDF1","FspDF2","FspP","SplitR","SplitRSD","SplitRP025", ...
-            "SplitRP975","SplitN","XCorrUp","XCorrLag","XCorrUp0"]
+            "SplitRP975","SplitN","XCorrUp","XCorrLag","XCorrUp0","DTWUp","DTWLag","DTWLagRange"]
 
         % The human columns of Thresholds, carried by key across re-analyses.
         CurationColumns = ["Decision","ManualValue","ManualKind","Note","ReviewedBy", ...
@@ -1330,7 +1330,10 @@ classdef Session < handle
             %     does not count);
             %   - XCorrUp: each condition's mean against the next HIGHER level
             %     of its series (SingleTrial.xcorrUp, lags 0..MaxLag), NaN at
-            %     the top level.
+            %     the top level; DTWUp the same pair after time warping
+            %     (SingleTrial.dtwUp: a lag of 0..MaxLag that changes along
+            %     the response), with its mean lag DTWLag and the spread of
+            %     the lag DTWLagRange (ms).
             % A Keys subset is therefore widened to whole series.
             %
             % The baseline is measured only where it can be: when the shortest
@@ -1348,7 +1351,8 @@ classdef Session < handle
             %   opts.SplitHalfMinPerPolarity  smallest K (default 25)
             %   opts.NumPermutations          power-test permutations (default 1000)
             %   opts.Seed                     base seed (default 1)
-            %   opts.MaxLag                   ms, XCorrUp's largest lag (default 0.3)
+            %   opts.MaxLag                   ms, XCorrUp's and DTWUp's largest
+            %                                 lag (default 0.3)
             %   opts.LevelDirection           which way is louder for XCorrUp:
             %                                 "" (default: the threshold step's
             %                                 LevelDirection, else "auto") |
@@ -1359,7 +1363,8 @@ classdef Session < handle
             %   T  (returned) obj.Conditions with RN, RNPM, ResponseRMS,
             %      BaselineRMS, F, PowerP, PowerF95, SNR, SNRCorr, Fsp, FspDF1,
             %      FspDF2, FspP, SplitR, SplitRSD, SplitRP025, SplitRP975, SplitN,
-            %      XCorrUp, XCorrLag, XCorrUp0 and Features (cell of tables)
+            %      XCorrUp, XCorrLag, XCorrUp0, DTWUp, DTWLag, DTWLagRange and
+            %      Features (cell of tables)
             arguments
                 obj
                 opts.ResponseWindow double = []
@@ -1465,8 +1470,10 @@ classdef Session < handle
             end
             p.close();
 
-            % XCorrUp: each condition against the next louder one of its series.
+            % XCorrUp and DTWUp: each condition against the next louder one of
+            % its series.
             iU = find(names == "XCorrUp",1);  iL = find(names == "XCorrLag",1);  i0 = find(names == "XCorrUp0",1);
+            iD = find(names == "DTWUp",1);  iDL = find(names == "DTWLag",1);  iDR = find(names == "DTWLagRange",1);
             lp = obj.levelParamOrEmpty();
             maxLag = round(opts.MaxLag/dt);
             if lp ~= "" && ismember(lp,string(C.Properties.VariableNames))
@@ -1484,6 +1491,8 @@ classdef Session < handle
                             & mabr.analysis.Session.extentMask(t,C.Extent(targets(b),:));
                         if ~any(rr) || isempty(means{a}) || isempty(means{b}), continue; end
                         [V(a,iU),V(a,iL),V(a,i0)] = mabr.analysis.SingleTrial.xcorrUp( ...
+                            means{a},means{b},rr,maxLag,dt);
+                        [V(a,iD),V(a,iDL),V(a,iDR)] = mabr.analysis.SingleTrial.dtwUp( ...
                             means{a},means{b},rr,maxLag,dt);
                     end
                 end
@@ -1559,9 +1568,10 @@ classdef Session < handle
             %
             % METHOD. Method names one of SeriesThreshold.methods() --
             % "perm-glm", "perm-descending", "power-descending",
-            % "fsp-descending", "presto", "xcorr" or "custom" (whose metric,
-            % model and criterion are read from MethodSettings). Left "" (the
-            % DIRECT, legacy call every script before named methods made), the
+            % "fsp-descending", "presto", "xcorr", "xcorr-dtw" or "custom"
+            % (whose metric, model and criterion are read from
+            % MethodSettings). Left "" (the DIRECT, legacy call every script
+            % before named methods made), the
             % method is custom with Metric "detection", Model = Type,
             % CriterionMode "probability" for glm and "fraction" otherwise,
             % Criterion as given, and FitTarget deciding what a fraction model
@@ -2997,6 +3007,14 @@ classdef Session < handle
                     nv(end+1,1) = mabr.analysis.Session.settingText(cur.(f)); %#ok<AGROW>
                 end
             end
+            % A measure the method in force reads and these conditions lack:
+            % results made before it existed. Their settings can all match,
+            % and re-running only the thresholds would refuse (noMeasures).
+            mc = obj.missingMeasure(s);
+            if mc ~= "" && ~any(st == "measure")
+                st(end+1,1) = "measure"; fd(end+1,1) = mc; ov(end+1,1) = "(not measured)";
+                nv(end+1,1) = "(needed by " + s.ThresholdMethod + ")";
+            end
             fpNow = obj.currentFingerprint();
             fpThen = "";
             if isfield(obj.StepState,'segment') && isstruct(obj.StepState.segment) ...
@@ -3008,6 +3026,40 @@ classdef Session < handle
             end
             D = table(st,fd,ov,nv,'VariableNames',{'Step','Field','Old','New'});
             tf = height(D) > 0;
+        end
+
+        function c = missingMeasure(obj,settings)
+            % The measure column the settings' threshold method reads that
+            % the conditions do not hold, or "".
+            %
+            % A results file analysed before a measure existed (DTWUp, which
+            % came with xcorr-dtw) records every step's settings as they are
+            % now, so nothing else says its measures are incomplete: pick
+            % such a method and the threshold step alone would re-run, and
+            % refuse (mabr:analysis:Session:noMeasures). isStale lists the
+            % column under "measure", so re-running starts there.
+            %
+            %   settings  a mabr.analysis.Settings (default Settings())
+            %   c         (returned) 1x1 string: the column, or "" when the
+            %             method needs none, it is there, or there are no
+            %             conditions yet
+            arguments
+                obj
+                settings = []
+            end
+            c = "";
+            C = obj.Conditions;
+            if ~istable(C) || height(C) == 0, return; end
+            s = mabr.analysis.Session.asSettings(settings);
+            try
+                m = mabr.analysis.SeriesThreshold.resolve(s.ThresholdMethod,s);
+            catch
+                return      % an invalid method is problems()'s to report
+            end
+            col = mabr.analysis.Session.metricColumnOf(m.Metric);
+            if m.NeedsMeasures && col ~= "" && ~ismember(col,string(C.Properties.VariableNames))
+                c = col;
+            end
         end
 
         function rep = recompute(obj,condKeys,opts)
@@ -4729,6 +4781,7 @@ classdef Session < handle
                 case "fsp",       c = "FspP";
                 case "splithalf", c = "SplitR";
                 case "xcorr",     c = "XCorrUp";
+                case "dtw",       c = "DTWUp";
                 case "snr",       c = "SNR";
                 otherwise,        c = "";
             end
@@ -4748,6 +4801,7 @@ classdef Session < handle
             Y.SplitR   = get("SplitR");
             Y.SplitRSD = get("SplitRSD");
             Y.XCorrUp  = get("XCorrUp");
+            Y.DTWUp    = get("DTWUp");
             Y.SNR      = get("SNR");
             Y.NClean   = double(C.nClean(idx));
             Y.NPos     = double(C.nPos(idx));
@@ -6932,7 +6986,7 @@ classdef Session < handle
             % group, the metric made again per replicate. [] when the sweeps
             % are not here or the metric cannot be bootstrapped this way.
             YB = [];
-            if ~obj.HasSweeps || ~ismember(metric,["snr","splithalf","xcorr"]), return; end
+            if ~obj.HasSweeps || ~ismember(metric,["snr","splithalf","xcorr","dtw"]), return; end
             C = obj.Conditions;
             t = obj.Time;  nT = numel(t);
             rwm = mabr.analysis.Artifacts.windowMask(t,obj.ResponseWindow);
@@ -6989,7 +7043,7 @@ classdef Session < handle
                 end
                 means{i} = M;
             end
-            if metric == "xcorr"
+            if ismember(metric,["xcorr","dtw"])
                 lp = obj.LevelParam;
                 if lp == "", lp = obj.levelParamOrEmpty(); end
                 lev = obj.loudnessSign(lp)*double(C.(lp)(idx));
@@ -7003,7 +7057,11 @@ classdef Session < handle
                     j = louder(k);
                     if isempty(means{j}), continue; end
                     for b = 1:B
-                        YB(i,b) = mabr.analysis.SingleTrial.xcorrUp(means{i}(:,b),means{j}(:,b),rwm,maxLag,dt);
+                        if metric == "dtw"
+                            YB(i,b) = mabr.analysis.SingleTrial.dtwUp(means{i}(:,b),means{j}(:,b),rwm,maxLag,dt);
+                        else
+                            YB(i,b) = mabr.analysis.SingleTrial.xcorrUp(means{i}(:,b),means{j}(:,b),rwm,maxLag,dt);
+                        end
                     end
                 end
             end

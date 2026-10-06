@@ -493,6 +493,22 @@ assert(o.CIMethod == "bootstrap" && o.CILower < o.Threshold && o.Threshold < o.C
     'Graded bootstrap CI [%g %g] (%s) does not bracket %g.',o.CILower,o.CIUpper,o.CIMethod,o.Threshold);
 o2 = ST.estimate(L,Yx,"xcorr",MinSweeps=0,MinPerPolarity=0,YBoot=YB);
 assert(isequal([o.CILower o.CIUpper],[o2.CILower o2.CIUpper]),'The bootstrap CI is not deterministic.');
+% xcorr-dtw: the same rule on DTWUp, at its own criterion (0.40: noise
+% passes it as often as it passes 0.35 under xcorr's rigid lag), and blind to
+% XCorrUp -- each method reads its own column.
+Yd = struct('DTWUp',Yx.XCorrUp,'XCorrUp',Yx.XCorrUp - 0.3);
+o = ST.estimate(L,Yd,"xcorr-dtw",MinSweeps=0,MinPerPolarity=0);
+assert(abs(o.Threshold - 38) < 1e-12 && o.Censored == "none" && o.Criterion == 0.40 && ...
+    o.CriterionUnit == "r" && o.Fit.Metric == "dtw" && o.Fit.Method == "xcorr-dtw" && ...
+    ~any(startsWith(o.Flags,"level ignored")) && ~any(o.Flags == "metric undefined at some level"), ...
+    'xcorr-dtw crossing %g (criterion %g) {%s}; expected 38 at 0.40.',o.Threshold,o.Criterion,strjoin(o.Flags,'|'));
+o = ST.estimate(L,struct('XCorrUp',Yx.XCorrUp),"xcorr-dtw",MinSweeps=0,MinPerPolarity=0);
+assert(o.Status == "insufficient" && o.NumUsable == 0,'xcorr-dtw read XCorrUp: %s, %d usable.',o.Status,o.NumUsable);
+YBd = Yd.DTWUp + 0.05*randn(RandStream('threefry','Seed',4),9,200);
+YBd(9,:) = NaN;
+o = ST.estimate(L,Yd,"xcorr-dtw",MinSweeps=0,MinPerPolarity=0,YBoot=YBd);
+assert(o.CIMethod == "bootstrap" && o.CILower < o.Threshold && o.Threshold < o.CIUpper, ...
+    'xcorr-dtw bootstrap CI [%g %g] (%s) does not bracket %g.',o.CILower,o.CIUpper,o.CIMethod,o.Threshold);
 % presto through estimate, with its flags and censoring
 Yp = struct('SplitR',0.05+0.7./(1+exp(-(L-40)/5)),'SplitRSD',0.05*ones(9,1));
 o = ST.estimate(L,Yp,"presto",MinSweeps=0,MinPerPolarity=0);
@@ -517,7 +533,8 @@ Yi = struct('SplitR',[NaN NaN NaN NaN 0.5 NaN NaN NaN NaN].','Override',[NaN NaN
 o = ST.estimate(L,Yi,"presto",MinSweeps=0,MinPerPolarity=0);
 assert(o.NumUsable == 3 && o.Status == "insufficient" && isnan(o.Threshold) && o.Censored == "", ...
     'presto on one finite r: %s %g (%d usable).',o.Status,o.Threshold,o.NumUsable);
-fprintf('  PASS graded metrics: interpolated crossing, conventions, overrides, deterministic bootstrap CI, presto\n');
+fprintf(['  PASS graded metrics: interpolated crossing, conventions, overrides, deterministic bootstrap CI, ' ...
+    'presto; xcorr-dtw on DTWUp at 0.40\n']);
 
 %% ====================================================== K. direction
 Ym = detY([0 0 0 0 1 1 1 1 1]);
@@ -545,7 +562,8 @@ fprintf('  PASS LevelDirection "descending" mirrors an ascending series (rule, G
 rs = RandStream('threefry','Seed',21);
 cust = {struct('ThresholdMetric',"detection",'ThresholdModel',"isotonic",'CriterionMode',"fraction",'Criterion',0.5), ...
         struct('ThresholdMetric',"snr",'ThresholdModel',"descending",'CriterionMode',"absolute",'Criterion',NaN), ...
-        struct('ThresholdMetric',"xcorr",'ThresholdModel',"presto",'CriterionMode',"absolute",'Criterion',NaN)};
+        struct('ThresholdMetric',"xcorr",'ThresholdModel',"presto",'CriterionMode',"absolute",'Criterion',NaN), ...
+        struct('ThresholdMetric',"dtw",'ThresholdModel',"presto",'CriterionMode',"absolute",'Criterion',NaN)};
 methodsUsed = ST.resolve(ST.Ids(1));
 for id = ST.Ids(2:end-1), methodsUsed(end+1) = ST.resolve(id); end %#ok<AGROW>
 for k = 1:numel(cust), methodsUsed(end+1) = ST.resolve("custom",cust{k}); end %#ok<AGROW>
@@ -560,6 +578,7 @@ for it = 1:80
         'XCorrUp',[0.02 + 0.8*pr(1:end-1) + 0.05*randn(rs,n-1,1); NaN],'SNR',-3 + 15*pr + randn(rs,n,1), ...
         'Override',nan(n,1));
     Yr.IsSig = double(Yr.P < 0.05);
+    Yr.DTWUp = min(Yr.XCorrUp + 0.05,0.99);     % (no draw: the stream stays as it was)
     if rand(rs) < 0.3, Yr.Override(randi(rs,n)) = double(rand(rs) < 0.5); end
     if rand(rs) < 0.2, Yr.P(randi(rs,n)) = NaN; end
     m    = methodsUsed(randi(rs,numel(methodsUsed)));
@@ -639,22 +658,23 @@ fprintf('  PASS finalValue for every decision, formatValue texts, belowThreshold
 
 %% ====================================================== M. methods, resolve, definitions
 M = ST.methods();
-ids = ["perm-glm","perm-descending","power-descending","fsp-descending","presto","xcorr","custom"];
+ids = ["perm-glm","perm-descending","power-descending","fsp-descending","presto","xcorr","xcorr-dtw","custom"];
 labels = ["Permutation test " + ARROW + " psychometric fit (GLM, p = 0.5)"
           "Permutation test " + ARROW + " lowest of 2 consecutive detected levels"
           "Response power vs " + PM + " reference (sign-flip test) " + ARROW + " lowest of 2 consecutive"
           "Fsp (multi-point F, estimated df) " + ARROW + " lowest of 2 consecutive"
           "Split-half correlation r " + GE + " 0.30 (ABRpresto-like fit)"
           "Correlation with next-louder level " + GE + " 0.35 (Suthakar & Liberman 2019)"
+          "Correlation with next-louder level after time warping " + GE + " 0.40 (DTW)"
           "Custom" + ELL].';
-assert(numel(M) == 7 && isequal([M.Id],ids) && isequal(ST.Ids,ids),'methods() Ids or order are wrong.');
+assert(numel(M) == 8 && isequal([M.Id],ids) && isequal(ST.Ids,ids),'methods() Ids or order are wrong.');
 assert(isequal([M.Label],labels),'methods() labels differ from the contract.');
-assert(isequal([M.Metric],["detection","detection","power","fsp","splithalf","xcorr","detection"]) && ...
-    isequal([M.Model],["glm","descending","descending","descending","presto","descending","glm"]) && ...
-    isequal([M.CriterionMode],["probability","p","p","p","absolute","absolute","probability"]) && ...
-    isequal([M.Criterion],[0.5 0.05 0.05 0.05 0.30 0.35 0.5]) && ...
-    isequal([M.CriterionUnit],["probability","p","p","p","r","r","probability"]) && ...
-    isequal([M.NeedsMeasures],[false false true true true true false]),'methods() table columns are wrong.');
+assert(isequal([M.Metric],["detection","detection","power","fsp","splithalf","xcorr","dtw","detection"]) && ...
+    isequal([M.Model],["glm","descending","descending","descending","presto","descending","descending","glm"]) && ...
+    isequal([M.CriterionMode],["probability","p","p","p","absolute","absolute","absolute","probability"]) && ...
+    isequal([M.Criterion],[0.5 0.05 0.05 0.05 0.30 0.35 0.40 0.5]) && ...
+    isequal([M.CriterionUnit],["probability","p","p","p","r","r","r","probability"]) && ...
+    isequal([M.NeedsMeasures],[false false true true true true true false]),'methods() table columns are wrong.');
 m = ST.resolve("perm-descending",struct('Alpha',0.01,'MinConsecutive',3));
 assert(m.Criterion == 0.01 && contains(m.Label,"lowest of 3 consecutive"),'resolve did not apply Alpha/K: %s.',m.Label);
 % A named p-method detects at the Alpha estimate is given (10 section 7.2 step
@@ -681,6 +701,11 @@ for k = 1:numel(bad)
 end
 mc = ST.resolve("custom",struct('ThresholdMetric',"snr",'ThresholdModel',"descending",'CriterionMode',"absolute"));
 assert(mc.Criterion == 3 && mc.CriterionUnit == "dB",'custom SNR default criterion %g %s.',mc.Criterion,mc.CriterionUnit);
+mc = ST.resolve("custom",struct('ThresholdMetric',"dtw",'ThresholdModel',"presto",'CriterionMode',"absolute"));
+assert(mc.Criterion == 0.40 && mc.CriterionUnit == "r" && mc.NeedsMeasures, ...
+    'custom dtw default criterion %g %s.',mc.Criterion,mc.CriterionUnit);
+expectError(@() ST.resolve("custom",struct('ThresholdMetric',"dtw",'ThresholdModel',"glm", ...
+    'CriterionMode',"probability")),'mabr:analysis:SeriesThreshold:badMethod','resolve refusal: glm on dtw');
 d1 = ST.definition("perm-descending");
 assert(d1 == "Threshold = the midpoint between the highest level without and the lowest level with " + ...
     "2 consecutive detected responses, descending from the loudest level to the first 2 consecutive " + ...
@@ -698,6 +723,14 @@ sx = mabr.analysis.Settings(Alpha=0.01,NumPermutations=2000,MinConsecutive=3,Det
 d4 = ST.definition(ST.resolve("perm-descending",sx),sx);
 assert(contains(d4,"0.01") && contains(d4,"2000 permutations") && contains(d4,"3 consecutive") && ...
     contains(d4,"cluster-mass") && startsWith(d4,"Threshold = the lowest level"),'Definition ignores the settings: "%s".',d4);
+d6 = ST.definition("xcorr-dtw");
+assert(d6 == "Threshold = level where the correlation with the next-louder level's average after time " + ...
+    "warping (dtw, lag 0" + NDASH + "0.3 ms changing along the response, smoothed over 2 ms) reaches 0.40, " + ...
+    "interpolated between the bracketing levels of the lowest run of 2 consecutive levels at or above it, " + ...
+    "descending from the loudest level to the first 2 consecutive misses.",'xcorr-dtw definition: "%s".',d6);
+s5 = mabr.analysis.Settings(MaxLag=0.5);
+d7 = ST.definition(ST.resolve("xcorr-dtw",s5),s5);
+assert(contains(d7,"lag 0" + NDASH + "0.5 ms"),'xcorr-dtw definition ignores MaxLag: "%s".',d7);
 d5 = ST.definition(ST.resolve("presto",sx),sx);
 assert(contains(d5,"300 resamples") && contains(d5,"1" + NDASH + "6 ms"),'presto definition ignores the settings: "%s".',d5);
 for id = ids
