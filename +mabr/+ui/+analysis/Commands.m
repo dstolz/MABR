@@ -301,6 +301,10 @@ classdef Commands
 
             % ---- browser ------------------------------------------------------
             add("browser.open","return","","","browser","app",false,"Open the selected session","open","AnalysisMenuOpenSession");
+            % (a project label, not a results edit -- so not Mutating -- and
+            % undone with Ctrl+Z all the same)
+            add("browser.hide","delete","","","browser","app",false, ...
+                "Exclude and hide the selected sessions (Show ▸ Hidden lists them)","hide","AnalysisMenuHide");
 
             % ---- navigation ---------------------------------------------------
             add("nav.levelUp","uparrow","","",nav,"model",false,"Louder level","louder","");

@@ -1090,6 +1090,11 @@ classdef StudyView < mabr.ui.analysis.View
             if isempty(V) || width(V) == 0
                 V = mabr.ui.analysis.StudyView.emptyView();
             end
+            % A hidden session is not this study's (the browser's Exclude
+            % and hide): no row in the tables, nothing aggregated from it.
+            if ismember('Hidden',V.Properties.VariableNames)
+                V = V(~logical(V.Hidden),:);
+            end
             A = [];
             try
                 A = m.Project.aggregate(string(V.Key),m.Catalog,Waveforms=needMeans);

@@ -854,6 +854,9 @@ classdef AnalysisApp < handle
             app.item(m,T("Analyse","session.analyse"),'AnalysisMenuAnalyse',@() app.Model.analyze(),true);
             app.item(m,"Pool Sweeps of Selected Sessions…",'AnalysisMenuPool',@() app.poolSelected(),true);
             app.item(m,"Unpool",'AnalysisMenuUnpool',@() app.Model.unpool());
+            app.item(m,T("Exclude and Hide Selected","browser.hide"),'AnalysisMenuHide', ...
+                @() app.hideSelected(true),true);
+            app.item(m,"Unhide Selected",'AnalysisMenuUnhide',@() app.hideSelected(false));
             app.item(m,"Review Queue…",'AnalysisMenuReview',@() app.openDialog("review"),true);
             app.item(m,"End Review",'AnalysisMenuEndReview',@() app.Model.endQueue());
             app.item(m,T("Next Needing Review","review.next"),'AnalysisMenuNextReview',@() app.Model.nextNeedingReview(1));
@@ -1614,6 +1617,7 @@ classdef AnalysisApp < handle
                 case "view.find",        app.focusFind();
                 case "help.keys",        app.showShortcuts();
                 case "browser.open",     app.openSelected();
+                case "browser.hide",     app.hideSelected(true);
                 case "nav.escape"
                     if m.Selection.Wave ~= ""
                         m.clearWave();
@@ -1713,6 +1717,16 @@ classdef AnalysisApp < handle
                 app.Browser.openSelected();
             else
                 app.setStatus("Select a session in the browser first.",0);
+            end
+        end
+
+        function hideSelected(app,tf)
+            % Exclude and hide the browser's selection (TF true) or unhide
+            % it (false): Browser.hideSelected.
+            if ~isempty(app.Browser) && isvalid(app.Browser)
+                app.Browser.hideSelected(tf);
+            else
+                app.setStatus("Select the sessions in the browser first.",0);
             end
         end
 

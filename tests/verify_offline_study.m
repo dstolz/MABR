@@ -25,6 +25,7 @@ function verify_offline_study()
 %             no-response triangles on the ceiling and each rule in the
 %             subtitle, Show modes, the shift re a timepoint (hollow
 %             censored points), one panel per subject (one legend for all),
+%             a hidden session gone from the tab (its In study kept),
 %             timepoint axis (automatic for a family without a parameter;
 %             a session with no timepoint plotted), colour groups,
 %             manual and all-respond curation reaching the plot, timepoint
@@ -657,6 +658,16 @@ assert(nnz(nl) == 1 && nl(titlesOf(ax) == "SUBJ-ID-9001") && ...
     isequal(sort(legendStrings(panel)),["2weeks","Baseline"]), ...
     'Per-subject legend: %s (%d legends).',strjoin(legendStrings(panel),' | '),nnz(nl));
 m.undo();
+% a HIDDEN session (the browser's Exclude and hide) is not plotted and has
+% no row in the Study tab at all, its own In study tick left ticked
+kh = "SUBJ-ID-9001/SUBJ-ID-9001_2weeks";
+m.setHidden(kh,true);
+P1 = v.thresholdTable();
+assert(~any(P1.Subject == "SUBJ-ID-9001" & P1.Timepoint == "2weeks") && ~any(string(v.Data.V.Key) == kh) && ...
+    logical(m.Project.Sessions.InStudy(m.Project.Sessions.Key == kh)), ...
+    'A hidden session is still on the Study tab (or lost its In study label).');
+m.undo();
+assert(any(string(v.Data.V.Key) == kh),'Undoing the hide did not bring the session back to the Study tab.');
 drive(app,lay,'overlay');
 % thresholds across timepoints: a panel per frequency, the visits in order
 xd = control(app,'AnalysisStudyX');

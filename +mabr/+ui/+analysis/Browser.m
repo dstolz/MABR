@@ -24,6 +24,15 @@ classdef Browser < mabr.ui.analysis.View
 %   (subject level, whichever of its sessions is selected), In study, a
 %   comment, and Open / Analyse n sessions… / Pool.
 %
+%   EXCLUDE AND HIDE (the context menu, Session ▸ Exclude and Hide
+%   Selected, or Delete) takes what a folder holds that is not the study's
+%   -- a pilot run, an abandoned recording, a calibration -- out of the
+%   study and out of the tree: the project's Hidden label (see HIDDEN in
+%   mabr.analysis.Project). Every Show choice but Hidden leaves hidden
+%   sessions out (a subject with nothing else disappears), the details say
+%   how many there are, and Show ▸ Hidden lists only them, where the same
+%   menu item reads Unhide. Undone with Ctrl+Z like any label.
+%
 %   The tree's nodes are REBUILT only when what it lists changed -- another
 %   folder, a session that came or went, a pool, the filter -- since
 %   deleting and creating uitree nodes is what redrawing the window spends
@@ -41,9 +50,9 @@ classdef Browser < mabr.ui.analysis.View
 %   Public methods (tests call these instead of synthesising clicks):
 %     applyFilter(text,show)   search text and Show ("All", "Needs review",
 %                              "Not analysed", "Out of date", "Failed",
-%                              "Not in study", "Test Mode"); text "" = no
-%                              search, show "" = "All" (both replace what
-%                              was in force)
+%                              "Not in study", "Test Mode", "Hidden"); text
+%                              "" = no search, show "" = "All" (both
+%                              replace what was in force)
 %     selectKeys(keys)         select session (or pool) nodes by key
 %     openSelected()           open the first selected session
 %     keys = selectedKeys()    the session keys the selection stands for (a
@@ -54,6 +63,9 @@ classdef Browser < mabr.ui.analysis.View
 %     setTimepoint(v), setGroup(v), setInStudy(tf), comment(text)
 %                              what the details controls do, for the
 %                              selection
+%     hideSelected(tf)         exclude and hide the selection (true), or
+%                              unhide it (false); no TF = unhide when every
+%                              selected session is hidden, else hide
 %     poolSelected()           confirm (listing what is pooled per
 %                              condition) and pool the selection
 %     refresh(what,keys)       redraw (View's contract)
@@ -107,7 +119,7 @@ classdef Browser < mabr.ui.analysis.View
 
     properties (Constant)
         ShowOptions = ["All","Needs review","Not analysed","Out of date","Failed", ...
-            "Not in study","Test Mode"]
+            "Not in study","Test Mode","Hidden"]
         SearchDelay = 0.3                   % s after the last keystroke
         UnknownDate = "(unknown date)"
     end
@@ -315,6 +327,24 @@ classdef Browser < mabr.ui.analysis.View
             end
         end
 
+        function hideSelected(obj,tf)
+            % Exclude and hide the selected sessions (TF true), or unhide
+            % them (false). Without TF: unhide when every selected session
+            % is hidden (Show ▸ Hidden), else hide. A subject or visit node
+            % stands for the sessions listed under it.
+            keys = obj.selectedKeys();
+            if nargin < 2, tf = isempty(keys) || ~all(obj.hiddenOf(keys)); end
+            if isempty(keys)
+                if tf
+                    obj.status("Select the sessions to hide first.",0);
+                else
+                    obj.status("Select the hidden sessions to unhide first (Show ▸ Hidden).",0);
+                end
+                return
+            end
+            obj.Model.setHidden(keys,logical(tf));
+        end
+
         function comment(obj,text)
             % A comment on the selection: a session's (Model.setNote), a
             % subject's, or the same comment on several sessions. Without
@@ -518,7 +548,8 @@ classdef Browser < mabr.ui.analysis.View
             ef.ValueChangingFcn = obj.viewWrap(@(~,e) obj.onSearchTyping(e),"browser");
             sh = uidropdown(r3,'Items',cellstr(obj.ShowOptions),'Value','All', ...
                 'Tag','AnalysisBrowserShow', ...
-                'Tooltip','Show only the sessions that need something (review, analysis, a re-run, ...).');
+                'Tooltip',['Show only the sessions that need something (review, analysis, a re-run, ...); ' ...
+                'Hidden lists the sessions excluded and hidden, and only those.']);
             sh.ValueChangedFcn = obj.viewWrap(@(src,~) obj.onShowPicked(src),"browser");
             obj.Handles.SearchRow = r3;
             obj.Handles.Search = ef;
@@ -1104,6 +1135,13 @@ classdef Browser < mabr.ui.analysis.View
                 end
                 keep = keep & contains(txt,q);
             end
+            % hidden sessions under Show ▸ Hidden only (and only they)
+            hid = logical(obj.col(V,'Hidden',false(n,1)));
+            if obj.FilterShow == "Hidden"
+                keep = keep & hid;
+            else
+                keep = keep & ~hid;
+            end
             st = obj.col(V,'Status',repmat("none",n,1));
             switch obj.FilterShow
                 case "Needs review"
@@ -1290,6 +1328,11 @@ classdef Browser < mabr.ui.analysis.View
                     else
                         lines = ["Select a session to see its details.";
                             "Double-click (or Enter, or Open) opens it."];
+                        nh = nnz(logical(obj.col(V,'Hidden',false(height(V),1))));
+                        if nh > 0 && obj.FilterShow ~= "Hidden"
+                            if nh == 1, w = "1 session is"; else, w = nh + " sessions are"; end
+                            lines(end+1) = w + " hidden (Show ▸ Hidden lists them).";
+                        end
                     end
                 case "multiple"
                     n = numel(info.Keys);
@@ -1365,12 +1408,18 @@ classdef Browser < mabr.ui.analysis.View
                     if tp ~= "" && ~ismissing(tp), lab(end+1) = "Timepoint " + tp; end
                     g = string(obj.fieldOr(R,'Group',""));
                     if g ~= "" && ~ismissing(g), lab(end+1) = "group " + g; end
-                    if logical(obj.fieldOr(R,'InStudy',true)) && logical(obj.fieldOr(R,'SubjectInStudy',true))
+                    hidden = logical(obj.fieldOr(R,'Hidden',false));
+                    if hidden
+                        lab(end+1) = "hidden (not in study)";
+                    elseif logical(obj.fieldOr(R,'InStudy',true)) && logical(obj.fieldOr(R,'SubjectInStudy',true))
                         lab(end+1) = "in study";
                     else
                         lab(end+1) = "not in study";
                     end
                     lines(end+1) = strjoin(lab," · ");
+                    if hidden
+                        lines(end+1) = "Hidden: right-click ▸ Unhide lists it again.";
+                    end
                     c = string(obj.fieldOr(R,'Comment',""));
                     if c ~= "" && ~ismissing(c), lines(end+1) = "Comment: " + c; end
                     if info.Type ~= "pool"
@@ -1423,7 +1472,16 @@ classdef Browser < mabr.ui.analysis.View
             hasSel = info.Type ~= "none";
             obj.put('tp_on',obj.Handles.Timepoint,'Enable',on(hasSel && info.Type ~= "subject"));
             obj.put('gr_on',obj.Handles.Group,'Enable',on(hasSel));
-            obj.put('in_on',obj.Handles.InStudy,'Enable',on(hasSel));
+            % (a hidden session is out of the study whatever its tick says)
+            hid = n > 0 && any(obj.hiddenOf(info.Keys));
+            obj.put('in_on',obj.Handles.InStudy,'Enable',on(hasSel && ~hid));
+            if hid
+                tip = ['A hidden session is out of the study whatever this says; unhide it ' ...
+                    'first (right-click ▸ Unhide).'];
+            else
+                tip = 'Use the selected sessions (or animal) in the study tables and the export.';
+            end
+            obj.put('in_tip',obj.Handles.InStudy,'Tooltip',tip);
             obj.put('cm_on',obj.Handles.Comment,'Enable',on(hasSel));
         end
 
@@ -1526,6 +1584,9 @@ classdef Browser < mabr.ui.analysis.View
             it.Group = uimenu(cm,'Text','Set group','Tag','AnalysisBrowserMenuGroup');
             it.InStudy = uimenu(cm,'Text','In study','Tag','AnalysisBrowserMenuInStudy', ...
                 'MenuSelectedFcn',obj.viewWrap(@(src,~) obj.setInStudy(~strcmp(src.Checked,'on')),"browser"));
+            % (its text follows the selection: Unhide under Show ▸ Hidden)
+            it.Hide = uimenu(cm,'Text','Exclude and hide','Tag','AnalysisBrowserMenuHide', ...
+                'MenuSelectedFcn',obj.viewWrap(@(~,~) obj.hideSelected(),"browser"));
             it.Explorer = uimenu(cm,'Text','Show in Explorer','Separator','on', ...
                 'Tag','AnalysisBrowserMenuExplorer', ...
                 'MenuSelectedFcn',obj.viewWrap(@(~,~) obj.showSelectedFolder(),"browser"));
@@ -1587,7 +1648,14 @@ classdef Browser < mabr.ui.analysis.View
             it.Analyse.Enable = on(n >= 1);
             it.Pool.Enable = on(numel(obj.poolableKeys()) >= 2);
             it.InStudy.Checked = on(logical(obj.Handles.InStudy.Value));
-            it.InStudy.Enable = on(info.Type ~= "none");
+            hid = n > 0 && all(obj.hiddenOf(info.Keys));
+            it.InStudy.Enable = on(info.Type ~= "none" && ~(n > 0 && any(obj.hiddenOf(info.Keys))));
+            if hid
+                it.Hide.Text = 'Unhide';
+            else
+                it.Hide.Text = 'Exclude and hide';
+            end
+            it.Hide.Enable = on(n >= 1);
             it.Explorer.Enable = on(info.Type ~= "none");
             it.CopyPath.Enable = on(info.Type ~= "none");
             % Set timepoint / Set group: the values in use, then New…
@@ -1726,6 +1794,16 @@ classdef Browser < mabr.ui.analysis.View
                 obj.View_ = V;
             end
             if ~istable(V) || height(V) == 0, V = table(); end
+        end
+
+        function tf = hiddenOf(obj,keys)
+            % Whether each of keys is a hidden session (the project's own
+            % label, so true for one the view has not caught up with yet).
+            tf = false(numel(keys),1);
+            try
+                tf = reshape(obj.Model.Project.isHidden(reshape(string(keys),[],1)),[],1);
+            catch
+            end
         end
 
         function nodes = selectedNodes(obj)

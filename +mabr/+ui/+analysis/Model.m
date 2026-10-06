@@ -70,6 +70,10 @@ classdef Model < handle
 %                                  through mabr.ui.analysis.View.timeAxis
 %     setSessionOverrides(key,ov)  ov fields InputFullScale, AmplifierGain,
 %                                  TimeOffset, ConductionDelay (NaN = none)
+%     setHidden(keys,tf)           exclude and hide sessions (true) or show
+%                                  them again (false); one undo step
+%     keys = allKeys()             every session and pool but the hidden ones
+%                                  (an "all sessions" scope)
 %     file = exportScript(Keys=,File=,Open=)   the replication script (13 A7)
 %     T = batch(keys,...,Settings=s)  a batch with another profile's
 %                                  settings (BatchDialog); [] = the project's;
@@ -1598,29 +1602,43 @@ classdef Model < handle
                 name (1,1) string
                 value
             end
+            note = obj.setLabel(keys,name,value,"Set " + name,"","label");
+        end
+
+        function setHidden(obj,keys,tf)
+            % Exclude sessions from the study and hide them from the
+            % browser (TF true), or show them again (false): the project's
+            % Hidden label (see HIDDEN in mabr.analysis.Project), one
+            % undoable step. Their In study label is left alone, so showing
+            % a session again puts it back exactly as it was; while hidden
+            % it is out of the study, out of the "in study" and "all"
+            % scopes of a batch, an export and a review, and listed in the
+            % browser only under Show ▸ Hidden. A pool is a key like any
+            % other; hiding a subject means hiding its sessions.
+            arguments
+                obj
+                keys string
+                tf (1,1) logical
+            end
             obj.assertNotBusy();
             obj.requireRoot();
             keys = reshape(keys,[],1);
-            before = obj.labelValues(keys,name);
-            [~,note] = obj.Project.label(keys,name,value);
-            note = string(note);
-            if isempty(note) || ismissing(note), note = ""; end
-            after = obj.labelValues(keys,name);
-            e = obj.newEntry("Set " + name,"labels");
-            e.Keys = keys;
-            e.Name = name;
-            e.Before = before;
-            e.After = after;
-            obj.pushUndo(e);
-            obj.ViewCache = [];
-            obj.markDirty("project");
-            txt = note;
-            if txt == ""
-                txt = sprintf('%s set to %s for %d item(s)',name, ...
-                    mabr.ui.analysis.Model.valueText(value),numel(keys));
+            keys = unique(keys(~ismissing(keys) & keys ~= ""),'stable');
+            n = numel(keys);
+            if n == 0
+                if tf, t = "Select the sessions to hide first."; else, t = "Select the hidden sessions to unhide first."; end
+                obj.say(t,0,"setHidden");
+                return
             end
-            obj.ev("ProjectChanged","labels","label",Keys=keys);
-            obj.ev("StatusChanged","save","label",Text=txt + " — Ctrl+Z to undo");
+            if n == 1, what = "1 session"; else, what = n + " sessions"; end
+            if tf
+                undo = "Hide " + what;
+                done = "Hid " + what + ": out of the study, and listed only under Show ▸ Hidden";
+            else
+                undo = "Unhide " + what;
+                done = "Unhid " + what + ": listed again, and in the study as their In study tick says";
+            end
+            obj.setLabel(keys,"Hidden",tf,undo,done,"setHidden");
         end
 
         function addColumn(obj,name,level,type)
@@ -1787,7 +1805,8 @@ classdef Model < handle
             % Analyse several sessions headlessly (mabr.analysis.Batch).
             % Cancel means "stop after the current session".
             %
-            %   keys                  sessions/pools ([] = every session)
+            %   keys                  sessions/pools ([] = every session
+            %                         that is not hidden)
             %   opts.SkipCurrent      leave up-to-date sessions alone (true)
             %   opts.IncludeTestMode  analyse Test Mode sessions too (false)
             %   opts.SummaryFigure    a summary figure per session (false)
@@ -1836,7 +1855,10 @@ classdef Model < handle
                     'The results folder cannot be written; choose another (Settings ▸ Results Folder…).');
             end
             keys = reshape(keys,[],1);
-            if isempty(keys), keys = string(obj.Catalog.Sessions.Key); end
+            if isempty(keys)
+                keys = string(obj.Catalog.Sessions.Key);
+                keys = keys(~obj.Project.isHidden(keys));
+            end
             obj.flush();
             items = obj.batchItems(keys);
             logFile = string(fullfile(obj.resultsFolder(),'logs', ...
@@ -2543,6 +2565,24 @@ classdef Model < handle
             f = "";
             if ~isempty(obj.Catalog)
                 f = string(obj.Catalog.ResultsFolder);
+            end
+        end
+
+        function keys = allKeys(obj)
+            % Every session and pool of the open folder but the hidden ones
+            % -- what an "all sessions" scope means (a hidden session is
+            % reached only by selecting it under Show ▸ Hidden).
+            keys = strings(0,1);
+            if isempty(obj.Catalog), return; end
+            keys = reshape(string(obj.Catalog.Sessions.Key),[],1);
+            if isempty(obj.Project), return; end
+            try
+                keys = [keys; reshape(string(obj.Project.Pools.Key),[],1)];
+            catch
+            end
+            try
+                keys = keys(~obj.Project.isHidden(keys));
+            catch
             end
         end
 
@@ -4447,6 +4487,37 @@ classdef Model < handle
         end
 
         % ---- label helpers -------------------------------------------------
+        function note = setLabel(obj,keys,name,value,undoText,doneText,source)
+            % label's and setHidden's work: Project.label as one undo entry
+            % (UNDOTEXT), then ProjectChanged(labels) and the status line
+            % (DONETEXT; "" = the coercion note, else "<name> set to
+            % <value> for n item(s)"), each raised with SOURCE.
+            obj.assertNotBusy();
+            obj.requireRoot();
+            keys = reshape(keys,[],1);
+            before = obj.labelValues(keys,name);
+            [~,note] = obj.Project.label(keys,name,value);
+            note = string(note);
+            if isempty(note) || ismissing(note), note = ""; end
+            after = obj.labelValues(keys,name);
+            e = obj.newEntry(undoText,"labels");
+            e.Keys = keys;
+            e.Name = name;
+            e.Before = before;
+            e.After = after;
+            obj.pushUndo(e);
+            obj.ViewCache = [];
+            obj.markDirty("project");
+            txt = string(doneText);
+            if txt == "", txt = note; end
+            if txt == ""
+                txt = sprintf('%s set to %s for %d item(s)',name, ...
+                    mabr.ui.analysis.Model.valueText(value),numel(keys));
+            end
+            obj.ev("ProjectChanged","labels",source,Keys=keys);
+            obj.ev("StatusChanged","save",source,Text=txt + " — Ctrl+Z to undo");
+        end
+
         function vals = labelValues(obj,keys,name)
             % The current value of label NAME for each key (cell).
             vals = cell(numel(keys),1);
@@ -4579,7 +4650,8 @@ classdef Model < handle
         end
 
         function keys = scopeKeys(obj,scope,keys)
-            % Sessions with results, by export scope.
+            % Sessions with results, by export scope ("in study" and "all"
+            % leave the hidden ones out; a selection is taken as given).
             keys = reshape(string(keys),[],1);
             switch string(scope)
                 case "current"
@@ -4589,17 +4661,12 @@ classdef Model < handle
                     % as given
                 case "instudy"
                     try
-                        T = obj.Project.Sessions;
-                        keys = string(T.Key(logical(T.InStudy)));
+                        keys = string(obj.Project.studyKeys());
                     catch
                         keys = strings(0,1);
                     end
                 otherwise   % "all"
-                    keys = string(obj.Catalog.Sessions.Key);
-                    try
-                        keys = [keys; string(obj.Project.Pools.Key)];
-                    catch
-                    end
+                    keys = obj.allKeys();
             end
             keep = false(numel(keys),1);
             for i = 1:numel(keys)

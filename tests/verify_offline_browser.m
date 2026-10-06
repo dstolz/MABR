@@ -50,6 +50,12 @@ function verify_offline_browser()
 %             another session
 %     Part I  a nested results store: the banner, Import, Ignore
 %     Part J  blind review covers the tree; End review uncovers it
+%     Part L  exclude and hide: the context menu's item hides a session
+%             (out of the tree, the study and the all / in-study scopes, its
+%             own In study label kept; the details count it), Show ▸ Hidden
+%             lists only it with In study greyed and the item reading
+%             Unhide, Delete on a subject node hides its sessions and the
+%             subject with them, Ctrl+Z, the Session menu's two items
 %     Part K  prefs: only the Session tab's own controls wrote one
 %             (OfflineAnalysisSession); scripts driving both views wrote none
 %
@@ -92,7 +98,8 @@ t0 = tic; partG_files(app,F);         tG = toc(t0);
 t0 = tic; partH_overrides(app,F);     tH = toc(t0);
 t0 = tic; partI_nested(app,F);        tI = toc(t0);
 t0 = tic; partJ_blind(app,F);         tJ = toc(t0);
-fprintf('  (parts A-J: %s s)\n',strjoin(compose('%.1f',[tA tB tC tD tE tF tG tH tI tJ]),' '));
+t0 = tic; partL_hide(app,F);          tL = toc(t0);
+fprintf('  (parts A-J, L: %s s)\n',strjoin(compose('%.1f',[tA tB tC tD tE tF tG tH tI tJ tL]),' '));
 changed = changedPrefs(prefs0,allPrefs());
 assert(isequal(changed,"OfflineAnalysisSession"), ...
     'Only the Session tab''s controls may write a pref; changed: [%s].',strjoin(changed,', '));
@@ -776,6 +783,83 @@ fprintf(['  PASS Part J: blind review covers search, tree and details ("item k o
 end
 
 % =========================================================================
+%  Part L -- exclude and hide
+% =========================================================================
+function partL_hide(app,F)
+br = app.Browser;
+m  = app.Model;
+t  = ctrl(app,'AnalysisBrowserTree');
+br.applyFilter("","All");
+kB = F.Keys(contains(F.Keys,"SUBJ-ID-1254_Baseline"));
+n0 = numel(br.VisibleKeys);
+rawInStudy = @(k) logical(m.Project.Sessions.InStudy(m.Project.Sessions.Key == k));
+% the context menu's item on a session that is shown
+br.selectKeys(kB);
+cm = findall(app.Figure,'Tag','AnalysisBrowserMenu');
+cm.ContextMenuOpeningFcn(cm,struct());
+it = findall(cm,'Tag','AnalysisBrowserMenuHide');
+assert(strcmp(it.Text,'Exclude and hide') && strcmp(it.Enable,'on'),'The hide item on a shown session reads "%s".',it.Text);
+it.MenuSelectedFcn(it,[]);
+assert(m.Project.isHidden(kB) && ~labelOf(m,kB,"InStudy") && rawInStudy(kB), ...
+    'Exclude and hide: Hidden, out of the study, its own In study label kept.');
+assert(isempty(nodeOf(t,kB)) && numel(br.VisibleKeys) == n0 - 1 && ~any(m.BrowserOrder == kB), ...
+    'A hidden session is still listed.');
+assert(~any(m.allKeys() == kB) && ~any(m.Project.studyKeys() == kB), ...
+    'A hidden session is in the "all" or the "in study" scope.');
+assert(contains(m.LastMessage,"Hid 1 session") && contains(m.LastMessage,"Ctrl+Z"),'The status line: %s',m.LastMessage);
+dt = string(ctrl(app,'AnalysisBrowserDetails').Value);
+assert(any(dt == "1 session is hidden (Show ▸ Hidden lists them)."), ...
+    'The details do not count the hidden session: %s',strjoin(dt,' | '));
+% Show ▸ Hidden lists only it: In study greyed, the item reads Unhide
+br.applyFilter("","Hidden");
+assert(isequal(br.VisibleKeys,kB),'Show Hidden lists [%s], not only the hidden session.',strjoin(br.VisibleKeys,', '));
+br.selectKeys(kB);
+cb = ctrl(app,'AnalysisBrowserInStudy');
+assert(strcmp(cb.Enable,'off') && ~cb.Value,'In study is not greyed (and clear) for a hidden session.');
+dt = string(ctrl(app,'AnalysisBrowserDetails').Value);
+assert(any(contains(dt,"hidden (not in study)")),'The details do not say the session is hidden: %s',strjoin(dt,' | '));
+cm.ContextMenuOpeningFcn(cm,struct());
+assert(strcmp(it.Text,'Unhide') && strcmp(findall(cm,'Tag','AnalysisBrowserMenuInStudy').Enable,'off'), ...
+    'On a hidden session the item reads "%s" (and In study is not greyed).',it.Text);
+it.MenuSelectedFcn(it,[]);
+assert(~m.Project.isHidden(kB) && labelOf(m,kB,"InStudy") && isempty(br.VisibleKeys),'Unhide.');
+br.applyFilter("","All");
+assert(~isempty(nodeOf(t,kB)) && numel(br.VisibleKeys) == n0,'Unhidden, the session is not listed again.');
+% Delete on a subject node hides its sessions, and the subject goes with them
+t.SelectedNodes = t.Children(1);
+t.SelectionChangedFcn(t,[]);
+subj = string(t.Children(1).NodeData.Subject);
+ks = br.selectedKeys();
+assert(subj == "SUBJ-ID-959" && numel(ks) == 2,'Setup: the first subject is SUBJ-ID-959 with two sessions.');
+m.FocusArea = "browser";
+m.KeyTarget = "plot";
+assert(app.dispatchKey(keyEvt('delete')),'Delete was not dispatched from the browser.');
+m.FocusArea = "workspace";
+names = string(arrayfun(@(n) string(n.NodeData.Subject),t.Children,'UniformOutput',false));
+assert(all(m.Project.isHidden(ks)) && ~any(names == subj) && numel(br.VisibleKeys) == n0 - 2, ...
+    'Delete on a subject did not hide its sessions (and the subject with them).');
+assert(contains(m.LastMessage,"Hid 2 sessions"),'The status line: %s',m.LastMessage);
+m.undo();
+assert(~any(m.Project.isHidden(ks)) && numel(br.VisibleKeys) == n0,'Ctrl+Z did not bring the subject back.');
+% the Session menu's two items
+br.selectKeys(kB);
+mi = ctrl(app,'AnalysisMenuHide');
+mi.MenuSelectedFcn(mi,[]);
+assert(m.Project.isHidden(kB),'Session ▸ Exclude and Hide Selected did not hide the selection.');
+br.applyFilter("","Hidden");
+br.selectKeys(kB);
+mi = ctrl(app,'AnalysisMenuUnhide');
+mi.MenuSelectedFcn(mi,[]);
+assert(~m.Project.isHidden(kB),'Session ▸ Unhide Selected did not unhide the selection.');
+br.applyFilter("","All");
+m.undo(); m.undo();
+assert(~m.Project.isHidden(kB) && numel(br.VisibleKeys) == n0,'Undoing the menu''s hide and unhide.');
+fprintf(['  PASS Part L: exclude and hide (context menu, Delete on a subject, Session menu) takes sessions ' ...
+    'out of the tree, the study and the all/in-study scopes with their In study kept; Show Hidden ' ...
+    'lists only them, In study greyed, Unhide; Ctrl+Z\n']);
+end
+
+% =========================================================================
 %  Helpers
 % =========================================================================
 function [app,stub] = newApp(F)
@@ -833,6 +917,11 @@ while ~isempty(stack)
     end
     stack = [stack; x.Children(:)]; %#ok<AGROW>
 end
+end
+
+function e = keyEvt(key,varargin)
+e = struct('Key',key,'Modifier',{varargin},'Character','');
+if isscalar(key) && isempty(varargin), e.Character = key; end
 end
 
 function v = labelOf(m,key,name)

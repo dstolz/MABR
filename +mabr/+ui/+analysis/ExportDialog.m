@@ -685,14 +685,9 @@ classdef ExportDialog < handle
                     case "selected"
                         keys = obj.Keys;
                     case "instudy"
-                        T = m.Project.Sessions;
-                        keys = string(T.Key(logical(T.InStudy)));
+                        keys = string(m.Project.studyKeys());
                     otherwise
-                        keys = string(m.Catalog.Sessions.Key);
-                        try
-                            keys = [keys; string(m.Project.Pools.Key)];
-                        catch
-                        end
+                        keys = m.allKeys();      % (the hidden ones left out)
                 end
             catch
                 keys = strings(0,1);
@@ -895,8 +890,7 @@ classdef ExportDialog < handle
                 if scope == "selected"
                     keys = obj.Keys;
                 elseif scope == "instudy"
-                    T = obj.Model.Project.Sessions;
-                    keys = string(T.Key(logical(T.InStudy)));
+                    keys = string(obj.Model.Project.studyKeys());
                 end
             catch
             end

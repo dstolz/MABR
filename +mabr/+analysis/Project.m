@@ -55,6 +55,15 @@ classdef Project < handle
 %   with setLevels; ReferenceTimepoint ("" = the first) is what
 %   DaysFromReference counts from.
 %
+%   HIDDEN. A session (or pool) labelled Hidden is out of the study and out
+%   of sight: view() reports it with InStudy false whatever its own InStudy
+%   label says (the label is kept, so un-hiding puts the session back
+%   exactly as it was), studyKeys() leaves it out, and the analysis app's
+%   browser lists it only under Show ▸ Hidden. It is for what a folder holds
+%   that is not the study's -- a pilot run, a recording abandoned, a
+%   calibration -- and that should stop cluttering the list. Hidden is
+%   false unless set, also for a project.mat written before the column.
+%
 %   POOLS. addPool makes several sessions of one animal one unit of
 %   analysis ("pool:" + Stats.hex8 of the sorted member keys -- the hash
 %   Catalog.resultsFile names the pooled results file by). Its members leave
@@ -96,7 +105,7 @@ classdef Project < handle
         Subjects table = table()
 
         % One row per session folder key (and per pool): Key, Subject,
-        % SubjectOverride, Timepoint, InStudy, ExcludeReason, Comment,
+        % SubjectOverride, Timepoint, InStudy, Hidden, ExcludeReason, Comment,
         % TimeOffsetOverride, ConductionDelayOverride, InputFullScaleOverride,
         % AmplifierGainOverride, LastRun, LastError, Day, Modified + free
         % session columns.
@@ -143,10 +152,13 @@ classdef Project < handle
         FileName = "project.mat"
         VarName  = "MABRAnalysisProject"
         Policies = ["most-sweeps" "latest" "mean"]
-        SessionBuiltins = ["Key" "Subject" "SubjectOverride" "Timepoint" "InStudy" ...
+        SessionBuiltins = ["Key" "Subject" "SubjectOverride" "Timepoint" "InStudy" "Hidden" ...
             "ExcludeReason" "Comment" "TimeOffsetOverride" "ConductionDelayOverride" ...
             "InputFullScaleOverride" "AmplifierGainOverride" "LastRun" "LastError" "Day" "Modified"]
         SubjectBuiltins = ["Subject" "Group" "InStudy" "Comment" "Modified"]
+        % The logical columns that are false until set (every other logical
+        % column, InStudy above all, is true for a row that lacks it).
+        OffByDefault = "Hidden"
         % The small results variables view() and results() read by default:
         % everything a status, a review count and a processing mode need, and
         % nothing per sweep.
@@ -292,8 +304,8 @@ classdef Project < handle
             %
             %   keys   session keys (Sessions.Key, pools included) and/or
             %          subject names (Subjects.Subject, any spelling)
-            %   name   a Sessions column (Timepoint, InStudy, ExcludeReason,
-            %          Comment, SubjectOverride, TimeOffsetOverride,
+            %   name   a Sessions column (Timepoint, InStudy, Hidden,
+            %          ExcludeReason, Comment, SubjectOverride, TimeOffsetOverride,
             %          ConductionDelayOverride, InputFullScaleOverride,
             %          AmplifierGainOverride, free session columns) or a
             %          Subjects column (Group, free subject columns; Comment
@@ -391,6 +403,30 @@ classdef Project < handle
             obj.Sessions.LastError(rows) = errorText;
             obj.Sessions.Modified(rows)  = now_;
             obj.Dirty = true;
+        end
+
+        function keys = studyKeys(obj)
+            % The session and pool keys in the study: InStudy, not Hidden,
+            % and their animal in the study -- view()'s InStudy &
+            % SubjectInStudy, without a catalog (rows ensureSessions added).
+            S = obj.Sessions;
+            subj = effectiveSubject(S);
+            [tf,loc] = ismember(subj,obj.Subjects.Subject);
+            animal = true(height(S),1);
+            animal(tf) = obj.Subjects.InStudy(loc(tf));
+            keys = S.Key(S.InStudy & ~S.Hidden & animal);
+        end
+
+        function tf = isHidden(obj,keys)
+            % Whether each of keys is a Hidden session or pool (a key the
+            % project has no row for is not).
+            arguments
+                obj
+                keys string
+            end
+            [in,loc] = ismember(keys,obj.Sessions.Key);
+            tf = false(size(keys));
+            tf(in) = obj.Sessions.Hidden(loc(in));
         end
 
         % =================================================================
@@ -554,6 +590,7 @@ classdef Project < handle
             R = obj.Sessions(rows(1),:);
             R.Key = key;
             R.InStudy = true;
+            R.Hidden = false;
             R.ExcludeReason = "";
             R.Comment = "";
             R.LastRun = NaT;  R.LastError = "";
@@ -769,9 +806,10 @@ classdef Project < handle
             %             data only, not the settings)
             %   V  (returned) one row per catalog session and per pool:
             %      Catalog.Sessions' columns (Subject the effective one), then
-            %      IsPool, Members, PoolKey, the Sessions labels, Group,
-            %      SubjectInStudy, free subject columns, TimepointOrder,
-            %      DaysFromReference, and
+            %      IsPool, Members, PoolKey, the Sessions labels (InStudy
+            %      false for a Hidden row, whatever its label: see HIDDEN in
+            %      the class help), Group, SubjectInStudy, free subject
+            %      columns, TimepointOrder, DaysFromReference, and
             %        Status      "none"|"current"|"stale"|"failed"
             %        StatusText  "Not analysed" | "Up to date (2026-09-30
             %                    15:40)" | "Out of date (settings changed)" |
@@ -1493,10 +1531,10 @@ classdef Project < handle
 
         function [name,level,type] = columnInfo(obj,name)
             % A column's canonical name, level and type (case-insensitive).
-            sess = ["Timepoint" "InStudy" "ExcludeReason" "Comment" "SubjectOverride" ...
+            sess = ["Timepoint" "InStudy" "Hidden" "ExcludeReason" "Comment" "SubjectOverride" ...
                 "TimeOffsetOverride" "ConductionDelayOverride" "InputFullScaleOverride" ...
                 "AmplifierGainOverride"];
-            stypes = ["text" "logical" "text" "text" "text" "number" "number" "number" "number"];
+            stypes = ["text" "logical" "logical" "text" "text" "text" "number" "number" "number" "number"];
             i = find(strcmpi(sess,name),1);
             if ~isempty(i)
                 name = sess(i);  level = "session";  type = stypes(i);
@@ -1657,11 +1695,15 @@ classdef Project < handle
             eff = effectiveSubject(L);
             eff(eff == "") = B.Subject(eff == "");
             B.Subject = eff;
-            for c = ["Timepoint" "InStudy" "ExcludeReason" "Comment" "TimeOffsetOverride" ...
+            for c = ["Timepoint" "InStudy" "Hidden" "ExcludeReason" "Comment" "TimeOffsetOverride" ...
                     "ConductionDelayOverride" "InputFullScaleOverride" "AmplifierGainOverride" ...
                     "LastRun" "LastError" "Modified"]
                 B.(c) = L.(c);
             end
+            % A hidden session is out of the study whatever its own label
+            % says: every reader of InStudy below (aggregate, resolveUse,
+            % exportItems, the Study tab) then leaves it out.
+            B.InStudy = B.InStudy & ~B.Hidden;
             free = obj.Columns.Name(obj.Columns.Level == "session" & ~obj.Columns.Builtin);
             for c = reshape(free,1,[]), B.(c) = L.(c); end
             % The animal's labels.
@@ -1948,8 +1990,8 @@ T = table(s,s,false(0,1),s,NaT(0,1),'VariableNames',{'Subject','Group','InStudy'
 end
 
 function T = emptySessions()
-s = strings(0,1);  x = zeros(0,1);  t = NaT(0,1);
-T = table(s,s,s,s,false(0,1),s,s,x,x,x,x,t,s,t,t,'VariableNames', ...
+s = strings(0,1);  x = zeros(0,1);  t = NaT(0,1);  b = false(0,1);
+T = table(s,s,s,s,b,b,s,s,x,x,x,x,t,s,t,t,'VariableNames', ...
     cellstr(mabr.analysis.Project.SessionBuiltins));
 end
 
@@ -1983,6 +2025,11 @@ for r = 1:height(C)
         if ~isempty(x), levels = reshape(string(x),[],1); end
     end
     bi = ismember(nm,["Timepoint" "Group"]);
+    % (a free column named like a built-in one added since -- "Hidden" --
+    % gives way to it: two columns of one name cannot be a table)
+    if ~bi && any(strcmpi(nm,[mabr.analysis.Project.SessionBuiltins mabr.analysis.Project.SubjectBuiltins]))
+        continue
+    end
     out = [out; columnRow(nm,lv,ty,levels,bi)]; %#ok<AGROW>
 end
 for b = ["Timepoint" "Group"]
@@ -2008,16 +2055,16 @@ end
 data = cell(1,numel(names));
 for j = 1:numel(names)
     if ismember(names(j),T.Properties.VariableNames)
-        data{j} = castLike(T.(names(j)),protos{j},n);
+        data{j} = castLike(T.(names(j)),protos{j},n,names(j));
     else
-        data{j} = defaultCol(protos{j},n);
+        data{j} = defaultCol(protos{j},n,names(j));
     end
 end
 T = table(data{:},'VariableNames',cellstr(names));
 end
 
-function x = castLike(x,proto,n)
-% Column x as proto's type, n rows.
+function x = castLike(x,proto,n,name)
+% Column x (named name) as proto's type, n rows.
 try
     if isstring(proto)
         x = string(x);  x(ismissing(x)) = "";
@@ -2029,15 +2076,19 @@ try
         x = double(x);
     end
     x = reshape(x,n,[]);
-    if size(x,2) ~= 1, x = defaultCol(proto,n); end
+    if size(x,2) ~= 1, x = defaultCol(proto,n,name); end
 catch
-    x = defaultCol(proto,n);
+    x = defaultCol(proto,n,name);
 end
 end
 
-function x = defaultCol(proto,n)
+function x = defaultCol(proto,n,name)
+% A column's default: "", NaN, NaT, {} -- and true for a logical (InStudy),
+% but false for one of OffByDefault (Hidden), so a row from before such a
+% column, or a new one, is not hidden.
+if nargin < 3, name = ""; end
 if isstring(proto), x = strings(n,1);
-elseif islogical(proto), x = true(n,1);
+elseif islogical(proto), x = true(n,1) & ~any(string(name) == mabr.analysis.Project.OffByDefault);
 elseif isdatetime(proto), x = NaT(n,1);
 elseif iscell(proto), x = cell(n,1);
 else, x = NaN(n,1);
@@ -2045,10 +2096,10 @@ end
 end
 
 function R = blankSessionRow(T)
-% One row of T at its defaults: "", NaN, NaT, and InStudy true.
+% One row of T at its defaults: "", NaN, NaT, InStudy true and Hidden false.
 s = struct();
 for v = string(T.Properties.VariableNames)
-    s.(v) = defaultCol(T.(v)([]),1);
+    s.(v) = defaultCol(T.(v)([]),1,v);
 end
 R = struct2table(s,'AsArray',true);
 R = R(:,T.Properties.VariableNames);

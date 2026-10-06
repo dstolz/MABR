@@ -121,7 +121,9 @@ Badges appear only when they apply:
 - TEST Test Mode files;
 - ✓k/n series reviewed.
 
-**Search** (Ctrl+F) matches subject, folder, stimuli, summary, timepoint and group. **Show** narrows the list to *Needs review*, *Not analysed*, *Out of date*, *Failed*, *Not in study* or *Test Mode*.
+**Search** (Ctrl+F) matches subject, folder, stimuli, summary, timepoint and group. **Show** narrows the list to *Needs review*, *Not analysed*, *Out of date*, *Failed*, *Not in study*, *Test Mode* or *Hidden*.
+
+**Exclude and hide** (context menu, **Session ▸ Exclude and Hide Selected**, or **Delete** after clicking the tree) is for sessions that are not part of the study: a pilot run, an abandoned recording, a calibration. They leave the study and the tree. A subject with nothing else listed disappears. A hidden session is left out of the Study tab and of every *In study* and *All* scope of a batch, an export or a review queue. The details below the tree say how many sessions are hidden. **Show ▸ Hidden** lists them, and only them; there the same menu item reads **Unhide** (also **Session ▸ Unhide Selected**). Hiding does not change the session's *In study* tick, so unhiding puts it back as it was. Ctrl+Z undoes either.
 
 **Opening a session.** Double-click it, press **Enter** after clicking the tree, or press **Open**. A session with a results file opens from its results in a moment, without reading any `.abr`. The Trials tab and a re-analysis load the raw files when they need them.
 
@@ -133,7 +135,7 @@ Badges appear only when they apply:
 
 - **Timepoint**: set on a visit, it labels every session of that day. A new session takes the timepoint its animal already has that day, so a visit's sessions share one and the earliest names it. Failing that, the timepoint comes from the folder name (`_Baseline`, `_2weeks`), and failing that, the animal's visits are numbered in date order (`Session 1`, `Session 2`, …). A project made before this keeps the date labels it already has; edit them in the Sessions table if you prefer.
 - **Group** belongs to the animal.
-- **In study** says whether the session counts in the Study tab.
+- **In study** says whether the session counts in the Study tab. It is greyed for a hidden session, which is out of the study whatever the tick says.
 - **Comment…** adds a note to the session.
 
 The context menu does the same for several nodes at once. Labels are stored in the study's `project.mat` and are undoable.
@@ -667,6 +669,7 @@ This list is generated from the app's one keymap, `mabr.ui.analysis.Commands.she
 | Keys | Command |
 |---|---|
 | Enter | Open the selected session |
+| Delete | Exclude and hide the selected sessions (Show ▸ Hidden lists them) |
 
 ### Session tab
 

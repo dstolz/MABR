@@ -63,7 +63,9 @@ function verify_offline_catalog()
 %           DuplicatePolicy with UsedInStudy; aggregate's per-file cache
 %           (P7b) equal to a freshly opened project's tables after label
 %           edits and a rewritten results file; exportItems and batchItems
-%           (incl. the A9 conduction-delay override); importStore
+%           (incl. the A9 conduction-delay override); importStore; P11
+%           Hidden: out of the study and its keys with InStudy kept, saved,
+%           false for a project.mat from before it, never on a pool
 %
 %   Everything is written under one tempname folder, removed on the way out.
 %   No preference is read or written, no figure opened, and the global random
@@ -1223,6 +1225,54 @@ V = p.view(c,S0);
 assert(V.Status(V.Key == k959T) ~= "none",'The imported results are found where the key says.');
 p.save();
 fprintf('  PASS Project P9: importStore copies and re-keys results, merges labels (edited rows win, conflicts listed), never touches the nested store\n');
+
+% =========================================================================
+%  P11 -- Hidden: out of the study, its own InStudy kept
+% =========================================================================
+assert(ismember("Hidden",p.Sessions.Properties.VariableNames) && ~any(p.Sessions.Hidden), ...
+    'Every session carries Hidden, false unless set.');
+in0 = p.studyKeys();
+assert(ismember(k959W,in0) && ~ismember(k959T,in0),'Setup: %s in the study, the Test Mode session not.',k959W);
+v = p.label(k959W,"Hidden",true);
+assert(v && p.isHidden(k959W) && isequal(p.isHidden([k959W k959B]),[true false]) && ...
+    ~p.isHidden("no/such/key") && p.Sessions.InStudy(p.Sessions.Key == k959W), ...
+    'label Hidden: isHidden says so, and its own InStudy is left as it was.');
+assert(isequal(setdiff(in0,p.studyKeys()),k959W),'studyKeys leaves the hidden session out (and only it).');
+V = p.view(c,S0);
+r = V.Key == k959W;
+assert(V.Hidden(r) && ~V.InStudy(r) && ~V.UsedInStudy(r) && ~any(V.Hidden(~r)), ...
+    'view: a hidden session is out of the study.');
+A = p.aggregate(strings(0,1),c);
+assert(~any(A.Sessions.Session == k959W),'aggregate over the study takes in a hidden session.');
+A = p.aggregate([k959B k959W],c);
+assert(~any(A.Thresholds.UsedInStudy(A.Thresholds.Session == k959W)) && ...
+    ~A.Sessions.InStudy(A.Sessions.Session == k959W),'A hidden session asked for by key contributes nothing.');
+items = p.exportItems(k959W,c);
+assert(isscalar(items) && ~items.Labels.InStudy,'exportItems: a hidden session is not in the study.');
+assertError(@() p.label("SUBJ-ID-959","Hidden",true),'mabr:analysis:Project:badLevel');
+% saved and read back; a project.mat from before the column reads every
+% session as shown
+p.save();
+q = mabr.analysis.Project.open(store);
+assert(q.isHidden(k959W) && isequal(q.studyKeys(),p.studyKeys()),'Hidden did not survive a save.');
+old = fullfile(work,"oldstore");
+mkdir(old);
+MABRAnalysisProject = p.toStruct();
+MABRAnalysisProject.Sessions.Hidden = [];
+save(fullfile(old,"project.mat"),'MABRAnalysisProject');
+po = mabr.analysis.Project.open(old);
+assert(~po.ReadOnly && ismember("Hidden",po.Sessions.Properties.VariableNames) && ~any(po.Sessions.Hidden) && ...
+    isequal(po.Sessions.InStudy,p.Sessions.InStudy),'A project.mat from before Hidden does not read every session as shown.');
+% a pool is never hidden, even when the member it copies its row from is
+kp = p.addPool([k959W k959B]);
+assert(~p.isHidden(kp),'A pool took its first member''s Hidden.');
+p.removePool(kp);
+p.label(k959W,"Hidden",false);
+assert(isequal(p.studyKeys(),in0) && ~any(p.Sessions.Hidden),'Unhidden, the session is not back in the study as it was.');
+p.save();
+fprintf(['  PASS Project P11: Hidden (false unless set, also in a project.mat from before it) takes a session ' ...
+    'out of studyKeys, view, aggregate and exportItems with its own InStudy kept; a subject key refused; ' ...
+    'saved; a pool never hidden\n']);
 
 % =========================================================================
 %  P10 -- no Statistics Toolbox

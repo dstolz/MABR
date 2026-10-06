@@ -375,23 +375,28 @@ classdef BatchDialog < handle
 
         function keys = scopeKeys(obj,scope)
             % The sessions a scope names (before skipping): the selection,
-            % the ones not current, or every session and pool.
+            % the ones not current, or every session and pool -- the last
+            % two leaving the hidden ones out.
             m = obj.Model;
             keys = strings(0,1);
             V = obj.view();
+            shown = true(height(V),1);
+            if ~isempty(V) && ismember('Hidden',V.Properties.VariableNames)
+                shown = ~logical(V.Hidden);
+            end
             switch string(scope)
                 case "selected"
                     keys = obj.Keys;
                 case "outofdate"
                     if ~isempty(V) && height(V) > 0
-                        keys = string(V.Key(string(V.Status) ~= "current"));
+                        keys = string(V.Key(string(V.Status) ~= "current" & shown));
                     end
                 otherwise
                     if ~isempty(V) && height(V) > 0
-                        keys = string(V.Key);
+                        keys = string(V.Key(shown));
                     else
                         try
-                            keys = string(m.Catalog.Sessions.Key);
+                            keys = m.allKeys();
                         catch
                         end
                     end
