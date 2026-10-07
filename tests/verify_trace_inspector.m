@@ -29,7 +29,10 @@ function verify_trace_inspector()
 %          unique, non-blank and not a plain number;
 %      12. the wave table -- custom waves included -- persists across
 %          inspectors, while the organizer's 1, 2, 3 ... peak numbering never
-%          becomes a wave (nor does an older saved table keep such rows).
+%          becomes a wave (nor does an older saved table keep such rows);
+%      13. the peak comparison matrices are column-minus-row, antisymmetric
+%          and zero-diagonal, and their window opens once, follows the picks,
+%          and closes with the inspector.
 %
 %   The user's saved search windows are preserved. Creates figures but needs
 %   no hardware. Run:
@@ -407,6 +410,60 @@ assert(isequal({insp11.Waves.Name},{'I','II','III','IV','V'}), ...
     'numbered rows saved by an older version were not dropped: %s', ...
     strjoin({insp11.Waves.Name},','));
 fprintf('  PASS: custom waves persist; the organizer''s numbering is never a wave\n');
+
+% --- 13. the peak comparison matrices --------------------------------------
+% A trace and an inspector of its own, with exactly the three picks this
+% section reasons about, rather than whatever the sections above left placed.
+mtxTr = mabr.ui.Trace(y,t,'matrix','matrix');
+insp12 = mabr.ui.TraceInspector(mtxTr);
+cleanInsp12 = onCleanup(@() delete(insp12)); %#ok<NASGU>
+for i = 1:numel(insp12.Waves), insp12.enableWave(i,i <= 3); end
+assert(insp12.setWindow(1,1.0,2.0,'Peak') && insp12.setWindow(2,2.0,3.0,'Peak') && ...
+       insp12.setWindow(3,3.0,4.0,'Peak'),'setWindow rejected a valid window');
+insp12.clearAll();
+insp12.autoDetect();
+
+dm = insp12.peakDifferences();
+nw = numel(dm.Names);
+assert(nw == 3,'expected the three enabled waves, got %d',nw);
+assert(all(diff(dm.Latency) > 0),'peakDifferences did not order the waves in time');
+assert(isequal(size(dm.dLatency),[nw nw]) && isequal(size(dm.dAmplitude),[nw nw]), ...
+    'the difference matrices are not square over the placed waves');
+% Column minus row, antisymmetric, zero diagonal -- the whole contract the
+% heat maps are drawn from.
+assert(abs(dm.dLatency(1,2) - (dm.Latency(2)-dm.Latency(1))) < 1e-9, ...
+    'dLatency(i,j) is not Latency(j) - Latency(i)');
+assert(abs(dm.dAmplitude(2,1) - (dm.Amplitude(1)-dm.Amplitude(2))) < 1e-9, ...
+    'dAmplitude(i,j) is not Amplitude(j) - Amplitude(i)');
+assert(max(abs(dm.dLatency + dm.dLatency.'),[],'all') < 1e-9 && ...
+       max(abs(dm.dAmplitude + dm.dAmplitude.'),[],'all') < 1e-9, ...
+    'the difference matrices are not antisymmetric');
+assert(all(diag(dm.dLatency) == 0) && all(diag(dm.dAmplitude) == 0), ...
+    'a wave differs from itself');
+
+nFig = @() numel(findobj(0,'Type','figure','-regexp','Name','Peak Comparison'));
+before = nFig();
+insp12.showMatrices();
+assert(nFig() == before+1,'showMatrices did not open the comparison window');
+insp12.showMatrices();
+assert(nFig() == before+1,'a second press opened a second comparison window');
+% It has to follow the picks: a stale matrix is worse than none.
+insp12.nudgeWave(1,-3);
+assert(nFig() == before+1,'redrawing the inspector rebuilt the comparison window');
+dm2 = insp12.peakDifferences();
+assert(abs(dm2.dLatency(1,2) - dm.dLatency(1,2)) > 1e-9, ...
+    'nudging a wave left the difference matrix unchanged');
+insp12.cancel();
+assert(nFig() == before, ...
+    'closing the inspector left its comparison window behind');
+
+cmap = mabr.ui.TraceInspector.divergingMap([0 0 1],[1 0 0],64);
+assert(isequal(size(cmap),[64 3]) && all(cmap(:) >= 0 & cmap(:) <= 1), ...
+    'divergingMap did not return a 64x3 colormap in range');
+assert(all(abs(cmap(1,:) - [0 0 1]) < 1e-9) && all(abs(cmap(end,:) - [1 0 0]) < 1e-9), ...
+    'divergingMap did not put the two hues at the two ends');
+assert(min(sum(abs(cmap - 0.98),2)) < 0.1,'divergingMap has no neutral centre');
+fprintf('  PASS: the comparison matrices, and the window that draws them\n');
 
 fprintf('== verify_trace_inspector PASSED ==\n');
 end

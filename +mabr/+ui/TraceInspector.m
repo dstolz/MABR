@@ -41,6 +41,14 @@ classdef TraceInspector < handle
 %   table from them, so a second pass edits the first rather than starting
 %   over.
 %
+%   Compare peaks (m) opens a second window holding the two comparison
+%   matrices: every placed wave against every other, as a latency-difference
+%   heat map beside an amplitude-difference heat map. The summary line can
+%   only report neighbouring intervals; the matrices show I-III, I-V and every
+%   other pair at once, without leaving the trace for the offline analysis
+%   window. The window follows the picks -- drag a marker and its numbers
+%   move -- and it closes with the inspector.
+%
 %   The wave table -- names, search windows, types, which are on -- persists in
 %   MATLAB prefs (group 'MABR') on Apply, so a lab that works at one species
 %   and one rate sets it up once. Picks do not persist, only the table.
@@ -53,6 +61,7 @@ classdef TraceInspector < handle
 %     Left / Right         nudge the selected wave 1 sample (Shift: 10)
 %     Delete               clear the selected wave
 %     c / f                clear all / fit the view
+%     m                    compare every pair of placed waves
 %     Enter / Escape       apply & close / cancel
 %     F1                   this list
 %
@@ -101,6 +110,8 @@ classdef TraceInspector < handle
         SelRow  = [];              % selected wave row, or []
         dragIdx = [];
         Fitted (1,1) logical = false;
+        MtxFig                     % the peak-comparison window, if it is open
+        MtxAx = gobjects(1,2);     % its two heat-map axes
     end
 
     methods
@@ -132,6 +143,7 @@ classdef TraceInspector < handle
         end
 
         function delete(obj)
+            obj.closeMatrices();
             delete(obj.Markers);
             delete(obj.WinShapes(isgraphics(obj.WinShapes)));
             try, delete(obj.Figure); end %#ok<TRYNC>
@@ -319,6 +331,7 @@ classdef TraceInspector < handle
             if obj.isopen()
                 mabr.ui.WindowPos.remember(obj.Figure,'TraceInspector');
             end
+            obj.closeMatrices();
             delete(obj.Markers);
             obj.Markers = mabr.ui.Marker.empty;
             delete(obj.WinShapes(isgraphics(obj.WinShapes)));
@@ -340,6 +353,48 @@ classdef TraceInspector < handle
             t = table(names(:),obj.timeMs(locs(:)),y(locs(:)),types, ...
                 'VariableNames',{'Wave','Latency_ms','Amplitude','Type'});
             t.Properties.VariableUnits = {'','ms',obj.DisplayUnit,''};
+        end
+
+        % --- Peak comparison ----------------------------------------------------
+        function s = peakDifferences(obj)
+            % Every placed wave measured against every other, in temporal
+            % order -- the two matrices behind the comparison heat maps.
+            %
+            %   s.Names        1xN wave names, earliest first
+            %   s.Latency      1xN latencies, ms re onset
+            %   s.Amplitude    1xN amplitudes, in DisplayUnit
+            %   s.dLatency     NxN, dLatency(i,j) = Latency(j) - Latency(i)
+            %   s.dAmplitude   NxN, same convention
+            %
+            % Row is the wave compared FROM, column the wave compared TO, so
+            % every cell reads "column minus row" and the upper triangle of
+            % dLatency is positive by construction. Both matrices are
+            % antisymmetric with a zero diagonal -- the display blanks that
+            % diagonal rather than showing a wave against itself.
+            [locs,names] = obj.markedWaves();
+            y   = obj.workingY()*obj.DisplayScale;
+            lat = obj.timeMs(locs(:)).';
+            amp = y(locs(:)).';
+            s = struct('Names',{names(:).'},'Latency',lat,'Amplitude',amp, ...
+                'dLatency',lat - lat.','dAmplitude',amp - amp.');
+        end
+
+        function showMatrices(obj)
+            % Open (or refresh and raise) the peak comparison window: every
+            % pair of placed waves as a latency-difference and an
+            % amplitude-difference heat map. Interpeak intervals are what an
+            % ABR is read by and the summary line can only show the
+            % neighbouring ones; this shows all of them at once, including the
+            % amplitude ratios that neighbouring differences never expose.
+            s = obj.peakDifferences();
+            if numel(s.Names) < 2
+                obj.status(['Place at least two waves before comparing them ' ...
+                    '(Auto-detect, or click the trace).']);
+                return
+            end
+            obj.buildMatrixFigure();
+            obj.drawMatrices(s);
+            figure(obj.MtxFig);
         end
     end
 
@@ -437,6 +492,10 @@ classdef TraceInspector < handle
             obj.H.copy  = obj.button(p,'Copy table', ...
                 'Copy the placed waves to the clipboard, tab-delimited.', ...
                 @() obj.copyTable());
+            obj.H.matrix = obj.button(p,'Compare peaks (m)', ...
+                ['Latency and amplitude differences between every pair of ' ...
+                 'placed waves, as heat maps.'], ...
+                @() obj.showMatrices());
 
             obj.H.cursor = uicontrol(p,'Style','text','Units','pixels', ...
                 'String','','HorizontalAlignment','left','BackgroundColor','w', ...
@@ -493,6 +552,7 @@ classdef TraceInspector < handle
 
             obj.H.summary.Position = [x y w 52];   y = y + 52 + 4;
             obj.H.cursor.Position  = [x y w 17];   y = y + 17 + 6;
+            obj.H.matrix.Position  = [x y w 26];   y = y + 26 + 6;
 
             hw = round((w-6)/2);
             obj.H.fit.Position   = [x y hw 26];
@@ -543,6 +603,7 @@ classdef TraceInspector < handle
             obj.drawMarkers(yw);
             obj.refreshTable();
             obj.refreshSummary();
+            obj.refreshMatrices();
         end
 
         function drawWindows(obj)
@@ -624,6 +685,159 @@ classdef TraceInspector < handle
                     lat(end)-lat(1));
             end
             obj.H.summary.String = s;
+        end
+
+        % --- Peak comparison drawing --------------------------------------------
+        function refreshMatrices(obj)
+            % Keep an open comparison window in step with the picks: dragging
+            % a marker while the heat maps are up has to move the numbers, or
+            % a stale window sits there being believed.
+            if isempty(obj.MtxFig) || ~isgraphics(obj.MtxFig), return; end
+            s = obj.peakDifferences();
+            if numel(s.Names) < 2
+                obj.closeMatrices();   % nothing left to compare
+                return
+            end
+            obj.drawMatrices(s);
+        end
+
+        function closeMatrices(obj)
+            if ~isempty(obj.MtxFig) && isgraphics(obj.MtxFig)
+                mabr.ui.WindowPos.remember(obj.MtxFig,'TraceInspectorMatrix');
+                delete(obj.MtxFig);
+            end
+            obj.MtxFig = [];
+            obj.MtxAx  = gobjects(1,2);
+        end
+
+        function buildMatrixFigure(obj)
+            % Built once and redrawn into: rebuilding the window on every pick
+            % would flicker it, and lose wherever the user put it.
+            if ~isempty(obj.MtxFig) && isgraphics(obj.MtxFig), return; end
+            obj.MtxFig = figure('Name',sprintf('MABR Peak Comparison — %s', ...
+                    obj.Trace.DisplayName), ...
+                'NumberTitle','off','Color','w','MenuBar','none', ...
+                'ToolBar','figure','Position',[180 180 1000 520], ...
+                'CloseRequestFcn',@(~,~) obj.closeMatrices());
+            mabr.ui.WindowPos.restore(obj.MtxFig,'TraceInspectorMatrix', ...
+                obj.MtxFig.Position,[820 440]);
+            tl = tiledlayout(obj.MtxFig,1,2,'Padding','compact','TileSpacing','loose');
+            obj.MtxAx(1) = nexttile(tl);
+            obj.MtxAx(2) = nexttile(tl);
+        end
+
+        function drawMatrices(obj,s)
+            % Two hues, not one: the panels answer different questions in the
+            % same shape, and a glance should not have to read the colorbar to
+            % tell which is which.
+            latLbl = arrayfun(@(v) sprintf('%.2f ms',v),s.Latency, ...
+                'UniformOutput',false);
+            ampLbl = arrayfun(@(v) sprintf('%.3f %s',v,obj.DisplayUnit),s.Amplitude, ...
+                'UniformOutput',false);
+            obj.drawMatrixPanel(obj.MtxAx(1),s.dLatency,s.Names,latLbl, ...
+                'Interpeak latency','\Delta latency (ms)','%+.2f', ...
+                mabr.ui.TraceInspector.divergingMap([0.11 0.36 0.62],[0.83 0.37 0.05]));
+            obj.drawMatrixPanel(obj.MtxAx(2),s.dAmplitude,s.Names,ampLbl, ...
+                'Amplitude difference', ...
+                sprintf('\\Delta amplitude (%s)',obj.DisplayUnit),'%+.3f', ...
+                mabr.ui.TraceInspector.divergingMap([0.36 0.19 0.55],[0.09 0.47 0.31]));
+
+            tl = obj.MtxAx(1).Parent;
+            title(tl,sprintf('%s  —  %d marked wave(s)',obj.Trace.DisplayName, ...
+                numel(s.Names)),'FontWeight','bold','Interpreter','none');
+            note = ['every cell is column minus row; the row label carries ' ...
+                'the reference value'];
+            if obj.SmoothSpan > 1
+                note = sprintf('%s (smoothed over %d samples)',note, ...
+                    round(obj.SmoothSpan));
+            end
+            subtitle(tl,note,'FontAngle','italic','Color',[0.42 0.42 0.42]);
+        end
+
+        function drawMatrixPanel(~,ax,M,names,rowVals,ttl,cbLabel,fmt,cmap)
+            n  = numel(names);
+            fs = max(7,min(11,round(52/n)));    % the numbers still have to fit
+            cla(ax);
+            colorbar(ax,'off');                 % or one stacks up per redraw
+
+            % A wave against itself is not a measurement: blank the diagonal
+            % rather than draw a band of zeros the eye reads as data.
+            D = M;
+            D(1:n+1:end) = NaN;
+            im = imagesc(ax,D);
+            set(im,'AlphaData',~isnan(D));
+            ax.Color = [0.93 0.93 0.93];        % what shows through the diagonal
+
+            colormap(ax,cmap);
+            lim = max(abs(D(:)),[],'omitnan');
+            if isempty(lim) || ~isfinite(lim) || lim <= 0, lim = 1; end
+            % Symmetric about zero, so the neutral colour means "no difference"
+            % in both panels and the two triangles mirror in hue, not in shade.
+            set(ax,'CLim',[-lim lim]);
+            axis(ax,'image');
+
+            rowLbl = arrayfun(@(k) sprintf('%s  (%s)',names{k},rowVals{k}), ...
+                1:n,'UniformOutput',false);
+            set(ax,'XTick',1:n,'YTick',1:n,'XTickLabel',names,'YTickLabel',rowLbl, ...
+                'TickLength',[0 0],'FontSize',fs,'Box','on', ...
+                'XColor',[0.30 0.30 0.30],'YColor',[0.30 0.30 0.30], ...
+                'TickLabelInterpreter','none','LineWidth',0.75);
+            xlabel(ax,'compared wave (column)','FontSize',fs+1,'Color',[0.25 0.25 0.25]);
+            ylabel(ax,'reference wave (row)','FontSize',fs+1,'Color',[0.25 0.25 0.25]);
+            title(ax,ttl,'FontSize',fs+3,'FontWeight','bold','Color',[0.15 0.15 0.15]);
+
+            % Hairlines on the cell boundaries: without them adjacent cells of
+            % similar value merge into one block and the grid stops reading as
+            % a table of pairs.
+            for k = 0.5:1:(n+0.5)
+                line(ax,[k k],[0.5 n+0.5],'Color','w','LineWidth',1.25, ...
+                    'PickableParts','none');
+                line(ax,[0.5 n+0.5],[k k],'Color','w','LineWidth',1.25, ...
+                    'PickableParts','none');
+            end
+
+            % The value in the cell, because the heat map shows the pattern and
+            % the number is what gets written down. Its colour comes from the
+            % luminance of the cell it sits on rather than from a threshold on
+            % the value: the two maps darken at different rates, and white on a
+            % mid-tone orange is exactly the number nobody can read.
+            nc  = size(cmap,1);
+            lum = cmap*[0.2126; 0.7152; 0.0722];
+            for i = 1:n
+                for j = 1:n
+                    if i == j
+                        txt = '—';
+                        col = [0.62 0.62 0.62];
+                        wgt = 'normal';
+                    else
+                        txt = sprintf(fmt,M(i,j));
+                        ci  = round((M(i,j)+lim)/(2*lim)*(nc-1)) + 1;
+                        ci  = min(max(ci,1),nc);
+                        if lum(ci) < 0.55
+                            col = [1 1 1];
+                        else
+                            col = [0.12 0.12 0.12];
+                        end
+                        % Bold above the diagonal: with the waves in temporal
+                        % order that triangle is the forward difference, the
+                        % half anybody actually reports.
+                        if i < j, wgt = 'bold'; else, wgt = 'normal'; end
+                    end
+                    text(ax,j,i,txt,'HorizontalAlignment','center', ...
+                        'VerticalAlignment','middle','FontSize',fs, ...
+                        'FontWeight',wgt,'Color',col,'Interpreter','none', ...
+                        'PickableParts','none');
+                end
+            end
+
+            cb = colorbar(ax);
+            cb.Label.String      = cbLabel;
+            cb.Label.Interpreter = 'tex';
+            cb.Label.FontSize    = fs+1;
+            cb.FontSize          = fs;
+            cb.TickDirection     = 'out';
+            cb.Box               = 'off';
+            cb.Color             = [0.30 0.30 0.30];
         end
 
         function status(obj,txt)
@@ -895,6 +1109,7 @@ classdef TraceInspector < handle
                 case 'a', obj.autoDetect();
                 case 'c', obj.clearAll();
                 case 'f', obj.fitView();
+                case 'm', obj.showMatrices();
                 case 'return', obj.apply();
                 case 'escape', obj.cancel();
                 case {'f1','help'}, obj.showHelp();
@@ -952,6 +1167,7 @@ classdef TraceInspector < handle
                 'Delete               clear the selected wave'
                 'c                    clear all waves'
                 'f                    fit the view to the whole trace'
+                'm                    compare every pair of placed waves'
                 'scroll wheel         zoom time about the cursor'
                 'Enter                apply and close'
                 'Escape               cancel'
@@ -1036,6 +1252,24 @@ classdef TraceInspector < handle
     end
 
     methods (Static)
+        function cmap = divergingMap(lowRGB,highRGB,n)
+            % A two-hue colormap running through a near-white centre, for a
+            % signed difference: the hue carries the sign and the saturation
+            % the size, and zero -- no difference at all -- is very nearly
+            % invisible, which is exactly the emphasis these matrices want.
+            % MATLAB ships no diverging map, and parula would put its loudest
+            % colour on the largest NEGATIVE difference.
+            if nargin < 3 || isempty(n), n = 256; end
+            m   = max(2,floor(n/2));
+            mid = [0.98 0.98 0.98];
+            % Slightly sub-linear, so the pale half of the ramp is wide enough
+            % that a small difference is still visibly a small one.
+            w   = linspace(0,1,m).'.^0.85;
+            lo  = (1-w).*lowRGB(:).'  + w.*mid;
+            hi  = (1-w).*highRGB(:).' + w.*mid;
+            cmap = min(max([lo; flipud(hi)],0),1);
+        end
+
         function w = defaultWaves()
             % ABR waves I-V with starting search windows (ms re onset). These
             % are a rodent-rig starting point, not a claim about anyone's
