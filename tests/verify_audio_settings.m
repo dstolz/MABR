@@ -21,8 +21,8 @@ function verify_audio_settings()
 %   mabr.stim.Schedule rather than played at one clock and windowed at
 %   another. A saved bank loaded from a .mat at another rate is refused by
 %   StimulusSet.fromFile, and the message a refused Start shows
-%   (mabr.ui.App.rateMismatchText) names both rates, the reason the bank
-%   was not re-rendered, and a remedy fitting its source.
+%   (mabr.ui.App.rateMismatchText) names the loaded bank, both rates, the
+%   reason the bank was not re-rendered, and a remedy fitting its source.
 %   Part F (amplifier gain): the external amplifier gain persists like the
 %   rest, is ignored in Test Mode, divides the recorded signal in
 %   mabr.compute.Pipeline's live step and finalization without moving a
@@ -242,6 +242,8 @@ assert(contains(m,'designed at a different sample rate') && ~contains(m,'..'), .
     'a reason ending in a full stop must be carried once, not doubled: %s',m);
 assert(contains(m,'Load the bank again') && contains(m,'once that is resolved'), ...
     'a file bank should be loaded again once the reason is resolved: %s',m);
+assert(contains(m,'(tones.spl)'), ...
+    'the message must name the bank that is loaded, since a failed load leaves it in place: %s',m);
 m = mabr.ui.App.rateMismatchText(192000,96000,struct('Kind','file','File','C:\banks\b.mat'),'',false);
 assert(~contains(m,'could not be re-rendered') && ~contains(m,'once that is resolved'), ...
     'with no reason recorded the message must not claim one: %s',m);
