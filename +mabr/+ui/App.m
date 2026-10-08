@@ -164,6 +164,14 @@ classdef App < handle
         % Stimuli.Source.File, which for a saved StimulusSet is wherever it
         % was saved from, not the file it was just loaded out of.
         BankFile (1,:) char = ''
+        % Why the loaded bank could not be re-rendered at the device's sample
+        % rate, the last time retuneStimuli tried ('' when it was, or never
+        % had to be). Kept because the warning retuneStimuli raises goes to
+        % the status line at the moment of the rate change, and the next
+        % status message overwrites it; onStart repeats it when it refuses to
+        % plan against the mismatch. Cleared by adoptStimuli, since it
+        % describes the bank it was raised about.
+        RetuneWhy (1,:) char = ''
         % Artifact criterion, and what to do about a sweep that fails it. The
         % GUI owns this; it is remembered across sessions in MATLAB prefs
         % (mabr.ArtifactPolicy.loadPrefs) so a rig keeps whatever suits its
@@ -2603,25 +2611,43 @@ classdef App < handle
                         why = me.message;
                     end
                 case {'file','stimgen'}
-                    if ~isempty(src.File) && isfile(src.File)
+                    if isempty(src.File) && strcmpi(src.Kind,'stimgen')
+                        % A stimgen bank with no file behind it was adopted
+                        % from the designer (or handed over as objects) and
+                        % never saved: there is nothing on disk to rebuild it
+                        % from, which is not the same as a file gone missing.
+                        why = 'it was built in the stimgen designer and never saved to a file';
+                    elseif isempty(src.File)
+                        why = 'it records no file to regenerate it from';
+                    elseif ~isfile(src.File)
+                        why = sprintf('its source file "%s" cannot be found',src.File);
+                    else
                         try
                             set = mabr.stim.StimulusSet.fromFile(src.File,app.Config);
                         catch me
                             why = me.message;
                         end
-                    else
-                        why = 'its source file is no longer available';
                     end
                 otherwise
                     why = 'it came from no reloadable source';
             end
+            % Every builder above refuses a rate other than the Config's, but
+            % adopting a bank that is still on the old clock would put the
+            % mismatch back with no warning at all, so it is checked here too.
+            if ~isempty(set) && set.numStimuli > 0 && set.SampleRate ~= fs
+                why = sprintf('regenerating it gave a bank at %s kHz', ...
+                    mabr.Config.rateText(set.SampleRate));
+                set = [];
+            end
 
             if isempty(set)
-                warn = sprintf(['The stimulus bank is rendered at %s kHz but the device ' ...
-                    'is now set to %s kHz, and it could not be regenerated (%s). ' ...
-                    'Load the bank again — nothing can run until the two match.'], ...
-                    mabr.Config.rateText(app.Stimuli.SampleRate), ...
-                    mabr.Config.rateText(fs),why);
+                app.RetuneWhy = why;
+                warn = mabr.ui.App.rateMismatchText(app.Stimuli.SampleRate,fs, ...
+                    src,why,app.designerOpen());
+                % Logged as well as shown: the status line is overwritten by
+                % the next message, and this one explains every refusal to
+                % start until the bank is replaced.
+                mabr.log.vprintf(0,1,'%s',warn);
                 app.setSourceLabel();   % the label carries the mismatch meanwhile
                 app.refreshPlan();
                 return
@@ -3071,9 +3097,10 @@ classdef App < handle
             % put a modal alert behind the still-open modal audio dialog that
             % prompted the re-render.
             if nargin < 4, file = ''; end
-            app.Stimuli  = set;
-            app.BankFile = char(file);
-            app.Reps     = mabr.stim.Schedule.startingRepetitions(set);
+            app.Stimuli   = set;
+            app.BankFile  = char(file);
+            app.RetuneWhy = '';
+            app.Reps      = mabr.stim.Schedule.startingRepetitions(set);
             if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
             % An open stimulus viewer shows the bank that is loaded, not the
             % one that was loaded when it was opened.
@@ -4247,6 +4274,20 @@ classdef App < handle
             if sum(app.Reps) < 1
                 app.setStatus('Nothing to run — every stimulus has 0 repetitions.'); return
             end
+            % A bank left on another clock by a sample-rate change that could
+            % not re-render it. mabr.stim.Schedule refuses it anyway, but only
+            % after ensureController has rebuilt the workers for the new rate,
+            % and with no word of why the bank is still at the old one -- the
+            % reason was on the status line at the rate change and has been
+            % overwritten since. Said here, before anything is started.
+            if app.Stimuli.SampleRate ~= app.Config.DACSampleRate
+                msg = mabr.ui.App.rateMismatchText(app.Stimuli.SampleRate, ...
+                    app.Config.DACSampleRate,app.Stimuli.Source,app.RetuneWhy, ...
+                    app.designerOpen());
+                app.setStatus(['Start failed: ' msg]);
+                mabr.log.vprintf(0,1,'Start failed: %s',msg);
+                return
+            end
 
             % A schedule owns the device. Stopped here, before the banner and
             % the status line below are written, so the monitor's own
@@ -5397,6 +5438,54 @@ classdef App < handle
     end
 
     methods (Static)
+        function msg = rateMismatchText(bankFs,deviceFs,src,why,designerOpen)
+            % The one wording for a bank on one clock and the device on
+            % another: the two rates, why the bank was not re-rendered when
+            % the rate changed (why; '' when nothing was recorded), and what
+            % to do about it given where the bank came from. Shared by
+            % retuneStimuli, which raises it at the rate change, and onStart,
+            % which repeats it when it refuses to start -- so a refused Start
+            % names the reason the bank was left behind instead of stating two
+            % numbers the operator believes were already reconciled.
+            %
+            % src is the bank's StimulusSet.Source; designerOpen says whether
+            % Adopt bank is one press away. Static and pure, so the wording is
+            % tested without a window (verify_audio_settings Part E).
+            if nargin < 4 || isempty(why), why = ''; end
+            if nargin < 5, designerOpen = false; end
+            b = mabr.Config.rateText(bankFs);
+            d = mabr.Config.rateText(deviceFs);
+            msg = sprintf('The stimulus bank is rendered at %s kHz but the device is set to %s kHz',b,d);
+            why = regexprep(strtrim(char(why)),'\.+$','');
+            if isempty(why)
+                msg = [msg '.'];
+            else
+                msg = sprintf('%s, and the bank could not be re-rendered at %s kHz: %s.',msg,d,why);
+            end
+            kind = ''; file = '';
+            if isstruct(src) && isfield(src,'Kind'), kind = lower(char(src.Kind)); end
+            if isstruct(src) && isfield(src,'File'), file = char(src.File); end
+            switch kind
+                case 'demo'
+                    fix = 'Press Demo to rebuild the test bank';
+                case {'file','stimgen'}
+                    if isempty(file) && strcmp(kind,'stimgen') && designerOpen
+                        fix = sprintf('Press Adopt bank to bring the designer''s bank in at %s kHz',d);
+                    elseif isempty(file) && strcmp(kind,'stimgen')
+                        fix = 'Rebuild it in the designer (Design…, then Adopt bank) or load it from a file';
+                    elseif isempty(file)
+                        fix = 'Load the bank again';
+                    else
+                        fix = 'Load the bank again (Open… or the Bank list)';
+                        if ~isempty(why), fix = [fix ' once that is resolved']; end
+                    end
+                otherwise
+                    fix = 'Load the bank again';
+            end
+            msg = sprintf('%s %s, or set the device back to %s kHz in Settings ▸ Audio Device (ASIO).', ...
+                msg,fix,b);
+        end
+
         function tf = isAcquiring()
             % True while the MABR window open in this MATLAB is running a
             % schedule -- isRunning's test: a controller exists and is not
