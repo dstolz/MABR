@@ -2120,7 +2120,12 @@ classdef App < handle
                 app.setStatus(sprintf('Loaded %d stimuli from %s', ...
                     app.Stimuli.numStimuli,[fn ext]));
             catch me
+                % Logged as well as shown: the bank already loaded stays loaded,
+                % so a Start after a failed load runs (or refuses) on the OLD
+                % bank, and the status line saying why is overwritten by then.
                 app.setStatus(['Load failed: ' me.message]);
+                mabr.log.vprintf(0,1,'Load of "%s" failed; the bank already loaded is unchanged: %s', ...
+                    file,me.message);
             end
             clear restorePointer
         end
@@ -3048,7 +3053,10 @@ classdef App < handle
                 app.setStatus(sprintf('Adopted %d presentations from the designer.', ...
                     set.numStimuli));
             catch me
+                % Logged for the same reason as a failed load (loadBankFile).
                 app.setStatus(['Adopt failed: ' me.message]);
+                mabr.log.vprintf(0,1,'Adopt from the designer failed; the bank already loaded is unchanged: %s', ...
+                    me.message);
             end
         end
 
@@ -5455,16 +5463,24 @@ classdef App < handle
             if nargin < 5, designerOpen = false; end
             b = mabr.Config.rateText(bankFs);
             d = mabr.Config.rateText(deviceFs);
-            msg = sprintf('The stimulus bank is rendered at %s kHz but the device is set to %s kHz',b,d);
+            kind = ''; file = '';
+            if isstruct(src) && isfield(src,'Kind'), kind = lower(char(src.Kind)); end
+            if isstruct(src) && isfield(src,'File'), file = char(src.File); end
+            % Named, because the bank that is LOADED is the one being refused:
+            % a later load that failed leaves this one in place, and without
+            % its name the refusal reads as being about the bank just built.
+            what = 'The loaded stimulus bank';
+            if ~isempty(file)
+                [~,fn,ext] = fileparts(file);
+                what = sprintf('The loaded stimulus bank (%s%s)',fn,ext);
+            end
+            msg = sprintf('%s is rendered at %s kHz but the device is set to %s kHz',what,b,d);
             why = regexprep(strtrim(char(why)),'\.+$','');
             if isempty(why)
                 msg = [msg '.'];
             else
                 msg = sprintf('%s, and the bank could not be re-rendered at %s kHz: %s.',msg,d,why);
             end
-            kind = ''; file = '';
-            if isstruct(src) && isfield(src,'Kind'), kind = lower(char(src.Kind)); end
-            if isstruct(src) && isfield(src,'File'), file = char(src.File); end
             switch kind
                 case 'demo'
                     fix = 'Press Demo to rebuild the test bank';
