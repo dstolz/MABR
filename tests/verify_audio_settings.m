@@ -19,7 +19,10 @@ function verify_audio_settings()
 %   config(), derives an integer decimation to a storage rate, and reaches the
 %   rendered spec -- while a bank left at another rate is refused by
 %   mabr.stim.Schedule rather than played at one clock and windowed at
-%   another.
+%   another. A saved bank loaded from a .mat at another rate is refused by
+%   StimulusSet.fromFile, and the message a refused Start shows
+%   (mabr.ui.App.rateMismatchText) names both rates, the reason the bank
+%   was not re-rendered, and a remedy fitting its source.
 %   Part F (amplifier gain): the external amplifier gain persists like the
 %   rest, is ignored in Test Mode, divides the recorded signal in
 %   mabr.compute.Pipeline's live step and finalization without moving a
@@ -201,6 +204,47 @@ catch me
     threw = strcmp(me.identifier,'mabr:stim:Schedule:sampleRate');
 end
 assert(threw,'a Schedule must refuse a bank rendered at a rate other than the Config''s');
+
+% E6: a saved StimulusSet is rendered waveforms and does not pass through the
+% constructor's rate check on its way out of a .mat, so fromFile checks it: a
+% bank saved at 48 kHz loads at 48 kHz and is refused at 96 kHz, instead of
+% loading without a word and failing only when a Schedule is built from it.
+bankFile  = [tempname '.mat'];
+cleanBank = onCleanup(@() delete(bankFile)); %#ok<NASGU>
+savedSet  = setLo; %#ok<NASGU>
+save(bankFile,'savedSet');
+assert(mabr.stim.StimulusSet.fromFile(bankFile,cfgLo).SampleRate == 48000, ...
+    'a saved bank should load at the rate it was rendered at');
+threw = false;
+try
+    mabr.stim.StimulusSet.fromFile(bankFile,cfgHi);
+catch me
+    threw = strcmp(me.identifier,'mabr:stim:StimulusSet:sampleRate');
+end
+assert(threw,'fromFile must refuse a saved bank rendered at a rate other than the Config''s');
+
+% E7: the wording a refused Start and a failed re-render share
+% (mabr.ui.App.rateMismatchText): both rates, the reason the bank was left
+% behind when one was recorded, and a remedy that fits where it came from.
+reason = 'it was built in the stimgen designer and never saved to a file';
+m = mabr.ui.App.rateMismatchText(192000,96000,struct('Kind','stimgen','File',''),reason,true);
+assert(contains(m,'192 kHz') && contains(m,'96 kHz'),'the message must name both rates: %s',m);
+assert(contains(m,reason),'the message must carry the reason: %s',m);
+assert(contains(m,'Adopt bank'), ...
+    'a designer bank with the designer open should point at Adopt bank: %s',m);
+m = mabr.ui.App.rateMismatchText(192000,96000,struct('Kind','stimgen','File',''),reason,false);
+assert(contains(m,'Rebuild it in the designer'), ...
+    'a designer bank with no designer open should point at the designer: %s',m);
+reason = 'its equalization-filter calibration was designed at a different sample rate.';
+m = mabr.ui.App.rateMismatchText(192000,96000, ...
+    struct('Kind','stimgen','File','C:\banks\tones.spl'),reason,false);
+assert(contains(m,'designed at a different sample rate') && ~contains(m,'..'), ...
+    'a reason ending in a full stop must be carried once, not doubled: %s',m);
+assert(contains(m,'Load the bank again') && contains(m,'once that is resolved'), ...
+    'a file bank should be loaded again once the reason is resolved: %s',m);
+m = mabr.ui.App.rateMismatchText(192000,96000,struct('Kind','file','File','C:\banks\b.mat'),'',false);
+assert(~contains(m,'could not be re-rendered') && ~contains(m,'once that is resolved'), ...
+    'with no reason recorded the message must not claim one: %s',m);
 fprintf('  PASS Part E: sample rate persists, derives its storage rate, and reaches the spec\n');
 
 % ---- Part F: amplifier gain ------------------------------------------------
