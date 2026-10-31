@@ -336,6 +336,10 @@ classdef Schedule < handle
         IsRepeat    (1,:) logical = false(1,0)  % parallel to Runs; user-requested repeat?
         IsLoop      (1,:) logical = false(1,0)  % parallel to Runs; inserted loop pass?
         CurrentRun  (1,1) double = 0   % 0 = not started / complete
+        % The seed build() actually drew the order with: Seed when one is set,
+        % else the one 'shuffle' picked -- recorded so an unseeded session
+        % can be replayed from its record. NaN until build() has run.
+        RealizedSeed (1,1) double = NaN
         RunCounts   (1,:) double = []  % presentations actually recorded, per stimulus
         MakeupUsed  (1,:) double = []  % make-up presentations appended, per stimulus
         Disabled    (1,:) logical = false(1,0) % per stimulus: left out of runs not yet started
@@ -514,6 +518,11 @@ classdef Schedule < handle
             if n == 0 || ~any(reps > 0), obj.CurrentRun = 0; return; end
 
             rs  = obj.stream();
+            % The seed this plan's order was actually drawn with -- the
+            % explicit Seed, or the one 'shuffle' picked -- so an unseeded
+            % session can still be replayed from its record (it was recorded
+            % nowhere before).
+            obj.RealizedSeed = rs.Seed;
             alt = obj.Set.alternatesPolarity();
 
             switch lower(obj.Strategy)
@@ -900,7 +909,7 @@ classdef Schedule < handle
             % One interval before each presentation after the first, so the
             % onsets are a cumulative sum rather than a multiple of a period:
             % under 'random' no two gaps need be the same.
-            periods = obj.onsetPeriods(nPres,Fs);
+            [periods,isiSeed] = obj.onsetPeriods(nPres,Fs,r);
             onsets  = [1; 1 + cumsum(periods)];
 
             % The run must be long enough to hold the last stimulus in full.
@@ -918,22 +927,43 @@ classdef Schedule < handle
             fl    = obj.Config.frameLength;
             total = ceil((N + P + T)/fl)*fl;
             cap   = obj.Config.maxInputBufferLength;
-            assert(total <= cap,'mabr:stim:Schedule:tooLong', ...
-                ['Run %d needs %d samples (%.1f s) but the ring buffer holds %d ' ...
-                 '(%.1f s). Reduce repetitions, shorten the ISI, or use a ' ...
-                 'conventional strategy so each run covers one stimulus.'], ...
-                r,total,total/Fs,cap,cap/Fs);
+            % Only a RECORDED run has to fit: a stimulation-only run writes
+            % nothing into the ring (the worker streams the plan frame by
+            % frame and records no input), so the cap would refuse a long
+            % exposure for a buffer it never touches.
+            if ~obj.StimulationOnly
+                assert(total <= cap,'mabr:stim:Schedule:tooLong', ...
+                    ['Run %d plays %.1f s in one continuous run, but the recorder holds ' ...
+                     '%.1f s (%d samples). Reduce repetitions, shorten the ISI, or use a ' ...
+                     'conventional strategy so each run covers one stimulus.'], ...
+                    r,total/Fs,cap/Fs,cap);
+            end
 
             % The shortest interval is what collides, so a randomized run is
             % judged on the bottom of its range, not its mean.
             longest   = obj.Set.maxDuration()*Fs;
             minPeriod = round(Fs*obj.MinISI);
+            if obj.isRandomISI(), what = 'shortest ISI in the range'; else, what = 'ISI'; end
             if longest > minPeriod
-                if obj.isRandomISI(), what = 'shortest ISI in the range'; else, what = 'ISI'; end
                 mabr.log.vprintf(0,1, ...
                     ['Stimulus (%.2f ms) is longer than the %s (%.2f ms); ' ...
                      'presentations overlap and are summed.'], ...
                     1e3*longest/Fs,what,1e3*minPeriod/Fs);
+            else
+                % The timing pulse spans the whole presentation, and the
+                % onset detector re-arms only once the channel has been low
+                % for OnsetRearm (and keeps onsets OnsetShadow apart): a gap
+                % shorter than that fuses neighbouring pulses, loses onsets,
+                % and mis-pairs every later sweep -- a fault the alignment
+                % report only names after the run.
+                gap = round(mabr.Config.OnsetRearm*Fs);
+                if minPeriod < longest + gap || minPeriod < round(mabr.Config.OnsetShadow*Fs)
+                    mabr.log.vprintf(0,1, ...
+                        ['Stimulus (%.2f ms) leaves less than %.2f ms before the next onset ' ...
+                         '(%s %.2f ms): neighbouring timing pulses can fuse and sweeps be ' ...
+                         'paired with the wrong presentation. Lengthen the ISI.'], ...
+                        1e3*longest/Fs,1e3*gap/Fs,what,1e3*minPeriod/Fs);
+                end
             end
 
             % Nothing is allocated here. The run is described -- the stimuli
@@ -958,6 +988,10 @@ classdef Schedule < handle
             spec.Plan              = plan;
             spec.SampleRate        = Fs;
             spec.ExpectedOnsets    = onsets;
+            % The seed the run's ISI jitter was drawn with (NaN on a fixed
+            % grid), so a run's realized timing can be reproduced from its
+            % record; the plan's own order seed is RealizedSeed.
+            spec.ISISeed           = isiSeed;
             spec.StimulusIndex     = seq(:);      % which stimulus at each onset
             spec.Polarity          = pol(:);      % +1/-1 applied at each onset
             spec.PlayerChannels    = obj.PlayerChannels;
@@ -1034,16 +1068,20 @@ classdef Schedule < handle
             reps = max(0,round(reps(1:n)));
         end
 
-        function rs = stream(obj)
+        function rs = stream(obj,offset)
             % The schedule's own RandStream, so building a plan never perturbs
             % global rng (and an explicit Seed makes the plan exactly
             % reproducible). A FRESH stream each call: build() takes one and
             % passes that same one on, rather than letting a second caller
-            % re-seed and draw the identical numbers.
+            % re-seed and draw the identical numbers. `offset` (default 0) is
+            % added to an explicit Seed, so two draws made for different
+            % purposes -- the order at build, each run's ISI jitter -- do not
+            % repeat one another's numbers.
+            if nargin < 2 || isempty(offset), offset = 0; end
             if isempty(obj.Seed)
                 rs = RandStream('twister','Seed','shuffle');
             else
-                rs = RandStream('twister','Seed',obj.Seed);
+                rs = RandStream('twister','Seed',mod(obj.Seed + offset,2^32));
             end
         end
     end
@@ -1086,8 +1124,11 @@ classdef Schedule < handle
                 r,sum(drop),mat2str(find(c)));
         end
 
-        function p = onsetPeriods(obj,nPres,Fs)
-            % The nPres-1 onset-to-onset intervals of a run, in samples.
+        function [p,seed] = onsetPeriods(obj,nPres,Fs,r)
+            % The nPres-1 onset-to-onset intervals of run r, in samples, and
+            % the seed they were drawn with (NaN on a fixed grid).
+            if nargin < 4 || isempty(r), r = 0; end
+            seed = NaN;
             if obj.isRandomISI()
                 lo = obj.ISIRange(1); hi = obj.ISIRange(2);
                 assert(round(Fs*lo) >= 1,'mabr:stim:Schedule:isi', ...
@@ -1096,8 +1137,12 @@ classdef Schedule < handle
                 % Drawn from the schedule's own RandStream for the same reason
                 % the shuffles are: building or rendering a plan must not
                 % perturb the global rng, and an explicit Seed must make the
-                % whole plan -- order AND timing -- reproducible.
-                rs = obj.stream();
+                % whole plan -- order AND timing -- reproducible. Offset by
+                % the run index: a fresh stream per call gave every run of a
+                % seeded plan the SAME intervals, a periodicity the jitter
+                % exists to remove.
+                rs   = obj.stream(r);
+                seed = rs.Seed;
                 p  = round(Fs.*(lo + (hi-lo).*rand(rs,max(0,nPres-1),1)));
                 p  = max(1,p);
             else

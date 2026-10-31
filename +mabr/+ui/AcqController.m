@@ -134,6 +134,21 @@ classdef AcqController < handle
         % the online analysis: a window attached later backfills from the
         % block after this one, so a reset is not undone by opening another.
         MetricsBase (1,1) double = 0
+        % The last thing that went wrong, in words -- a worker error, a block
+        % that could not be saved, a next run that could not be started --
+        % for the main window to show beside a red lamp (which used to come
+        % with the previous "Saved ..." text still on the status line, so an
+        % unattended schedule stopped in silence). Cleared by start().
+        LastErrorMessage (1,:) char = ''
+        % Whether start() has run on this controller: what canResume needs to
+        % tell "halted with runs left" from "never started".
+        Started (1,1) logical = false
+        % The worker watchdog's memory (watch_worker): the ring's write head
+        % last seen, when it last moved, and how long it may stand still in
+        % Acquire before the device is taken for stalled.
+        StallHead    (1,1) double = -1
+        StallClock   = []
+        StallSeconds (1,1) double = 3
         Engine      mabr.acq.Engine
         Session     mabr.data.Session
         Stimuli     mabr.stim.StimulusSet
@@ -602,7 +617,13 @@ classdef AcqController < handle
             w = max([abs(tb(:)); 5])/1000;     % at least 5 ms
             % The compute buffers hold MaxComputeSamples of [baseline;response]
             % and refuse more, so the longest window is what they can hold.
-            wMax = floor(obj.Config.MaxComputeSamples/2)/obj.Config.ADCSampleRate;
+            % Minus one sample: extract_sweeps windows 0:df:round(Fs*w)
+            % INCLUSIVE of both ends, so a window of exactly half the buffer
+            % is half the buffer plus one sample a side -- 2050 for 2048 --
+            % and the DSP worker died on the publish (the live view froze,
+            % the watchdog relaunched it into the same window, and the
+            % second stall wrote the role off for the session).
+            wMax = (floor(obj.Config.MaxComputeSamples/2) - 1)/obj.Config.ADCSampleRate;
             w = min(w,wMax);
             if w ~= obj.Window(2) || obj.Window(1) ~= 0
                 obj.Window = [0 w];
@@ -641,6 +662,8 @@ classdef AcqController < handle
             % the next Run resets it.
             assert(~obj.FinalizePending,'mabr:ui:AcqController:finalizing', ...
                 'The previous run is still being finalized; try again in a moment.');
+            obj.LastErrorMessage = '';
+            obj.Started = true;
             % A schedule owns the device: the input monitor gives it up
             % first, and is waited for, so its last lap is over before the
             % self-test or the first run is prepared behind it.
@@ -661,6 +684,17 @@ classdef AcqController < handle
                     isequal(obj.VerifiedAudioConfig,audioCfg);
                 if ~obj.TimingVerified
                     if ~obj.verifyTimingLoop()
+                        % Every "timing pulse not detected" in the rig logs
+                        % followed a worker error -- a device that would not
+                        % open, an interface switched off -- and the wiring
+                        % message sent operators to re-seat cables. When the
+                        % worker said what went wrong, say that instead.
+                        if ~isempty(obj.LastErrorMessage)
+                            error('mabr:ui:AcqController:deviceError', ...
+                                ['The audio device could not be opened for the pre-run check: %s ' ...
+                                 'Is the interface switched on and selected under Settings > Audio ' ...
+                                 'Device...?'],obj.LastErrorMessage);
+                        end
                         error('mabr:ui:AcqController:timingNotDetected', ...
                             ['Timing pulse not detected on the loop-back input during the ' ...
                              'pre-run check. Check that the timing output channel is physically ' ...
@@ -686,7 +720,11 @@ classdef AcqController < handle
             % Finish the current block early and advance to the next -- with
             % Loop set too: the user asked to move on, and the next run is
             % then the one held (see loop_run).
-            obj.HaltAfterBlock   = false;
+            %
+            % HaltAfterBlock is left alone: Advance pressed after Abort used
+            % to clear it, so the two adjacent buttons pressed in that order
+            % silently cancelled the abort and the schedule carried on. An
+            % abort stands until the schedule halts.
             obj.AdvanceRequested = true;
             obj.Engine.stop();
         end
@@ -1012,6 +1050,43 @@ classdef AcqController < handle
                 obj.begin_current_run();
             end
         end
+
+        function tf = canResume(obj)
+            % True when a halted schedule can be taken up where it stopped:
+            % a Start has happened, the controller rests in Idle (after Abort)
+            % or Error, the plan has runs left, and the worker is still there
+            % to play them. False before any Start, after SchedComplete, and
+            % while anything is in flight.
+            tf = obj.Started && ~isempty(obj.Schedule) && obj.Schedule.NumRuns > 0 ...
+                && any(obj.State == [mabr.ui.ProgState.Idle mabr.ui.ProgState.Error]) ...
+                && ~obj.Schedule.isComplete() ...
+                && ~isempty(obj.Engine) && isvalid(obj.Engine) && obj.Engine.isAlive();
+        end
+
+        function resumeSchedule(obj)
+            % Take a halted schedule up again where it stopped -- the same
+            % session, folder and counts -- instead of a Start, which rebuilds
+            % the plan with full repetitions into a new session folder (so an
+            % accidental Abort at run 40 of 60 meant redoing counts by hand).
+            % After Abort the halted run was finalized and credited, so the
+            % plan moves on to the next run; after an Error the run in flight
+            % never finished, so it is begun again.
+            assert(obj.canResume(),'mabr:ui:AcqController:noResume', ...
+                ['Nothing to resume: the schedule has not started, is complete, ' ...
+                 'is still in flight, or the acquisition worker is gone.']);
+            obj.stopMonitor();          % the run needs the device, as start() does
+            wasError = obj.State == mabr.ui.ProgState.Error;
+            obj.HaltAfterBlock   = false;
+            obj.AdvanceRequested = false;
+            obj.LastErrorMessage = '';
+            mabr.log.vprintf(1,'Resuming the schedule at run %d of %d.', ...
+                obj.Schedule.current(),obj.Schedule.NumRuns);
+            if wasError
+                obj.begin_current_run();
+            else
+                obj.after_finalize();   % advance past the halted run, or complete
+            end
+        end
     end
 
     methods (Access = private)
@@ -1141,6 +1216,7 @@ classdef AcqController < handle
             if ~isempty(obj.Schedule.Device), spec.Device = obj.Schedule.Device; end
 
             obj.SelfTestActive = true;
+            obj.LastErrorMessage = '';       % start() reads it if this fails
             n0 = obj.CompletedCount;
             obj.Engine.prep(spec);
             obj.Engine.run();
@@ -1186,13 +1262,20 @@ classdef AcqController < handle
                         if ~isempty(obj.Compute), obj.Compute.runStart(info); end
                     end
                     obj.set_state(mabr.ui.ProgState.Acquire);
+                    obj.StallHead = -1;          % the watchdog starts afresh with the run
                     % Nothing is recorded in stimulation-only mode, so there
                     % is nothing for the live timer to read out of the ring
                     % buffer; run progress comes from the state transitions.
                     if ~obj.Schedule.StimulationOnly
                         obj.start_timer();
                     end
-                % Ready / Paused / Idle need no program-state change here
+                case mabr.acq.State.Paused
+                    % Said in the main window too: with no Paused program
+                    % state the lamp stayed green "Acquiring" through a pause
+                    % and only the progress window knew. Resume reports
+                    % Acquire again, which the case above turns back.
+                    obj.set_state(mabr.ui.ProgState.Paused);
+                % Ready / Idle need no program-state change here
             end
         end
 
@@ -1260,7 +1343,7 @@ classdef AcqController < handle
             % lands (on_finalized) or the timeout fires (on_finalize_timeout).
             % The GUI stays responsive across the block boundary either way.
             % Without a worker the same work is done here, now.
-            if obj.usingWorkerDSP() && obj.Compute.finalize(obj.RunSerial,obj.CurSeq)
+            if obj.usingWorkerDSP() && obj.Compute.finalize(obj.RunSerial,obj.CurSeq,obj.CurOnsets)
                 obj.FinalizePending = true;
                 obj.FinalizeRunId   = obj.RunSerial;
                 obj.arm_finalize_timeout();
@@ -1319,14 +1402,44 @@ classdef AcqController < handle
             % pass's blocks are assembled, like any other next run.
             obj.loop_run(ctx.CurRun);
             goOn = ~obj.HaltAfterBlock && ~obj.Schedule.isComplete();
-            if goOn, obj.after_finalize(); end
+            nextErr = [];
+            if goOn
+                % Starting the next run can throw -- a run too long for the
+                % ring, a device that would not reopen -- and it used to throw
+                % straight out of here, past the assembly below, so the run
+                % just finished lost every one of its Blocks and files while
+                % the state stuck in PrepBlock. Its data are in F; they are
+                % built and saved first, and the failure raised after.
+                try
+                    obj.after_finalize();
+                catch nextErr
+                end
+            end
+            if ~isempty(F) && isfield(F,'Pairing') && F.Pairing.Method == "nearest"
+                % Said in red even though the data are now right: a pulse the
+                % plan did not render (or one it lost) is a fault in the
+                % timing path worth finding.
+                mabr.log.vprintf(0,1,['Pairing: the recording did not match the plan pulse for pulse ' ...
+                    '(%d pulses recovered, %d planned); sweeps were paired with the nearest planned ' ...
+                    'presentation -- %d paired, %d pulse(s) dropped, %d presentation(s) without a sweep.'], ...
+                    F.Pairing.NumRecovered,F.Pairing.NumPlanned,F.Pairing.NumPaired, ...
+                    F.Pairing.Dropped,F.Pairing.Unmatched);
+            end
             if ~isempty(F)
                 try
-                    [files,blocks] = obj.assemble_blocks(F,ctx);
+                    [files,blocks] = obj.assemble_blocks(F,ctx,R);
                     obj.emit_blocks(files,blocks,R);
                 catch me
-                    mabr.log.vprintf(0,1,'Finalize failed: %s',me.message);
+                    obj.LastErrorMessage = sprintf('The finished run could not be assembled: %s',me.message);
+                    mabr.log.vprintf(0,1,me);
                 end
+            end
+            if ~isempty(nextErr)
+                obj.LastErrorMessage = sprintf('The next run could not be started: %s',nextErr.message);
+                mabr.log.vprintf(0,1,nextErr);
+                obj.stop_timer();
+                obj.set_state(mabr.ui.ProgState.Error);
+                return
             end
             if ~goOn, obj.after_finalize(); end
         end
@@ -1428,7 +1541,14 @@ classdef AcqController < handle
             % halt if asked, else move the plan on to the next run or to
             % completion. Shared by every finalization path.
             if obj.HaltAfterBlock
-                obj.set_state(mabr.ui.ProgState.Idle);
+                % A halt the operator asked for rests in Idle; one a device
+                % error forced (on_engine_error) keeps the Error lamp and its
+                % reason, so the stop is not read as a quiet Abort.
+                if isempty(obj.LastErrorMessage)
+                    obj.set_state(mabr.ui.ProgState.Idle);
+                else
+                    obj.set_state(mabr.ui.ProgState.Error);
+                end
                 return
             end
 
@@ -1504,6 +1624,17 @@ classdef AcqController < handle
                 return
             end
             obj.stop_timer();
+            obj.LastErrorMessage = sprintf('%s [%s]',e.Message,e.Identifier);
+            % A device that failed mid-block ends the block early and the
+            % worker still reports it streamed (reason 'deviceError'), so the
+            % partial run is finalized and saved like a stopped one -- but the
+            % schedule must not then start the next run on a device that just
+            % failed: halt after it, in Error (after_finalize), with Resume
+            % available once the device is back.
+            if any(obj.State == [mabr.ui.ProgState.Acquire mabr.ui.ProgState.PrepBlock ...
+                                 mabr.ui.ProgState.Paused])
+                obj.HaltAfterBlock = true;
+            end
             obj.set_state(mabr.ui.ProgState.Error);
             mabr.log.vprintf(0,1,'Acquisition error [%s]: %s',e.Identifier,e.Message);
         end
@@ -1663,11 +1794,58 @@ classdef AcqController < handle
         end
 
         function aux_tick_body(obj)
+            obj.watch_worker();
             % The tally and the Run panel ride this whichever process did
             % the DSP: nothing to say until the first sweep has been counted.
             if obj.CurMetrics.numSweeps < 1, return; end
             notify(obj,'MetricsUpdated', ...
                 mabr.ui.ProgStateEventData(obj.State,obj.CurMetrics));
+        end
+
+        function watch_worker(obj)
+            % The acquisition worker's watchdog, riding the 2 Hz aux tick
+            % while a run is in flight (the compute workers have had one all
+            % along; this one had none). A worker that crashed mid-run -- an
+            % ASIO fault, an interface unplugged -- left the GUI "Acquiring"
+            % for ever, its timers spinning on a frozen ring, Abort and
+            % Advance sent to a queue nothing read, and only closing the
+            % window got out. Two signs are watched: the worker's future no
+            % longer running (Engine.isAlive), and the ring's write head not
+            % moving for StallSeconds while the state says Acquire -- the
+            % device call hung (a USB stall), so no Stop is ever read either.
+            % Paused is excluded: nothing moves then by design, and so is a
+            % stimulation-only run, which writes no ring.
+            if mabr.ui.ProgState.isTerminal(obj.State) || obj.State == mabr.ui.ProgState.Paused
+                return
+            end
+            if isempty(obj.Engine) || ~isvalid(obj.Engine), return; end
+            if ~obj.Engine.isAlive()
+                obj.fail_run(['The acquisition worker stopped; the run in flight was not ' ...
+                    'finalized or saved. Resume restarts it on a new worker after the next Start.']);
+                return
+            end
+            if obj.State ~= mabr.ui.ProgState.Acquire || obj.Schedule.StimulationOnly
+                obj.StallHead = -1;
+                return
+            end
+            h = obj.Engine.head();
+            if h ~= obj.StallHead
+                obj.StallHead  = h;
+                obj.StallClock = tic;
+            elseif toc(obj.StallClock) > obj.StallSeconds
+                obj.fail_run(sprintf(['The acquisition worker has recorded nothing for %.0f s; ' ...
+                    'the audio device has stalled (unplugged, or the driver hung). The run in ' ...
+                    'flight was not saved.'],obj.StallSeconds));
+            end
+        end
+
+        function fail_run(obj,why)
+            % End the run in flight in the Error state, with the reason the
+            % main window shows beside the red lamp (LastErrorMessage).
+            obj.stop_timer();
+            obj.LastErrorMessage = why;
+            mabr.log.vprintf(0,1,'%s',why);
+            obj.set_state(mabr.ui.ProgState.Error);
         end
 
         function build_live_snapshot(obj)
@@ -1996,10 +2174,13 @@ classdef AcqController < handle
             % the DSP worker does the same thing when there is one. The rest
             % (crediting, the Blocks, the files) is conclude_run's, whichever
             % process produced F.
-            F = obj.Pipeline.finalize(obj.Engine.RingBuffer,obj.CurSeq);
+            F = obj.Pipeline.finalize(obj.Engine.RingBuffer,obj.CurSeq,obj.CurOnsets);
         end
 
-        function [files,blocks] = assemble_blocks(obj,F,ctx)
+        function [files,blocks] = assemble_blocks(obj,F,ctx,R)
+            % R (optional): the run's alignment verdict (alignment_compute),
+            % carried on every block it produced (mabr.data.Block.Alignment).
+            if nargin < 4, R = []; end
             % Turn the pipeline's finalization output (see
             % mabr.compute.Pipeline.finalize) into Recordings, Blocks and
             % files. Nothing here filters a sample: the filtered trace arrives
@@ -2091,8 +2272,20 @@ classdef AcqController < handle
                 % with this block's stimulus so a pattern may split a
                 % session by condition.
                 if ~isempty(obj.Session.OutputPath)
-                    files{end+1} = mabr.data.io.writeABR(blk, ...
-                        obj.Session.folderFor(stimMeta.Meta),obj.Session.Subject.ID); %#ok<AGROW>
+                    % A save that fails costs that file, never the rest of the
+                    % run: the block is still added to the session and handed
+                    % to the viewers, and the failure is said in red. It used
+                    % to throw out of this loop, abandoning every block of the
+                    % run not yet written -- and the ring, the only other
+                    % copy, is reset by the run already streaming.
+                    try
+                        files{end+1} = mabr.data.io.writeABR(blk, ...
+                            obj.Session.folderFor(stimMeta.Meta),obj.Session.Subject.ID); %#ok<AGROW>
+                    catch me
+                        obj.LastErrorMessage = sprintf('NOT SAVED: %s (%s)', ...
+                            mabr.data.io.buildFilename(blk,obj.Session.Subject.ID),me.message);
+                        mabr.log.vprintf(0,1,'%s',obj.LastErrorMessage);
+                    end
                 end
                 try
                     blk = blk.computeMetrics();

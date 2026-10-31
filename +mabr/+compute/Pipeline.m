@@ -344,7 +344,7 @@ classdef Pipeline < handle
         end
 
         % --- Finalization ---------------------------------------------------
-        function F = finalize(obj,rb,seq)
+        function F = finalize(obj,rb,seq,expected)
             % The DSP half of finalizing a completed run: read the whole
             % retained block, recover the onsets, decimate to the analysis
             % rate, split by stimulus, filter, and judge each sweep. Returns
@@ -413,13 +413,20 @@ classdef Pipeline < handle
             % is 256 MB a channel as single, 512 MB as double).
             rawTiming = []; %#ok<NASGU>
             F.OnsetsAll = base + onsetsRaw(:)' - 1;   % before any trimming
+            F.Pairing   = mabr.compute.Pipeline.emptyPairing();
             if isempty(onsetsRaw), return; end
 
+            % Which planned presentation each recovered onset belongs to --
+            % by order when the recording agrees with the plan, by nearest
+            % planned onset when it does not (see pairOnsets). `expected`
+            % (optional) is the plan's onset list, mabr.stim.Schedule's
+            % ExpectedOnsets, in the ring's frame.
+            if nargin < 4, expected = []; end
             seq = double(seq(:)');
-            n   = min(numel(onsetsRaw),numel(seq));
+            [onsetsRaw,seq,F.Pairing] = mabr.compute.Pipeline.pairOnsets( ...
+                onsetsRaw(:)',F.OnsetsAll,seq,expected);
+            n = numel(onsetsRaw);
             if n < 1, return; end
-            onsetsRaw = onsetsRaw(1:n);
-            seq       = seq(1:n);
 
             % Decimate to the analysis rate at finalization so the Recording
             % (and its filter design) are self-consistent. io then saves it
@@ -740,6 +747,93 @@ classdef Pipeline < handle
         function p = emptyParts()
             p = struct('Stimulus',{},'Data',{},'Processed',{},'Onsets',{}, ...
                        'SweepLength',{},'Flags',{},'Count',{});
+        end
+
+        function P = emptyPairing()
+            P = struct('Method',"order",'NumRecovered',0,'NumPlanned',0, ...
+                       'NumPaired',0,'Dropped',0,'Unmatched',0,'Offset',0, ...
+                       'Tolerance',0);
+        end
+
+        function [onsets,seq,P] = pairOnsets(onsets,onsetsAbs,seq,expected)
+            % Which planned presentation each recovered onset belongs to.
+            %
+            %   onsets     recovered onsets, indices into the block's trace
+            %   onsetsAbs  the same onsets in the ring's absolute frame
+            %   seq        the plan's stimulus index per planned presentation
+            %   expected   the plan's onsets in the ring's frame ([] = unknown)
+            %
+            % By ORDER when the recording agrees with the plan -- the k-th
+            % pulse is the k-th presentation, the lists trimmed to the shorter
+            % (a run that ended early played fewer) -- which is the pairing
+            % everything always rested on. By NEAREST planned onset when it
+            % does not: with one spurious pulse (more recovered than planned)
+            % or one lost pulse (the offset jumping by about an interval), the
+            % order pairing put every later sweep under the wrong condition,
+            % and the per-condition files with it, while the alignment report
+            % could only say so afterwards. Here a recovered onset is given to
+            % the planned presentation nearest it once the run's constant
+            % offset (the mode of the per-onset differences, as
+            % mabr.metrics.alignment_report takes it) is removed, within half
+            % the plan's shortest interval; a pulse that matches nothing is
+            % dropped, two pulses claiming one presentation keep the nearer,
+            % and a presentation with no pulse simply has no sweep. P says
+            % which method was used and what it dropped, for the log.
+            onsets    = double(onsets(:)');
+            onsetsAbs = double(onsetsAbs(:)');
+            seq       = double(seq(:)');
+            P = mabr.compute.Pipeline.emptyPairing();
+            P.NumRecovered = numel(onsets);
+            P.NumPlanned   = numel(seq);
+            n = min(numel(onsets),numel(seq));
+            byOrder = @() deal(onsets(1:n),seq(1:n));
+            if n < 1 || isempty(expected) || numel(expected) ~= numel(seq)
+                [onsets,seq] = byOrder();
+                P.NumPaired = n;
+                return
+            end
+            expected = double(expected(:)');
+            gap = min(diff(expected));
+            if isempty(gap) || ~isfinite(gap) || gap < 2
+                [onsets,seq] = byOrder();
+                P.NumPaired = n;
+                return
+            end
+            tol = floor(gap/2);
+            d   = onsetsAbs(1:n) - expected(1:n);
+            off = mode(d);
+            P.Offset = off; P.Tolerance = tol;
+            % The order pairing stands unless something broke it: an onset
+            % beyond the plan, or an offset that moved by a presentation.
+            if numel(onsets) <= numel(seq) && all(abs(d - off) < tol)
+                [onsets,seq] = byOrder();
+                P.NumPaired = n;
+                return
+            end
+            P.Method = "nearest";
+            target = expected + off;
+            match  = zeros(1,numel(onsets));            % planned index per recovered onset
+            miss   = inf(1,numel(onsets));
+            for k = 1:numel(onsets)
+                [m,j] = min(abs(target - onsetsAbs(k)));
+                if m <= tol, match(k) = j; miss(k) = m; end
+            end
+            % Two pulses on one presentation: the nearer keeps it.
+            [u,~,g] = unique(match(match > 0));
+            for i = 1:numel(u)
+                k = find(match == u(i));
+                if numel(k) > 1
+                    [~,best] = min(miss(k));
+                    k(best) = [];
+                    match(k) = 0;
+                end
+            end
+            keep = match > 0;
+            P.Dropped   = nnz(~keep);
+            P.NumPaired = nnz(keep);
+            P.Unmatched = numel(seq) - numel(unique(match(keep)));
+            onsets = onsets(keep);
+            seq    = seq(match(keep));
         end
 
         function [data,newOnsets] = compact_sweeps(src,onsets,sweepLen)

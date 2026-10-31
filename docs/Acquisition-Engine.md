@@ -20,7 +20,11 @@ Reference for `+mabr/+acq/` — the subsystem that actually plays and records. T
    └─────────────────────┘                 └──────────────────────────┘
 ```
 
-Three files back the ring buffer, all in `.runtime_data/`: `ring_signal.dat`, `ring_timing.dat` (both `single`, `maxInputBufferLength` samples), and `ring_header.dat` (two `uint32`: write head and block sequence).
+Three files back the ring buffer, all in `.runtime_data/`: `ring_signal.dat`, `ring_timing.dat` (both `single`, `maxInputBufferLength` samples), and `ring_header.dat` (two `uint32`: write head and block sequence). The folder is `<repo>/.runtime_data` unless the preference `MABR/RuntimeDir` names another, with `<tempdir>/MABR/.runtime_data` as the fallback when the repository folder is not writable. Because the file names are fixed, only one process may stream into them at a time: `Engine.run` writes `stream.lock` with its MATLAB process id, and a Run from another live process is refused with `mabr:acq:Engine:runtimeBusy` (a lock left by a crashed process is taken over).
+
+**Worker watchdog.** The worker's exit is an event — the engine watches its parfeval future and raises `WorkerError` if the loop ends while it is not being deleted — and the controller's aux tick ends a run in `Error` when the worker is gone or the ring's write head has not moved for 3 s while acquiring (a hung device call never reads a Stop). A device call that throws mid-block ends the *block*, not the worker: what was recorded is finalized and saved, and the schedule halts in `Error` with **Resume** available once the device is back.
+
+**Pairing sweeps with presentations.** Finalization pairs the k-th recovered timing pulse with the k-th planned presentation. When that order is broken — a spurious pulse (more recovered than planned) or a lost one (the offset jumping by about an interval) — it pairs each recovered pulse with the nearest planned onset instead, within half the shortest planned interval, and logs in red what it dropped. The alignment verdict is saved with every block as `ABR_Data.Alignment`.
 
 ## Lifecycle
 
@@ -51,7 +55,7 @@ eng.kill();                           % release device, exit worker
 | `Stop` | End the current block early, return to Ready |
 | `Kill` | Release the device and terminate the worker loop |
 
-[mabr.acq.State](../+mabr/+acq/State.m) — worker to client: `Idle`, `Ready`, `Acquire`, `Paused`, `Completed`, `Error`.
+[mabr.acq.State](../+mabr/+acq/State.m) — worker to client: `Idle`, `Ready`, `Acquire`, `Paused`, `Completed`, `Error`. While paused the worker keeps feeding the device silence, so the stream stays clocked and Resume does not step the latency; the controller's program state is `Paused` too, so the main window's lamp says so.
 
 Both are enumerations sent as messages. They are never written into shared memory.
 

@@ -56,7 +56,7 @@ classdef Config
         % largest run or roster, and the number of analysis windows a
         % metrics worker serves at once. A window or a run over these is
         % refused with an error, never truncated.
-        MaxComputeSamples    (1,1) double = 2048;     % ~85 ms at 12 kHz
+        MaxComputeSamples    (1,1) double = 2048;     % [baseline;response] at 12 kHz: ~85 ms of each
         MaxComputeConditions (1,1) double = 256;
         MaxComputeJobs       (1,1) double = 8;
         % --- Timing-channel onset detection --------------------------------
@@ -182,7 +182,9 @@ classdef Config
                 missing = RT(~ok,:);
                 s = '';
                 for i = 1:size(missing,1)
-                    s = sprintf('%s\t> %s (>= v%0.1f)\n',s,missing{i,1},missing{i,2});
+                    % %g, not %0.1f: 9.11 is a minor version of 11 and printed
+                    % as "v9.1" (and 6.13 as "v6.1").
+                    s = sprintf('%s\t> %s (>= v%g)\n',s,missing{i,1},missing{i,2});
                 end
                 error('mabr:Config:missingToolboxes', ...
                     'The MABR toolbox requires the following toolboxes:\n%s',s);
@@ -197,8 +199,39 @@ classdef Config
         end
 
         function p = runtimeDir()
-            p = fullfile(mabr.Config.root,'.runtime_data');
-            if ~isfolder(p), mkdir(p); end
+            % The folder the memory-mapped ring and compute buffers live in
+            % (about 0.55 GB). The preference MABR/RuntimeDir names one
+            % explicitly -- a rig whose toolbox sits on a network share or a
+            % read-only install wants the real-time buffers on a local disk.
+            % Otherwise <root>/.runtime_data, and when that cannot be created
+            % (a read-only clone: mkdir used to throw a bare "Access is
+            % denied" out of the App constructor before anything was logged)
+            % the fallback is <tempdir>/MABR/.runtime_data, said once.
+            persistent chosen
+            if ~isempty(chosen) && isfolder(chosen), p = chosen; return; end
+            p = '';
+            try
+                pref = getpref('MABR','RuntimeDir','');
+                if ~isempty(pref), p = char(pref); end
+            catch
+            end
+            if isempty(p), p = fullfile(mabr.Config.root,'.runtime_data'); end
+            if ~isfolder(p)
+                [ok,msg] = mkdir(p);
+                if ~ok
+                    alt = fullfile(tempdir,'MABR','.runtime_data');
+                    [ok2,msg2] = mkdir(alt);
+                    if ~ok2
+                        error('mabr:Config:runtimeDir', ...
+                            ['Cannot create the runtime folder %s (%s) nor the fallback %s (%s). ' ...
+                             'Set the preference MABR/RuntimeDir to a writable folder.'],p,msg,alt,msg2);
+                    end
+                    fprintf(2,['MABR: the runtime folder %s cannot be created (%s); using %s. ' ...
+                        'Set the preference MABR/RuntimeDir to choose one.\n'],p,msg,alt);
+                    p = alt;
+                end
+            end
+            chosen = p;
         end
 
         function p = errorLogDir()

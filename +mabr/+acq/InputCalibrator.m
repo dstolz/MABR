@@ -251,11 +251,13 @@ classdef InputCalibrator < handle
         end
 
         function tf = engineHoldsDevice(obj)
-            % A schedule in flight, or the input monitor streaming.
+            % A schedule in flight, or the input monitor streaming. Any
+            % non-terminal state counts (SchedComplete and Error are as idle
+            % as Idle -- see mabr.stim.CalibrationAdapter.engineHoldsDevice).
             tf = false;
             c = obj.Controller;
             if isempty(c) || ~isvalid(c), return; end
-            tf = c.State ~= mabr.ui.ProgState.Idle;
+            tf = ~mabr.ui.ProgState.isTerminal(c.State);
             if ~tf && isprop(c,'Monitoring'), tf = c.Monitoring; end
         end
     end

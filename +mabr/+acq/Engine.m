@@ -91,6 +91,9 @@ classdef Engine < handle
         CmdQueue                 % PollableDataQueue (client -> worker)
         MsgListener
         Progress = @(~) []       % startup progress sink, fcn(char)
+        ExitWatch                % afterEach on Future: the worker's exit, as an event
+        Deleting (1,1) logical = false
+        StreamLock (1,:) char = ''   % the lock file held while a block streams
     end
 
     events
@@ -137,9 +140,21 @@ classdef Engine < handle
             mabr.log.vprintf(1,'Launching %s (testing = %d)',obj.WorkerName,obj.Testing);
             obj.Future = parfeval(obj.Pool,@mabr.acq.worker_loop,0, ...
                 mabr.Config.root,obj.ResultQueue,obj.Testing);
+            % The worker's EXIT is an event too. Nothing watched the future
+            % before: a worker that crashed mid-run (an ASIO driver fault)
+            % left the client in Acquire for ever, since isAlive was only
+            % consulted at the next Start. A Kill from delete() ends the loop
+            % on purpose and says nothing (Deleting).
+            try
+                obj.ExitWatch = afterEach(obj.Future,@(f) obj.on_future_done(f),0,'PassFuture',true);
+            catch me
+                mabr.log.vprintf(1,1,'Could not watch the worker''s future: %s',me.message);
+            end
         end
 
         function delete(obj)
+            obj.Deleting = true;
+            try, obj.releaseStreamLock(); end %#ok<TRYNC>
             try, obj.kill(); end %#ok<TRYNC>
             % Give the loop a moment to exit on its own (it polls its queue
             % every 0.1 s), so the pool's slot is free the instant this
@@ -147,7 +162,70 @@ classdef Engine < handle
             % running on it -- and cancel only what did not.
             try, wait(obj.Future,'finished',5); end %#ok<TRYNC>
             try, delete(obj.MsgListener); end %#ok<TRYNC>
+            try, cancel(obj.ExitWatch); end %#ok<TRYNC>
             try, cancel(obj.Future); end %#ok<TRYNC>
+        end
+
+        function on_future_done(obj,f)
+            % The worker's loop has ended. Expected during delete; anywhere
+            % else it is the worker dying under a client that still thinks it
+            % is streaming, which is reported exactly as a worker error so
+            % the controller ends the run (mabr.ui.AcqController.on_engine_error).
+            try
+                if ~isvalid(obj) || obj.Deleting, return; end
+                obj.releaseStreamLock();
+                if ~isempty(f.Error)
+                    msg = sprintf('The acquisition worker crashed: %s',f.Error.message);
+                else
+                    msg = 'The acquisition worker exited.';
+                end
+                mabr.log.vprintf(0,1,'%s',msg);
+                obj.State = mabr.acq.State.Error;
+                notify(obj,'WorkerError',mabr.acq.StateEventData( ...
+                    mabr.acq.State.Error,'mabr:acq:Engine:workerExited',msg));
+            catch
+            end
+        end
+
+        function acquireStreamLock(obj)
+            % The ring and compute buffers have fixed names in the runtime
+            % folder (mabr.Config.runtimeDir), so a second MABR streaming at
+            % the same time -- another MATLAB session's app, or a verification
+            % script running Engine(cfg,true) -- wrote the same files under
+            % this run: it reset the head and bumped BlockSeq, the live view
+            % started over and readBlock returned the wrong block. A lock file
+            % names the process whose block is streaming; a Run while a LIVE
+            % other process holds it is refused with the remedy, and a lock a
+            % dead process left (a crashed session) is taken over.
+            lock = fullfile(mabr.Config.runtimeDir,'stream.lock');
+            me   = feature('getpid');
+            if isfile(lock)
+                owner = [];
+                try, owner = sscanf(strtrim(fileread(lock)),'%d',1); end %#ok<TRYNC>
+                if ~isempty(owner) && owner ~= me && mabr.acq.Engine.processAlive(owner)
+                    error('mabr:acq:Engine:runtimeBusy', ...
+                        ['Another MABR (MATLAB process %d) is streaming into the runtime folder %s. ' ...
+                         'Stop that run first, or give this installation its own folder with the ' ...
+                         'preference MABR/RuntimeDir.'],owner,mabr.Config.runtimeDir);
+                end
+            end
+            fid = fopen(lock,'w');
+            if fid >= 0
+                fprintf(fid,'%d %s',me,char(datetime('now')));
+                fclose(fid);
+                obj.StreamLock = lock;
+            end
+        end
+
+        function releaseStreamLock(obj)
+            lock = obj.StreamLock;
+            obj.StreamLock = '';
+            if isempty(lock) || ~isfile(lock), return; end
+            try
+                owner = sscanf(strtrim(fileread(lock)),'%d',1);
+                if isempty(owner) || owner == feature('getpid'), delete(lock); end
+            catch
+            end
         end
 
         function n = get.WorkerName(obj)
@@ -228,7 +306,10 @@ classdef Engine < handle
             obj.send_cmd(mabr.acq.Cmd.Prep,blockSpec);
         end
 
-        function run(obj),    obj.send_cmd(mabr.acq.Cmd.Run);    end
+        function run(obj)
+            obj.acquireStreamLock();        % see there; refuses a second streamer
+            obj.send_cmd(mabr.acq.Cmd.Run);
+        end
         function pause(obj),  obj.send_cmd(mabr.acq.Cmd.Pause);  end
         function resume(obj), obj.send_cmd(mabr.acq.Cmd.Resume); end
         function stop(obj),   obj.send_cmd(mabr.acq.Cmd.Stop);   end
@@ -300,6 +381,9 @@ classdef Engine < handle
                 case 'state'
                     prev = obj.State;
                     obj.State = msg.state;
+                    if any(msg.state == [mabr.acq.State.Completed mabr.acq.State.Idle mabr.acq.State.Ready])
+                        obj.releaseStreamLock();
+                    end
                     notify(obj,'StateChanged',mabr.acq.StateEventData(msg.state));
                     if msg.state == mabr.acq.State.Completed && prev ~= mabr.acq.State.Completed
                         notify(obj,'BlockCompleted');
@@ -307,6 +391,7 @@ classdef Engine < handle
 
                 case 'error'
                     mabr.log.vprintf(0,1,'Worker error [%s]: %s',msg.identifier,msg.message);
+                    obj.releaseStreamLock();
                     obj.State = mabr.acq.State.Error;
                     notify(obj,'WorkerError',mabr.acq.StateEventData( ...
                         mabr.acq.State.Error,msg.identifier,msg.message));
@@ -356,6 +441,21 @@ classdef Engine < handle
                 pool = parpool('Processes',1);
             catch
                 pool = parpool('local',1);   % older release fallback
+            end
+        end
+
+        function tf = processAlive(pid)
+            % Whether a process with this id is running (the stream lock's
+            % owner check). Through .NET on Windows; elsewhere, or if that
+            % fails, a lock is assumed live rather than stolen.
+            tf = true;
+            try
+                if ispc
+                    System.Diagnostics.Process.GetProcessById(int32(pid));
+                    tf = true;
+                end
+            catch
+                tf = false;
             end
         end
 

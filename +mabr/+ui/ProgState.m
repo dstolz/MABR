@@ -11,6 +11,8 @@ classdef ProgState < int8
 %   BlockComplete current block finished; finalize + save
 %   AdvanceBlock  choosing the next block in the schedule
 %   SchedComplete the whole schedule finished
+%   Paused        the current block is paused on the worker (the operator's
+%                 Pause); Acquire again on Resume
 %   Error         an error occurred
 
     enumeration
@@ -20,6 +22,7 @@ classdef ProgState < int8
         BlockComplete (3)
         AdvanceBlock  (4)
         SchedComplete (5)
+        Paused        (6)
         Error         (-1)
     end
 
@@ -36,6 +39,7 @@ classdef ProgState < int8
                 case mabr.ui.ProgState.BlockComplete, rgb = [0.2 0.5 0.9];  txt = 'Block complete';
                 case mabr.ui.ProgState.AdvanceBlock,  rgb = [0.95 0.8 0.2]; txt = 'Advancing…';
                 case mabr.ui.ProgState.SchedComplete, rgb = [0.2 0.5 0.9];  txt = 'Schedule complete';
+                case mabr.ui.ProgState.Paused,        rgb = [0.95 0.6 0.1]; txt = 'Paused';
                 case mabr.ui.ProgState.Error,         rgb = [0.9 0.2 0.2];  txt = 'Error';
                 otherwise,                            rgb = [0.6 0.6 0.6];  txt = char(state);
             end
