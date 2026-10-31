@@ -193,6 +193,7 @@ classdef SeriesView < mabr.ui.analysis.View
         PkObjs = gobjects(0,1)               % ... the peak plot
         StackKey (1,1) string = ""           % what the stack's objects were built for
         ListKeys (:,1) string = strings(0,1) % series key of each list row
+        ListDecided (:,1) logical = false(0,1)   % ... and whether it has a decision (the Reviewed count)
         ListStyle (1,1) string = ""          % the list's highlight as last applied
         MatrixInfo = []                      % row -> level/key, column -> wave of the matrix
         MatrixStyle (1,1) string = ""        % the matrix's styles as last applied
@@ -230,7 +231,7 @@ classdef SeriesView < mabr.ui.analysis.View
             end
         end
 
-        function refresh(obj,what,keys) %#ok<INUSD> (keys: one series is drawn, whichever changed)
+        function refresh(obj,what,keys) % (keys: the series a curation changed; else one series is drawn, whichever changed)
             % Redraw what a Model event changed. Words this tab does not draw
             % ("message", "save", "busy", "idle", "queue", "labels",
             % "columns", "pools", "sweeps") return at once.
@@ -238,8 +239,9 @@ classdef SeriesView < mabr.ui.analysis.View
                 case {"all","rejection","detection","measures","thresholds","files"}
                     obj.renderGuarded(@() obj.renderAll());
                 case "curation"
-                    % a decision or a note: the traces and picks are as drawn
-                    obj.renderGuarded(@() obj.renderCuration());
+                    % a decision or a note: the traces and picks are as drawn,
+                    % and the series it names are the list rows that change
+                    obj.renderGuarded(@() obj.renderCuration(keys));
                 case {"series","condition"}
                     % another series is a new stack; the one already drawn
                     % (a session just opened on it, a condition of it picked
@@ -633,8 +635,8 @@ classdef SeriesView < mabr.ui.analysis.View
                 'ScaleText',gobjects(1));
             cm = uicontextmenu(fig,'Tag','AnalysisSeriesStackMenu');
             items = ["Accept fit (a)","accept"; "Threshold at this level (t)","atLevel"; ...
-                "No response (i)","noResponse"; "Exclude (x)","exclude"; ...
-                "Cycle detection override (d)","override"; "Auto-pick series (p)","autoPick"; ...
+                "No response (i)","noResponse"; "Exclude series (x)","exclude"; ...
+                "Detection verdict: cycle override (d)","override"; "Auto-pick series (p)","autoPick"; ...
                 "Re-track down (u)","retrack"; "Wave absent here (Delete)","absent"; ...
                 "Back to automatic pick (Backspace)","revert"];
             for k = 1:size(items,1)
@@ -763,19 +765,24 @@ classdef SeriesView < mabr.ui.analysis.View
                 @(~,~) obj.runId("thr.allRespond"));
             mabr.ui.analysis.Style.setButtonIcon(H.AllRespond,'enableall','left');
             H.Exclude = obj.button(r6,'Exclude (x)','AnalysisThresholdExclude', ...
-                'Exclude this series from the study (or bring it back), then say why in a note (x)', ...
+                ['Exclude SERIES: this series leaves the study tables (or comes back), then say why in a ' ...
+                'note (x; a series decision, Ctrl+Z undoes it). The session stays; to drop a whole ' ...
+                'session use Session ▸ Exclude and Hide Selected'], ...
                 @(~,~) obj.runId("thr.exclude"));
             mabr.ui.analysis.Style.setButtonIcon(H.Exclude,'exclude','left');
             H.Clear = obj.button(r6,'Clear (c)','AnalysisThresholdClear', ...
                 'Back to unreviewed: the decision is cleared (c)',@(~,~) obj.runId("thr.clear"));
             mabr.ui.analysis.Style.setButtonIcon(H.Clear,'trash','left');
             r7 = obj.rowGrid(g,7,{'fit',64,46,'1x'});
-            uilabel(r7,'Text','Value (dB)');
+            % (the unit follows the series' level axis -- dB SPL, kHz, or none
+            % -- in render: a fixed "dB" would mislabel a frequency series)
+            H.ValueLabel = uilabel(r7,'Text','Value (dB)','Tag','AnalysisThresholdValueLabel');
             H.ValueField = uieditfield(r7,'numeric','Value',0,'Tag','AnalysisThresholdValueField', ...
                 'Tooltip',['A threshold value of your own, in dB (then press Set) -- or hold Alt ' ...
                 'while dragging the green line on the stack']);
             H.SetValue = obj.button(r7,'Set','AnalysisThresholdSetValue', ...
-                'Make the value typed beside it this series'' threshold (uncensored)', ...
+                ['Make the value typed beside it this series'' threshold (uncensored). It must lie ' ...
+                'within the levels tested: above the loudest is No response, below the quietest All respond'], ...
                 @(~,~) obj.onSetValue());
             H.Note = obj.button(r7,'Note… (Ctrl+N)','AnalysisThresholdNote', ...
                 'A note on this series'' threshold (Ctrl+N)',@(~,~) obj.runId("edit.note"));
@@ -868,8 +875,9 @@ classdef SeriesView < mabr.ui.analysis.View
             mabr.ui.analysis.Style.setButtonIcon(H.Bootstrap,'raster','left');
             r5 = obj.rowGrid(g,5,{'1x',116});
             H.FitWindows = obj.button(r5,'Use current picks as wave windows','AnalysisPeaksFitWindows', ...
-                ['Make this series'' loudest-level picks the wave windows of its stimulus (project ' ...
-                'settings; other sessions become out of date)'],@(~,~) obj.Model.usePicksAsWindows());
+                ['Make this series'' loudest-level picks the wave windows of its stimulus (a PROJECT ' ...
+                'setting: other sessions become out of date, which it asks about first; Ctrl+Z puts the ' ...
+                'old windows back)'],@(~,~) obj.Model.usePicksAsWindows());
             H.Waves = obj.button(r5,'Waves…','AnalysisPeaksWaves', ...
                 'Edit the wave windows (Settings, Peaks tab)',@(~,~) obj.openSettings("Peaks"));
             mabr.ui.analysis.Style.setButtonIcon(H.Waves,'gear','left');
@@ -960,11 +968,13 @@ classdef SeriesView < mabr.ui.analysis.View
             obj.renderStack(G);
         end
 
-        function renderCuration(obj)
+        function renderCuration(obj,keys)
             % A curation (accept, a manual value, no response, exclude, a
             % note) changes the series' threshold row -- and with it the
             % list, the dividers, the threshold side and which picks are
-            % below threshold -- but no trace and no pick.
+            % below threshold -- but no trace and no pick. KEYS (the event's)
+            % name the series whose list rows change; the others keep theirs.
+            if nargin < 2, keys = strings(0,1); end
             if ~obj.geometryValid()
                 obj.renderAll();
                 return
@@ -976,7 +986,7 @@ classdef SeriesView < mabr.ui.analysis.View
             G.Row = obj.rowOf(m.Session,G.SeriesKey);
             G = obj.peakGeometry(G);
             obj.Geometry = G;
-            obj.renderList(m.seriesKeys());
+            obj.renderList(m.seriesKeys(),keys);
             obj.drawDividers(G);
             obj.renderThreshold(G);
             obj.renderPeaksSide(G);
@@ -1081,35 +1091,43 @@ classdef SeriesView < mabr.ui.analysis.View
         end
 
         % ---- the series list ---------------------------------------------
-        function renderList(obj,sks)
+        function renderList(obj,sks,only)
+            % The series list. ONLY (a curation's Keys) names the series
+            % whose rows may have changed: when the list is the one last
+            % drawn, the other rows are kept as they are (their names too --
+            % the shortened names depend on every series, and a decision
+            % changes none) and only these are worked out and written.
+            if nargin < 3, only = strings(0,1); end
             m = obj.Model;
             S = m.Session;
+            sks = reshape(sks,[],1);
             n = numel(sks);
-            C = cell(n,5);
-            nRev = 0;
-            % (names shortened for the column: the mode as ⧉, a stimulus
-            % word every series shares left out -- Style.compactSeriesLabels)
-            labs = strings(n,1);
-            for i = 1:n, labs(i) = obj.labelOf(sks(i)); end
-            labs = mabr.ui.analysis.Style.compactSeriesLabels(labs);
-            for i = 1:n
-                row = obj.rowOf(S,sks(i));
-                lab = char(labs(i));
-                if isempty(row)
-                    C(i,:) = {'',lab,'n/a','',''};
-                    continue
+            partial = ~isempty(only) && isfield(obj.Written,'list_data') && ...
+                iscell(obj.Written.list_data) && size(obj.Written.list_data,1) == n && ...
+                isequal(obj.ListKeys,sks) && numel(obj.ListDecided) == n && all(ismember(only,sks));
+            if partial
+                C = obj.Written.list_data;
+                dec = obj.ListDecided;
+                for i = reshape(find(ismember(sks,only)),1,[])
+                    [C(i,:),dec(i)] = obj.listRow(S,sks(i),C{i,2});
                 end
-                d = mabr.ui.analysis.SeriesView.asText(mabr.ui.analysis.SeriesView.field(row,'Decision',""));
-                flags = mabr.ui.analysis.SeriesView.asText(mabr.ui.analysis.SeriesView.field(row,'Flags',""));
-                if d ~= "", nRev = nRev + 1; end
-                C(i,:) = {char(mabr.ui.analysis.Style.decisionGlyph(d,flags)),lab, ...
-                    char(mabr.ui.analysis.Style.formatThreshold(row)), ...
-                    char(mabr.ui.analysis.SeriesView.fitText(row,false)), ...
-                    char(mabr.ui.analysis.SeriesView.flagCodes(flags))};
+            else
+                C = cell(n,5);
+                dec = false(n,1);
+                % (names shortened for the column: the mode as ⧉, a stimulus
+                % word every series shares left out -- Style.compactSeriesLabels)
+                labs = strings(n,1);
+                for i = 1:n, labs(i) = obj.labelOf(sks(i)); end
+                labs = mabr.ui.analysis.Style.compactSeriesLabels(labs);
+                for i = 1:n
+                    [C(i,:),dec(i)] = obj.listRow(S,sks(i),char(labs(i)));
+                end
             end
+            nRev = nnz(dec);
             H = obj.Handles;
-            obj.ListKeys = reshape(sks,[],1);
-            obj.put('list_data',H.List,'Data',C);
+            obj.ListKeys = sks;
+            obj.ListDecided = dec;
+            obj.putCells('list_data',H.List,C);
             obj.put('list_rev',H.Reviewed,'Text',sprintf('Reviewed %d/%d',nRev,n));
             k = find(sks == m.Selection.SeriesKey,1);
             if isempty(k), k = 0; end
@@ -1126,6 +1144,24 @@ classdef SeriesView < mabr.ui.analysis.View
                 end
                 obj.ListStyle = key;
             end
+        end
+
+        function [cells,decided] = listRow(obj,S,sk,lab)
+            % One row of the series list: decision glyph, name LAB, threshold,
+            % fit, flag codes; DECIDED says whether the series has a decision.
+            row = obj.rowOf(S,sk);
+            decided = false;
+            if isempty(row)
+                cells = {'',lab,'n/a','',''};
+                return
+            end
+            d = mabr.ui.analysis.SeriesView.asText(mabr.ui.analysis.SeriesView.field(row,'Decision',""));
+            flags = mabr.ui.analysis.SeriesView.asText(mabr.ui.analysis.SeriesView.field(row,'Flags',""));
+            decided = d ~= "";
+            cells = {char(mabr.ui.analysis.Style.decisionGlyph(d,flags)),lab, ...
+                char(mabr.ui.analysis.Style.formatThreshold(row)), ...
+                char(mabr.ui.analysis.SeriesView.fitText(row,false)), ...
+                char(mabr.ui.analysis.SeriesView.flagCodes(flags))};
         end
 
         % ---- the stack -----------------------------------------------------
@@ -1966,6 +2002,12 @@ classdef SeriesView < mabr.ui.analysis.View
             else
                 obj.put('thr_state',H.State,'Text','Not analysed: no threshold yet.');
             end
+            % the value field's unit is the level axis' (dB SPL, kHz, or none)
+            vu = "";  inU = "";
+            if G.Unit ~= "", vu = " (" + G.Unit + ")"; inU = ", in " + G.Unit; end
+            obj.put('thr_value_label',H.ValueLabel,'Text',char("Value" + vu));
+            obj.put('thr_value_tip',H.ValueField,'Tooltip',char("A threshold value of your own" + inU + ...
+                " (then press Set) -- or hold Alt while dragging the green line on the stack"));
             % the value field follows the series' Final -- on a new series,
             % and after a re-fit or a decision while it still holds what
             % was put there -- but never over a value the user typed
@@ -3279,8 +3321,42 @@ classdef SeriesView < mabr.ui.analysis.View
         end
 
         function onSetValue(obj)
+            % A typed threshold is stored UNCENSORED, as a level with a
+            % response, so a slip of the finger (305 for 30.5) would become
+            % a plausible-looking threshold nobody tested. A value outside
+            % the levels tested is therefore refused, and the status line
+            % (and an alert) say which button says what was meant.
             v = obj.Handles.ValueField.Value;
+            txt = obj.valueProblem(v);
+            if txt ~= ""
+                obj.status(txt,1);
+                try
+                    obj.Model.AlertFcn(txt,"Threshold value","warning");
+                catch
+                end
+                return
+            end
             obj.Model.setThresholdValue(v);
+        end
+
+        function txt = valueProblem(obj,v)
+            % Why V cannot be this series' threshold ("" when it can): it
+            % lies above the loudest level tested, which is No response, or
+            % below the quietest, which is All respond.
+            txt = "";
+            G = obj.Geometry;           % (the series as drawn: its levels and their unit)
+            if ~isstruct(G) || ~isfield(G,'Levels') || ~isfinite(v), return; end
+            lv = G.Levels(isfinite(G.Levels));
+            if isempty(lv), return; end
+            u = string(G.Unit);
+            tol = 1e-9*max(1,max(abs(lv)));
+            if v > max(lv) + tol
+                txt = mabr.ui.analysis.SeriesView.valueText(v,u) + " is above the loudest level tested (" + ...
+                    mabr.ui.analysis.SeriesView.valueText(max(lv),u) + ") — use No response (i). Nothing was set.";
+            elseif v < min(lv) - tol
+                txt = mabr.ui.analysis.SeriesView.valueText(v,u) + " is below the quietest level tested (" + ...
+                    mabr.ui.analysis.SeriesView.valueText(min(lv),u) + ") — use All respond (Alt+↓). Nothing was set.";
+            end
         end
 
         function onSuthakar(obj)
@@ -3595,6 +3671,12 @@ classdef SeriesView < mabr.ui.analysis.View
 
     % =====================================================================
     methods (Static)
+        function t = valueText(v,u)
+            % A level with its unit: "90 dB SPL", "4.5 kHz", "12" (no unit).
+            t = string(num2str(v,'%.4g'));
+            if strlength(u) > 0, t = t + " " + u; end
+        end
+
         function u = levelUnitOf(lp,S)
             % The unit of a series' level axis LP in session S: the session's
             % level reference for a sound level (Session.LevelAliases, or the

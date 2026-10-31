@@ -423,6 +423,33 @@ classdef (Abstract) View < handle
             end
         end
 
+        function putCells(obj,key,t,C)
+            % put(key,t,'Data',C), except that when the table last got as
+            % many cells as C and only a few differ from what was written,
+            % those cells are set one by one (t.Data{r,c} = v): rewriting
+            % the whole Data of a uitable sends all of it to the browser and
+            % resets its scroll position, selection and edit focus -- a
+            % table that follows one edited row should not do that.
+            key = char(key);
+            if isfield(obj.Written,key) && isequal(obj.Written.(key),C), return; end
+            if isfield(obj.Written,key) && iscell(obj.Written.(key)) && iscell(C) && ...
+                    isequal(size(obj.Written.(key)),size(C)) && ~isempty(C)
+                old = obj.Written.(key);
+                d = find(~cellfun(@isequal,old,C));
+                if numel(d) <= 12
+                    try
+                        [r,c] = ind2sub(size(C),d);
+                        for k = 1:numel(d), t.Data{r(k),c(k)} = C{r(k),c(k)}; end
+                        obj.Written.(key) = C;
+                        return
+                    catch me
+                        mabr.log.vprintf(2,'%s view: cells not patched (%s).',obj.ViewName,me.message);
+                    end
+                end
+            end
+            obj.put(key,t,'Data',C);
+        end
+
         function forgetWritten(obj,prefix)
             % Drop the Written records whose key starts with PREFIX (all of
             % them when omitted) -- after the objects they describe were
@@ -535,13 +562,25 @@ classdef (Abstract) View < handle
         end
 
         function safeRefresh(obj,what,keys)
-            % refresh, with any error logged rather than thrown into the
-            % event that triggered it.
+            % refresh, with any error kept out of the event that triggered
+            % it -- but not out of sight: it is logged AND said on the
+            % status line (a half-drawn tab with no word looks like empty
+            % data), and the view stays Dirty so that the next activation
+            % draws it all again instead of trusting what is on screen.
             try
                 obj.refresh(what,keys);
             catch me
                 mabr.log.vprintf(1,'%s view: refresh (%s) failed: %s',obj.ViewName,what,me.message);
                 mabr.log.vprintf(2,me);
+                obj.Dirty = true;
+                if obj.ViewName == "Browser", part = "The Browser"; else, part = "The " + obj.ViewName + " tab"; end
+                try
+                    if ~isempty(obj.Host) && isvalid(obj.Host)
+                        obj.Host.setStatus(part + " could not be drawn: " + string(me.message) + ...
+                            " (see log)",2);
+                    end
+                catch
+                end
             end
         end
     end

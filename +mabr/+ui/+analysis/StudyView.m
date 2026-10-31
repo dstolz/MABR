@@ -158,6 +158,8 @@ classdef StudyView < mabr.ui.analysis.View
         % landing after an edit, a label that changes nothing plotted.
         DrawnSig = struct('thresholds',[],'growth',[],'waveforms',[])
         Pass = struct()                     % one render's memo (growth data, family rows)
+        AggTimer = []                       % MABR_OfflineStudyAggregate: the debounced re-aggregation
+        AggScheduled (1,1) logical = false  % a re-aggregation waits for AggTimer
     end
 
     % =====================================================================
@@ -279,9 +281,109 @@ classdef StudyView < mabr.ui.analysis.View
                     if obj.AggPendingSave, obj.StaleData = true; end
                     obj.refreshOrMark("all",strings(0,1));
                     return
+                case "ProjectChanged"
+                    % A label typed into a cell changes a cell, not the
+                    % study: patch what shows, and aggregate again only for
+                    % a label the plots are made of (see patchLabels).
+                    if what == "labels" && obj.patchLabels(), return; end
             end
             obj.StaleData = true;
             obj.refreshOrMark(what,strings(0,1));
+        end
+
+        function done = patchLabels(obj)
+            % The Sessions table follows a label edit by changing the cells
+            % that changed -- NOT by aggregating the study and rewriting the
+            % whole table (which, with a few hundred sessions, made every
+            % keystroke in a cell a visible pause, and reset the table's
+            % scroll position and selection). The study is aggregated again
+            % only when a label its plots group by changed (Timepoint,
+            % Group, In study ...), and then after a pause: typing the
+            % timepoints of twenty sessions in a row costs one aggregate.
+            % DONE false: take the ordinary path (a session left or came
+            % back, a column the table does not know changed, no drawn data
+            % to patch, ...).
+            done = false;
+            m = obj.Model;
+            if ~(obj.IsActive && obj.Built) || isempty(obj.Data) || obj.StaleData
+                return
+            end
+            if m.Busy || m.BlindReview || isempty(m.Project) || isempty(m.Catalog), return; end
+            Vo = obj.Data.V;
+            Vn = obj.studyView();
+            if height(Vn) ~= height(Vo) || ~isequal(string(Vn.Key),string(Vo.Key)) || ...
+                    ~isequal(Vn.Properties.VariableNames,Vo.Properties.VariableNames)
+                return
+            end
+            feeds = ["InStudy","SubjectInStudy","Subject","Timepoint","Group","TimepointOrder", ...
+                "DaysFromReference","UsedInStudy"];
+            shown = [feeds "Comment" "Modified"];       % (Modified: the project row's own time stamp)
+            changed = strings(1,0);
+            for nm = string(Vn.Properties.VariableNames)
+                if ~isequaln(Vo.(nm),Vn.(nm)), changed(end+1) = nm; end %#ok<AGROW>
+            end
+            if ~all(ismember(changed,shown)), return; end
+            if any(ismember(changed,feeds))
+                % (without timers -- a test -- the plots follow at once, by
+                % the ordinary path)
+                if ~m.AutoRefresh, return; end
+                obj.Data.V = Vn;
+                obj.scheduleAggregate();
+            else
+                obj.Data.V = Vn;
+            end
+            obj.renderGuarded(@() obj.renderSessionsOnly());
+            done = true;
+        end
+
+        function renderSessionsOnly(obj)
+            % Redraw the Sessions sub-tab alone (the other sub-tabs are
+            % marked for their next showing: what they draw is made of the
+            % same labels).
+            if ~isvalid(obj) || isempty(obj.Data), return; end
+            obj.SubDirty.Thresholds = true;
+            obj.SubDirty.Growth = true;
+            obj.SubDirty.Waveforms = true;
+            if obj.ActiveSub == "Sessions"
+                obj.Pass = struct();
+                obj.renderSessions();
+                obj.SubDirty.Sessions = false;
+                obj.syncButtons();
+            else
+                obj.SubDirty.Sessions = true;
+            end
+        end
+
+        function scheduleAggregate(obj)
+            % Aggregate the study again ~0.3 s after the last label edit.
+            obj.AggScheduled = true;
+            try
+                if isempty(obj.AggTimer) || ~isvalid(obj.AggTimer)
+                    obj.AggTimer = timer('Tag','MABR_OfflineStudyAggregate','StartDelay',0.3, ...
+                        'ExecutionMode','singleShot','BusyMode','drop', ...
+                        'TimerFcn',@(~,~) obj.aggregateTick());
+                end
+                stop(obj.AggTimer);
+                start(obj.AggTimer);
+            catch me
+                % (no timer: aggregate now, as before)
+                mabr.log.vprintf(2,'Study view: no aggregate timer (%s).',me.message);
+                obj.aggregateTick();
+            end
+        end
+
+        function aggregateTick(obj)
+            if ~isvalid(obj) || ~obj.AggScheduled, return; end
+            obj.AggScheduled = false;
+            obj.StaleData = true;
+            obj.refreshOrMark("labels",strings(0,1));
+        end
+
+        function stopAggTimer(obj)
+            try
+                if ~isempty(obj.AggTimer) && isvalid(obj.AggTimer), stop(obj.AggTimer); end
+            catch
+            end
         end
 
         function s = displaySettings(obj)
@@ -405,10 +507,25 @@ classdef StudyView < mabr.ui.analysis.View
         end
 
         function flush(obj)
-            % Draw now whatever is waiting (tests call this).
+            % Draw now whatever is waiting (tests call this) -- the
+            % re-aggregation a label edit scheduled included.
+            if obj.AggScheduled
+                obj.stopAggTimer();
+                obj.StaleData = true;
+                obj.AggScheduled = false;
+                obj.Dirty = true;
+            end
             if obj.IsActive && (obj.Dirty || obj.StaleData)
                 obj.Dirty = false;
                 obj.safeRefresh("all",strings(0,1));
+            end
+        end
+
+        function delete(obj)
+            obj.stopAggTimer();
+            try
+                if ~isempty(obj.AggTimer) && isvalid(obj.AggTimer), delete(obj.AggTimer); end
+            catch
             end
         end
     end
@@ -1066,6 +1183,19 @@ classdef StudyView < mabr.ui.analysis.View
         end
 
         % ---- the data ---------------------------------------------------
+        function V = studyView(obj)
+            % The project's table of sessions as the study sees it.
+            V = obj.Model.projectView();
+            if isempty(V) || width(V) == 0
+                V = mabr.ui.analysis.StudyView.emptyView();
+            end
+            % A hidden session is not this study's (the browser's Exclude
+            % and hide): no row in the tables, nothing aggregated from it.
+            if ismember('Hidden',V.Properties.VariableNames)
+                V = V(~logical(V.Hidden),:);
+            end
+        end
+
         function ensureData(obj,needMeans)
             % Project.aggregate over every session (the Sessions table
             % reports on sessions out of the study too; the plots keep
@@ -1086,15 +1216,9 @@ classdef StudyView < mabr.ui.analysis.View
             % (anything but "saved": a conflict or a read-only store keeps
             % the open session's edits out of the files too)
             obj.AggPendingSave = m.SaveState ~= "saved";
-            V = m.projectView();
-            if isempty(V) || width(V) == 0
-                V = mabr.ui.analysis.StudyView.emptyView();
-            end
-            % A hidden session is not this study's (the browser's Exclude
-            % and hide): no row in the tables, nothing aggregated from it.
-            if ismember('Hidden',V.Properties.VariableNames)
-                V = V(~logical(V.Hidden),:);
-            end
+            obj.AggScheduled = false;
+            obj.stopAggTimer();
+            V = obj.studyView();
             A = [];
             try
                 A = m.Project.aggregate(string(V.Key),m.Catalog,Waveforms=needMeans);
@@ -1383,7 +1507,7 @@ classdef StudyView < mabr.ui.analysis.View
             obj.put('sess_names',t,'ColumnName',cellstr(names));
             obj.put('sess_fmt',t,'ColumnFormat',fmt);
             obj.put('sess_edit',t,'ColumnEditable',ed);
-            obj.put('sess_data',t,'Data',C);
+            obj.putCells('sess_data',t,C);
             obj.SessionKeys = string(V.Key(ord));
             obj.SessionCols = cols;
             % Styles: rows out of the study muted; a settings hash that is
@@ -1437,7 +1561,7 @@ classdef StudyView < mabr.ui.analysis.View
             obj.put('subj_names',u,'ColumnName',cellstr(snames));
             obj.put('subj_fmt',u,'ColumnFormat',sfmt);
             obj.put('subj_edit',u,'ColumnEditable',scols ~= "");
-            obj.put('subj_data',u,'Data',C2);
+            obj.putCells('subj_data',u,C2);
             obj.SubjectKeys = string(U.Subject);
             obj.SubjectCols = scols;
         end
@@ -1651,8 +1775,8 @@ classdef StudyView < mabr.ui.analysis.View
         function onSessionEdit(obj,evt)
             % A Sessions cell edited: Model.label (coerced; the note reaches
             % the status line through the Model's own StatusChanged).
-            obj.forgetWritten('sess_data');
             [r,c,val] = obj.editOf(evt);
+            obj.noteEdit('sess_data',r,c,val);
             if r < 1 || r > numel(obj.SessionKeys) || c < 1 || c > numel(obj.SessionCols), return; end
             name = obj.SessionCols(c);
             if name == "", return; end
@@ -1660,8 +1784,8 @@ classdef StudyView < mabr.ui.analysis.View
         end
 
         function onSubjectEdit(obj,evt)
-            obj.forgetWritten('subj_data');
             [r,c,val] = obj.editOf(evt);
+            obj.noteEdit('subj_data',r,c,val);
             if r < 1 || r > numel(obj.SubjectKeys) || c < 1 || c > numel(obj.SubjectCols), return; end
             name = obj.SubjectCols(c);
             if name == "", return; end
@@ -3872,6 +3996,20 @@ classdef StudyView < mabr.ui.analysis.View
 
         function s = numText(~,v,digits)
             if isempty(v) || ~isfinite(v), s = ''; else, s = sprintf('%.*g',digits,v); end
+        end
+
+        function noteEdit(obj,key,r,c,~)
+            % A cell was just edited, so what the table shows there is no
+            % longer what was last written: mark THAT cell as unknown (a
+            % value no cell holds), and the render this edit causes sets it
+            % -- one cell, t.Data{r,c} = v -- instead of the whole table
+            % that forgetting the record altogether would rewrite.
+            if ~isfield(obj.Written,key) || ~iscell(obj.Written.(key)) || r < 1 || c < 1 || ...
+                    r > size(obj.Written.(key),1) || c > size(obj.Written.(key),2)
+                obj.forgetWritten(key);
+                return
+            end
+            obj.Written.(key){r,c} = missing;
         end
 
         function [r,c,val] = editOf(~,evt)

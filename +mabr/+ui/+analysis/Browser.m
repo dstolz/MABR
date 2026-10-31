@@ -616,15 +616,19 @@ classdef Browser < mabr.ui.analysis.View
             mabr.ui.analysis.Style.setButtonIcon(cm,'notes','left');
             cm.Layout.Row = 4; cm.Layout.Column = 2;
             cm.ButtonPushedFcn = obj.viewWrap(@(~,~) obj.comment(),"browser");
-            br = uigridlayout(d,[1 3],'ColumnWidth',{'1x','1.6x','1x'},'Padding',[0 0 0 0], ...
+            br = uigridlayout(d,[1 3],'ColumnWidth',{'1x','2.2x','1x'},'Padding',[0 0 0 0], ...
                 'ColumnSpacing',4,'BackgroundColor',S.Panel);
             br.Layout.Row = 5; br.Layout.Column = [1 2];
             op = uibutton(br,'Text','Open','Tag','AnalysisBrowserOpen', ...
                 'Tooltip','Open the selected session (Enter or double-click).');
             mabr.ui.analysis.Style.setButtonIcon(op,'inspect','left');
             op.ButtonPushedFcn = obj.viewWrap(@(~,~) obj.openSelected(),"browser");
-            an = uibutton(br,'Text','Analyse…','Tag','AnalysisBrowserAnalyse', ...
-                'Tooltip','Analyse the selected sessions in a batch…');
+            % (four buttons say "Analyse": this one is the BATCH of the selection;
+            % the header's analyses the open session, Batch ▸ Analyse Sessions…
+            % chooses a scope, the Study tab's the rows selected there)
+            an = uibutton(br,'Text','Analyse selected (batch)…','Tag','AnalysisBrowserAnalyse', ...
+                'Tooltip',['Analyse the sessions selected here in a batch (the header''s Analyse is ' ...
+                'the open session only; Batch ▸ Analyse Sessions… chooses by scope)']);
             mabr.ui.analysis.Style.setButtonIcon(an,'batch','left');
             an.ButtonPushedFcn = obj.viewWrap(@(~,~) obj.analyseSelected(),"browser");
             pl = uibutton(br,'Text','Pool','Tag','AnalysisBrowserPool', ...
@@ -1465,7 +1469,7 @@ classdef Browser < mabr.ui.analysis.View
             on = @(tf) matlab.lang.OnOffSwitchState(tf);
             obj.put('open_on',obj.Handles.Open,'Enable',on(n >= 1 && ~busy));
             if n == 1, lab = "Analyse 1 session…"; else, lab = "Analyse " + n + " sessions…"; end
-            if n == 0, lab = "Analyse…"; end
+            if n == 0, lab = "Analyse selected (batch)…"; end
             obj.put('analyse_text',obj.Handles.Analyse,'Text',char(lab));
             obj.put('analyse_on',obj.Handles.Analyse,'Enable',on(n >= 1 && ~busy));
             obj.put('pool_on',obj.Handles.Pool,'Enable',on(numel(obj.poolableKeys()) >= 2 && ~busy));
@@ -1575,7 +1579,7 @@ classdef Browser < mabr.ui.analysis.View
             % session whose results file cannot be read, or to start over)
             it.OpenRaw = uimenu(cm,'Text','Open from raw files','Tag','AnalysisBrowserMenuOpenRaw', ...
                 'MenuSelectedFcn',obj.viewWrap(@(~,~) obj.openSelected("raw"),"browser"));
-            it.Analyse = uimenu(cm,'Text','Analyse…','Tag','AnalysisBrowserMenuAnalyse', ...
+            it.Analyse = uimenu(cm,'Text','Analyse selected (batch)…','Tag','AnalysisBrowserMenuAnalyse', ...
                 'MenuSelectedFcn',obj.viewWrap(@(~,~) obj.analyseSelected(),"browser"));
             it.Pool = uimenu(cm,'Text','Pool sweeps of selected sessions…','Tag','AnalysisBrowserMenuPool', ...
                 'MenuSelectedFcn',obj.viewWrap(@(~,~) obj.poolSelected(),"browser"));
@@ -1641,6 +1645,7 @@ classdef Browser < mabr.ui.analysis.View
             info = obj.selectedNodeInfo();
             n = numel(info.Keys);
             if n == 1, lab = "Analyse 1 session…"; else, lab = "Analyse " + n + " sessions…"; end
+            if n == 0, lab = "Analyse selected (batch)…"; end
             it.Analyse.Text = char(lab);
             on = @(tf) matlab.lang.OnOffSwitchState(tf);
             it.Open.Enable = on(n >= 1);

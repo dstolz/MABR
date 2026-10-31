@@ -17,6 +17,18 @@ classdef NoteEditor < handle
 %   way. Pressing x (exclude) opens it right after the exclusion, because an
 %   exclusion without a reason is the one a reviewer cannot judge later.
 %
+%   THE SESSION IT WAS OPENED ON. The target records the open session's key
+%   (Target.SessionKey): series keys are shared by every session of a
+%   study, so a note typed for series k of one session and committed after
+%   the person opened another would be written into series k of THAT one.
+%   The editor therefore listens to the Model: when another session is
+%   opened (or the folder changes) it closes without saving and the keys
+%   come back; and commit() refuses on its own when the open session is not
+%   the one the editor was opened on. Both say "The session changed — note
+%   not saved." on the status line -- the first also leaves it in Notice,
+%   which the app puts ahead of the "Opened ..." sentence that the opening
+%   raises right after (takeNotice), or that sentence would overwrite it.
+%
 %   Tags: AnalysisNoteEditor (the panel), AnalysisNoteEditorTitle,
 %   AnalysisNoteEditorText, AnalysisNoteEditorSave, AnalysisNoteEditorCancel.
 %
@@ -28,11 +40,13 @@ classdef NoteEditor < handle
         Model                     % mabr.ui.analysis.Model
         Host                      % mabr.ui.AnalysisApp (or [])
         Panel = []
-        Target = []               % struct Kind ("series"|"session"), Key
+        Target = []               % struct Kind ("series"|"session"), Key, SessionKey
         IsOpen (1,1) logical = false
+        Notice (1,1) string = ""  % why the editor closed itself, until takeNotice()
     end
 
     properties (Access = private)
+        Listeners = event.listener.empty   % the Model's SessionChanged / RootChanged
         Title = []
         Text  = []
         Typed = ""                % what the text area holds, as typed
@@ -93,9 +107,17 @@ classdef NoteEditor < handle
             obj.Panel = p;
             obj.Title = t;
             obj.Text  = ta;
+            % (no listener, no way to learn the person moved on: the note
+            % would stay aimed at the session it was opened on)
+            obj.Listeners = [addlistener(model,'SessionChanged',@(~,~) obj.onSessionMoved()), ...
+                addlistener(model,'RootChanged',@(~,~) obj.onSessionMoved())];
         end
 
         function delete(obj)
+            try
+                delete(obj.Listeners);
+            catch
+            end
             try
                 if ~isempty(obj.Panel) && isvalid(obj.Panel), delete(obj.Panel); end
             catch
@@ -108,6 +130,8 @@ classdef NoteEditor < handle
             if nargin < 3 || isempty(text), text = ""; end
             text = string(text);
             if ismissing(text), text = ""; end
+            % (the session the note belongs to: see the class help)
+            target.SessionKey = string(obj.Model.SessionKey);
             obj.Target = target;
             obj.Title.Text = char(obj.titleFor(target));
             obj.write(text);
@@ -123,6 +147,10 @@ classdef NoteEditor < handle
             txt = obj.read();
             target = obj.Target;
             obj.close();
+            if ~obj.onOpenSession(target)
+                obj.say(obj.sessionChangedText(),1);
+                return
+            end
             try
                 obj.Model.setNote(target,txt);
             catch me
@@ -133,6 +161,13 @@ classdef NoteEditor < handle
         function cancel(obj)
             % Close without saving.
             obj.close();
+        end
+
+        function n = takeNotice(obj)
+            % The sentence left by an editor that closed itself because the
+            % session changed ("" when there is none); read once.
+            n = obj.Notice;
+            obj.Notice = "";
         end
 
         function v = read(obj)
@@ -151,6 +186,40 @@ classdef NoteEditor < handle
     end
 
     methods (Access = private)
+        function tf = onOpenSession(obj,target)
+            % Is the Model's open session the one TARGET was opened on?
+            tf = true;
+            try
+                tf = string(obj.Model.SessionKey) == string(target.SessionKey);
+            catch
+            end
+        end
+
+        function onSessionMoved(obj)
+            % The Model opened another session, or another folder, or closed
+            % one: a note typed meanwhile belongs to the session it was
+            % opened on and must not be written into the same-keyed series
+            % of the new one. (The same session read again -- a batch
+            % re-analysing it, Load theirs -- leaves the editor alone.)
+            if ~obj.IsOpen || obj.onOpenSession(obj.Target), return; end
+            obj.close();
+            obj.Notice = obj.sessionChangedText();
+            obj.say(obj.Notice,1);
+        end
+
+        function s = sessionChangedText(~)
+            s = "The session changed — note not saved.";
+        end
+
+        function say(obj,text,level)
+            if ~isempty(obj.Host) && isvalid(obj.Host)
+                try
+                    obj.Host.setStatus(text,level);
+                catch
+                end
+            end
+        end
+
         function close(obj)
             obj.IsOpen = false;
             try

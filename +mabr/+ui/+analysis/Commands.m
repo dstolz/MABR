@@ -304,7 +304,8 @@ classdef Commands
             % (a project label, not a results edit -- so not Mutating -- and
             % undone with Ctrl+Z all the same)
             add("browser.hide","delete","","","browser","app",false, ...
-                "Exclude and hide the selected sessions (Show ▸ Hidden lists them)","hide","AnalysisMenuHide");
+                "Remove the selected sessions from the study (exclude and hide; Show ▸ Hidden lists them)", ...
+                "hide","AnalysisMenuHide");
 
             % ---- navigation ---------------------------------------------------
             add("nav.levelUp","uparrow","","",nav,"model",false,"Louder level","louder","");
@@ -325,10 +326,10 @@ classdef Commands
             add("thr.atLevel","t","","",gs,"model",true,"Threshold at selected level","at level","");
             add("thr.noResponse","i","","",gs,"model",true,"No response","no response","");
             add("thr.allRespond","downarrow","alt","",gs,"model",true,"All levels respond","all respond","");
-            add("thr.exclude","x","","",gs,"model",true,"Exclude (then note)","exclude","");
+            add("thr.exclude","x","","",gs,"model",true,"Exclude series (then note)","exclude","");
             add("thr.clear","c","","",gs,"model",true,"Clear decision","clear","");
             add("thr.override","d","","",gs,"model",true, ...
-                "Cycle detection override (auto → response → none)","override","");
+                "Detection verdict: cycle the override (auto → response → none)","override","");
 
             % ---- peaks --------------------------------------------------------
             add("peak.autoPick","p","","","series","model",true,"Auto-pick series","auto-pick","");
