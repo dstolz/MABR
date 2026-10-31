@@ -387,12 +387,21 @@ classdef SettingsDialog < handle
             end
         end
 
-        function b = onsetBiasOf(fsADC,fsDAC)
+        function b = onsetBiasOf(fsADC,fsDAC,dataVersion)
             % The onset bias of a file, ms: (1 - 1/df)/fsADC with df =
-            % round(fsDAC/fsADC) -- SweepOnsets = round(iRaw/df) puts time
+            % round(fsDAC/fsADC) -- SweepOnsets = round(iRaw/df) put time
             % zero that many ADC samples early, so latencies read long by it
             % (0.078125 ms at 192 kHz / 12 kHz). NaN when a rate is unknown.
+            %
+            % Files written at mabr.Config.DataVersion '26B' or later carry
+            % onsets on the resampled grid exactly (1 + round((iRaw-1)/df))
+            % and have no such bias: 0 for those, so the "Use it" button
+            % cannot add a correction they do not need.
             b = NaN;
+            if nargin >= 3 && strlength(string(dataVersion)) > 0 && string(dataVersion) >= "26B"
+                b = 0;
+                return
+            end
             if ~(isfinite(fsADC) && fsADC > 0 && isfinite(fsDAC) && fsDAC > 0), return; end
             df = round(fsDAC/fsADC);
             if df < 1, return; end
@@ -560,8 +569,9 @@ classdef SettingsDialog < handle
                 "A further fixed offset of the recording system, ms (e.g. the onset rounding bias below), added to the conduction delay.");
             bl = uilabel(g,'Text','','Tag','AnalysisSettingsOnsetBias', ...
                 'FontColor',mabr.ui.analysis.Style.Muted, ...
-                'Tooltip',['SweepOnsets are rounded to the ADC grid, which puts time zero (1 - 1/df) ADC ' ...
-                'samples early: latencies read long by this much.']);
+                'Tooltip',['In files written before data version 26B (October 2026) SweepOnsets were ' ...
+                'rounded (1 - 1/df) ADC samples early, so their latencies read long by this much; ' ...
+                'later files have no such bias and read 0 here.']);
             bl.Layout.Row = 17; bl.Layout.Column = [1 3];
             ub = uibutton(g,'Text','Use it','Tag','AnalysisSettingsUseOnsetBias', ...
                 'Tooltip','Copy the onset bias into the system time offset.', ...
@@ -1619,7 +1629,9 @@ classdef SettingsDialog < handle
                     p = fullfile(string(F.folder(r)),string(F.fileName(r)));
                     if ~isfile(p), continue; end
                     rec = mabr.analysis.AbrFile.read(p,'ReadTrace',false);
-                    v = mabr.ui.analysis.SettingsDialog.onsetBiasOf(rec.SampleRate,rec.DACSampleRate);
+                    dv = "";
+                    if isfield(rec,'DataVersion'), dv = rec.DataVersion; end
+                    v = mabr.ui.analysis.SettingsDialog.onsetBiasOf(rec.SampleRate,rec.DACSampleRate,dv);
                     if isfinite(v), b(end+1) = v; end %#ok<AGROW>
                     if numel(b) >= 4, break; end
                 end

@@ -58,6 +58,15 @@ classdef Block
         % also what every file from before the setting holds. Written to the
         % .abr as ADC.InputFullScale.
         InputFullScale (1,1) double = 1;
+        % The alignment verdict of the run this block came from
+        % (mabr.metrics.alignment_report's struct: Aligned, Offset, Jitter,
+        % Extra, NumExpected, NumRecovered, Summary, ...), or [] when none was
+        % computed. Carried on the block, and from there into the .abr as
+        % ABR_Data.Alignment, because a run whose sweeps were paired with the
+        % wrong presentations used to be told apart from a good one only by a
+        % status line that the next run's "Saved ..." overwrote within
+        % seconds -- offline, the file could not say it was suspect.
+        Alignment = [];
     end
 
     properties (Dependent)

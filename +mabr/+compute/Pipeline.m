@@ -418,8 +418,32 @@ classdef Pipeline < handle
             rawSignal = []; %#ok<NASGU>          % only the double copy from here
             adcData   = single(resample(x,1,df)/obj.Gain);
             x         = []; %#ok<NASGU>
-            onsets   = max(1,round(onsetsRaw(:)./df));
+            % resample keeps raw sample 1 at ADC sample 1 and puts raw sample
+            % 1 + (j-1)*df at j, so a raw onset o lands on 1 + (o-1)/df.
+            % round(o/df) put it (1 - 1/df) of an ADC sample EARLY on average
+            % -- 78 us at 192/12 kHz -- so every saved sweep began before its
+            % stimulus and every offline latency read long by that much (the
+            % analysis settings carry a "System time offset" for files written
+            % under the old rule; see mabr.ui.analysis.SettingsDialog.onsetBiasOf,
+            % which keys on the file's DataVersion).
+            onsets   = max(1,1 + round((onsetsRaw(:) - 1)./df));
             sweepLen = max(1,round(adcFs*diff(obj.FileWindow)));
+
+            % The chain runs over the continuous trace ONCE, here, and every
+            % part adopts its own slice of the result. It used to run over
+            % each intermixed part's COMPACTED trace -- its sweep windows laid
+            % end to end -- so filtfilt crossed every join and rang a step the
+            % size of the EEG jump between neighbouring windows into the first
+            % milliseconds of each sweep, where waves I and II are, while a
+            % homogeneous run was filtered whole. The artifact flags saved
+            % with an intermixed run (and its Block.Metrics) therefore did not
+            % mean what a conventional run's did. One pass is also cheaper
+            % than one per stimulus.
+            whole = mabr.data.Recording(adcFs,adcData,onsets,sweepLen,1);
+            whole.Filters = obj.Filters;
+            whole   = whole.designFilters();
+            procAll = whole.ProcessedData;
+            whole   = []; %#ok<NASGU>
 
             present = unique(seq,'stable');
             parts   = mabr.compute.Pipeline.emptyParts();
@@ -430,21 +454,24 @@ classdef Pipeline < handle
                     % Homogeneous run: the continuous trace, exactly as the
                     % one-block-per-condition path always has.
                     data = adcData;
+                    proc = procAll;
                 else
                     % Intermixed run: keep only this stimulus's sweep windows,
                     % so each .abr carries its own data instead of N copies of
                     % one shared trace. Still plain Data + SweepOnsets, so the
-                    % offline pipeline reads it unchanged.
+                    % offline pipeline reads it unchanged. The filtered trace
+                    % is cut with the same windows so the two stay aligned.
+                    proc       = mabr.compute.Pipeline.compact_sweeps(procAll,sel,sweepLen);
                     [data,sel] = mabr.compute.Pipeline.compact_sweeps(adcData,sel,sweepLen);
                 end
 
                 % The Recording carries the raw trace and the chain separately:
-                % designFilters only decides what SweepData looks like, and io
+                % withProcessed only decides what SweepData looks like, and io
                 % writes Data. So the .abr this becomes is unfiltered no matter
                 % what the operator has the filter dialog set to.
                 rec = mabr.data.Recording(adcFs,data,sel,sweepLen,1);
                 rec.Filters = obj.Filters;
-                rec = rec.designFilters();
+                rec = rec.withProcessed(proc,obj.Filters);
 
                 % Judge each sweep AFTER filtering: baseline drift in a raw
                 % trace trips a voltage threshold on its own. Rejected sweeps
@@ -454,8 +481,19 @@ classdef Pipeline < handle
                 % Mapped back through ValidSweeps so the flags stay aligned
                 % with SweepOnsets even when a truncated run left the last
                 % window short (those sweeps are absent from SweepData).
+                %
+                % The same rule as the live preview (judgeCols): with the high
+                % pass OFF nothing removes a baseline offset, so each sweep's
+                % own mean stands in for it. Judged raw here while the preview
+                % demeaned, a run on a DC offset showed 0 rejected live and
+                % then had every sweep flagged in the file -- and, with Repeat
+                % set, make-up runs appended for all of them.
+                D = double(rec.SweepData);
+                if ~obj.Filters.HighPass && ~isempty(D)
+                    D = D - mean(D,1,'omitnan');
+                end
                 flags = false(numel(sel),1);
-                flags(rec.ValidSweeps) = obj.Artifacts.detect(rec.SweepData);
+                flags(rec.ValidSweeps) = obj.Artifacts.detect(D);
 
                 parts(end+1) = struct('Stimulus',u,'Data',data, ...
                     'Processed',rec.ProcessedData,'Onsets',sel(:), ...

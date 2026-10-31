@@ -75,7 +75,14 @@ classdef Config
 
         % --- Release metadata -----------------------------------------------
         SoftwareVersion = '23A';
-        DataVersion     = '22A';                      % keep matched to the .abr struct the offline pipeline reads
+        % Written into every .abr. Bumped when the meaning of a stored field
+        % changes, so a reader can tell the eras apart: '26B' is the first
+        % whose ADC.SweepOnsets sit on the resampled grid exactly (before it
+        % they were (1 - 1/df) of a sample early; see
+        % mabr.compute.Pipeline.finalize and
+        % mabr.ui.analysis.SettingsDialog.onsetBiasOf). Readers otherwise key
+        % on field presence, so adding a field needs no bump.
+        DataVersion     = '26B';
         Author          = 'Daniel Stolzberg';
         AuthorEmail     = 'dstolz@umd.edu';
         GithubRepository = 'https://github.com/dstolz/MABR';

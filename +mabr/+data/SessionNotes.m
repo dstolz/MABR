@@ -257,16 +257,32 @@ classdef SessionNotes < handle
             try
                 d = fileparts(obj.JournalFile);
                 if ~isempty(d) && ~isfolder(d), mkdir(d); end
-                fid = fopen(obj.JournalFile,'w');
-                if fid < 0, error('cannot open %s',obj.JournalFile); end
-                c = onCleanup(@() fclose(fid));
-                subj = obj.Subject; if isempty(subj), subj = '(no subject)'; end
-                fprintf(fid,'%% MABR session notes — %s — session started %s\n', ...
-                    subj,obj.StartTime);
-                fprintf(fid,'%% Rewritten in full on every change; last written %s\n', ...
-                    char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss')));
-                lines = obj.log();
-                for k = 1:numel(lines), fprintf(fid,'%s\n',lines{k}); end
+                % Written beside the journal and renamed into place: opening
+                % the journal itself with 'w' truncated it first, so a full
+                % disk or a crash mid-write left it empty -- at exactly the
+                % moment a crash journal is wanted. UTF-8 explicitly, because
+                % a note is free text (µ, Ω, the em dash in the header) and
+                % the default encoding is the machine's.
+                tmp = [obj.JournalFile '.part'];
+                [fid,msg] = fopen(tmp,'w','n','UTF-8');
+                if fid < 0, error('cannot open %s (%s)',tmp,msg); end
+                closed = false;
+                try
+                    subj = obj.Subject; if isempty(subj), subj = '(no subject)'; end
+                    fprintf(fid,'%% MABR session notes — %s — session started %s\n', ...
+                        subj,obj.StartTime);
+                    fprintf(fid,'%% Rewritten in full on every change; last written %s\n', ...
+                        char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss')));
+                    lines = obj.log();
+                    for k = 1:numel(lines), fprintf(fid,'%s\n',lines{k}); end
+                    closed = fclose(fid) == 0;
+                    if ~closed, error('could not finish writing %s',tmp); end
+                catch inner
+                    if ~closed, try, fclose(fid); catch, end, end
+                    rethrow(inner);
+                end
+                [ok,msg] = movefile(tmp,obj.JournalFile,'f');
+                if ~ok, error('%s',msg); end
                 tf = true;
             catch me
                 mabr.log.vprintf(1,1,'Could not write the notes journal: %s',me.message);

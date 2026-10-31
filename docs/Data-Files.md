@@ -155,19 +155,28 @@ The [analysis app](Analysis-App.md) and `mabr.analysis.Batch` never write next t
 | `project.mat` | One variable, `MABRAnalysisProject`: timepoint and group labels, your own columns, pools, in-study flags, per-session overrides, the duplicate policy, and the project's analysis settings |
 | `<subject>\<session>.mat` | One session's results, as **results v2**. The variables are `Version` (= 2), `Provenance`, `Settings`, `StepState`, `StepOptions`, `Summary`, `Files`, `Conditions`, `Means`, `SweepInfo`, `Detection`, `Thresholds`, `CurationArchive`, `Peaks`, `PeakOverrides`, `ManualRejections`, `DetectionOverrides`, `Messages`, `EditLog`. They are separate, so the small ones load on their own. `Means` holds the condition averages in double precision, so a session opened from its results picks exactly the peaks its raw files give. The app and the batch write no raw sweeps (`Sweeps` only when a script asks for them): the `.abr` files stay the data. |
 | `<subject>\pooled\…mat` | the results of a pool of sessions |
+| `<session>.conflict.mat` | a batch's results for a session whose results file was changed by another MATLAB while the batch analysed it, when the changes could not be merged (the file could not be read again, or it gained manual rejections or file exclusions the batch had not analysed). The results file itself is left as the other writer saved it; the batch reports the session as `conflict`. Run the batch again to analyse the session with those edits, and delete the `.conflict.mat` |
+| `project.mat.lock\` | an empty folder that exists only while a MATLAB is saving `project.mat`, so that two saves cannot lose each other's rows. A lock older than ten seconds is taken for a crashed writer's and removed; if a save reports the project as locked and no other MATLAB is saving, delete the folder |
 | `.history\` | the previous results file of a session, kept before a re-analysis replaced it (newest three); and `<session>_unreadable_<yyMMddTHHmmss>.mat`, a results file the app could not read, copied aside before anything could overwrite it (never pruned) |
 | `logs\batch_<yyMMddTHHmmss>.csv` | one line per session per batch, written as each finishes |
 | `figures\`, `exports\<yyMMddTHHmmss>\`, `scripts\` | batch summary figures, exports (tables, the R script, the column dictionary, a replication script) and replication scripts |
 
 All of it can be regenerated from the `.abr` files and your curation. The curation itself — decisions, peak picks, manual rejections — lives only in the results files and `project.mat`, so **back the folder up with the data**. See [Files written](Analysis-App.md#files-written) for the details.
 
-Neither kind of file is overwritten unseen when it cannot be read. A session whose results file is damaged opens from its `.abr` files, and a batch analyses it afresh; either way the damaged file is kept in `.history\`. A `project.mat` that cannot be read, or that a newer MABR wrote, makes the whole store read-only until you choose another results folder.
+Neither kind of file is overwritten unseen when it cannot be read. A session whose results file is damaged opens from its `.abr` files, and a batch analyses it afresh; either way the damaged file is kept in `.history\` (as `…_unreadable_…mat`, which the pruning of the newest three never touches). A results file that another MATLAB changed while a batch was analysing its session is read again before the batch saves, and the edits it gained are adopted; one that cannot be reconciled is not overwritten (see `.conflict.mat` above). A `project.mat` that cannot be read, or that a newer MABR wrote, makes the whole store read-only until you choose another results folder.
 
 `mabr.analysis.Session.fromResults(file)` reads a results file back into a session without its sweeps, and `loadRaw()` reads the sweeps again from the `.abr` files.
 
 ## Runtime files (safe to ignore)
 
-`.runtime_data/` holds the memory-mapped streaming buffers, reused every session and not tied to any recording. `.error_logs/` holds daily text logs. Neither needs backing up; both are excluded from version control. If disk space is tight, they can be deleted while MABR is closed and will be recreated.
+`.runtime_data/` holds the memory-mapped streaming buffers, reused every session and not tied to any recording (another folder can be named with the preference `MABR/RuntimeDir`). `.error_logs/` holds daily text logs; logs older than the preference `MABR/LogRetentionDays` (default 365; 0 keeps everything) are deleted when MABR starts. Neither needs backing up; both are excluded from version control. If disk space is tight, they can be deleted while MABR is closed and will be recreated.
+
+### Fields added in October 2026
+
+- `ABR_Data.Subject` — the subject ID exactly as typed. The filename token keeps the whole alphanumeric ID (`SUBJ-ID-M12` for `M12`; earlier versions kept only the digits), and the analysis reader prefers this field over the filename.
+- `ABR_Data.Alignment` — the run's alignment verdict (`Aligned`, `Offset`, `Jitter`, `Extra`, `NumExpected`, `NumRecovered`, `Summary`, …), so a file from a run whose timing pulses did not match the plan says so.
+- `ABR_Data.DataVersion` is `'26B'` or later for files whose `ADC.SweepOnsets` sit on the resampled grid exactly; earlier files are `(1 − 1/df)` of an ADC sample early (0.078 ms at 192/12 kHz), which the analysis Settings offer as a time offset for them.
+- Files are written to a `.part` beside the final name and renamed into place, so a `.abr` either exists whole or not at all.
 
 ---
 

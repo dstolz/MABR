@@ -2055,6 +2055,7 @@ classdef AcqController < handle
                 stimMeta = struct('Meta',obj.Stimuli.meta(u), ...
                                   'SampleRate',obj.Stimuli.SampleRate);
                 blk = mabr.data.Block(stimMeta,rec,ctx.BlockStart);
+                if isstruct(R) && ~isempty(R), blk.Alignment = R; end
                 % Test Mode blocks are marked at the source. Everything
                 % downstream -- the viewers, the .abr, an analysis six months
                 % from now -- reads it off the block rather than having to
