@@ -135,9 +135,16 @@ entries = {};
 for i = 1:numel(items)
     stimObj = items(i).Stim;
 
-    assert(~stimObj.IsMultiObj,'mabr:stim:fromStimgen:multiObj', ...
-        ['Stimulus %d (%s) is a multi-object stimulus, which MABR does not yet ' ...
-         'know how to split into presentations.'],i,class(stimObj));
+    % stimgen's IsMultiObj/MultiObjects mechanism was never implemented by
+    % any class and the current submodule pin has removed the property, so
+    % reading it unconditionally made EVERY bank refuse to import. Variants
+    % are the one multiplicity stimgen has (handled below); the check is kept
+    % only for an older pin that still carries the flag.
+    if isprop(stimObj,'IsMultiObj') && stimObj.IsMultiObj
+        error('mabr:stim:fromStimgen:multiObj', ...
+            ['Stimulus %d (%s) is a multi-object stimulus, which MABR does not yet ' ...
+             'know how to split into presentations.'],i,class(stimObj));
+    end
 
     s = copy(stimObj);          % never mutate the caller's object
     s.Fs = cfg.DACSampleRate;   % regenerate natively at the DAC rate
