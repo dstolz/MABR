@@ -11,6 +11,10 @@ function plotABRThresholds(thresh_hat, freqs, options)
 %   Optional Name-Value Inputs:
 %     cm         - Colormap or color vector for plotting.
 %
+%   Needs STRUCTTOCALLERVARS (and COLORCET unless cm is given) from the author's
+%   helper_fnc repository, https://github.com/dstolz/helper_fnc; without them it stops
+%   at once with error abr_analysis:missingDependency.
+%
 
 
 arguments
@@ -18,6 +22,10 @@ arguments
     freqs (1,:) double
     options.cm = [] % Optional; default assigned in function body
 end
+
+helpers = "structToCallerVars";
+if isempty(options.cm), helpers(end+1) = "colorcet"; end
+checkABRDependencies("plotABRThresholds", helpers);
 
 structToCallerVars(options);
 

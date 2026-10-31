@@ -10,6 +10,7 @@ function [S, artInd] = rejectArtifacts(S, option)
 %   computes a per-trial feature within a response window, detects outlier
 %   trials using isoutlier with a user-selectable METHOD and parameters, and
 %   removes those trials. Logical indices of removed trials are returned.
+%   By default only the UPPER tail is rejected (see 'tail').
 %
 % Inputs
 %   S            Cell array of ABR response matrices sized [samples x trials].
@@ -25,8 +26,17 @@ function [S, artInd] = rejectArtifacts(S, option)
 %                Trial-level feature computed within the response window.
 %                Default: "absPeak".
 %
-%   'rmMethod'   "median" | "mean" | "quartiles" | "gesd" | "movmedian" | "movmean"
-%                Method passed to isoutlier. Default: "quartiles".
+%   'rmMethod'   "median" | "mean" | "quartiles" | "gesd" | "grubbs"
+%                Method passed to isoutlier. Default: "median". The moving-window
+%                methods ("movmedian", "movmean") are not supported.
+%
+%   'tail'       "upper" | "both"
+%                Which outliers are rejected. Default: "upper", so only trials whose
+%                feature is ABOVE isoutlier's upper threshold go: artifacts (movement,
+%                electrical interference) are LARGE. A two-sided test would also throw
+%                away the QUIETEST trials, which are the cleanest ones, and bias the
+%                average toward noisier sweeps. "both" restores the two-sided isoutlier
+%                result, e.g. to catch dropouts or a disconnected electrode.
 %
 %   'rmArgs'     struct. Additional name-value arguments forwarded to isoutlier.
 %                Common fields include:
@@ -57,6 +67,10 @@ function [S, artInd] = rejectArtifacts(S, option)
 %   [S, artInd] = rejectArtifacts(S,'respInd',respInd,'feature','rms', ...
 %                                 'rmMethod','gesd','rmArgs',rmArgs,'plot',true);
 %
+% Needs PARFOR_PROGRESS from the author's helper_fnc repository
+% (https://github.com/dstolz/helper_fnc), and with 'plot',true also USE_FIG_TILEDLAYOUT and
+% TITLEF from it; without them it stops at once with error abr_analysis:missingDependency.
+%
 % See also isoutlier
 
 arguments
@@ -64,6 +78,7 @@ arguments
     option.respInd (1,:) logical = []
     option.feature (1,1) string {mustBeMember(option.feature, ["rms","std","meanabs","peak2peak","posPeak","negPeak","absPeak"])} = "absPeak"
     option.rmMethod (1,1) string {mustBeMember(option.rmMethod, ["median","mean","quartiles","gesd","grubbs"])} = "median"
+    option.tail (1,1) string {mustBeMember(option.tail, ["upper","both"])} = "upper"
     option.rmArgs struct = struct()
     option.useParallel (1,1) logical = false
     option.plot (1,1) logical = false
@@ -71,11 +86,19 @@ arguments
 end
 
 if ~iscell(S)
-    [S, artInd] = rejectArtifacts({S}, option);
+    % Forward the options as name-value pairs: a struct is not accepted as a positional
+    % argument, so passing OPTION itself made the documented matrix input error out.
+    nvOpt = namedargs2cell(option);
+    [S, artInd] = rejectArtifacts({S}, nvOpt{:});
     S = S{1};
     artInd = artInd{1};
     return
 end
+
+% After the matrix branch above, so the recursive call (which has the cell) checks once.
+helpers = "parfor_progress";
+if option.plot, helpers = [helpers, "use_fig_tiledlayout", "titlef"]; end
+checkABRDependencies("rejectArtifacts", helpers);
 
 nS = numel(S);
 useParfor = option.useParallel && nS > 1;
@@ -125,6 +148,12 @@ function artInd = localReject(y, option)
         [artInd, lb, ub] = isoutlier(f, option.rmMethod, nv{:});
     end
 
+    % isoutlier is two-sided and would discard the quietest trials along with the
+    % artifacts; keep only the trials above the upper threshold unless asked for both.
+    if option.tail == "upper"
+        artInd = f > ub;
+        lb = [];
+    end
 
     if option.plot
         tl = use_fig_tiledlayout;

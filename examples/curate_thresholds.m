@@ -60,7 +60,7 @@ axFit   = subplot(1,2,1,'Parent',fig);
 axStack = subplot(1,2,2,'Parent',fig);
 
 nR   = height(s.Thresholds);
-quit = false;
+stopCurating = false;       % not "quit": that would shadow the MATLAB command
 for row = 1:nR
     Trow  = s.Thresholds(row,:);           % re-read: reflects any prior curation
     label = rowLabel(Trow,idCols);
@@ -107,7 +107,7 @@ for row = 1:nR
         case ''
             % leave uncurated
         case 'q'
-            quit = true;
+            stopCurating = true;
         case 'i'
             s.setThreshold(row,Inf);
         otherwise
@@ -119,7 +119,7 @@ for row = 1:nR
             end
     end
 
-    if quit, break; end
+    if stopCurating, break; end
 end
 
 close(fig);

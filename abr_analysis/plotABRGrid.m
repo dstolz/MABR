@@ -6,7 +6,11 @@ function axesArray = plotABRGrid(S, U, Fs, winIdx ,options)
 %
 %   Inputs:
 %       S - Cell array where each cell contains a matrix of ABR data.
-%       U
+%       U - Struct of unique stimulus values from EXTRACTABRRESPONSES. Needs a
+%           level field and a frequency field, in either of the two spellings:
+%             files from the current software: U.Level (dB SPL), U.Frequency (kHz)
+%             older files:                     U.soundLevel (dB SPL), U.frequency (Hz)
+%           The frequency axis label states whichever unit applies.
 %       winIdx - Vector of indices specifying the window of interest.
 %       Fs - Sampling frequency in Hz.
 % 
@@ -17,6 +21,10 @@ function axesArray = plotABRGrid(S, U, Fs, winIdx ,options)
 %
 %   Example:
 %       plotABRGrid(S, U, T, winIdx, Fs, true);
+%
+%   Needs STRUCTTOCALLERVARS and ERREMPTY (and COLORCET unless cm is given) from the
+%   author's helper_fnc repository, https://github.com/dstolz/helper_fnc; without them it
+%   stops at once with error abr_analysis:missingDependency.
 
 arguments
     S cell
@@ -29,8 +37,31 @@ arguments
 end
 
 
+helpers = ["structToCallerVars", "errEmpty"];
+if isempty(options.cm), helpers(end+1) = "colorcet"; end
+checkABRDependencies("plotABRGrid", helpers);
+
 structToCallerVars(options);
 
+% Files written by the current software name the parameters Level and Frequency
+% (kHz); older files use soundLevel and frequency (Hz). Accept either set, and
+% remember the frequency unit so the labels do not call kHz values "Hz".
+if isfield(U, 'Level')
+    lvlVals = U.Level;
+elseif isfield(U, 'soundLevel')
+    lvlVals = U.soundLevel;
+else
+    error('plotABRGrid:noLevel', 'U has neither a Level nor a soundLevel field.');
+end
+if isfield(U, 'Frequency')
+    freqVals = U.Frequency;
+    freqUnit = 'kHz';
+elseif isfield(U, 'frequency')
+    freqVals = U.frequency;
+    freqUnit = 'Hz';
+else
+    error('plotABRGrid:noFrequency', 'U has neither a Frequency nor a frequency field.');
+end
 
 % Convert window indices to time vector in seconds
 tvec = winIdx ./ Fs;
@@ -44,10 +75,10 @@ SM = cellfun(@(a) mean(a, 2), data, 'UniformOutput', false);
 
 % Flip the data and levels for plotting
 SM = flipud(SM);
-lvl = flipud(U.soundLevel(:));
+lvl = flipud(lvlVals(:));
 
 % Determine the number of frequencies
-numFreq = numel(U.frequency);
+numFreq = numel(freqVals);
 
 
 % Create a tiled layout
@@ -92,11 +123,12 @@ for i = 1:numel(SM)
     end
 
     if c == 1
-        ylabel(ax, sprintf('%d', lvl(r)), 'Color', [0, 0, 0]);
+        ylabel(ax, sprintf('%g', lvl(r)), 'Color', [0, 0, 0]);
     end
 
     if r == numel(lvl)
-        xlabel(ax, sprintf('%d', U.frequency(c)), 'Color', [0, 0, 0]);
+        % %g, not %d: kHz values such as 1.5 are not integers.
+        xlabel(ax, sprintf('%g', freqVals(c)), 'Color', [0, 0, 0]);
     end
 
     % Skip if data is empty
@@ -135,6 +167,6 @@ xticks(axesArray, 1000 * (tvec(1):0.002:tvec(end)));
 
 % Add overall labels and title
 ylabel(tl, 'Level (dB SPL)');
-xlabel(tl, 'Frequency (Hz)');
+xlabel(tl, sprintf('Frequency (%s)', freqUnit));
 
 end
