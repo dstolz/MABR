@@ -291,6 +291,10 @@ Logging is [granary](https://github.com/dstolz/granary), a submodule at `externa
 
 None require audio hardware; all require the Parallel Computing Toolbox. See [Testing](Testing.md).
 
+## Offline analysis classes — `+mabr/+analysis/`
+
+The class-based analysis the Analysis App is built on (`Session`, `Batch`, `Catalog`, `Project`, `Export`, `Threshold`, `SeriesThreshold`, `Peaks`, `SingleTrial`, `PermTest`, `Settings`, …) has its own reference page: [The `mabr.analysis` classes](Analysis-Classes.md). The window itself is described in [The Analysis App](Analysis-App.md).
+
 ## Offline analysis — `abr_analysis/`
 
 A **separate, function-based** pipeline, untouched by the acquisition rewrite. Listed in pipeline order. See [Offline Analysis](Offline-Analysis.md).
@@ -308,14 +312,16 @@ A **separate, function-based** pipeline, untouched by the acquisition rewrite. L
 | [`abrPermutationThreshold(S,rowVals,options,ptoptions)`](../abr_analysis/abrPermutationThreshold.m) | Per-condition detection via `permtest`, then a per-column threshold estimate (GLM by default). Returns `[thresh_hat,permResult,mdls]`. |
 | [`abrPermutationThresholdCuration(...)`](../abr_analysis/abrPermutationThresholdCuration.m) | Interactive review and manual override of estimated thresholds. |
 | [`plotABRThresholds(thresh_hat,freqs,opts)`](../abr_analysis/plotABRThresholds.m) | Audiogram of threshold against frequency. |
-| [`batchABRAnalysis(rootPth,options)`](../abr_analysis/batchABRAnalysis.m) | All-in-one driver. **Currently broken** by stale positional-argument calls and intentionally not fixed — call the functions above directly. |
-| [`SCRATCH_BatchABRanalysis.m`](../abr_analysis/SCRATCH_BatchABRanalysis.m) | Working example script to adapt. |
+| [`batchABRAnalysis(rootPth,options)`](../abr_analysis/batchABRAnalysis.m) | All-in-one driver over a root folder of sessions (repaired October 2026: real signatures, one filtering pass, a `responseWindow` of `[0 10]` ms by default, `Seed`, and sessions it cannot analyse — compact files, parameters other than Level/Frequency — skipped with a message). Returns cells per session. |
+| [`checkABRDependencies(names)`](../abr_analysis/checkABRDependencies.m) | One clear error, `abr_analysis:missingDependency`, naming a missing helper (from the author's [helper_fnc](https://github.com/dstolz/helper_fnc) repository) or toolbox; every entry point of this folder calls it first. |
+| [`SCRATCH_BatchABRanalysis.m`](../abr_analysis/SCRATCH_BatchABRanalysis.m) | The author's working script to adapt (personal paths inside). |
 
-`parfor_progress` (File Exchange) is an optional external dependency used for progress reporting.
+This folder depends on `parfor_progress`, `colorcet`, `structToCallerVars`, `errEmpty` and `mustBeAscending` from [helper_fnc](https://github.com/dstolz/helper_fnc), and on the Statistics and Machine Learning and Curve Fitting toolboxes, none of which the toolbox proper needs; `checkABRDependencies` says which one is missing.
 
 ## Other folders
 
 | Folder | Contents |
 |--------|----------|
-| [`helpers/`](../helpers/) | Small standalone utilities predating the rewrite (`Fsp`, `octaves`, `log10space`, `figxy2axisxy`, `timeout`, `seppuku`). Not part of the acquisition path. |
-| [`external/`](../external/) | Submodules — [granary](https://github.com/dstolz/granary) (logging, required) and [stimgen](https://github.com/dstolz/stimgen) (stimuli and calibration, optional) — plus platform files (`getjframe`, MinGW installer, `user32.h`). |
+| [`helpers/`](../helpers/) | Small standalone utilities predating the rewrite (`Fsp`, `octaves`, `log10space`, `figxy2axisxy`, `timeout`). Not part of the acquisition path. |
+| [`external/`](../external/) | Submodules — [granary](https://github.com/dstolz/granary) (logging, required) and [stimgen](https://github.com/dstolz/stimgen) (stimuli and calibration, optional) — plus `user32.h`, which the trace organizer's window handling reads. |
+| [`docs/legacy/`](legacy/) | The retired `abr.ControlPanel` GUI's help (`MABR_Help.json`) and manual (`MABR_Documentation.pdf`), kept for reference only. |

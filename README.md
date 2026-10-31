@@ -27,7 +27,7 @@ MABR **does** own presentation: the inter-stimulus interval, how many times each
 
 ## Requirements
 
-Windows, MATLAB R2019b or newer, and the Signal Processing, Audio, DSP System, and **Parallel Computing** toolboxes. Recording needs an ASIO audio device with two output and two input channels. See [Installation](docs/Installation.md).
+Windows, MATLAB R2021b or newer (the GUI puts a toolbar on a `uifigure`, which older releases cannot), and the Signal Processing, Audio, DSP System, and **Parallel Computing** toolboxes. Recording needs an ASIO audio device with two output and two input channels. See [Installation](docs/Installation.md).
 
 Verify a working setup with no hardware attached:
 
