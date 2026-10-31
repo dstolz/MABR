@@ -27,7 +27,18 @@ classdef Batch
 %       the previous results file is copied to <ResultsFolder>/.history
 %       (the newest three per session are kept), and the new results are
 %       written WITHOUT sweeps (the GUI reads the raw files again when it
-%       needs them).
+%       needs them). A results file that could not be read is copied to
+%       .history as <session>_unreadable_<stamp>.mat instead, which is never
+%       pruned;
+%     - the analysis takes minutes, and a second MATLAB (the analysis app, a
+%       second batch) may save curation to the same results file meanwhile,
+%       so the file's size and time are noted when it is read and compared
+%       again before it is replaced. If it changed, the file is read again
+%       and its edits adopted again before the save; if it cannot be read, or
+%       holds manual rejections or file exclusions this run did not analyse
+%       (the numbers would not follow from the edits), the results file is
+%       left alone, this run's results are written beside it as
+%       <name>.conflict.mat and the session's Status is "conflict".
 %   A failure is caught per session ("failed", with the error text, also
 %   logged through mabr.log.vprintf) and the run goes on, unless
 %   StopOnError. CancelFcn() returning true stops the run after the session
@@ -86,8 +97,10 @@ classdef Batch
             %                         per-session overrides (sessionOverrides)
             %   opts.Analyst          stamped on the sessions' edits
             %   T  (returned) table Key, Status ("ok", "ok (no thresholds)",
-            %      "skipped", "failed", "cancelled"), Seconds, Message,
-            %      ResultsFile, SettingsHash -- one row per item, in order
+            %      "skipped", "failed", "cancelled", "conflict" -- the results
+            %      file changed while the session was analysed and could not
+            %      be reconciled, see above), Seconds, Message, ResultsFile,
+            %      SettingsHash -- one row per item, in order
             arguments
                 items table
                 settings = []
@@ -148,6 +161,8 @@ classdef Batch
                 mabr.analysis.Batch.noteProject(opts.Project,key,Status(i),Message(i));
                 if Status(i) == "failed"
                     mabr.log.vprintf(1,'Batch: %s failed: %s',key,Message(i));
+                elseif Status(i) == "conflict"
+                    mabr.log.vprintf(1,'Batch: %s: %s',key,Message(i));
                 end
                 if Status(i) == "cancelled" || (Status(i) == "failed" && opts.StopOnError), break; end
             end
@@ -320,15 +335,21 @@ classdef Batch
                 % that cannot be read (a crash mid-write, a disk error) must
                 % not fail the session at every batch from now on: it is
                 % analysed afresh, the message says so, and the unreadable
-                % file is kept in .history by keepHistory below.
+                % file is kept in .history by keepHistory below (under the
+                % _unreadable_ name, so that three further batches do not
+                % prune it).
                 lost = "";
+                % The file's stamp is taken BEFORE it is read: a save landing
+                % between the two then shows as a change at the end (a
+                % harmless re-adoption), whereas the other order could miss it.
+                stamp = mabr.analysis.Batch.fileStamp(out);
                 if isfile(out)
                     try
                         R = load(char(out));
                         S.adoptEdits(R);
                     catch MEr
                         lost = "; the previous results could not be read (" + string(MEr.message) + ...
-                            "), so their edits were not carried over: analysed afresh, the old file kept in .history";
+                            "), so their edits were not carried over: analysed afresh, the old file kept in .history as _unreadable_";
                         S = mabr.analysis.Batch.newSession(paths,sargs,item,opts);   % no half-adopted edits
                     end
                 end
@@ -337,7 +358,24 @@ classdef Batch
                 nf = sum(S.Files.Include);
                 msg = sprintf('%d files, %d conditions, %d series',nf,S.NumConditions,height(S.Thresholds)) + lost;
                 S.ProgressFcn = [];
-                mabr.analysis.Batch.keepHistory(out,key,rf);
+                % The file was read minutes ago. Whatever a second MATLAB
+                % saved to it since (curation, above all) would be replaced
+                % by this run's stale copy of it, so the file is looked at
+                % again; "conflict" leaves it alone and writes this run's
+                % results beside it instead.
+                [late,note] = mabr.analysis.Batch.adoptLate(S,out,stamp);
+                msg = msg + note;
+                if late == "conflict"
+                    cf = mabr.analysis.Batch.conflictFile(out);
+                    S.saveResults(cf,IncludeSweeps=false);
+                    status = "conflict";
+                    msg = msg + "; this run's results were written to " + cf + ", the results file was left as it is";
+                    return
+                end
+                % An unreadable file is the one kept under the _unreadable_
+                % name -- unless it was replaced meanwhile by a readable one,
+                % which is an ordinary previous results file.
+                mabr.analysis.Batch.keepHistory(out,key,rf,lost ~= "" && late == "unchanged");
                 S.saveResults(out,IncludeSweeps=false);
                 if opts.SummaryFigure
                     try
@@ -528,21 +566,31 @@ classdef Batch
             end
         end
 
-        function keepHistory(out,key,rf)
+        function keepHistory(out,key,rf,unreadable)
             % The previous results file into .history, newest HistoryKeep kept.
+            %
+            % A file that could not be read is copied as
+            % <flat>_unreadable_<stamp>.mat (the naming Model.keepUnreadable
+            % uses), which the pruning pattern below does not match: it is
+            % the only copy of what a person had curated, and three further
+            % batches must not delete it.
+            if nargin < 4, unreadable = false; end
             if ~isfile(out), return; end
             if rf == "", rf = string(fileparts(char(out))); end
             hd = fullfile(char(rf),'.history');
             if ~isfolder(hd), mkdir(hd); end
             flat = mabr.analysis.Batch.flatKey(key);
             stamp = char(datetime('now'),'yyMMdd''T''HHmmss');
-            dst = fullfile(hd,[char(flat) '_' stamp '.mat']);
+            tag = '';
+            if unreadable, tag = '_unreadable'; end
+            dst = fullfile(hd,[char(flat) tag '_' stamp '.mat']);
             k = 1;
             while isfile(dst)
                 k = k + 1;
-                dst = fullfile(hd,sprintf('%s_%s_%d.mat',flat,stamp,k));
+                dst = fullfile(hd,sprintf('%s%s_%s_%d.mat',flat,tag,stamp,k));
             end
             copyfile(char(out),dst,'f');
+            if unreadable, return; end        % never pruned
             d = dir(fullfile(hd,[char(flat) '_*.mat']));
             d = d(~cellfun(@isempty,regexp({d.name},['^' regexptranslate('escape',char(flat)) ...
                 '_\d{6}T\d{6}(_\d+)?\.mat$'],'once')));
@@ -552,6 +600,107 @@ classdef Batch
             % Same-second copies: the name decides among equal times.
             for j = mabr.analysis.Batch.HistoryKeep+1:numel(d)
                 delete(fullfile(hd,d(j).name));
+            end
+        end
+
+        function s = fileStamp(f)
+            % Size and modification time of a file, [] when it is not there.
+            d = dir(char(f));
+            d = d(~[d.isdir]);
+            if isscalar(d), s = [d.bytes d.datenum]; else, s = []; end
+        end
+
+        function cf = conflictFile(out)
+            % <name>.conflict.mat beside the results file <name>.mat. Catalog
+            % and Project do not count it as a session's results.
+            [d,n] = fileparts(char(out));
+            cf = string(fullfile(d,[n '.conflict.mat']));
+        end
+
+        function [late,note] = adoptLate(S,out,stamp)
+            % Reconcile a finished analysis with a results file that may have
+            % changed since it was read.
+            %
+            %   S      the analysed session (edits adopted when it was read)
+            %   out    the results file it is about to replace
+            %   stamp  fileStamp(out) from before it was read
+            %   late   "unchanged" (the file is as it was read), "merged" (it
+            %          changed and its edits were adopted again) or
+            %          "conflict" (it changed and cannot be reconciled: the
+            %          caller must not replace it)
+            %   note   (returned) a clause for the session's message ("" when
+            %          unchanged)
+            %
+            % adoptEdits merges, newer winning, so an edit the other writer
+            % REMOVED comes back from this run's copy; that is the price of
+            % not losing the ones it added. Manual rejections and file
+            % exclusions are different: they change which sweeps the numbers
+            % are made of, and adoptEdits recomputes nothing, so a saved file
+            % would claim results that do not follow from its own edits. Those
+            % are a conflict, and the session is analysed again by the next
+            % batch.
+            late = "unchanged";  note = "";
+            if isequaln(mabr.analysis.Batch.fileStamp(out),stamp), return; end
+            pre = "; the results file was changed by another process while this ran";
+            if ~isfile(out)
+                late = "merged";
+                note = pre + " (it was removed), so there was nothing to adopt";
+                return
+            end
+            % Stamped again before the reload, and compared once more after
+            % the edits are adopted: a third writer in between is a conflict
+            % too. What remains is the few milliseconds of the move itself.
+            stamp2 = mabr.analysis.Batch.fileStamp(out);
+            try
+                R = load(char(out));
+            catch ME
+                late = "conflict";
+                note = pre + " and cannot be read now (" + string(ME.message) + ")";
+                return
+            end
+            if mabr.analysis.Batch.countsChanged(S,R)
+                late = "conflict";
+                note = pre + ", with manual rejections or file exclusions that this run did not analyse";
+                return
+            end
+            try
+                S.adoptEdits(R);
+            catch ME
+                late = "conflict";
+                note = pre + " and its edits could not be adopted (" + string(ME.message) + ")";
+                return
+            end
+            if ~isequaln(mabr.analysis.Batch.fileStamp(out),stamp2)
+                late = "conflict";
+                note = pre + " again while its edits were adopted";
+                return
+            end
+            late = "merged";
+            note = pre + ": its edits were read again and adopted before saving";
+        end
+
+        function tf = countsChanged(S,R)
+            % Whether the results struct R holds manual rejections or file
+            % exclusions other than the session S analysed with (the same
+            % reading adoptEdits makes of R: exclusions only when R lists some).
+            tf = false;
+            M = S.ManualRejections;
+            if isfield(R,'ManualRejections') && istable(R.ManualRejections) && ...
+                    all(ismember({'FileId','SweepIndex'},R.ManualRejections.Properties.VariableNames)) && ...
+                    all(ismember({'FileId','SweepIndex'},M.Properties.VariableNames))
+                k = @(T) sort(string(T.FileId) + "|" + string(T.SweepIndex));
+                if ~isequal(k(R.ManualRejections),k(M)), tf = true; return; end
+            end
+            ex = [];
+            if isfield(R,'Exclude')
+                ex = R.Exclude;
+            elseif isfield(R,'Summary') && isstruct(R.Summary) && isfield(R.Summary,'Exclude')
+                ex = R.Summary.Exclude;
+            end
+            if ~isempty(ex)
+                ex = reshape(string(ex),[],1);
+                ex = unique(ex(~ismissing(ex) & ex ~= ""),'stable');
+                if ~isempty(ex) && ~isequal(sort(ex),sort(S.Exclude)), tf = true; end
             end
         end
 

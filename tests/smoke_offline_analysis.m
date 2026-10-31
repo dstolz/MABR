@@ -21,6 +21,15 @@ function smoke_offline_analysis(root)
 %   preference the analysis window may write is put back
 %   (mabrtest.prefGuard over mabr.ui.AnalysisApp.prefKeys()).
 %
+%   THE STUDY HOLDS MORE THAN ONE ANIMAL. SUBJ-ID-1255 joined SUBJ-ID-1254
+%   on 6 October 2026, and the catalog, the project and the analysis window
+%   see the whole study. The catalog's Sessions and Files tables are
+%   therefore cut to SUBJ-ID-1254 straight after the scan, so that every
+%   key, batch item, export item and count below is that sitting's, as
+%   they were when the script was written; the other animal is only
+%   counted (step 3) and is never analysed. The scan itself, the project
+%   rows and the window's catalog still cover both -- none of it writes.
+%
 %   Steps (each prints PASS, a few print the numbers they found):
 %     1  snapshot the tree; guard the prefs
 %     2  Catalog.suggestStudyRoot(<root>/SUBJ-ID-1254) is ROOT
@@ -89,19 +98,32 @@ fprintf('  PASS 1: %d entries under the study snapshot; prefs guarded; scratch i
 
 % ---- 2. the study-folder suggestion ----------------------------------------
 sug = mabr.analysis.Catalog.suggestStudyRoot(fullfile(root,subj));
-assert(sameFolder(sug,root), ...
+% Once the study has a results store (MABR_Analysis at the root -- it has had
+% one since 6 Oct 2026), opening anything inside it files into that store, so
+% suggestStudyRoot has nothing to suggest and says "" by design.
+hasStore = isfolder(fullfile(root,"MABR_Analysis"));
+assert(sameFolder(sug,root) || (hasStore && sug == ""), ...
     'suggestStudyRoot of the subject folder gave "%s", expected the study folder "%s"',sug,root);
-fprintf('  PASS 2: opening %s suggests the study folder instead\n',subj);
+if hasStore
+    fprintf('  PASS 2: the study already has a store, so opening %s suggests nothing (by design)\n',subj);
+else
+    fprintf('  PASS 2: opening %s suggests the study folder instead\n',subj);
+end
 
 % ---- 3. the catalog --------------------------------------------------------
 t = tic;
 c = mabr.analysis.Catalog(root,'CacheFolder',cacheF,'ResultsFolder',results);
 c.scan();
-S = c.Sessions;
-F = c.Files;
 assert(sameFolder(c.AnalysisRoot,root),'AnalysisRoot is "%s", expected the study folder',c.AnalysisRoot);
-assert(height(S) == 6 && all(S.Subject == subj), ...
-    'expected 6 sessions of %s, found %d (%s)',subj,height(S),strjoin(unique(S.Subject),', '));
+% The whole study, then SUBJ-ID-1254 alone (see the header): Sessions and
+% Files are cut to it, and every later use of S, F, S.Key and their counts
+% is that animal's.
+others = unique(c.Sessions.Subject(c.Sessions.Subject ~= subj));
+S = c.Sessions(c.Sessions.Subject == subj,:);
+F = c.Files(ismember(c.Files.SessionKey,S.Key),:);
+assert(height(S) == 6, ...
+    'expected 6 sessions of %s, found %d (the study holds %s)',subj,height(S), ...
+    strjoin(unique(c.Sessions.Subject),', '));
 assert(all(startsWith(S.Key,subj + "/")),'a session key is not under %s/',subj);
 assert(height(F) == 202 && all(F.Ok), ...
     'expected 202 readable .abr files, found %d (%d unreadable)',height(F),sum(~F.Ok));
@@ -126,9 +148,11 @@ s40 = mabr.analysis.Session(S.Path(r40),'Verbose',false,'KeepTraces',false);
 short = s40.Files.fileName(s40.Files.Short);
 assert(isscalar(short) && short == f15.FileName, ...
     'Session.Files.Short should mark the 15-sweep file alone, it marks: %s',strjoin(short,', '));
-assert(c.LastScanReads == 202,'the first scan should open every file, it opened %d',c.LastScanReads);
-fprintf('  PASS 3: 6 sessions, 202 files, %s; 54 compact in 140000; %s short (%.1f s)\n', ...
-    strjoin(sort(stim),'/'),f15.FileName,toc(t));
+% (every file of the study, the other animals' too)
+assert(c.LastScanReads == height(c.Files),'the first scan should open every file (%d), it opened %d', ...
+    height(c.Files),c.LastScanReads);
+fprintf('  PASS 3: 6 sessions, 202 files of %s, %s; 54 compact in 140000; %s short; %d other session(s) in the study (%s) (%.1f s)\n', ...
+    subj,strjoin(sort(stim),'/'),f15.FileName,height(c.Sessions) - height(S),strjoin(others,', '),toc(t));
 
 % ---- 4. 140000: both acquisition modes, tones and clicks -------------------
 t = tic;
@@ -304,7 +328,10 @@ fprintf('  PASS 7: the window opened 140845, showed every tab, accepted 8 kHz an
 
 % ---- 8. the data are as they were ------------------------------------------
 after = treeSnapshot(root);
-store = after.Path(contains(after.Path,"MABR_Analysis"));
+% A store the study ALREADY had (it has had one since 6 Oct 2026) is not one
+% this run created: only what is under MABR_Analysis now and was not before
+% counts against the read-only guarantee.
+store = setdiff(after.Path(contains(after.Path,"MABR_Analysis")),before.Path);
 assert(isempty(store),'a results store appeared under the data: %s',strjoin(store,', '));
 [same,diffs] = sameSnapshot(before,after);
 assert(same,'the data tree changed:\n  %s',strjoin(diffs,newline + "  "));
