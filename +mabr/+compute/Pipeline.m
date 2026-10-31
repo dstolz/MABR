@@ -175,8 +175,16 @@ classdef Pipeline < handle
                 obj.invalidateFiltered(true);
             end
             if ~obj.Configured || ~isequal(window,obj.Window)
-                obj.Window     = window;
-                obj.restartExtraction();
+                obj.Window = window;
+                % The onsets do not depend on the window -- only which
+                % samples around each one a sweep is -- so the cursor is
+                % rewound and the sweeps read back off the ring, with the
+                % onset list kept. Starting extraction over entirely
+                % (restartExtraction) re-read and re-detected the whole block
+                % so far on the next step: a 5-minute run is a 230 MB read,
+                % about a second, in-process AND on both workers, each time
+                % the operator typed a time base.
+                obj.invalidateFiltered(true);
             end
             if ~obj.Configured || ~isequal(artifacts.toStruct(),obj.Artifacts.toStruct())
                 obj.Artifacts   = artifacts;
@@ -242,7 +250,7 @@ classdef Pipeline < handle
                 'window',obj.Window,'decimation',obj.Config.decimationFactor, ...
                 'threshold',mabr.Config.OnsetThreshold, ...
                 'shadow',mabr.Config.OnsetShadow,'rearm',mabr.Config.OnsetRearm);
-            [pre,post,~,obj.SweepState,tw] = ...
+            [pre,post,~,obj.SweepState,tw,ord] = ...
                 mabr.metrics.extract_sweeps(rb,params,obj.SweepState);
             obj.StepCount = obj.StepCount + 1;
 
@@ -271,7 +279,12 @@ classdef Pipeline < handle
                 Y = obj.filterCols(pre/obj.Gain,post/obj.Gain);
                 obj.Filt(:,cols) = Y;
                 obj.Bad(cols)    = obj.judgeCols(Y(L+1:end,:));
-                obj.Idx(cols)    = obj.stimulusAt(cols);
+                % Paired by the onset's place in the BLOCK (extract_sweeps'
+                % ordinals), not by its place among the sweeps returned: a
+                % sweep extract_sweeps skips -- its baseline before the
+                % retained ring -- would otherwise shift every later live
+                % sweep onto the wrong condition.
+                obj.Idx(cols)    = obj.stimulusAt(ord(:)');
                 obj.NumFiltered  = n0 + k;
             end
             n = obj.NumFiltered;
