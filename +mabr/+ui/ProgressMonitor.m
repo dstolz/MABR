@@ -42,9 +42,12 @@ classdef ProgressMonitor < handle
 %     what      the rig's state, which run of how many (and whether it is an
 %               artifact make-up or a repeat the user asked for), and
 %               'stimulation only' when nothing is being recorded. It reads
-%               'Paused' while the operator has paused the rig: ProgState has
-%               no such state -- a paused run is still Acquire -- so it is
-%               read off the acquisition engine's own StateChanged instead.
+%               'Paused' while the operator has paused the rig. The controller
+%               now reports ProgState.Paused too (the main window's lamp
+%               shows it), but this window folds that back into Acquire --
+%               the run is still the one in flight, and its clock needs the
+%               pause's own start and end -- and goes on reading the pause
+%               off the acquisition engine's StateChanged.
 %     this run  during a run, the condition being presented, named by the
 %               parameters the bank varies ('8 kHz, 30 dB', never a constant
 %               one), or how many are intermixed; how far through the run it
@@ -860,7 +863,11 @@ classdef ProgressMonitor < handle
         % --- Controller events -------------------------------------------------
         function onState(obj,e)
             prev = obj.StateNow;
-            s    = e.State;
+            % A pause is not a transition as far as the run is concerned: it
+            % is the same run, still acquiring, with its clock held (that is
+            % onEngineState's). Taken as one, the resume that follows it
+            % would read as a run starting and zero the run's progress.
+            s    = foldPaused(e.State);
             obj.setStateNow(s);
             if s == mabr.ui.ProgState.PrepBlock
                 % The next run's sweeps have not started arriving; anything
@@ -1013,6 +1020,7 @@ classdef ProgressMonitor < handle
 
         function setStateNow(obj,s)
             % The one place StateNow changes, so Phase cannot disagree with it.
+            s = foldPaused(s);   % a controller already paused when attached
             obj.StateNow = s;
             [rgb,txt] = mabr.ui.ProgState.appearance(s);
             obj.Phase = struct( ...
@@ -2065,6 +2073,11 @@ end
 function t = runTotal(sch)
 % Presentations the plan has credited so far -- the number a run's credit moves.
 if isempty(sch), t = 0; else, t = sum(sch.RunCounts); end
+end
+
+function s = foldPaused(s)
+% ProgState.Paused as the window has always seen it: the run still acquiring.
+if s == mabr.ui.ProgState.Paused, s = mabr.ui.ProgState.Acquire; end
 end
 
 function eng = engineOf(controller)

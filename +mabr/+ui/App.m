@@ -65,6 +65,16 @@ classdef App < handle
 %   rather than settings, so they have their own prefs and are in neither a
 %   configuration nor the last-session snapshot.
 %
+%   WHAT THE WINDOW MUST NOT LET BE MISSED sits where it cannot be: the line
+%   above the Run panel holds the rig chip (Test Mode, or device, rate, gain
+%   and an uncalibrated bank -- syncRigChip) and, after a run whose sweeps
+%   landed away from the plan, a red MISALIGNED badge that stays until the
+%   next Start (noteMisaligned); Start asks before it overlaps presentations
+%   (confirmOverlapStart); closing mid-run asks (confirmCloseDuringRun). A
+%   halted schedule -- Abort, or an error -- is taken up again by Resume
+%   rather than redone from the first run (onResume). Every question the
+%   window asks goes through askConfirm, which ConfirmFcn can stand in for.
+%
 %   The layout code lives in createComponents (treated as generated); the
 %   wiring/logic lives in the callbacks and event handlers below.
 %
@@ -232,6 +242,19 @@ classdef App < handle
         Listeners
     end
 
+    % --- Test seam ------------------------------------------------------------
+    properties (Hidden)
+        % Stand-in for the one question this window asks of its own accord --
+        % whether to close mid-run (onClose) -- so a script can answer it
+        % without a modal blocking it. A function handle taking (msg,title,
+        % options,default) and returning the option picked, the shape
+        % mabr.ui.AnalysisApp's ConfirmFcn takes. [] (the default) asks with
+        % uiconfirm, and answers "Keep recording" without asking when the
+        % window is not visible, because then there is nobody to answer.
+        % delete(app) never asks, whatever this holds.
+        ConfirmFcn = []
+    end
+
     % --- UI components ------------------------------------------------------
     properties (Access = private)
         UIFigure
@@ -377,6 +400,25 @@ classdef App < handle
         PauseButton
         StopButton
         AbortButton
+        % Takes a halted schedule up where it stopped (Abort, or an Error):
+        % the same session folder and counts, from the next run. Enabled only
+        % while AcqController.canResume says there is something to resume
+        % (syncResumeEnable), so it is dead through every ordinary schedule.
+        ResumeButton
+        % The line directly above the Run panel, in the grid's spacer row.
+        % AlignBadge (left) is the red verdict of a run whose sweeps landed
+        % away from where the plan put them, and stays until the next Start;
+        % RigChip fills the rest of the line with what the rig is set to.
+        % StripGrid is kept to open and close the badge's column.
+        StripGrid
+        AlignBadge
+        RigChip
+        % The chip's look with nothing to warn about, captured at build time
+        % for the same reason as LoopOffColor: the theme's own label colours
+        % (a uilabel's BackgroundColor may even be 'none'), put back rather
+        % than hard-coded.
+        RigChipPlainBG = []
+        RigChipPlainFG (1,3) double = [0.3 0.3 0.3]
         StateLamp
         StateLabel
         SweepLabel
@@ -416,6 +458,32 @@ classdef App < handle
         % preview or no Output folder), resolved at Start so the completion
         % message can say where the files went.
         SessionFolder (1,:) char = ''
+        % True while onStart is on the stack. Bringing the engine up blocks
+        % that callback for tens of seconds and pumps the event queue (every
+        % status line is a drawnow), so the close box can be pressed in the
+        % middle of it -- at a point where isRunning() still says no, because
+        % the controller has not left Idle. See onClose.
+        Starting (1,1) logical = false
+        % "Abort and close" was answered while Starting. Tearing the
+        % controller down underneath the onStart still using it would turn a
+        % close into a cascade of invalid-handle errors, so the close waits
+        % for onStart to return and happens then (endStart).
+        CloseWhenStarted (1,1) logical = false
+        % The runs of this schedule whose sweeps the alignment check found
+        % away from where the plan put them (NaN where the report did not say
+        % which run), and the verdict's own words for the latest. The sticky
+        % badge is drawn from these and nothing else; Start empties them.
+        MisalignedRuns (1,:) double = zeros(1,0)
+        MisalignedNote (1,:) char = ''
+        % What the settings were when the schedule now (or last) run started
+        % (resumeSignature), so Resume can tell that they have been changed
+        % since: the halted schedule goes on with the ones it started with.
+        StartSignature = []
+    end
+
+    % Text that is set in more than one place and has to read the same.
+    properties (Constant, Access = private)
+        RepsFieldTip = 'Presentations per stimulus. Sets every entry in the bank at once.';
     end
 
     methods
@@ -495,9 +563,23 @@ classdef App < handle
 
         function delete(app)
             % Whatever layout the user ended up with is the one they want back
-            % next session, so capture it before anything is torn down.
-            app.rememberViewerPositions();
-            mabr.ui.WindowPos.remember(app.UIFigure,'MABR');
+            % next session, so capture it before anything is torn down. Each
+            % write is guarded and logged, never fatal: a corrupt
+            % matlabprefs.mat makes setpref throw, and an error here used to
+            % stop delete before the controller, the worker and the figure
+            % were touched -- a window that could not be closed, still holding
+            % the device. A layout that is not remembered costs a drag next
+            % session; a window that will not close costs the rig.
+            try
+                app.rememberViewerPositions();
+            catch me
+                mabr.log.vprintf(1,'App: viewer positions not remembered (%s).',me.message);
+            end
+            try
+                mabr.ui.WindowPos.remember(app.UIFigure,'MABR');
+            catch me
+                mabr.log.vprintf(1,'App: window position not remembered (%s).',me.message);
+            end
             % ... and whatever the window was set up to run. Written here
             % rather than on every edit because a setting is only "the last
             % one used" once the session that used it is over -- and again at
@@ -821,8 +903,13 @@ classdef App < handle
             app.buildPresentationPanel(3);
             app.buildAcquisitionPanel(4);
             % Row 5 is a spacer: it absorbs spare height so the run controls
-            % stay pinned to the bottom of the window at any size.
+            % stay pinned to the bottom of the window at any size. The 16 px
+            % the window has always been taller than its panels (WindowSlack)
+            % are what it holds, which is exactly a line of small text: the
+            % rig chip and the alignment badge live there, directly above the
+            % Run panel they speak for.
             app.buildRunPanel(6);
+            app.buildRigStrip(5);
 
             app.StatusLabel = uilabel(app.Grid,'Text','Ready.','FontColor',[0.3 0.3 0.3]);
             app.StatusLabel.Layout.Row = 7; app.StatusLabel.Layout.Column = 1;
@@ -1022,7 +1109,7 @@ classdef App < handle
             r = app.Reps;
             if ~isempty(r)
                 if all(r == r(1)), parts{end+1} = sprintf('%d reps',r(1));
-                else,              parts{end+1} = 'varied reps';
+                else,              parts{end+1} = sprintf('%d–%d reps',min(r),max(r));
                 end
             end
             if app.JitterCheck.Value
@@ -1287,7 +1374,7 @@ classdef App < handle
             app.addLabel(g,'Repetitions',4,1);
             app.RepsField = uieditfield(g,'numeric','Value',512, ...
                 'Limits',[0 Inf],'RoundFractionalValues','on', ...
-                'Tooltip','Presentations per stimulus. Sets every entry in the bank at once.', ...
+                'Tooltip',mabr.ui.App.RepsFieldTip, ...
                 'ValueChangedFcn',@(~,~) app.onRepsChanged());
             app.RepsField.Layout.Row = 4; app.RepsField.Layout.Column = 2;
             app.RepsButton = uibutton(g,'Text','Per stimulus…', ...
@@ -1397,13 +1484,12 @@ classdef App < handle
                 'ItemsData',mabr.ArtifactPolicy.Modes, ...
                 'Value',app.Artifacts.Mode, ...
                 'Tooltip',['How a sweep is judged contaminated. Rejected sweeps are always ' ...
-                           'marked and saved -- never silently discarded. Adjustable while ' ...
-                           'acquiring: a change applies to every block finalized after it.'], ...
+                           'marked and saved -- never silently discarded. Thresholds are volts AT ' ...
+                           'THE ELECTRODE, after the amplifier gain set in Settings ▸ Audio Device. ' ...
+                           'Adjustable while acquiring: a change applies to every block finalized after it.'], ...
                 'ValueChangedFcn',@(~,~) app.onArtifactModeChanged());
             app.ArtifactDrop.Layout.Row = 2; app.ArtifactDrop.Layout.Column = 2;
             app.ArtifactField = uieditfield(g,'numeric','Limits',[eps Inf], ...
-                'Tooltip',['Sweeps beyond this are rejected. Each criterion keeps its own ' ...
-                           'value. Adjustable while acquiring.'], ...
                 'ValueChangedFcn',@(~,~) app.onArtifactThresholdChanged());
             app.ArtifactField.Layout.Row = 2; app.ArtifactField.Layout.Column = 3;
 
@@ -1441,14 +1527,14 @@ classdef App < handle
 
         function buildRunPanel(app,row)
             % Loop's column is fixed and narrow -- its label is one short word
-            % -- so the six other buttons keep their share of the window's
+            % -- so the seven other buttons keep their share of the window's
             % minimum width. Each button is a picture over its caption
             % (setButtonIcon): beside it, "Advance" and a 16 px icon do not
             % fit the ~60 px a column gets, and the caption stays because
             % Abort is not a button to be learnt from a pictogram alone. The
             % buttons are 42 px tall, which is what the picture and the line
             % under it take.
-            g = app.panelGrid('Run',row,{22,42},{'1x','1x','1x',48,'1x','1x','1x'});
+            g = app.panelGrid('Run',row,{22,42},{'1x','1x','1x','1x',48,'1x','1x','1x'});
             % Kept so a preview can say so in the title: it is the one caption
             % here with room for the words, and it sits directly above the
             % button that started the run.
@@ -1457,7 +1543,7 @@ classdef App < handle
             % Readout and transport share a panel: what the run is doing and
             % what you can do about it belong to the same glance.
             s = uigridlayout(g,[1 5]);
-            s.Layout.Row = 1; s.Layout.Column = [1 7];
+            s.Layout.Row = 1; s.Layout.Column = [1 8];
             % Fixed width for the state label rather than 'fit', so the sweep
             % count does not slide sideways as the state text changes length.
             s.ColumnWidth   = {18,112,'1x','fit','fit'};
@@ -1475,9 +1561,22 @@ classdef App < handle
                 'Tooltip','Sweeps rejected as artifact so far this schedule.');
 
             app.StartButton = uibutton(g,'Text','Start','BackgroundColor',[0.6 0.9 0.6], ...
-                'FontWeight','bold','ButtonPushedFcn',@(~,~) app.onStart());
+                'FontWeight','bold','ButtonPushedFcn',@(~,~) app.onStart(), ...
+                'Tooltip',['Begin a new schedule from its first run, in a session folder ' ...
+                           'of its own. After an Abort, Resume carries on the old one instead.']);
             app.StartButton.Layout.Row = 2; app.StartButton.Layout.Column = 1;
             app.setButtonIcon(app.StartButton,'play');
+            % Beside Start because it is Start's counterpart: Start builds the
+            % plan afresh with full repetitions into a new folder, Resume
+            % takes the halted one up where it stopped. Lighter green, so the
+            % pair reads as related without two equally loud buttons; dead
+            % until there is something to resume (syncResumeEnable).
+            app.ResumeButton = uibutton(g,'Text','Resume','Enable','off', ...
+                'BackgroundColor',[0.82 0.93 0.82], ...
+                'Tooltip','Continue the halted schedule from the next run, in the same session folder', ...
+                'ButtonPushedFcn',@(~,~) app.onResume());
+            app.ResumeButton.Layout.Row = 2; app.ResumeButton.Layout.Column = 2;
+            app.setButtonIcon(app.ResumeButton,'play');
             % Preview runs the identical schedule -- same stimuli, same
             % acquisition, same live view and organizer traces -- with the
             % Session's output folder left empty, so no .abr file is written.
@@ -1486,7 +1585,7 @@ classdef App < handle
             app.PreviewButton = uibutton(g,'Text','Preview','BackgroundColor',[0.85 0.9 0.98], ...
                 'Tooltip','Run the schedule exactly as Start does, but write no .abr files.', ...
                 'ButtonPushedFcn',@(~,~) app.onStart(true));
-            app.PreviewButton.Layout.Row = 2; app.PreviewButton.Layout.Column = 2;
+            app.PreviewButton.Layout.Row = 2; app.PreviewButton.Layout.Column = 3;
             app.setButtonIcon(app.PreviewButton,'preview');
             % Only meaningful once a blocked-strategy run has completed (an
             % intermixed run has no single stimulus to repeat), so it starts
@@ -1497,7 +1596,7 @@ classdef App < handle
                            'strategies only -- an intermixed run has no single ' ...
                            'stimulus to repeat.'], ...
                 'ButtonPushedFcn',@(~,~) app.onRepeat());
-            app.RepeatButton.Layout.Row = 2; app.RepeatButton.Layout.Column = 3;
+            app.RepeatButton.Layout.Row = 2; app.RepeatButton.Layout.Column = 4;
             app.setButtonIcon(app.RepeatButton,'repeat');
             % Repeat's sibling: one more run of the last condition, against
             % the same run over and over until switched off -- and, like
@@ -1516,7 +1615,7 @@ classdef App < handle
                            'stops. Conventional strategies only -- an intermixed run ' ...
                            'presents every condition at once.'], ...
                 'ValueChangedFcn',@(~,~) app.onLoopChanged());
-            app.LoopButton.Layout.Row = 2; app.LoopButton.Layout.Column = 4;
+            app.LoopButton.Layout.Row = 2; app.LoopButton.Layout.Column = 5;
             app.setButtonIcon(app.LoopButton,'loop');
             % The theme's own button colour, so switching Loop off puts back
             % what was there rather than a hard-coded grey.
@@ -1524,18 +1623,50 @@ classdef App < handle
             app.PauseButton = uibutton(g,'Text','Pause','Enable','off', ...
                 'Tooltip','Suspend playback in place, keeping the audio device open.', ...
                 'ButtonPushedFcn',@(~,~) app.onPause());
-            app.PauseButton.Layout.Row = 2; app.PauseButton.Layout.Column = 5;
+            app.PauseButton.Layout.Row = 2; app.PauseButton.Layout.Column = 6;
             app.setPauseButton(false);
             app.StopButton = uibutton(g,'Text','Advance','Enable','off', ...
                 'Tooltip','End the current run early and advance to the next.', ...
                 'ButtonPushedFcn',@(~,~) app.onStopBlock());
-            app.StopButton.Layout.Row = 2; app.StopButton.Layout.Column = 6;
+            app.StopButton.Layout.Row = 2; app.StopButton.Layout.Column = 7;
             app.setButtonIcon(app.StopButton,'advance');
             app.AbortButton = uibutton(g,'Text','Abort','Enable','off','BackgroundColor',[0.95 0.7 0.7], ...
-                'Tooltip','Abandon the whole schedule. Data already recorded is still saved.', ...
+                'Tooltip',['Finish the current run early and halt the schedule (the partial ' ...
+                           'run is saved; Resume continues it)'], ...
                 'ButtonPushedFcn',@(~,~) app.onAbort());
-            app.AbortButton.Layout.Row = 2; app.AbortButton.Layout.Column = 7;
+            app.AbortButton.Layout.Row = 2; app.AbortButton.Layout.Column = 8;
             app.setButtonIcon(app.AbortButton,'abort');
+        end
+
+        function buildRigStrip(app,row)
+            % The line above the Run panel: [badge][chip]. Two rows, the
+            % lower 16 px, so the text sits against the panel it speaks for
+            % however tall the spacer row has been stretched. The badge's
+            % column is closed (width 0) until a run is found misaligned
+            % (syncAlignBadge), leaving the whole line to the chip.
+            g = uigridlayout(app.Grid,[2 2]);
+            g.Layout.Row = row; g.Layout.Column = 1;
+            g.RowHeight     = {'1x',16};
+            g.ColumnWidth   = {0,'1x'};
+            g.Padding       = [2 0 2 0];
+            g.RowSpacing    = 0;
+            g.ColumnSpacing = 6;
+            app.StripGrid = g;
+            % White on red, bold: the one thing in this window that says the
+            % data of a finished run should not be believed, so it has to be
+            % louder than the grey text around it. Hidden, not just empty,
+            % so a closed column cannot leave a red sliver.
+            app.AlignBadge = uilabel(g,'Text','','Visible','off', ...
+                'FontSize',11,'FontWeight','bold','FontColor',[1 1 1], ...
+                'BackgroundColor',[0.78 0.12 0.12],'HorizontalAlignment','center', ...
+                'VerticalAlignment','center');
+            app.AlignBadge.Layout.Row = 2; app.AlignBadge.Layout.Column = 1;
+            app.RigChip = uilabel(g,'Text','','FontSize',11, ...
+                'VerticalAlignment','center');
+            app.RigChip.Layout.Row = 2; app.RigChip.Layout.Column = 2;
+            app.RigChipPlainBG = app.RigChip.BackgroundColor;
+            app.RigChipPlainFG = app.RigChip.FontColor;
+            app.syncRigChip();
         end
 
         function ok = setButtonIcon(~,btn,glyph,align)
@@ -1558,8 +1689,11 @@ classdef App < handle
         function setPauseButton(app,paused)
             % One button, two jobs: it suspends the run, and then it resumes
             % it, so its picture changes with its caption -- two bars to
-            % stop, the Start triangle to go on. onPause tells the two
-            % apart by the caption, which this is the only thing to write.
+            % stop, the Start triangle to go on. The caption is DERIVED from
+            % the controller's state (syncPauseButton) and never toggled by
+            % the click: a click only asks, and a pause answered by the next
+            % run (Advance while paused) used to leave "Resume" on a button
+            % whose run was not paused at all.
             if paused
                 app.PauseButton.Text = 'Resume';
                 app.PauseButton.Tooltip = 'Carry on from where playback was suspended.';
@@ -1569,6 +1703,20 @@ classdef App < handle
                 app.PauseButton.Tooltip = 'Suspend playback in place, keeping the audio device open.';
                 app.setButtonIcon(app.PauseButton,'pause');
             end
+        end
+
+        function syncPauseButton(app,state)
+            % The Pause button's caption for STATE (default: the
+            % controller's, or Idle with none): Resume while the run is
+            % paused, Pause in every other state. Called from every state
+            % change and from transport, so whatever ends a pause -- Resume,
+            % Advance, Abort, an error -- puts the caption back.
+            if nargin < 2
+                state = mabr.ui.ProgState.Idle;
+                c = app.Controller;
+                if ~isempty(c) && isvalid(c), state = c.State; end
+            end
+            app.setPauseButton(state == mabr.ui.ProgState.Paused);
         end
 
         function buildToolbar(app)
@@ -1810,7 +1958,14 @@ classdef App < handle
             items = [{v} old(~strcmp(old,v))];
             if numel(items) > 10, items = items(1:10); end
             app.showHistory(field,items,v);
-            setpref('MABR',['History_' name],items);
+            % A convenience, never a reason to refuse to start: a corrupt
+            % matlabprefs.mat makes setpref throw, and this is called from
+            % inside onStart's try, where that read as "Start failed".
+            try
+                setpref('MABR',['History_' name],items);
+            catch me
+                mabr.log.vprintf(1,'App: %s history not saved (%s).',name,me.message);
+            end
         end
 
         function forgetHistoryValue(app,field,name,what)
@@ -2384,6 +2539,7 @@ classdef App < handle
                 app.Audio = mabr.AudioSettings.fromStruct(cfg.Audio);
                 mabr.AudioSettings.savePrefs(app.Audio);
                 app.applySampleRate();
+                app.syncRigChip();
             end
 
             warn = app.applyConfigStimuli(cfg);
@@ -2645,7 +2801,7 @@ classdef App < handle
                 if ~isempty(idx), r(idx) = counts(k); end
             end
             app.Reps = r;
-            if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
+            app.syncRepsField();
         end
 
         function warn = applyConfigStimuli(app,cfg)
@@ -2718,7 +2874,7 @@ classdef App < handle
             end
             if n == 0, return; end
             app.Reps = r;
-            if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
+            app.syncRepsField();
         end
 
         function warn = applyConfigCustomStrategy(app,cfg,warn)
@@ -3074,13 +3230,14 @@ classdef App < handle
             app.Stimuli  = set;
             app.BankFile = char(file);
             app.Reps     = mabr.stim.Schedule.startingRepetitions(set);
-            if ~isempty(app.Reps), app.RepsField.Value = app.Reps(1); end
+            app.syncRepsField();
             % An open stimulus viewer shows the bank that is loaded, not the
             % one that was loaded when it was opened.
             if ~isempty(app.StimViewer) && isvalid(app.StimViewer)
                 app.StimViewer.setStimuli(set);
             end
             app.setSourceLabel();
+            app.syncRigChip();   % "bank UNCALIBRATED" follows the bank
             app.syncRecentBanks();
             app.syncDesignButton();
             app.syncOrderItems();
@@ -3512,15 +3669,47 @@ classdef App < handle
             % Hand the field's current value back to the criterion that owned
             % it BEFORE switching, so toggling voltage -> RMS -> voltage does
             % not overwrite one threshold with the other's number.
-            app.Artifacts = app.Artifacts.setThreshold(app.ArtifactField.Value/1e3);
+            if ~app.takeArtifactThreshold()
+                app.ArtifactDrop.Value = app.Artifacts.Mode;   % the mode stands too
+                return
+            end
             app.Artifacts.Mode = app.ArtifactDrop.Value;
             app.syncArtifactFields();
             app.applyArtifacts();
         end
 
         function onArtifactThresholdChanged(app)
-            app.Artifacts = app.Artifacts.setThreshold(app.ArtifactField.Value/1e3);
+            if ~app.takeArtifactThreshold(), return; end
             app.applyArtifacts();
+        end
+
+        function ok = takeArtifactThreshold(app)
+            % Move the threshold field's value (mV) into the policy, or
+            % refuse it and put the field back. A typed Inf or a value the
+            % policy will not hold used to throw out of the callback, which
+            % MATLAB reports in a dialog and leaves the field showing the
+            % rejected number; the policy stays as it was and the status
+            % line says why.
+            ok = true;
+            % With no criterion the field belongs to nobody (it is dead, and
+            % keeps whatever it last showed), so there is nothing to take.
+            if ~app.Artifacts.Enabled, return; end
+            v = app.ArtifactField.Value;
+            ok = false;
+            if ~isfinite(v) || v <= 0
+                app.syncArtifactFields();
+                app.setStatus(['Artifact threshold not changed — it must be a finite, ' ...
+                    'positive number of millivolts at the electrode.'],true,1);
+                return
+            end
+            try
+                app.Artifacts = app.Artifacts.setThreshold(v/1e3);
+                ok = true;
+            catch me
+                app.syncArtifactFields();
+                app.setStatus(['Artifact threshold not changed — ' ...
+                    strtrim(regexprep(me.message,'\s+',' '))],true,1);
+            end
         end
 
         function onArtifactRepeatChanged(app)
@@ -3557,14 +3746,20 @@ classdef App < handle
             % directions, since these controls stay live while acquiring and
             % so have to be revived after the busy lock, not just at Idle.
             p = app.Artifacts;
+            % Volts AT THE ELECTRODE, after the amplifier gain: the pipeline
+            % divides the recording by it before judging, so a threshold
+            % typed as what the converter sees would be off by the gain.
+            % Said in the caption, not only the tooltip -- 100 mV means very
+            % different things at the electrode and at the converter.
             switch p.Mode
                 case 'voltage'
-                    app.ArtifactField.ValueDisplayFormat = '± %.4g mV';
+                    app.ArtifactField.ValueDisplayFormat = '± %.4g mV at electrode';
                     app.ArtifactField.Value = 1e3*p.VoltageThreshold;
                 case 'rms'
-                    app.ArtifactField.ValueDisplayFormat = 'RMS > %.4g mV';
+                    app.ArtifactField.ValueDisplayFormat = 'RMS > %.4g mV at electrode';
                     app.ArtifactField.Value = 1e3*p.RMSThreshold;
             end
+            app.ArtifactField.Tooltip = app.artifactFieldTip();
             % Artifact rejection judges recorded sweeps, of which a
             % stimulation-only run has none: the criterion, its threshold, and
             % the make-up runs it would append all have nothing to act on.
@@ -3573,6 +3768,24 @@ classdef App < handle
             app.ArtifactField.Enable       = onOff(live && p.Enabled);
             app.ArtifactRepeatCheck.Enable = onOff(live && p.Enabled);
             app.ArtifactRepeatCheck.Value  = p.Repeat;
+        end
+
+        function s = artifactFieldTip(app)
+            % The threshold field's tooltip, with the gain it is relative to
+            % as the Audio settings stand now (syncArtifactFields runs when
+            % they change). In Test Mode there is no amplifier: the
+            % recording is the stimulus, divided by nothing.
+            if app.Audio.Testing
+                g = 'Test Mode: there is no amplifier in the path, so the gain is ×1.';
+            else
+                g = sprintf('Amplifier gain ×%s (set under Settings ▸ Audio Device (ASIO)…).', ...
+                    mabr.ui.App.gainText(app.Audio.AmplifierGain));
+            end
+            s = ['Sweeps beyond this are rejected. The threshold is in volts AT THE ' ...
+                 'ELECTRODE: the recording is divided by the amplifier gain before it is ' ...
+                 'judged, so enter what the electrode itself would show, not what reaches ' ...
+                 'the converter. ' g ' Each criterion keeps its own value. Adjustable ' ...
+                 'while acquiring.'];
         end
 
         function saveArtifactPrefs(app)
@@ -3838,6 +4051,7 @@ classdef App < handle
             % Stimulation only takes the entire Acquisition panel out of play,
             % so committing is the moment that has to be reflected.
             app.syncAcquisitionEnables();
+            app.syncRigChip();
             msg = ['Audio device: ' app.Audio.describe() '.'];
             if app.Audio.isStimulationOnly()
                 msg = [msg ' Nothing will be recorded — each run saves its ' ...
@@ -4061,7 +4275,28 @@ classdef App < handle
             % per-stimulus values set through the dialog.
             if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
             app.Reps = repmat(app.RepsField.Value,1,app.Stimuli.numStimuli);
+            app.syncRepsField();
             app.refreshPlan();
+        end
+
+        function syncRepsField(app)
+            % The shortcut field follows app.Reps. Counts that are all the same
+            % are simply shown; counts that differ cannot be (a numeric field
+            % has no blank), so it shows the first and says so -- in its
+            % tooltip, and in the Presentation panel's title (min-max) -- or
+            % it would pass for the common value, and touching it would
+            % silently overwrite every per-stimulus count (onRepsChanged).
+            r = app.Reps;
+            if isempty(r) || isempty(app.RepsField) || ~isvalid(app.RepsField), return; end
+            app.RepsField.Value = r(1);
+            if all(r == r(1))
+                app.RepsField.Tooltip = mabr.ui.App.RepsFieldTip;
+            else
+                app.RepsField.Tooltip = sprintf(['Varied: %d–%d per stimulus (this ' ...
+                    'shows the first). Typing here sets every stimulus to the ' ...
+                    'same count; use Per stimulus… to keep them different.'], ...
+                    min(r),max(r));
+            end
         end
 
         function onRepsDialog(app)
@@ -4079,9 +4314,10 @@ classdef App < handle
             figure(app.UIFigure);
             if isempty(r), return; end        % cancelled
             app.Reps = r;
-            % Keep the shortcut field honest: show the common value, or blank
-            % out to the first entry when they differ.
-            app.RepsField.Value = r(1);
+            % Keep the shortcut field honest: it shows the common value, or the
+            % first entry when they differ (a numeric field cannot be blank)
+            % with a tooltip and a panel title that say the counts vary.
+            app.syncRepsField();
             app.refreshPlan();
         end
 
@@ -4155,6 +4391,55 @@ classdef App < handle
             end
         end
 
+        function [tf,stimMs,isiMs] = overlapInfo(app)
+            % Whether the longest stimulus is longer than the SHORTEST
+            % interval that can occur, and both lengths in ms -- the question
+            % mabr.stim.Schedule.overlaps answers about the plan Start will
+            % build, asked here of the same two numbers so the label under
+            % the ISI and the prompt at Start cannot disagree, and so neither
+            % has to build a plan (which a custom strategy can refuse).
+            tf = false; stimMs = 0; isiMs = 0;
+            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
+            stimMs = 1e3*app.Stimuli.maxDuration();
+            isiMs  = 1e3*app.isiSeconds();
+            tf = stimMs > isiMs;
+        end
+
+        function w = isiWord(app)
+            % What the interval is called: under Random only its shortest
+            % draw is what has to clear the stimulus.
+            if app.JitterCheck.Value, w = 'shortest ISI'; else, w = 'ISI'; end
+        end
+
+        function p = isiPhrase(app)
+            % isiWord with its verb, for a sentence.
+            if app.JitterCheck.Value
+                p = 'the shortest ISI in the range is';
+            else
+                p = 'the ISI is';
+            end
+        end
+
+        function tf = confirmOverlapStart(app,stimMs,isiMs)
+            % Whether the operator chose to start although the presentations
+            % will overlap. The default is the safe answer, "Don't start";
+            % with the window hidden and no ConfirmFcn there is nobody to ask
+            % and Start proceeds as it always did (the Schedule logs its own
+            % red warning), which keeps every verification script unchanged.
+            msg = sprintf(['Stimuli last %s ms but %s %s ms: presentations will ' ...
+                'overlap and be summed. Start anyway?'], ...
+                mabr.ui.App.overlapMsText(stimMs,isiMs),app.isiPhrase(), ...
+                mabr.ui.App.overlapMsText(isiMs,stimMs));
+            opts = {'Start anyway','Don''t start'};
+            try
+                pick = app.askConfirm(msg,'Stimuli overlap',opts,opts{2},opts{1});
+                tf = strcmp(pick,opts{1});
+            catch me
+                mabr.log.vprintf(1,'App: overlap confirmation failed, not started (%s).',me.message);
+                tf = false;
+            end
+        end
+
         function checkOverlap(app)
             % Warn when the longest stimulus does not fit inside the ISI, so
             % the next presentation would start before this one has finished.
@@ -4162,11 +4447,13 @@ classdef App < handle
             % one unlucky draw is enough to overlap, so the bottom of the range
             % is the number that has to clear the stimulus.
             app.OverlapLabel.Text = '';
-            if isempty(app.Stimuli) || app.Stimuli.numStimuli == 0, return; end
-            stimMs = 1e3*app.Stimuli.maxDuration();
-            minMs  = 1e3*app.isiSeconds();
-            if stimMs > minMs
-                app.OverlapLabel.Text = sprintf('overlap! %.1f ms stim',stimMs);
+            [over,stimMs,minMs] = app.overlapInfo();
+            if over
+                % Both numbers, so the line says what to compare rather than
+                % that something is wrong; the same as the prompt at Start.
+                app.OverlapLabel.Text = sprintf('stimulus %s ms > %s %s ms', ...
+                    mabr.ui.App.overlapMsText(stimMs,minMs),app.isiWord(), ...
+                    mabr.ui.App.overlapMsText(minMs,stimMs));
                 if app.JitterCheck.Value
                     app.setStatus(sprintf(['Longest stimulus is %.2f ms but the shortest ' ...
                         'interval in the range is only %.2f ms — presentations will ' ...
@@ -4248,6 +4535,37 @@ classdef App < handle
                 app.setStatus('Nothing to run — every stimulus has 0 repetitions.'); return
             end
 
+            % From here until this returns a close request has to be held, not
+            % obeyed (see Starting). Cleared by onCleanup rather than at each
+            % exit so that an error nobody caught cannot leave the window
+            % believing a Start is still under way.
+            app.Starting = true;
+            cleanup = onCleanup(@() endStart(app)); %#ok<NASGU>
+
+            % A stimulus longer than the shortest interval makes presentations
+            % overlap and sum, which is almost never what a recording wants and
+            % is easy to miss: the red line under the ISI is small text and
+            % the Schedule's own warning goes to the log. So the operator is
+            % asked once, here, before anything is started, with the safe
+            % answer as the default. A preview writes nothing, so it is not
+            % asked -- the red line still says it.
+            [over,stimMs,isiMs] = app.overlapInfo();
+            if over && ~preview && ~app.confirmOverlapStart(stimMs,isiMs)
+                if app.JitterCheck.Value
+                    fix = sprintf('Raise the range minimum to %.2f ms or above',stimMs);
+                else
+                    fix = sprintf('Lower the rate to %.2f Hz or below',1e3/stimMs);
+                end
+                app.setStatus(sprintf('Not started — the stimuli last %s ms but %s %s ms. %s, then press Start again.', ...
+                    mabr.ui.App.overlapMsText(stimMs,isiMs),app.isiPhrase(), ...
+                    mabr.ui.App.overlapMsText(isiMs,stimMs),fix));
+                return
+            end
+            % Only now is a run really beginning, so only now does it answer
+            % for the last one: the MISALIGNED badge is about the data of the
+            % schedule that is over, and stays up until this moment.
+            app.clearMisaligned();
+
             % A schedule owns the device. Stopped here, before the banner and
             % the status line below are written, so the monitor's own
             % goodbye cannot overwrite them (AcqController.start would stop
@@ -4261,6 +4579,7 @@ classdef App < handle
             app.Previewing  = preview;
             app.StimOnlyRun = app.Audio.isStimulationOnly();
             app.TestRun     = app.Audio.Testing;
+            app.syncRigChip();     % what this run is about to be recorded on
             app.setRunTitle(preview || app.StimOnlyRun || app.TestRun);
             if app.TestRun
                 app.setBusy('Starting in Test Mode…');
@@ -4411,6 +4730,9 @@ classdef App < handle
                 % them here rather than only in delete() is what makes the
                 % recall survive a MATLAB that never gets to close cleanly.
                 app.saveLastSession();
+                % What Resume will hold the halted schedule to: it carries on
+                % with these, whatever the window has been changed to since.
+                app.StartSignature = app.resumeSignature();
                 c.start();
             catch me
                 app.transport(false);      % unlock so the user can fix and retry
@@ -4424,10 +4746,112 @@ classdef App < handle
         end
 
         function onPause(app)
-            if strcmp(app.PauseButton.Text,'Pause')
-                app.Controller.pauseAcq(); app.setPauseButton(true);
+            % Asks, and leaves the caption to the state change that answers
+            % (onState -> syncPauseButton). Which of the two to ask is read
+            % off the controller, not off the caption: a caption flipped by
+            % the click itself went on saying "Resume" after Advance had
+            % moved the schedule on to a run that was not paused.
+            if app.Controller.State == mabr.ui.ProgState.Paused
+                app.Controller.resumeAcq();
             else
-                app.Controller.resumeAcq(); app.setPauseButton(false);
+                app.Controller.pauseAcq();
+            end
+        end
+
+        function onResume(app)
+            % Take a halted schedule up where it stopped -- the same session
+            % folder and counts, from the next run -- instead of a Start,
+            % which would rebuild the plan with full repetitions into a new
+            % folder. Offered after an Abort (an accidental one at run 40 of
+            % 60 used to mean redoing the counts by hand) and after an Error.
+            if ~app.canResumeNow()
+                app.syncResumeEnable();
+                app.setStatus('Nothing to resume — Start begins a new schedule.');
+                return
+            end
+            % The halted schedule is the controller's, built from the window
+            % as it was at Start; the config controls are unlocked while it
+            % rests, so the window may no longer describe it. Resuming a
+            % Test Mode run as a rig recording, or into a subject it was not
+            % started for, is exactly the quiet mislabelling this window
+            % exists to prevent, so it is refused and the reason is given.
+            sigNow = app.resumeSignature();
+            if ~isempty(app.StartSignature) && ~isempty(sigNow) && ~isequaln(app.StartSignature,sigNow)
+                app.setStatus(['Not resumed — the audio, stimulus, subject, output or timing ' ...
+                    'settings have changed since Start, and a halted schedule goes on with ' ...
+                    'the ones it started with. Put them back, or press Start for a new session.'], ...
+                    true,1);
+                return
+            end
+            % As onStart: a schedule owns the device, so an input monitor
+            % goes first; and a close pressed while the controller is being
+            % driven waits for this to return (endStart).
+            app.stopInputMonitor();
+            app.Starting = true;
+            cleanup = onCleanup(@() endStart(app)); %#ok<NASGU>
+            app.setBusy('Resuming…');
+            try
+                app.Controller.resumeSchedule();
+            catch me
+                app.transport(false);
+                app.setStatus(['Resume failed: ' me.message],true,2);
+                mabr.log.vprintf(0,1,'Resume failed: %s',me.message);
+                return
+            end
+            % From the controller, not assumed: a halted schedule with
+            % nothing left to play completes at once, and a UI locked as
+            % "running" with nothing running would be a window nobody can use.
+            app.transport(app.isRunning());
+            if app.isRunning()
+                app.setStatus('Resumed — the same session folder, from the next run.');
+            end
+        end
+
+        function tf = canResumeNow(app)
+            % Whether the controller has a halted schedule to take up. Asked
+            % by method rather than assumed, so a controller built before
+            % Resume existed simply has nothing to offer.
+            tf = false;
+            c = app.Controller;
+            if isempty(c) || ~isvalid(c) || ~ismethod(c,'canResume')
+                return
+            end
+            try
+                tf = logical(c.canResume());
+            catch me
+                mabr.log.vprintf(3,'App: canResume failed (%s).',me.message);
+            end
+        end
+
+        function syncResumeEnable(app)
+            % Re-derived wherever the controller's state can have changed
+            % (transport, which every settling state goes through), because
+            % canResume is false while anything is in flight and true only
+            % once a halted schedule has come to rest.
+            app.ResumeButton.Enable = onOff(app.canResumeNow());
+        end
+
+        function sig = resumeSignature(app)
+            % The settings a schedule is started from and then cannot be
+            % changed under -- the ones the config controls hold and Start
+            % reads (the rest are live by design): audio, subject, output
+            % folder, bank, repetitions, strategy, order, timing, advance.
+            % Compared at Resume with the copy taken at Start. [] if they
+            % cannot be read, which switches the comparison off rather than
+            % refusing a Start or a Resume on a bug in the bookkeeping.
+            sig = [];
+            try
+                ids = {};
+                if ~isempty(app.Stimuli) && app.Stimuli.numStimuli > 0
+                    ids = cellstr(string(app.Stimuli.IDs()));
+                end
+                [by,way] = app.orderSetting();
+                sig = {app.Audio.toStruct(),app.SubjectField.Value,app.outputFolder(), ...
+                    app.BankFile,ids,app.Reps,app.strategySetting(),by,way, ...
+                    app.ISIField.Value,app.ISIMinField.Value,app.ISIMaxField.Value, ...
+                    app.JitterCheck.Value,app.AdvanceDrop.Value,app.CorrField.Value};
+            catch me
+                mabr.log.vprintf(2,'App: settings not captured for Resume (%s).',me.message);
             end
         end
 
@@ -5057,7 +5481,87 @@ classdef App < handle
         end
 
         function onClose(app)
+            % The window's close box (CloseRequestFcn) -- and only that:
+            % delete(app) is the unconditional teardown that scripts and
+            % tests call, and does not ask. Closing mid-run kills the worker
+            % and loses the run in progress, along with a run still awaiting
+            % finalization (the controller sits in BlockComplete until its
+            % worker answers, which isRunning counts as running), so the
+            % operator is asked first. The default is the safe answer.
+            if app.CloseWhenStarted, return; end     % already on its way out
+            if app.Starting || app.isRunning()
+                if ~app.confirmCloseDuringRun(), return; end
+                if app.Starting
+                    % onStart is further up this stack, still using the
+                    % controller; endStart finishes the job when it returns.
+                    app.CloseWhenStarted = true;
+                    app.setStatus('Closing as soon as the run has started…');
+                    return
+                end
+                app.haltRun();
+            end
             delete(app);
+        end
+
+        function haltRun(app)
+            % The Abort button's call (onAbort), guarded: this is the way out
+            % of a close, and a controller that will not take the request must
+            % not keep the window open -- delete is about to take it down.
+            try
+                app.Controller.abort();
+            catch me
+                mabr.log.vprintf(1,'App: run not halted before closing (%s).',me.message);
+            end
+        end
+
+        function endStart(app)
+            % onStart's exit, by onCleanup, whichever way it left. Called as
+            % endStart(app) rather than app.endStart(): the window may have
+            % been deleted underneath the callback, and dot syntax on a deleted
+            % object errors before the method can say so.
+            if ~isvalid(app), return; end
+            app.Starting = false;
+            if ~app.CloseWhenStarted, return; end
+            app.CloseWhenStarted = false;
+            app.haltRun();
+            delete(app);
+        end
+
+        function tf = confirmCloseDuringRun(app)
+            % Whether the operator chose to abort the run and close anyway.
+            % ConfirmFcn answers when a script has installed one; otherwise
+            % uiconfirm, unless the window is not visible -- a modal on a
+            % hidden figure is one nobody can dismiss, and no answer is the
+            % default one, so the run is left alone.
+            msg  = 'A run is in progress. Closing now will lose the data of this run.';
+            opts = {'Keep recording','Abort and close'};
+            try
+                pick = app.askConfirm(msg,'Close MABR',opts,opts{1},opts{1});
+                tf = strcmp(pick,opts{2});
+            catch me
+                mabr.log.vprintf(1,'App: close confirmation failed, run kept (%s).',me.message);
+                tf = false;
+            end
+        end
+
+        function pick = askConfirm(app,msg,title,opts,default,hiddenPick)
+            % The one place this window asks a question of its own accord, so
+            % every question is stubbable the same way: ConfirmFcn answers
+            % when a script has installed one, called (msg,title,options,
+            % default); otherwise uiconfirm, with DEFAULT also the answer to
+            % the close box. A hidden window has nobody to ask -- a modal on
+            % it is one nobody can dismiss -- so it answers HIDDENPICK
+            % without asking, which each caller chooses to be what the
+            % window did before it asked. Returns the option picked as char.
+            pick = hiddenPick;
+            if ~isempty(app.ConfirmFcn)
+                pick = app.ConfirmFcn(msg,title,opts,default);
+            elseif strcmp(app.UIFigure.Visible,'on')
+                k = find(strcmp(opts,default),1);
+                pick = uiconfirm(app.UIFigure,msg,title,'Options',opts, ...
+                    'DefaultOption',k,'CancelOption',k,'Icon','warning');
+            end
+            pick = char(string(pick));
         end
 
         % --- Controller event handlers -------------------------------------
@@ -5065,6 +5569,10 @@ classdef App < handle
             [c,txt] = stateAppearance(e.State);
             app.StateLamp.Color = c;
             app.StateLabel.Text = txt;
+            % Paused arrives here like any other state (lamp and label come
+            % from ProgState.appearance), and the Pause button follows it
+            % rather than the last click -- see setPauseButton.
+            app.syncPauseButton(e.State);
             % A preview -- and a stimulation-only run -- is indistinguishable
             % from a real one everywhere else, so the panel title carries the
             % warning for as long as one is in flight, and drops it once the
@@ -5079,7 +5587,38 @@ classdef App < handle
                 case {mabr.ui.ProgState.SchedComplete, mabr.ui.ProgState.Idle, mabr.ui.ProgState.Error}
                     app.transport(false);
             end
+            if e.State == mabr.ui.ProgState.Error, app.showControllerError(); end
+            % An Abort lands in Idle with the schedule unfinished. The status
+            % line would go on saying "Saved ...", which reads as a schedule
+            % between files, so say that it stopped and what can be done.
+            if e.State == mabr.ui.ProgState.Idle && app.canResumeNow()
+                app.setStatus(['Halted — Resume continues the schedule from the next run, ' ...
+                    'in the same session folder.'],false);
+            end
             drawnow limitrate
+        end
+
+        function showControllerError(app)
+            % The lamp turns red on Error, but the status line would go on
+            % showing whatever came before it -- on an unattended schedule,
+            % the last "Saved ..." -- so a run that has stopped looks like a
+            % run between files. The controller keeps the reason
+            % (LastErrorMessage, '' when none). Asked for by property rather
+            % than assumed, so a controller without it leaves the line alone.
+            msg = '';
+            try
+                c = app.Controller;
+                if ~isempty(c) && isvalid(c) && isprop(c,'LastErrorMessage')
+                    msg = strtrim(regexprep(char(string(c.LastErrorMessage)),'\s+',' '));
+                end
+            catch me
+                mabr.log.vprintf(3,'App: error reason not read (%s).',me.message);
+            end
+            if isempty(msg), return; end
+            if app.canResumeNow()
+                msg = [msg ' Resume retries the run that failed.'];
+            end
+            app.setStatus(['ERROR: ' msg],false,2);
         end
 
         function onMetrics(app,e)
@@ -5134,9 +5673,99 @@ classdef App < handle
             %               say something goes unnoticed.
             R = e.Info.report;
             if ~R.Aligned
+                % The status line is overwritten by the next "Saved ..."
+                % within seconds, and 20+ misaligned runs went by in the
+                % September logs with nobody the wiser. So the verdict also
+                % goes on a badge that stays until the next Start.
+                app.noteMisaligned(R);
                 app.setStatus(['Alignment: ' R.Summary]);
             elseif app.TestRun
                 app.setStatus(['Test Mode — ' R.Summary]);
+            end
+        end
+
+        function noteMisaligned(app,R)
+            % Record a run whose sweeps are not the presentations they are
+            % labelled with, and raise the badge. R is the alignment report;
+            % its Run says which run, where it knows.
+            run = NaN;
+            if isfield(R,'Run') && isnumeric(R.Run) && isscalar(R.Run) ...
+                    && isfinite(R.Run) && R.Run > 0
+                run = double(R.Run);
+            end
+            app.MisalignedRuns(end+1) = run;
+            note = '';
+            if isfield(R,'Summary'), note = char(string(R.Summary)); end
+            app.MisalignedNote = strtrim(regexprep(note,'\s+',' '));
+            app.syncAlignBadge();
+        end
+
+        function clearMisaligned(app)
+            % Start's: a new schedule answers for itself.
+            app.MisalignedRuns = zeros(1,0);
+            app.MisalignedNote = '';
+            app.syncAlignBadge();
+        end
+
+        function syncAlignBadge(app)
+            % The badge from MisalignedRuns: shown, in a column of its own
+            % width, when any run is on the list; hidden and closed (width 0)
+            % when none is, so the chip beside it gets the whole line back.
+            if isempty(app.AlignBadge) || ~isvalid(app.AlignBadge), return; end
+            on = ~isempty(app.MisalignedRuns);
+            if on
+                txt = mabr.ui.App.misalignedText(app.MisalignedRuns);
+                tip = app.MisalignedNote;
+                if isempty(tip)
+                    tip = 'The recovered stimulus onsets do not match the plan.';
+                end
+                tip = [tip ' The sweeps of ' mabr.ui.App.misalignedWhich(app.MisalignedRuns) ...
+                    ' are not the presentations they are labelled with; do not analyse them as data. ' ...
+                    'Stays until the next Start.'];
+                app.AlignBadge.Text    = txt;
+                app.AlignBadge.Tooltip = tip;
+                % Wide enough for the words at 11 px bold, with room either side.
+                app.StripGrid.ColumnWidth = {8*numel(txt)+16,'1x'};
+            else
+                app.StripGrid.ColumnWidth = {0,'1x'};
+                app.AlignBadge.Text    = '';
+                app.AlignBadge.Tooltip = '';
+            end
+            app.AlignBadge.Visible = onOff(on);
+        end
+
+        function syncRigChip(app)
+            % What the rig is set to, on the line above the Run panel and at
+            % every moment: Test Mode is the factory default (and what a
+            % prefs reset returns to), and until now it showed only while a
+            % run was in flight -- so a morning's first Start could quietly be
+            % the loopback. Refreshed wherever its inputs change: the audio
+            % settings, a bank adopted, a configuration loaded, Start.
+            if isempty(app.RigChip) || ~isvalid(app.RigChip), return; end
+            uncal = false;
+            if ~isempty(app.Stimuli) && app.Stimuli.numStimuli > 0
+                [cal,known] = app.Stimuli.isCalibrated();
+                uncal = known && ~cal;
+            end
+            [txt,tip,kind] = mabr.ui.App.rigChipText(app.Audio,uncal);
+            app.RigChip.Text    = txt;
+            app.RigChip.Tooltip = tip;
+            switch kind
+                case 'test'
+                    % Amber on a pale amber ground, bold: the strongest
+                    % statement the chip makes, that what is recorded is the
+                    % stimulus and not a subject.
+                    app.RigChip.FontColor       = [0.45 0.25 0];
+                    app.RigChip.BackgroundColor = [1 0.88 0.55];
+                    app.RigChip.FontWeight      = 'bold';
+                case 'warn'
+                    app.RigChip.FontColor       = [0.75 0.45 0];
+                    if ~isempty(app.RigChipPlainBG), app.RigChip.BackgroundColor = app.RigChipPlainBG; end
+                    app.RigChip.FontWeight      = 'bold';
+                otherwise
+                    app.RigChip.FontColor       = app.RigChipPlainFG;
+                    if ~isempty(app.RigChipPlainBG), app.RigChip.BackgroundColor = app.RigChipPlainBG; end
+                    app.RigChip.FontWeight      = 'normal';
             end
         end
 
@@ -5192,10 +5821,12 @@ classdef App < handle
         %   idle    - configurable; everything but the transport controls
         function tf = isRunning(app)
             % A schedule is under way: the controller exists and has not
-            % settled back into a resting state.
+            % settled back into a resting state. Paused is not one -- a
+            % paused run is still in flight, its worker holding the device --
+            % so it counts as running, which is what keeps the settings
+            % locked and the close box asking through a pause.
             tf = ~isempty(app.Controller) && isvalid(app.Controller) && ...
-                 ~any(app.Controller.State == [mabr.ui.ProgState.Idle, ...
-                      mabr.ui.ProgState.SchedComplete, mabr.ui.ProgState.Error]);
+                 ~isTerminal(app.Controller.State);
         end
 
         function h = configControls(app)
@@ -5239,8 +5870,8 @@ classdef App < handle
 
         function h = allControls(app)
             h = [app.configControls, app.liveControls, ...
-                 {app.StartButton, app.PreviewButton, app.PauseButton, ...
-                  app.StopButton, app.AbortButton}];
+                 {app.StartButton, app.ResumeButton, app.PreviewButton, ...
+                  app.PauseButton, app.StopButton, app.AbortButton}];
         end
 
         function setBusy(app,msg)
@@ -5267,6 +5898,11 @@ classdef App < handle
             % apply to (it re-derives the Advance pair for the same reason).
             app.syncAcquisitionEnables();
             app.syncRepeatEnable();
+            % Resume is the other state-dependent one: setBusy killed it, and
+            % it comes back only if the controller holds a halted schedule.
+            app.syncResumeEnable();
+            % The caption follows the controller's state, whichever way in.
+            app.syncPauseButton();
             % Loop is live in both states and in every mode -- it only ever
             % decides what happens when a run ends -- but only for a plan of
             % one condition per run; setBusy took it away, and this is where
@@ -5278,7 +5914,6 @@ classdef App < handle
             % The toolbar is deliberately never disabled -- raising a viewer is
             % safe at any time, including while the engine is starting up.
             if ~running
-                app.setPauseButton(false);
                 app.syncAdvanceEnables();     % re-derives the Advance/Corr enables
                 app.syncOrderEnable();        % only some strategies read the order
                 % Same reason: configControls just switched all five ISI
@@ -5380,7 +6015,7 @@ classdef App < handle
             end
         end
 
-        function setStatus(app,txt,flush)
+        function setStatus(app,txt,flush,level)
             % flush (default true) forces the repaint: most status arrives
             % mid-blocking-call (the pool starting, a bank loading), where
             % nothing else would draw it. A caller on the acquisition path
@@ -5388,9 +6023,28 @@ classdef App < handle
             % every queued callback, once per saved file at the end of an
             % intermixed run, while the live view's own refresh draws the
             % label within a tick anyway.
+            %
+            % level (default 0) colours the line as the offline analysis
+            % window's status line is coloured: 0 as always, 1 warning, 2
+            % error (mabr.ui.analysis.Style.levelColor). Every call sets the
+            % colour, so an error does not leave the next ordinary message
+            % red.
             if ~isvalid(app.UIFigure), return; end
+            if nargin < 3 || isempty(flush), flush = true; end
+            if nargin < 4, level = 0; end
             app.StatusLabel.Text = txt;
-            if nargin < 3 || flush
+            % The label is one row tall and cuts a longer message off -- the
+            % half that says what to do about it, as often as not ("Start
+            % failed: ...", a plan error, an alignment verdict) -- so the
+            % tooltip always carries the whole text.
+            app.StatusLabel.Tooltip = txt;
+            if level > 0
+                col = mabr.ui.analysis.Style.levelColor(level);
+            else
+                col = [0.3 0.3 0.3];
+            end
+            if ~isequal(app.StatusLabel.FontColor,col), app.StatusLabel.FontColor = col; end
+            if flush
                 drawnow
             end
         end
@@ -5583,6 +6237,96 @@ classdef App < handle
                 try, sp.set_control_visibility(Output=true); end %#ok<TRYNC>
             end
             note = ['Rig: ' strjoin(notes,' · ') '.'];
+        end
+
+        function [txt,tip,kind] = rigChipText(audio,uncal)
+            % The rig chip's line for an mabr.AudioSettings AUDIO and a bank
+            % that is (UNCAL) or is not known to lack a calibration: its text,
+            % its tooltip, and its KIND -- 'test' (Test Mode: nothing is
+            % being recorded but the stimulus), 'warn' (a real rig whose bank
+            % is uncalibrated, so its levels are relative) or 'plain'.
+            % Static and of plain values so it is verified without a window.
+            if audio.Testing
+                kind = 'test';
+                txt  = 'TEST MODE — no device, the stimulus is copied into the recording';
+                tip  = ['Test Mode: no audio device is opened and the stimulus is copied ' ...
+                        'straight into the recording, so the .abr files hold the stimulus, ' ...
+                        'not a subject. Untick Testing under Settings ▸ Audio Device (ASIO)… ' ...
+                        'to record for real.'];
+                return
+            end
+            dev = audio.Device;
+            if isempty(dev), dev = 'default ASIO device'; end
+            rate = sprintf('%s kHz',mabr.Config.rateText(audio.SampleRate));
+            if audio.isStimulationOnly()
+                % No recorder, so no amplifier gain to state.
+                txt = sprintf('%s · %s · stimulation only (nothing is recorded)', ...
+                    mabr.ui.App.clipText(dev,32),rate);
+            else
+                txt = sprintf('%s · %s · gain ×%s',mabr.ui.App.clipText(dev,32),rate, ...
+                    mabr.ui.App.gainText(audio.AmplifierGain));
+            end
+            tip = [audio.describe() '. Change it under Settings ▸ Audio Device (ASIO)….'];
+            kind = 'plain';
+            if uncal
+                txt  = [txt ' · bank UNCALIBRATED'];
+                tip  = [tip ' The loaded bank has no calibration behind it: its levels are ' ...
+                        'relative, not dB SPL.'];
+                kind = 'warn';
+            end
+        end
+
+        function s = gainText(g)
+            % An amplifier gain as a person writes it: 10000, not 1e+04 or
+            % 10000.000, and a fractional gain with what digits it has.
+            if isfinite(g) && g == round(g) && abs(g) < 1e9
+                s = sprintf('%d',round(g));
+            else
+                s = sprintf('%.4g',g);
+            end
+        end
+
+        function s = misalignedText(runs)
+            % The badge's words for the runs found misaligned (RUNS, NaN
+            % where a report did not say which): 'Run 3 MISALIGNED' for one,
+            % the runs listed for a few, a count beyond that. Each run is
+            % named once however many passes of it were bad.
+            known = unique(runs(isfinite(runs)));
+            n = numel(known) + sum(~isfinite(runs));
+            if n == 1 && isscalar(known)
+                s = sprintf('Run %d MISALIGNED',known);
+            elseif n == 1
+                s = 'MISALIGNED';
+            elseif n <= 3 && numel(known) == n
+                s = sprintf('Runs %s MISALIGNED',strjoin(compose('%d',known),', '));
+            else
+                s = sprintf('%d runs MISALIGNED',n);
+            end
+        end
+
+        function s = misalignedWhich(runs)
+            % misalignedText's subject for a sentence: 'run 3', 'runs 3, 7'.
+            known = unique(runs(isfinite(runs)));
+            n = numel(known) + sum(~isfinite(runs));
+            if n == 1 && isscalar(known)
+                s = sprintf('run %d',known);
+            elseif n == 1
+                s = 'the run';
+            elseif n <= 3 && numel(known) == n
+                s = sprintf('runs %s',strjoin(compose('%d',known),', '));
+            else
+                s = 'those runs';
+            end
+        end
+
+        function s = overlapMsText(x,other)
+            % X (ms) to one decimal -- 12.0 -- or to as many more as it takes
+            % to tell it from OTHER, so "47.4 ms but the ISI is 47.4 ms" is
+            % never what an overlap sounds like.
+            s = sprintf('%.1f',x);
+            if strcmp(s,sprintf('%.1f',other))
+                s = sprintf('%.3f',x);
+            end
         end
 
         function s = clipText(s,maxChars)

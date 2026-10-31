@@ -11,7 +11,7 @@ This walks through a complete recording session. If you have not installed MABR 
 5. Untick **Testing** once real hardware is connected.
 6. Click **Start** and watch the live plot.
 
-Each condition is saved to its own `.abr` file as soon as it finishes. If something goes wrong halfway through a session, everything recorded up to that point is already on disk.
+Every run is saved as soon as it finishes: a conventional run is one condition and one `.abr` file; an intermixed run holds every condition at once, so its files (still one per condition) are written when the whole run ends. If something goes wrong halfway through a session, every run that had finished is already on disk — the run in flight is not, unless you **Abort** it, which saves it, and **Resume** then carries the schedule on from the next run.
 
 ## Step by step
 
@@ -56,9 +56,11 @@ Open **Settings ▸ Audio Device (ASIO)…**. **Testing (loopback, no hardware)*
 
 Changing this checkbox rebuilds the acquisition worker, which takes a few seconds the first time.
 
+Test Mode is the factory default, so the window never lets you forget which one you are in: the line directly above the **Run** panel always says. It is an amber `TEST MODE — no device, the stimulus is copied into the recording` in Test Mode, and otherwise the device, rate and amplifier gain — `ASIO Fireface UC · 192 kHz · gain ×10000` — with `· bank UNCALIBRATED` added when the loaded bank has no calibration. Read it before the first Start of the day.
+
 ### 6. Record
 
-Click **Start**. In order, MABR will:
+Click **Start**. (If the longest stimulus is longer than the ISI, MABR asks first — *Stimuli last 12.0 ms but the ISI is 10.0 ms: presentations will overlap and be summed. Start anyway?* — and the default answer is **Don't start**.) In order, MABR will:
 
 1. Start the background acquisition process (once per session; the status line says so).
 2. Prepare the first condition and begin playing it.
@@ -68,15 +70,17 @@ Click **Start**. In order, MABR will:
 
 While it runs:
 
-- **Pause** suspends playback in place and keeps the audio device open; the button becomes **Resume**.
+- **Pause** suspends playback in place and keeps the audio device open; the lamp reads **Paused** and the button becomes **Resume**.
 - **Advance** ends the current run early, saves it, and continues with the next one. Useful when a condition is clearly done or clearly bad.
-- **Abort** ends the current condition, saves it, and stops the whole schedule.
+- **Abort** ends the current run early, saves it, and halts the schedule. It is not the end of the session: the **Resume** button beside **Start** lights up, and pressing it carries on from the next run in the same session folder with the counts already recorded (an accidental Abort at run 40 of 60 costs nothing). **Start** would begin a new session instead.
 
 Nothing is discarded by any of these — whatever was recorded before you pressed the button is saved.
 
+Two things to watch while it runs. A red **MISALIGNED** badge (`Run 7 MISALIGNED`) appears above the Run panel if a finished run's sweeps do not sit where the plan put them; that run's data cannot be trusted as the conditions it is labelled with, and the badge stays until the next Start. And closing the window mid-run asks first (**Keep recording** is the default), because the run in flight is lost if you close.
+
 ### 7. Look at the results
 
-Both viewers are already open — they launch with the app and sit to the right of the main window. The monitor and stacked-traces toolbar buttons raise them if they get buried.
+Both viewers open when you press **Start** (not when the app launches) and sit to the right of the main window. Their toolbar buttons — the monitor and the stacked traces — open them earlier, or raise them if they get buried. Traces from a run that failed the alignment check carry a red ⚠ in the Trace Organizer.
 
 The **Live Plot** (**L**) shows the most recent sweep on its own axes at the top (blue), a bar with the current correlation against your threshold, and below them the running average of every condition the run is presenting. It updates about 20 times a second. Conditions are named by the parameters your bank varies — `8 kHz, 30 dB` — and the **Means** control lays them out overlaid, one panel each, as a Frequency × Level **grid**, or **stacked** into the offset level series a threshold is read from. See [Viewing Data](Viewing-Data.md#live-plot).
 

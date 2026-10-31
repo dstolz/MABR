@@ -455,21 +455,36 @@ classdef TraceOrganizer < handle
                 % to the descriptive label in Trace.DisplayName.
             end
             % The parameters it was recorded under, for organizing the view
-            % by -- exactly as the stimulus metadata states them.
+            % by -- exactly as the stimulus metadata states them. And whether
+            % its run failed the alignment check: such a trace is drawn, and
+            % marked, rather than dropped -- the data may still be what the
+            % operator needs to look at, but not to believe unseen.
             obj.addTrace(m,t,lbl,sid,sweeps, ...
-                mabr.ui.TraceOrganizer.blockParams(block));
+                mabr.ui.TraceOrganizer.blockParams(block), ...
+                mabr.ui.TraceOrganizer.misalignedNote(block));
         end
 
-        function tr = addTrace(obj,data,time,label,stimID,sweeps,params)
+        function tr = addTrace(obj,data,time,label,stimID,sweeps,params,suspect)
             % params: the stimulus parameters, a struct of numeric scalars
             % (name -> value); see mabr.ui.Trace.Params.
+            % suspect: '' (the default) for a trace to be trusted; any text
+            % marks it as from a misaligned run, and is what the status line
+            % says of it (true marks it with a stock sentence).
             if nargin < 4, label  = ''; end
             if nargin < 5, stimID = ''; end
             if nargin < 6, sweeps = []; end
             if nargin < 7, params = struct(); end
+            if nargin < 8, suspect = ''; end
             tr = mabr.ui.Trace(data,time,label,stimID);
             tr.ID = numel(obj.Traces)+1;
             tr.Params = mabr.ui.Trace.cleanParams(params);
+            if islogical(suspect) && isscalar(suspect) && suspect
+                suspect = 'The run this trace came from failed the alignment check.';
+            end
+            if ischar(suspect) && ~isempty(suspect)
+                tr.Suspect     = true;
+                tr.SuspectNote = suspect;
+            end
             % [nSamples x nSweeps], one row per sample of Data -- anything else
             % is not this trace's sweeps and is dropped rather than banded.
             if ~isempty(sweeps) && size(sweeps,1) == numel(tr.Data)
@@ -2156,8 +2171,16 @@ classdef TraceOrganizer < handle
             if ~strcmp(obj.ErrorBand,'none')
                 band = sprintf('  |  %s',obj.bandDescription());
             end
-            obj.status(sprintf('%d trace(s), %d selected  |  spacing %.3g  |  %s scale%s%s', ...
-                n,numel(s),obj.YSpacing,mode,band,obj.organizeDescription()));
+            % Said here as well as on the labels: the labels are in a margin
+            % that a long stack can scroll, and a stack with one misaligned
+            % run in it is not a stack to read the thresholds off unseen.
+            bad = '';
+            nBad = sum([obj.Traces.Suspect]);
+            if nBad > 0
+                bad = sprintf('  |  %s %d from a MISALIGNED run',char(9888),nBad);
+            end
+            obj.status(sprintf('%d trace(s), %d selected  |  spacing %.3g  |  %s scale%s%s%s', ...
+                n,numel(s),obj.YSpacing,mode,band,obj.organizeDescription(),bad));
         end
 
         function s = organizeDescription(obj)
@@ -2324,6 +2347,30 @@ classdef TraceOrganizer < handle
                 end
             end
             P = struct('Names',{names},'Values',V);
+        end
+
+        function note = misalignedNote(block)
+            % '' for a block to be trusted; otherwise the alignment check's
+            % verdict on the run it came from, when mabr.data.Block.Alignment
+            % says it was not Aligned. Read defensively, because most things
+            % that are handed to addBlock have no verdict at all: a Block
+            % from before the verdict was kept, a hand-built one, a struct
+            % standing in for one, and the field is [] where the check was
+            % not computed. None of those is suspect -- only a verdict that
+            % says "not aligned" is.
+            note = '';
+            try
+                A = block.Alignment;
+                if isstruct(A) && isscalar(A) && isfield(A,'Aligned') ...
+                        && ~isempty(A.Aligned) && ~logical(A.Aligned(1))
+                    if isfield(A,'Summary') && ~isempty(A.Summary)
+                        note = strtrim(regexprep(char(string(A.Summary)),'\s+',' '));
+                    end
+                    if isempty(note), note = 'The run this trace came from was MISALIGNED.'; end
+                end
+            catch
+                note = '';
+            end
         end
 
         function p = blockParams(block)

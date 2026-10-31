@@ -24,23 +24,24 @@ Under the toolbar, the window is five titled panels stacked top to bottom in the
  │     then by  [ Level         v ] [ Descending v ] │
  │ Repetitions  [   512 ] [ Per stimulus…          ] │
  │  ISI / Rate  [ 47.39 ms ] [        21.10 Hz     ] │
- │              overlap! 60.0 ms stim                │
+ │              stimulus 60.0 ms > ISI 47.4 ms       │
  │        8 runs (blocked) · 4096 presentations · ~4 min │
  └───────────────────────────────────────────────────┘
  ┌ Acquisition ─────────────────────────────────────┐
  │     Advance  [ Correlation Thr. v ] [ r ≥ 0.50 ]  │
- │   Artifacts  [ Voltage threshold v ] [ ± 100 mV ] │
+ │   Artifacts  [ Voltage threshold v ] [ ± 100 mV at electrode ] │
  │              [x] Repeat sweeps lost to artifact   │
  │     Filters  10–3000 Hz + 60 Hz notch [ Filters… ]│
  └───────────────────────────────────────────────────┘
+ [Run 7 MISALIGNED] ASIO Fireface UC · 192 kHz · gain ×10000
  ┌ Run ─────────────────────────────────────────────┐
  │  (o) Acquire   Sweeps: 128   r = 0.42  rejected: 3 │
- │  [ Start ] [ Preview ] [ Repeat ] [Loop] [ Pause ] [ Advance ] [ Abort ] │
+ │  [Start] [Resume] [Preview] [Repeat] [Loop] [Pause] [Advance] [Abort] │
  └───────────────────────────────────────────────────┘
  Saved SUBJ-ID-001_Frequency-8kHz_Level-30dB_....abr
 ```
 
-Every panel shares one label-column width, so the fields line up along a single edge down the whole window. The gap above **Run** is a spacer that absorbs extra height, keeping the transport controls pinned to the bottom at any window size. The overlap warning and plan summary rows in **Presentation** are blank until they have something to say, but their space is reserved so nothing jumps when they appear.
+Every panel shares one label-column width, so the fields line up along a single edge down the whole window. The gap above **Run** is a spacer that absorbs extra height, keeping the transport controls pinned to the bottom at any window size; the one line of text in it, directly above **Run**, is the [rig chip](#status-row) (and, after a misaligned run, the red MISALIGNED badge beside it). The overlap warning and plan summary rows in **Presentation** are blank until they have something to say, but their space is reserved so nothing jumps when they appear.
 
 Every panel except **Run** can be folded up to its title bar with the **▾** at the right end of that title (**▸** opens it again). The window resizes to fit what is open, and its top edge stays put, so the chevron you just pressed stays under the pointer. Folding a panel changes no setting, and the chevrons stay active while a schedule runs, so you can tuck away what you are not using during a long session. MABR remembers which panels are folded for the next session. A saved configuration also records them, along with the window layout.
 
@@ -122,7 +123,7 @@ Both rows are greyed under every other strategy: the shuffled strategies decide 
 
 **Repetitions** — How many times each stimulus is presented. The number field applies one value to every stimulus. **Per stimulus…** opens a small editor where you can either keep one value for the whole bank or give each stimulus its own count; it shows the running total and estimated acquisition time as you type. Stimuli with unequal counts drop out of the cycle once they are done, so the extra repetitions of the others stay spread out rather than clumping at the end.
 
-**ISI / Rate** — The inter-stimulus interval, onset to onset. The two fields are two views of one number — edit either and the other follows. If the longest stimulus does not fit inside the interval, a red `overlap!` warning appears and the status line tells you the highest rate that would fit; MABR will still run, summing the overlap, but this is almost always a mistake.
+**ISI / Rate** — The inter-stimulus interval, onset to onset. The two fields are two views of one number — edit either and the other follows. If the longest stimulus does not fit inside the interval, a red line under the fields reads `stimulus 12.0 ms > ISI 10.0 ms` (with Random on, the shortest interval in the range is the one compared, since one short draw is enough to overlap) and the status line tells you the highest rate that would fit. MABR will still run, summing the overlapped presentations into one waveform, but this is almost always a mistake — so **Start asks first**: *"Stimuli last 12.0 ms but the ISI is 10.0 ms: presentations will overlap and be summed. Start anyway?"*, with **Start anyway** and **Don't start**, and *Don't start* is the default. Preview does not ask, since it saves nothing. With no visible window (a script) there is nobody to ask and Start proceeds as it always has; the schedule logs its own red warning.
 
 **Plan summary** — The grey line below shows what the current settings actually buy: how many runs, how many presentations in total, and roughly how long it will take. Check it before pressing Start. Under the Conventional strategy its tooltip lists the runs in the order they will play.
 
@@ -149,6 +150,8 @@ The threshold field (0 to 1, 0.5 is a reasonable starting point) is enabled for 
 | None — keep every sweep | No sweep is ever flagged |
 | Voltage threshold | Flag a sweep if any sample leaves ±threshold (default ±100 mV) |
 | RMS threshold | Flag a sweep if its RMS exceeds the threshold (default 30 mV) — catches sustained muscle noise a peak limit misses |
+
+**Thresholds are volts at the electrode.** The recording is divided by the amplifier gain set in **Settings ▸ Audio Device (ASIO)…** before a sweep is judged, so type what the electrode itself would show: behind a ×10000 amplifier a sweep that reaches 100 mV at the electrode reaches 1 V at the converter, and the threshold is still 100 mV. The field says so (`± 100 mV at electrode`) and its tooltip names the gain now set. In Test Mode there is no amplifier (gain ×1). The defaults are limits for gross contamination — a good ABR is microvolts — so tighten them for your preparation. A value that is not a finite, positive number (`Inf`, 0, a negative) is refused: the status line says so and the field goes back to what it was.
 
 One threshold field serves both criteria, since they are alternatives; the caption beside the number says which one it belongs to, and each criterion remembers its own value as you switch. **Repeat sweeps lost to artifact** re-presents what was rejected in a make-up run appended to the end of the schedule, so every condition still reaches its requested count; leave it off to simply count the losses. Your choices are remembered across sessions.
 
@@ -199,7 +202,7 @@ Calibration is greyed out in Testing mode (loopback would just measure the stimu
 
 ## Toolbar
 
-Both viewers open automatically with the app and sit beside the main window, so the toolbar buttons normally just raise them; they rebuild a window only if you closed it.
+The Live Plot and the Trace Organizer open by themselves at **Start** or **Preview** — not when the app launches — and sit beside the main window (**Settings ▸ Windows to open at Start** chooses which windows do). So before the first Start these buttons open a window, and during a schedule they normally just raise it; they rebuild a window only if you closed it.
 
 Each button is drawn as what its window shows or what it does, and the colours mean the same thing on every button — blue is the data, orange is the action, green is done or added, red is live or destructive. Hover for the tooltip if a picture is not enough. The same set of pictures is used on the Trace Organizer's toolbar ([mabr.ui.Icon](../+mabr/+ui/Icon.m); `mabr.ui.Icon.preview` shows them all).
 
@@ -226,11 +229,15 @@ The toolbar is never disabled — raising a viewer is safe at any time, includin
 
 ## Status row
 
-**Lamp and state label** — The current program state: Idle, PrepBlock, Acquire, BlockComplete, AdvanceBlock, SchedComplete, or Error.
+**Lamp and state label** — The current program state: Idle, PrepBlock, Acquire, **Paused** (amber, while playback is suspended), BlockComplete, AdvanceBlock, SchedComplete, or Error.
 
 **Sweeps** — Sweeps detected in the current run so far. In an intermixed run this counts every presentation, not one condition's share.
 
 **r** — The current online correlation, the same value the live plot's bar shows. Under the correlation criterion, the run ends when this reaches your threshold. In an intermixed run it is shown for information only and never stops the run.
+
+**Rig chip** — One line directly above **Run**, always visible, saying what the rig is set to: an amber `TEST MODE — no device, the stimulus is copied into the recording` when Test Mode is on, and otherwise `<device> · <rate> kHz · gain ×<G>`, with ` · bank UNCALIBRATED` added when the loaded bank has no calibration behind it (under **Stimulation only** it reads `stimulation only (nothing is recorded)` in place of the gain). Test Mode is the factory default and what a preferences reset returns to, so this is the line to read before the first Start of the day. It follows the audio settings, the bank and any loaded configuration, and is refreshed at Start; hover over it for the whole setting.
+
+**MISALIGNED badge** — After every recorded run MABR checks that the stimulus onsets it recovered are where the plan put them. If they are not, a red `Run 7 MISALIGNED` badge appears at the left of the rig chip line (hover over it for the check's own words) and **stays there until the next Start** — the status line, which the next "Saved …" overwrites within seconds, is not where a verdict like this should live. A misaligned run's sweeps are not certainly the presentations they are labelled with, so do not analyse them as conditions; the Trace Organizer marks each such trace with a red ⚠ label so it stays visible offline, in a saved `.torg` view and in the status line. An aligned run raises nothing (in Test Mode the aligned verdict is reported in the status line, since confirming it is what Test Mode is for).
 
 **Status line** (bottom) — The most recent event: worker startup, files saved, errors.
 
@@ -238,14 +245,17 @@ The toolbar is never disabled — raising a viewer is safe at any time, includin
 
 | Button | Effect |
 |--------|--------|
-| **Start** | Begin the schedule from the first run |
+| **Start** | Begin a new schedule from the first run, in a session folder of its own. If the stimuli are longer than the ISI it asks first (see **ISI / Rate**) |
+| **Resume** | After an **Abort** or an error, continue the halted schedule from the next run, in the same session folder. Enabled only while there is a halted schedule to continue |
 | **Repeat** | Queue one more full block of the stimulus that just finished |
 | **Loop** | Present the condition in progress again when its run ends, and again after that, until Loop is switched off. Conventional strategies only |
-| **Pause** / **Resume** | Suspend playback in place, keeping the audio device open |
+| **Pause** / **Resume** | Suspend playback in place, keeping the audio device open. The lamp reads **Paused** and the button's caption becomes **Resume**; the caption follows the program's state, so Advancing out of a pause leaves **Pause** showing for the next run |
 | **Advance** | End the current run now, save it, continue to the next |
-| **Abort** | End the current run now, save it, halt the schedule |
+| **Abort** | Finish the current run early, save it, and halt the schedule — the partial run is kept, and **Resume** continues the schedule |
 
 Advance and Abort both save what was recorded. Neither discards data. Stopping an intermixed run early is allowed but leaves the conditions unbalanced — the stimuli late in the sequence will have fewer sweeps than the rest.
+
+**Resume** takes a halted schedule up where it stopped — the same session folder, the same counts, the same notebook — instead of a **Start**, which builds the whole plan again with full repetitions into a new folder. Abort at run 40 of 60, change your mind, press Resume, and runs 41 to 60 follow. The run Abort ended was saved and credited like any other, so Resume goes on with the run after it; after an **Error** the run that failed never finished, so Resume begins it again (the status line says so). It is enabled only when there is something to resume: never before the first Start, never after the schedule has completed, never while one is running, and only while the acquisition worker is still there. It refuses, saying why in the status line, if the audio, stimulus, subject, output or timing settings were changed after Start — a halted schedule goes on with the settings it started with, and resuming a Test Mode schedule that the window now describes as a rig recording, or into another subject's folder, is exactly the quiet mislabelling to avoid. Put the setting back, or press Start for a new session. Closing the window ends the schedule, so Resume exists only in the window that halted it.
 
 **Repeat** appends one more run of whichever stimulus the most recently completed block presented, at its originally scheduled repetition count, to the end of the plan — the same "append to the end" mechanism artifact make-up uses, just triggered by you instead of a rejected sweep. It is **available only for blocked strategies** (Blocked, or Blocked with shuffled run order): an intermixed run has no single stimulus to point at, so the button stays disabled for the whole run in that case. It lights up as soon as the first eligible block lands and stays available for the rest of the schedule — including after everything has finished, to add one more block before you move on — and it works whether or not the schedule is still running, exactly like the artifact and filter controls beside it.
 
@@ -265,7 +275,7 @@ Short passes of one condition can start within the same second — the resolutio
 
 ## Closing
 
-Closing the window shuts down the background acquisition worker and releases the audio device. If you close mid-recording, the run in progress is not saved — use Abort first.
+Closing the window shuts down the background acquisition worker and releases the audio device. Closing **mid-run asks first**: *"A run is in progress. Closing now will lose the data of this run."* — **Keep recording** (the default, and what the close box itself answers) or **Abort and close**. Runs that had finished are on disk; the run in flight is not saved, so use **Abort** first if you want it. The question also covers a run that is being finalized, and a close pressed while Start is still bringing the worker up: it asks the same, and if you choose **Abort and close** it waits for the start to finish, then halts and closes. With nothing running the window closes without asking.
 
 ---
 
@@ -283,11 +293,16 @@ The events the app listens for:
 
 | Event | Payload | App response |
 |-------|---------|--------------|
-| `StateChanged` | `ProgStateEventData.State` | Lamp colour, state label, button enable states |
+| `StateChanged` | `ProgStateEventData.State` | Lamp colour, state label (`ProgState.Paused` included), the Pause button's caption, button enable states, the Resume button |
 | `MetricsUpdated` | `.Info` = `numSweeps`, `corr` | Sweep and correlation labels |
 | `BlockReady` | `.Info.block` | Not handled by `App` — the Trace Organizer subscribes to it directly (see below) |
 | `BlockSaved` | `.Info.file` | Status line. Fires once per stimulus recovered from the run, so an intermixed run raises it several times |
+| `AlignmentChecked` | `.Info.report` = the `mabr.metrics.alignment_report` struct | A report that is not `Aligned` raises the sticky MISALIGNED badge (cleared by the next Start) and the status line |
 | `ScheduleComplete` | — | Status line; resets transport buttons |
+
+Every question the window asks of its own accord — the close prompt and the overlap prompt at Start — goes through one method, `askConfirm`, and is stubbable through the hidden `ConfirmFcn` property: a handle taking `(msg,title,options,default)` and returning the option picked, the shape `mabr.ui.AnalysisApp`'s takes. With no stub a visible window asks with `uiconfirm` (the default is also the answer of the close box); a hidden window opens no modal and answers what it always did without asking — *Keep recording* for the close, *Start anyway* for the overlap — so verification scripts are unchanged. `delete(app)` never asks.
+
+Resume is the controller's: `AcqController.canResume` says whether a halted schedule can be taken up and `resumeSchedule` takes it up; the window only derives the button's enable from the former (in `transport`, which every settling state passes through) and, at Resume, compares the settings it captured at Start with the ones it now holds.
 
 `BlockReady` and `BlockSaved` both fire once per stimulus recovered from the run, but they are not interchangeable: `BlockReady` carries the finalized `mabr.data.Block` and fires whether or not the session is writing files, while `BlockSaved` carries only a path and is skipped entirely when the `Session` has no `OutputPath`. Anything that needs the *data* listens to `BlockReady`.
 

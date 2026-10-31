@@ -169,7 +169,7 @@ Opens with the app, and is raised by the stacked-traces toolbar button. Closing 
 - **Organize by stimulus parameter** — the **Organize** menu (also on the right-click menu) splits and orders the stack by what each condition was recorded at. See below.
 - **Save / load** the arrangement, so a figure you have laid out can be recovered later.
 
-Traces are labeled with their stimulus ID and coloured in sequence. Time is shown in milliseconds relative to sweep onset.
+Traces are labeled with their stimulus ID and coloured in sequence. Time is shown in milliseconds relative to sweep onset. A trace from a run whose timing pulses did not match the plan (the alignment verdict saved with its block, `ABR_Data.Alignment`) is marked **suspect**: its label leads with ⚠ and is drawn red, the status line counts such traces, and the mark is saved with the view — so data that must not be believed cannot pass for ordinary data once the session's status line has scrolled on.
 
 ### Organizing by stimulus parameter
 

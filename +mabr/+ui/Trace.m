@@ -34,6 +34,13 @@ classdef Trace < handle
 %   Only Params are ever saved -- a value read back off a label is not
 %   stimulus metadata and is never written as if it were.
 %
+%   Suspect marks a trace whose data should not be believed -- the run it came
+%   from failed the acquisition's alignment check, so its sweeps are not
+%   certainly the presentations they are labelled with. The label then leads
+%   with a warning sign and is drawn red, so suspect data is visible at a
+%   glance in a stack of a dozen, offline as well as live; SuspectNote is the
+%   check's own verdict, for the status line. Both are saved with the view.
+%
 %   Caption is what the organizer asks the on-plot label to read instead of
 %   DisplayName (the parameters, say, rather than the stimulus ID). It is
 %   derived from the view's settings every time they change, so it is not
@@ -64,6 +71,8 @@ classdef Trace < handle
         BandHi     (:,1) double = [];
         Params     (1,1) struct = struct(); % stimulus parameters, name -> value
         Group      (1,1) double {mustBeNonnegative,mustBeInteger} = 0; % overlap group (0 = on its own line)
+        Suspect    (1,1) logical = false;   % from a run that failed the alignment check
+        SuspectNote (1,:) char = '';        % that check's verdict, in its own words
     end
 
     properties (Transient)
@@ -127,11 +136,17 @@ classdef Trace < handle
             % What the on-plot label reads: the organizer's Caption when it
             % has set one, otherwise DisplayName. A non-unit gain is
             % advertised either way, since it is a fact about the drawing.
-            if isempty(obj.Caption), s = obj.DisplayName; return; end
-            s = obj.Caption;
-            if abs(obj.Gain-1) > 1e-3
-                s = sprintf('%s  (x%.3g)',s,obj.Gain);
+            % A suspect trace leads with a warning sign (U+26A0, by code so
+            % this file stays plain ASCII) whichever way it is captioned.
+            if isempty(obj.Caption)
+                s = obj.DisplayName;
+            else
+                s = obj.Caption;
+                if abs(obj.Gain-1) > 1e-3
+                    s = sprintf('%s  (x%.3g)',s,obj.Gain);
+                end
             end
+            if obj.Suspect, s = [char(9888) ' ' s]; end
         end
 
         function p = parameters(obj)
@@ -184,7 +199,15 @@ classdef Trace < handle
                 set(obj.LabelHandle,'Position',[labelX obj.YOffset+obj.LabelShift 0], ...
                     'String',obj.labelText());
             end
-            set(obj.LabelHandle,'Color',max(obj.Color-0.2,0), ...
+            % The trace's own darker shade, or red for suspect data: colour is
+            % what the eye finds in a stack, so the warning sign is not left
+            % to carry it alone.
+            if obj.Suspect
+                lblColor = [0.8 0.1 0.1];
+            else
+                lblColor = max(obj.Color-0.2,0);
+            end
+            set(obj.LabelHandle,'Color',lblColor, ...
                 'FontWeight',weight,'Visible',showLbl);
 
             obj.redrawMarkers(ax,yscale);
@@ -333,7 +356,9 @@ classdef Trace < handle
                 'BandLo',     obj.BandLo, ...
                 'BandHi',     obj.BandHi, ...
                 'Params',     obj.Params, ...
-                'Group',      obj.Group);
+                'Group',      obj.Group, ...
+                'Suspect',    obj.Suspect, ...
+                'SuspectNote',obj.SuspectNote);
         end
     end
 
@@ -363,6 +388,14 @@ classdef Trace < handle
             if isfield(s,'Group') && isnumeric(s.Group) && isscalar(s.Group) ...
                     && isfinite(s.Group) && s.Group >= 0 && s.Group == round(s.Group)
                 obj.Group = double(s.Group);
+            end
+            % Flagged traces; a file saved before the alignment check was
+            % kept has none, and so none of its traces is marked.
+            if isfield(s,'Suspect') && islogical(s.Suspect) && isscalar(s.Suspect)
+                obj.Suspect = s.Suspect;
+                if isfield(s,'SuspectNote') && ischar(s.SuspectNote)
+                    obj.SuspectNote = s.SuspectNote;
+                end
             end
         end
 
