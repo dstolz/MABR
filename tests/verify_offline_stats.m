@@ -16,7 +16,9 @@ function verify_offline_stats()
 %   null do not change at all when a CM is added, and a condition too small
 %   for a sign-flip null gets no p.
 %   Part C (the one statistic): the partition-averaged split-half r with
-%   mean halves is (F-1)/(F+1); median halves give a lower r.
+%   mean halves is (F-1)/(F+1); median halves give a lower r. The sweep
+%   bootstrap of that r (partition, then resample inside each half) is 0 on
+%   noise alone, where resampling first and partitioning after gave +0.3.
 %   Part D (+/- reference): balanced signs cancel the CM exactly, where
 %   (+)-(-) and polarity-following signs show it.
 %   Part E (convergence): RN falls as N^-0.5 on noise.
@@ -190,8 +192,38 @@ assert(all(abs(diffs) < 0.05), ...
     'partition-averaged split-half r differs from (F-1)/(F+1) by %s.',mat2str(diffs,3));
 assert(all(rMed < rMean),'median halves must give a lower r than mean halves (%s vs %s).', ...
     mat2str(rMed,3),mat2str(rMean,3));
+% The sweep bootstrap of the split-half r (Session.metricBootstrap, behind a
+% presto threshold's interval): each half is drawn again with replacement
+% AFTER the partition. Drawing the sweeps again first and partitioning the
+% resample puts copies of one sweep in both halves, which correlate with
+% themselves -- about +0.3 on noise alone, where the true r is 0. Averaged
+% over independent noise-only datasets, per half-averaging mode.
+nDs = 30;  Nn = 200;  polN = (-1).^(0:Nn-1);  grpN = (polN > 0) + 1;
+rBoot = zeros(nDs,2);  rOld = zeros(nDs,2);
+for i = 1:nDs
+    g = RandStream('threefry','Seed',700 + i);
+    En = randn(g,numel(tAll),Nn);
+    for m = 1:2
+        md = ["mean" "median"];
+        sh = mabr.analysis.SingleTrial.splitHalf(En,polN,resp,K=Nn/4,Mode=md(m),Resamples=25, ...
+            Stream=g,MinPerPolarity=1,Bootstrap=true);
+        rBoot(i,m) = sh.Mean;
+        pick = zeros(1,Nn);
+        for q = 1:2
+            w = find(grpN == q);
+            pick(w) = w(randi(g,numel(w),1,numel(w)));
+        end
+        sh = mabr.analysis.SingleTrial.splitHalf(En(:,pick),polN(pick),resp,K=Nn/4,Mode=md(m),Resamples=25, ...
+            Stream=g,MinPerPolarity=1);
+        rOld(i,m) = sh.Mean;
+    end
+end
+assert(all(abs(mean(rBoot)) < 0.02),'Bootstrap split-half r on noise alone: %s, expected 0.',mat2str(mean(rBoot),3));
+assert(all(mean(rOld) > 0.15),['Resample-then-partition on noise alone: %s; the defect this guards against ' ...
+    'should show as r well above 0.'],mat2str(mean(rOld),3));
 fprintf(['  PASS Part C: split-half r(mean) - (F-1)/(F+1) = %s at F %s; ' ...
-    'median-mode r lower (%s)\n'],mat2str(diffs,2),mat2str(Fs,2),mat2str(rMed,2));
+    'median-mode r lower (%s); bootstrap r on noise alone %s (mean, median) against %s when the sweeps were resampled first\n'], ...
+    mat2str(diffs,2),mat2str(Fs,2),mat2str(rMed,2),mat2str(mean(rBoot),2),mat2str(mean(rOld),2));
 
 % ---- Part D: the +/- reference cancels the CM ------------------------------
 g = RandStream('threefry','Seed',404);

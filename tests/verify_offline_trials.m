@@ -417,7 +417,12 @@ st = statusText(app);
 assert(contains(st,sprintf('%d sweep(s) rejected',numel(sel))) && contains(st,"Ctrl+Z to undo"), ...
     'The status line does not echo the recompute report: %s',st);
 d1 = C.Detection{r};
-assert(d1.nSweeps == d0.nSweeps - nNew && d1.strength ~= d0.strength,'The condition was not re-tested.');
+% Detection tests +/- PAIR averages (Settings.DetectPairPolarity), and
+% nSweeps counts the recorded sweeps those pairs used: rejecting nNew sweeps
+% removes nNew pairs' worth -- or one more, when the remainder of one
+% polarity can no longer be paired -- never fewer.
+assert(d1.nSweeps < d0.nSweeps && d1.nSweeps >= d0.nSweeps - nNew - 1 && d1.strength ~= d0.strength, ...
+    'The condition was not re-tested (nSweeps %d -> %d after %d rejections).',d0.nSweeps,d1.nSweeps,nNew);
 assert(C.p(r) ~= p0,'p did not change (%.4g) after %d sweeps were rejected.',p0,nNew);
 h = string(tagged(app,'AnalysisTrialsHeader').Text);
 assert(contains(h,sprintf('(manual %d)',numel(sel))),'The header does not count the manual rejections: %s',h);

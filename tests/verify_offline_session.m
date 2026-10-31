@@ -34,7 +34,13 @@ function verify_offline_session()
 %           P-N within 10%); wave I is printed, not asserted
 %   Part F  per-condition seeds: a subset re-test is bit-identical to the full
 %           one, and two conditions of equal N no longer share sign flips
-%           (defect 20)
+%           (defect 20); detect tests the +/- pair averages (PermTest's own
+%           null on Threshold.pairPolarity of the clean sweeps) and, with
+%           PairPolarity=false, the raw sweeps
+%           The pictures draw what the numbers are made from: means(), grid(
+%           Reduce="mean") and plotStack show the polarity-balanced mean, not
+%           the plain mean of sweeps whose polarity classes rejections have
+%           left uneven
 %   Part G  atomic steps: a progress sink throwing mabr:analysis:cancelled
 %           inside parse, segment, reject, detect and estimateThresholds
 %           leaves the session exactly as it was
@@ -496,22 +502,83 @@ r2 = r2(2);
 assert(C.Detection{r1}.Seed ~= C.Detection{r2}.Seed,'Two conditions drew the same seed.');
 rows = mabr.analysis.Artifacts.windowMask(s.Time,s.ResponseWindow) & s.Time >= C.Extent(r1,1) & s.Time <= C.Extent(r1,2);
 X1 = s.sweeps(r1);
-[~,res] = mabr.analysis.PermTest.run(X1(rows,:),Method="tfce",NumPermutations=100, ...
+% detect tests the averages of +/- pairs (Threshold.pairPolarity), so the
+% null it draws is PermTest's on those averages under the same seed.
+use1 = ~C.Rejected{r1} & ~C.Excess{r1};
+pol1 = C.Polarity{r1}(use1);  str1 = C.SweepFile{r1}(use1);
+assert(isequal(size(X1,2),nnz(use1)),'sweeps() and the clean mask disagree.');
+[Xp1,nUsed1,nPairs1] = mabr.analysis.Threshold.pairPolarity(X1(rows,:),pol1,str1);
+assert(nPairs1 >= 2 && size(Xp1,2) == nPairs1 && nUsed1 == 2*nPairs1 && nUsed1 <= size(X1,2) && ...
+    C.Detection{r1}.nSweeps == nUsed1,'The fixture has no +/- pairs to test (%d), or nSweeps is not the sweeps used.',nPairs1);
+[~,res] = mabr.analysis.PermTest.run(Xp1,Method="tfce",NumPermutations=100, ...
     Seed=mabr.analysis.Stats.conditionSeed(1,C.Key(r1)));
-assert(isequal(res.null,C.Detection{r1}.null),'The per-condition null is not PermTest''s under that seed.');
+assert(isequal(res.null,C.Detection{r1}.null),'The per-condition null is not PermTest''s on the pair averages under that seed.');
 % The same sweeps flipped by the other condition's draw give another null:
 % the two conditions' sign-flip sets differ (with one shared seed they were
 % the same set, which is defect 20).
-[~,res2] = mabr.analysis.PermTest.run(X1(rows,:),Method="tfce",NumPermutations=100, ...
+[~,res2] = mabr.analysis.PermTest.run(Xp1,Method="tfce",NumPermutations=100, ...
     Seed=mabr.analysis.Stats.conditionSeed(1,C.Key(r2)));
 assert(~isequal(res2.null,res.null),'Two equal-N conditions drew the same sign flips.');
+% PairPolarity=false is the test of the raw sweeps, as MABR once ran it.
+s.detect(Method="tfce",NumPermutations=100,SeedMode="per-condition",PairPolarity=false);
+[~,resRaw] = mabr.analysis.PermTest.run(X1(rows,:),Method="tfce",NumPermutations=100, ...
+    Seed=mabr.analysis.Stats.conditionSeed(1,C.Key(r1)));
+assert(isequal(s.Conditions.Detection{r1}.null,resRaw.null) && s.Conditions.Detection{r1}.nSweeps == size(X1,2) ...
+    && ~isequal(resRaw.null,res.null),'PairPolarity=false is not the test of the raw sweeps.');
 s.detect(Method="tfce",NumPermutations=100,SeedMode="shared");
-[~,res1] = mabr.analysis.PermTest.run(X1(rows,:),Method="tfce",NumPermutations=100,Seed=1);
+[~,res1] = mabr.analysis.PermTest.run(Xp1,Method="tfce",NumPermutations=100,Seed=1);
 assert(isequal(s.Conditions.Detection{r1}.null,res1.null) && ~isequal(res1.null,res.null), ...
     'SeedMode "shared" is not today''s behaviour.');
 fprintf(['  PASS Part F: a subset re-test (3 of %d keys) is bit-identical; equal-N conditions draw ' ...
-    'different seeds; per-condition and shared nulls are PermTest''s under those seeds (%.1f s)\n'], ...
-    height(C),toc(tp));
+    'different seeds; per-condition and shared nulls are PermTest''s under those seeds on %d +/- pair averages ' ...
+    'of %d sweeps, and on the raw sweeps with PairPolarity=false (%.1f s)\n'], ...
+    height(C),nPairs1,size(X1,2),toc(tp));
+
+% The means the pictures show. measure, detect and pickPeaks work from the
+% polarity-balanced mean; the plain mean of the clean sweeps lets a CM in
+% whenever rejections have left the two polarities uneven, so means(), grid(
+% Reduce="mean") and plotStack drew a trace that the numbers beside it were
+% not made from. The fixture is a session with artifacts, so some conditions
+% are uneven.
+tp = tic;
+Ck = s.Conditions;
+Mb = s.means();
+Mp = s.means(Polarity="all");
+uneven = find(Ck.nPos > 0 & Ck.nNeg > 0 & Ck.nPos ~= Ck.nNeg & isfinite(Ck.Frequency) & Ck.Stimulus == "Tone");
+assert(~isempty(uneven),'The fixture has no tone condition with uneven polarity classes to test the balanced mean on.');
+for i = reshape(unique([uneven(1:min(3,numel(uneven))); 1; height(Ck)]),1,[])
+    mb = s.conditionMean(Ck.Key(i),"balanced");
+    assert(isequaln(isnan(Mb(:,i)),isnan(mb)) && max(abs(Mb(:,i) - mb),[],'omitnan') < 1e-12, ...
+        'means() of %s is not the balanced mean.',Ck.Key(i));
+    assert(max(abs(Mp(:,i) - mean(s.sweeps(i),2)),[],'omitnan') < 1e-12, ...
+        'means(Polarity="all") of %s is not the plain mean.',Ck.Key(i));
+end
+i0 = uneven(1);
+dPlain = max(abs(Mb(:,i0) - Mp(:,i0)),[],'omitnan');
+assert(dPlain > 0,'The balanced and plain means of an uneven condition should differ.');
+mb0 = s.conditionMean(Ck.Key(i0),"balanced");
+sel = Ck.Stimulus == "Tone" & Ck.AcqMode == Ck.AcqMode(i0) & Ck.Frequency == Ck.Frequency(i0);
+assert(nnz(Ck.Level == Ck.Level(i0) & sel) == 1,'The uneven condition shares its tile with another.');
+[Sg,~,rg,cg] = s.grid("Level","Frequency",Reduce="mean",Where=struct('AcqMode',Ck.AcqMode(i0),'Stimulus',"Tone"));
+tile = Sg{rg == Ck.Level(i0),cg == Ck.Frequency(i0)};
+assert(isequaln(isnan(tile),isnan(mb0)) && max(abs(tile - mb0),[],'omitnan') < 1e-12, ...
+    'grid(Reduce="mean") is not the balanced mean.');
+figS = figure('Visible','off');
+axS = axes(figS);
+s.plotStack(Ck.Frequency(i0),Parent=axS,Where=struct('AcqMode',Ck.AcqMode(i0),'Stimulus',"Tone"),Window=[-2 10]);
+dyS = axS.YTick(2) - axS.YTick(1);
+kS = find(sort(Ck.Level(sel)) == Ck.Level(i0));
+win = s.Time >= -2 & s.Time <= 10;
+want  = 1e6*mb0(win) + (kS-1)*dyS;
+plain = 1e6*mean(s.sweeps(i0),2);
+plain = plain(win) + (kS-1)*dyS;
+lines = findobj(axS,'Type','line','-function',@(h) numel(h.XData) > 2);
+dBal = arrayfun(@(h) max(abs(h.YData(:) - want),[],'omitnan'),lines);
+dPln = arrayfun(@(h) max(abs(h.YData(:) - plain),[],'omitnan'),lines);
+close(figS);
+assert(min(dBal) < 1e-6 && min(dPln) > 0,'plotStack does not draw the balanced mean (%.3g, plain %.3g).',min(dBal),min(dPln));
+fprintf(['  PASS Part F (pictures): means(), grid(Reduce="mean") and plotStack draw the balanced mean; the plain mean of ' ...
+    '%s (%d + / %d - sweeps) is %.3g V from it (%.1f s)\n'],Ck.Key(i0),Ck.nPos(i0),Ck.nNeg(i0),dPlain,toc(tp));
 
 % =========================================================================
 %  Part G -- atomic steps under a cancelling progress sink

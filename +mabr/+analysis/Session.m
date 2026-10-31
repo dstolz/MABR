@@ -740,6 +740,7 @@ classdef Session < handle
                     end
                     idx = on + winIdx;                         % [nT x nSweeps]
                     ok  = all(idx >= 1 & idx <= numel(x),1) & valid;
+                    nOff = sum(~ok & valid);                   % before the non-finite pass
                     if ~isempty(bad)
                         m = reach*filtered;
                         hit = mabr.analysis.Session.touches(bad,on + w(1) - m,on + w(2) + m);
@@ -758,10 +759,12 @@ classdef Session < handle
                     off = (e(g,1):e(g,2)).';
                     if isempty(off)
                         ok = valid;
+                        nOff = 0;
                         X  = zeros(0,sum(ok));
                     else
                         idx = on + off;
                         ok  = all(idx >= 1 & idx <= numel(x),1) & valid;
+                        nOff = sum(~ok & valid);               % before the non-finite pass
                         % Each window is filtered alone: a window holding a
                         % non-finite sample is left out, no other.
                         bad = ~isfinite(x);
@@ -796,7 +799,10 @@ classdef Session < handle
                 if isnat(t0), s0 = Inf; else, s0 = datenum(t0); end %#ok<DATNM>
                 parts(j).start  = repmat(s0,1,n);
                 parts(j).nTrunc = sum(~valid);
-                parts(j).nOff   = sum(~ok & valid);
+                % Counted before the non-finite pass took its sweeps out of
+                % `ok`, so a sweep dropped for a NaN is not also reported as
+                % having run off its file.
+                parts(j).nOff   = nOff;
                 p.step();
             end
             p.close();
@@ -1138,7 +1144,10 @@ classdef Session < handle
             % Permutation-test every condition and store p, isSig, strength.
             %
             % Each condition is tested on its CLEAN sweeps (not rejected, not
-            % excess) over Window intersected with the rows it holds. A
+            % excess) over Window intersected with the rows it holds -- on the
+            % averages of their condensation/rarefaction pairs where both
+            % polarities are present (PairPolarity, below), so a cochlear
+            % microphonic cancels rather than costing detections. A
             % condition whose clean sweeps do not vary within their file x
             % polarity groups is not tested (Threshold.detect): p NaN, flagged
             % "zero variance", and a warning names it; one whose sweeps are
@@ -1157,12 +1166,20 @@ classdef Session < handle
             %   opts.Seed             permutation seed (default 1)
             %   opts.SeedMode         "shared" (default) or "per-condition"
             %   opts.Keys             test only these condition keys (default all)
+            %   opts.PairPolarity     average each file's condensation and
+            %                         rarefaction sweeps in pairs and test the
+            %                         averages (default true; Threshold.detect
+            %                         says why). A polarity-locked CM cancels
+            %                         in a pair instead of inflating the
+            %                         variance the t-test divides by. false
+            %                         tests the raw sweeps, as MABR once did.
             %   opts.UseParallel      accepted for old scripts and ignored: the
             %                         conditions are always tested one after
             %                         another (see below)
             %   T  (returned) obj.Conditions, with p/isSig/strength/Detection/
             %      DetectedAuto/Detected, also stored on the object. Detection{k}
-            %      is a struct: p, isSig, strength, nSweeps, method, tThresh, t,
+            %      is a struct: p, isSig, strength, nSweeps (the recorded sweeps
+            %      the test used: twice the pairs when paired), method, tThresh, t,
             %      pSample, sigMask, clusters (sample indices within the tested
             %      rows, which run from RowsMs(1) to RowsMs(2) of Time), RowsMs,
             %      NullP95, Seed and null (the permutation null; dropped on save)
@@ -1176,6 +1193,7 @@ classdef Session < handle
                 opts.Seed = 1
                 opts.SeedMode (1,1) string {mustBeMember(opts.SeedMode,["shared","per-condition"])} = "shared"
                 opts.Keys (:,1) string = strings(0,1)
+                opts.PairPolarity (1,1) logical = true
                 opts.UseParallel (1,1) logical = false
             end
             if opts.SeedMode == "per-condition" && ~(isnumeric(opts.Seed) && isscalar(opts.Seed) ...
@@ -1211,7 +1229,7 @@ classdef Session < handle
                 end
                 [X{k},pol,str] = obj.cleanSweeps(r);
                 args{k} = {rows,opts.Method,opts.NumPermutations,opts.Alpha, ...
-                    opts.MinClusterSize,seed,rowsMs,pol,str};
+                    opts.MinClusterSize,seed,rowsMs,pol,str,opts.PairPolarity};
             end
 
             % Serial, whatever UseParallel says. A parfor here was the one
@@ -1295,7 +1313,7 @@ classdef Session < handle
 
             dopt = struct('Method',opts.Method,'NumPermutations',opts.NumPermutations, ...
                 'Alpha',opts.Alpha,'MinClusterSize',opts.MinClusterSize,'Window',win, ...
-                'Seed',opts.Seed,'SeedMode',opts.SeedMode);
+                'Seed',opts.Seed,'SeedMode',opts.SeedMode,'PairPolarity',opts.PairPolarity);
             obj.Conditions = C;
             obj.StepOptions.detect = dopt;
             if isempty(opts.Keys), obj.clearStepStates("detect"); end
@@ -1359,6 +1377,17 @@ classdef Session < handle
             %                                 "auto" | "ascending" | "descending".
             %                                 analyze passes the settings', since
             %                                 it measures before thresholds run.
+            %   opts.LevelParam               the level axis of the series ("" =
+            %                                 automatic, levelParam()). analyze
+            %                                 passes the settings'.
+            %   opts.GroupBy                  the series' grouping as typed
+            %                                 (seriesGrouping: Stimulus and
+            %                                 AcqMode are always added; empty =
+            %                                 every key column but the level).
+            %                                 Left out, the series are those of
+            %                                 the last threshold estimate
+            %                                 (GroupParams), as direct calls
+            %                                 have always had them.
             %   opts.Keys                     condition keys (default all)
             %   T  (returned) obj.Conditions with RN, RNPM, ResponseRMS,
             %      BaselineRMS, F, PowerP, PowerF95, SNR, SNRCorr, Fsp, FspDF1,
@@ -1377,6 +1406,8 @@ classdef Session < handle
                 opts.Seed (1,1) double {mustBeInteger,mustBeNonnegative} = 1
                 opts.MaxLag (1,1) double {mustBeNonnegative} = 0.3
                 opts.LevelDirection (1,1) string {mustBeMember(opts.LevelDirection,["","auto","ascending","descending"])} = ""
+                opts.LevelParam (1,1) string = ""
+                opts.GroupBy (1,:) string = string(missing)
                 opts.Keys (:,1) string = strings(0,1)
             end
             guard = obj.beginStep("measure"); %#ok<NASGU>
@@ -1393,7 +1424,25 @@ classdef Session < handle
             nT = numel(t);
             h  = height(C);
             dt = median(diff(t));
-            sk = obj.conditionSeriesKeys();
+            % The series and the level axis the measures are made along (the
+            % K every level of a series shares, the next-louder level behind
+            % XCorrUp and DTWUp). The settings it is given decide them, not
+            % what the last threshold estimate happened to leave behind
+            % (GroupParams, LevelParam): a typed level parameter or grouping
+            % changed since then would otherwise pair the levels as the
+            % earlier ones did until the whole session was analysed again.
+            % A level parameter that is not a column of this session is
+            % ignored here (estimateThresholds is the step that refuses it).
+            lp = opts.LevelParam;
+            if lp == "" || ~ismember(lp,string(C.Properties.VariableNames))
+                lp = obj.levelParamOrEmpty();
+            end
+            if isscalar(opts.GroupBy) && ismissing(opts.GroupBy)
+                sk = obj.conditionSeriesKeys();
+            else
+                grp = mabr.analysis.Session.seriesGrouping(opts.GroupBy,obj.KeyParams,lp,obj.poolsAcqModes());
+                sk = mabr.analysis.Session.keyText(C,grp(ismember(grp,string(C.Properties.VariableNames))));
+            end
             if isempty(opts.Keys)
                 targets = (1:h).';
             else
@@ -1462,7 +1511,11 @@ classdef Session < handle
                 means{q} = S.Mean;
                 Xall = C.Sweeps{r};
                 if size(Xall,1) == nT && size(Xall,2) > 0
-                    feats{q} = mabr.analysis.SingleTrial.features(Xall,rows,br);
+                    % Every sweep gets a row (the Trials tab shows the
+                    % rejected ones too), but the template each is projected
+                    % onto is built from the CLEAN sweeps only -- see features.
+                    feats{q} = mabr.analysis.SingleTrial.features(Xall,rows,br, ...
+                        ~C.Rejected{r} & ~C.Excess{r});
                 else
                     feats{q} = mabr.analysis.SingleTrial.features(zeros(nT,numel(C.Rejected{r})),rows,br);
                 end
@@ -1474,7 +1527,6 @@ classdef Session < handle
             % its series.
             iU = find(names == "XCorrUp",1);  iL = find(names == "XCorrLag",1);  i0 = find(names == "XCorrUp0",1);
             iD = find(names == "DTWUp",1);  iDL = find(names == "DTWLag",1);  iDR = find(names == "DTWLagRange",1);
-            lp = obj.levelParamOrEmpty();
             maxLag = round(opts.MaxLag/dt);
             if lp ~= "" && ismember(lp,string(C.Properties.VariableNames))
                 % Louder is higher, on an attenuation axis lower (loudnessSign).
@@ -2199,27 +2251,9 @@ classdef Session < handle
             end
             obj.requireConditions();
             r = obj.rowIndex(row);
-            X = obj.Conditions.Sweeps{r};
-            if isempty(X), return; end
+            X = obj.selectSweeps(r,opts.IncludeRejected,opts.IncludeExcess,opts.Polarity);
 
-            keep = true(1,size(X,2));
-            if ~opts.IncludeRejected
-                keep = keep & ~obj.Conditions.Rejected{r};
-            end
-            if ~opts.IncludeExcess && ismember('Excess',obj.Conditions.Properties.VariableNames)
-                keep = keep & ~obj.Conditions.Excess{r};
-            end
-            if opts.Polarity ~= "all"
-                pol = obj.Conditions.Polarity{r};
-                if numel(pol) == size(X,2)
-                    if opts.Polarity == "positive", keep = keep & pol > 0;
-                    else,                           keep = keep & pol < 0;
-                    end
-                end
-            end
-            X = X(:,keep);
-
-            if ~isempty(opts.Window)
+            if ~isempty(opts.Window) && ~isempty(X)
                 X = X(mabr.analysis.Artifacts.windowMask(obj.Time,opts.Window),:);
             end
         end
@@ -2232,19 +2266,33 @@ classdef Session < handle
             % draw as a flat trace indistinguishable from a real null.
             %
             %   opts.IncludeRejected  include flagged sweeps (default false)
-            %   opts.Polarity         "all" (default), "positive", or "negative"
+            %   opts.Polarity         "balanced" (default), "all", "positive" or
+            %                         "negative". "balanced" is the mean the
+            %                         other steps use (Stats.balancedMean: equal
+            %                         weight per polarity, so a polarity-locked
+            %                         component -- the cochlear microphonic --
+            %                         cancels even when rejections have left
+            %                         the classes uneven); "all" is the plain
+            %                         mean of every sweep kept
             %   M  (returned) [nSamples x nConditions] double
             arguments
                 obj
                 opts.IncludeRejected (1,1) logical = false
-                opts.Polarity (1,1) string = "all"
+                opts.Polarity (1,1) string {mustBeMember(opts.Polarity,["balanced","all","positive","negative"])} = "balanced"
             end
             obj.requireConditions();
             n = height(obj.Conditions);
             M = nan(numel(obj.Time),n);
             for i = 1:n
-                X = obj.sweeps(i,IncludeRejected=opts.IncludeRejected,Polarity=opts.Polarity);
-                if ~isempty(X), M(:,i) = mean(X,2); end
+                pl = opts.Polarity;
+                if pl == "balanced", pl = "all"; end         % selection: both polarities
+                [X,pol,str] = obj.selectSweeps(i,opts.IncludeRejected,false,pl);
+                if isempty(X), continue; end
+                if opts.Polarity == "balanced"
+                    M(:,i) = mabr.analysis.Stats.balancedMean(X,pol,str);
+                else
+                    M(:,i) = mean(X,2);
+                end
             end
         end
 
@@ -2256,6 +2304,11 @@ classdef Session < handle
             %
             % S{r,c} is a [nSamples x nSweeps] matrix (or the mean, with
             % Reduce="mean"), empty where the session holds no such condition.
+            % The mean is the polarity-balanced one (Stats.balancedMean), as
+            % measure, detect and pickPeaks use: the plain mean of the clean
+            % sweeps lets a cochlear microphonic into the picture whenever
+            % rejections have left the two polarities uneven, although the
+            % numbers computed from the same sweeps do not have it.
             % U is the struct of unique values, one field per parameter. A
             % condition whose row or column parameter is NaN -- a click on a
             % frequency grid -- is not on the grid; Where restricts it further
@@ -2264,7 +2317,7 @@ classdef Session < handle
             %   rowParam               row parameter name (default "" = levelParam())
             %   colParam               column parameter name (default "" = frequencyParam())
             %   opts.IncludeRejected   include flagged sweeps (default false)
-            %   opts.Reduce            "none" (default) or "mean"
+            %   opts.Reduce            "none" (default) or "mean" (balanced, see above)
             %   opts.Where             struct of param=values to restrict to (default none)
             %   opts.Window            ms window to crop sweeps to (default: no crop)
             %   S        (returned) [nRow x nCol] cell, see above
@@ -2307,8 +2360,13 @@ classdef Session < handle
             for k = idx(:).'
                 r = find(rowVals == C.(rowParam)(k),1);
                 c = colOf(k);
-                X = obj.sweeps(k,IncludeRejected=opts.IncludeRejected,Window=opts.Window);
-                if opts.Reduce == "mean" && ~isempty(X), X = mean(X,2); end
+                [X,pol,str] = obj.selectSweeps(k,opts.IncludeRejected,false,"all");
+                if ~isempty(opts.Window) && ~isempty(X)
+                    X = X(mabr.analysis.Artifacts.windowMask(obj.Time,opts.Window),:);
+                end
+                if opts.Reduce == "mean" && ~isempty(X)
+                    X = mabr.analysis.Stats.balancedMean(X,pol,str);
+                end
                 if isempty(S{r,c})
                     S{r,c} = X;
                 else
@@ -2532,15 +2590,22 @@ classdef Session < handle
             C = obj.Conditions;
             idx = find(obj.whereMask(w) & mabr.analysis.Session.gridColumn(C,rp));
             rowVals = unique(C.(rp)(idx));
+            % Each condition's balanced mean (what measure, detect and
+            % pickPeaks work from; the plain mean of the clean sweeps lets a
+            % cochlear microphonic into the picture when rejections have left
+            % the polarities uneven). Conditions folded onto one level are
+            % weighted by their clean sweeps, as their pooled sweeps were.
             S = cell(numel(rowVals),1);
+            W = cell(numel(rowVals),1);
             for k = idx(:).'
-                X = obj.sweeps(k);
+                [X,pol,str] = obj.selectSweeps(k,false,false,"all");
                 if isempty(X), continue; end
                 r = find(rowVals == C.(rp)(k),1);
-                S{r} = [S{r} X];                % conditions folded onto one level
+                S{r} = [S{r} mabr.analysis.Stats.balancedMean(X,pol,str)];
+                W{r} = [W{r}; size(X,2)];
             end
             for r = 1:numel(S)
-                if ~isempty(S{r}), S{r} = mean(S{r},2); end
+                if ~isempty(S{r}), S{r} = S{r}*(W{r}/sum(W{r})); end
             end
 
             th = NaN;
@@ -2920,14 +2985,15 @@ classdef Session < handle
                     case "detect"
                         obj.detect(Method=s.DetectMethod,NumPermutations=s.NumPermutations, ...
                             Alpha=s.Alpha,Window=s.ResponseWindow,Seed=s.Seed, ...
-                            SeedMode="per-condition",Keys=keys);
+                            SeedMode="per-condition",PairPolarity=s.DetectPairPolarity,Keys=keys);
                     case "measure"
                         obj.measure(ResponseWindow=s.ResponseWindow,BaselineWindow=s.BaselineWindow, ...
                             SplitHalfMode=s.SplitHalfMode,SplitHalfResamples=s.SplitHalfResamples, ...
                             SplitHalfWindow=s.SplitHalfWindow, ...
                             SplitHalfMinPerPolarity=s.SplitHalfMinPerPolarity, ...
                             NumPermutations=s.NumPermutations,Seed=s.Seed,MaxLag=s.MaxLag, ...
-                            LevelDirection=s.LevelDirection,Keys=keys);
+                            LevelDirection=s.LevelDirection,LevelParam=s.LevelParam, ...
+                            GroupBy=s.GroupBy,Keys=keys);
                     case "thresholds"
                         obj.estimateThresholds(Method=s.ThresholdMethod,MethodSettings=s, ...
                             LevelParam=s.LevelParam,GroupBy=s.GroupBy,Alpha=s.Alpha, ...
@@ -4133,16 +4199,19 @@ classdef Session < handle
             %
             %   X     [nSamples x nSweeps] clean sweeps for one condition
             %   args  cell {rows,method,nPerm,alpha,minSz,seed,rowsMs[,pol,
-            %         strata]}, the detect() options in positional form, and
+            %         strata[,pair]]}, the detect() options in positional form,
             %         the sweeps' polarities and files (without them the
-            %         sweeps are one group: see Threshold.detect)
+            %         sweeps are one group: see Threshold.detect) and whether
+            %         to test polarity pairs (default true; nothing to pair
+            %         without polarities)
             %   d     (returned) the Detection record (see detect)
             %   why   (returned) string row: Threshold.detect's Flags -- the
             %         condition has no noise and was not tested, or its TFCE
             %         step was raised
             [rows,method,nPerm,alpha,minSz,seed,rowsMs] = deal(args{1:7});
-            pol = [];  str = [];
+            pol = [];  str = [];  pair = true;
             if numel(args) >= 9, pol = args{8};  str = args{9}; end
+            if numel(args) >= 10, pair = args{10}; end
             why = strings(1,0);
             d = struct('p',NaN,'isSig',false,'strength',NaN,'nSweeps',size(X,2), ...
                 'method',method,'tThresh',NaN,'t',zeros(1,0),'pSample',zeros(1,0), ...
@@ -4153,7 +4222,7 @@ classdef Session < handle
             end
             r = mabr.analysis.Threshold.detect(X, Rows=rows, Method=method, ...
                 NumPermutations=nPerm, Alpha=alpha, MinClusterSize=minSz, Seed=seed, ...
-                Polarity=pol, Strata=str);
+                Polarity=pol, Strata=str, PairPolarity=pair);
             why = reshape(string(r.Flags),1,[]);
             res = r.result;
             d.p        = r.p;
@@ -5551,6 +5620,44 @@ classdef Session < handle
             end
         end
 
+        function [X,pol,str] = selectSweeps(obj,r,includeRejected,includeExcess,polarity)
+            % A condition's sweeps as sweeps() selects them, with the
+            % polarity and file of each kept sweep (means, grid and plotStack
+            % average these with Stats.balancedMean).
+            %
+            %   r                row of Conditions
+            %   includeRejected  keep flagged sweeps
+            %   includeExcess    keep sweeps beyond MaxSweepsPerCondition
+            %   polarity         "all", "positive" or "negative"
+            %   X, pol, str      (returned) [nSamples x nKept], 1 x nKept
+            %                    stimulus polarity and file index ([] / [] when
+            %                    the condition holds no sweeps)
+            C = obj.Conditions;
+            X = C.Sweeps{r};
+            pol = zeros(1,0);  str = zeros(1,0);
+            if isempty(X), return; end
+            n = size(X,2);
+            keep = true(1,n);
+            if ~includeRejected
+                keep = keep & ~C.Rejected{r};
+            end
+            if ~includeExcess && ismember('Excess',C.Properties.VariableNames)
+                keep = keep & ~C.Excess{r};
+            end
+            pol = ones(1,n);
+            if ismember('Polarity',C.Properties.VariableNames), pol = C.Polarity{r}; end
+            if polarity ~= "all" && numel(pol) == n
+                if polarity == "positive", keep = keep & pol > 0;
+                else,                      keep = keep & pol < 0;
+                end
+            end
+            X = X(:,keep);
+            if numel(pol) == n, pol = pol(keep); else, pol = ones(1,size(X,2)); end
+            str = ones(1,n);
+            if ismember('SweepFile',C.Properties.VariableNames), str = C.SweepFile{r}; end
+            if numel(str) == n, str = str(keep); else, str = ones(1,size(X,2)); end
+        end
+
         function [X,pol,str] = cleanSweeps(obj,r)
             % Condition r's clean sweeps, their polarities and source files.
             C = obj.Conditions;
@@ -6374,7 +6481,11 @@ classdef Session < handle
                 a = {};
                 if isfield(SO,'detect')
                     a = mabr.analysis.Session.namedArgs(SO.detect, ...
-                        ["Method","NumPermutations","Alpha","MinClusterSize","Window","Seed","SeedMode"]);
+                        ["Method","NumPermutations","Alpha","MinClusterSize","Window","Seed","SeedMode", ...
+                         "PairPolarity"]);
+                    % Options recorded before pairing existed describe a test
+                    % of the raw sweeps, and the other conditions were tested so.
+                    if ~isfield(SO.detect,'PairPolarity'), a = [a {'PairPolarity',false}]; end
                 end
                 obj.detect(a{:},Keys=keys);
             end
@@ -6383,7 +6494,7 @@ classdef Session < handle
                 if isfield(SO,'measure')
                     a = mabr.analysis.Session.namedArgs(SO.measure,["ResponseWindow","BaselineWindow", ...
                         "SplitHalfMode","SplitHalfResamples","SplitHalfWindow","SplitHalfMinPerPolarity", ...
-                        "NumPermutations","Seed","MaxLag","LevelDirection"]);
+                        "NumPermutations","Seed","MaxLag","LevelDirection","LevelParam","GroupBy"]);
                 end
                 obj.measure(a{:},Keys=keys);
             end
@@ -6988,6 +7099,19 @@ classdef Session < handle
             % idx of one series: sweeps resampled within each file x polarity
             % group, the metric made again per replicate. [] when the sweeps
             % are not here or the metric cannot be bootstrapped this way.
+            %
+            % The split-half r is the exception to "resample, then measure":
+            % its replicate PARTITIONS the sweeps first (balanced per
+            % polarity, as SingleTrial.splitHalf does for the observed r) and
+            % resamples with replacement within each half afterwards, the
+            % halves averaged as the measure step averages them (its
+            % SplitHalfMode, over its SplitHalfWindow). Resampling first and
+            % letting splitHalf partition the resample put copies of one
+            % sweep in both halves, which correlate with themselves: the
+            % replicates of a noise-only condition averaged an r of about
+            % +0.3 instead of 0, and the interval of a presto threshold
+            % was drawn around that. The other metrics are not split, so they
+            % are resampled as before.
             YB = [];
             if ~obj.HasSweeps || ~ismember(metric,["snr","splithalf","xcorr","dtw"]), return; end
             C = obj.Conditions;
@@ -6997,6 +7121,15 @@ classdef Session < handle
             YB = NaN(n,B);
             means = cell(n,1);
             K = [];
+            shMode = "median";
+            shMask = rwm;
+            if metric == "splithalf" && isfield(obj.StepOptions,'measure')
+                mo = obj.StepOptions.measure;
+                if isfield(mo,'SplitHalfMode'), shMode = string(mo.SplitHalfMode); end
+                if isfield(mo,'SplitHalfWindow') && ~isempty(mo.SplitHalfWindow)
+                    shMask = mabr.analysis.Artifacts.windowMask(t,mo.SplitHalfWindow);
+                end
+            end
             if metric == "splithalf"
                 kc = zeros(n,1);
                 for i = 1:n
@@ -7020,6 +7153,15 @@ classdef Session < handle
                 if size(X,2) < 2 || size(X,1) ~= nT, continue; end
                 rows = rwm & mabr.analysis.Session.extentMask(t,C.Extent(r,:)) & all(isfinite(X),2);
                 rs = mabr.analysis.Stats.conditionStream(seed,C.Key(r) + "|bootstrap");
+                if metric == "splithalf"
+                    shRows = shMask & mabr.analysis.Session.extentMask(t,C.Extent(r,:)) & all(isfinite(X),2);
+                    for b = 1:B
+                        sh = mabr.analysis.SingleTrial.splitHalf(X,pol,shRows,K=K,Mode=shMode, ...
+                            Resamples=25,Stream=rs,MinPerPolarity=0,Bootstrap=true);
+                        YB(i,b) = sh.Mean;
+                    end
+                    continue
+                end
                 g = string(str) + "|" + string(pol);
                 [~,~,gi] = unique(g);
                 M = NaN(nT,B);
@@ -7032,16 +7174,9 @@ classdef Session < handle
                     Xb = X(:,pick);
                     [m,sem] = mabr.analysis.Stats.balancedMean(Xb,pol(pick),str(pick));
                     M(:,b) = m;
-                    switch metric
-                        case "snr"
-                            if any(rows)
-                                mr = m(rows);
-                                YB(i,b) = 10*log10(mean((mr - mean(mr)).^2)/mean(sem(rows).^2));
-                            end
-                        case "splithalf"
-                            sh = mabr.analysis.SingleTrial.splitHalf(Xb,pol(pick),rows,K=K, ...
-                                Resamples=25,Stream=rs,MinPerPolarity=0);
-                            YB(i,b) = sh.Mean;
+                    if metric == "snr" && any(rows)
+                        mr = m(rows);
+                        YB(i,b) = 10*log10(mean((mr - mean(mr)).^2)/mean(sem(rows).^2));
                     end
                 end
                 means{i} = M;

@@ -168,11 +168,13 @@ classdef SeriesThreshold
             %   settings  a mabr.analysis.Settings, a plain struct with the same
             %             field names, or [] (defaults); only these fields are
             %             read: Alpha, MinConsecutive, ThresholdMetric,
-            %             ThresholdModel, CriterionMode, Criterion
+            %             ThresholdModel, CriterionMode, Criterion,
+            %             GLMConnectedOnly
             %   m         (returned) one row as methods() returns, resolved:
             %             p-methods take Criterion = Alpha; the label carries
             %             MinConsecutive; custom takes metric/model/mode from
-            %             the settings and Criterion (NaN = the mode's default)
+            %             the settings and Criterion (NaN = the mode's default);
+            %             ConnectedOnly is GLMConnectedOnly (true)
             %
             % Errors mabr:analysis:SeriesThreshold:badMethod for an unknown Id
             % or a custom combination that cannot be estimated (glm on a
@@ -212,6 +214,11 @@ classdef SeriesThreshold
             end
             m.CriterionUnit = criterionUnit(m.CriterionMode,m.Metric);
             m.NeedsMeasures = needsMeasures(m.Metric);
+            % Whether a psychometric (glm) fit sees only the levels connected
+            % to the top response. It travels with the method, which the
+            % window, the export and the session all resolve from the same
+            % settings, so none of them can fit a series differently.
+            m.ConnectedOnly = logical(setting(settings,'GLMConnectedOnly',true));
 
             % "2 consecutive" in a label is literally MinConsecutive.
             if m.Model == "descending" && id ~= "custom" && K ~= 2
@@ -414,7 +421,12 @@ classdef SeriesThreshold
             % loudest level with: NaN there is the method, not a defect.
             exempt = false(n,1);
             if ismember(m.Metric,["xcorr","dtw"]) && any(finLev)
-                exempt = finLev & ~okVal & levels == max(levels(finLev));
+                % The LOUDEST level, which on an attenuation axis (descending)
+                % is the smallest number: judged by max(levels) alone every
+                % descending series earned the spurious "metric undefined"
+                % flags its ascending twin did not.
+                ref    = sgn*levels;
+                exempt = finLev & ~okVal & ref == max(ref(finLev));
             end
             usable = (finLev & okN & okPol & okVal) | (finLev & hasOv);
             % Said in the words the settings dialog uses ("Fewest clean
@@ -437,6 +449,46 @@ classdef SeriesThreshold
             if any(~finLev), flags(end+1) = "level ignored: level value missing"; end
 
             u = find(usable);
+
+            % ---- repeated levels ----------------------------------------
+            % A series is one level axis, and two entries at one level mean
+            % that the grouping let two different conditions into it -- a
+            % typed GroupBy that leaves out a key column that varies (the
+            % frequency, say): the "series" then mixes what it was meant to
+            % separate, and whatever threshold it gives is of that mixture.
+            % Counted as two levels they also made a run of two consecutive
+            % detections out of one level, and hid the "top-level-only run"
+            % flag the same way. So the level is FLAGGED (whether or not both
+            % entries are usable), and the fit is given one entry per level:
+            % an overridden entry (a curator's verdict stands), else the one
+            % with the strongest evidence in the method's metric (the
+            % smallest p, the largest r, SNR or statistic), else the first
+            % in input order. A level is thus "detected" when any of its
+            % conditions is -- the liberal reading, which a person looking
+            % at the mixture would also take, and why the flag matters. The
+            % entries set aside are not used: Usable and Detected are false
+            % for them, as for any level the series ignores.
+            fl = levels(finLev);
+            [ul,~,gl] = unique(fl);
+            nl = accumarray(gl,1);
+            for i = find(nl > 1).'
+                flags(end+1) = sprintf("repeated level at %s dB: %d conditions share it; the one with the %s is used", ...
+                    fmtNum(ul(i)),nl(i),ifelse(isP,"smallest p","strongest metric")); %#ok<AGROW>
+            end
+            setAside = zeros(0,1);
+            if numel(u) > 1
+                [~,~,gu] = unique(levels(u));
+                for g = find(accumarray(gu,1) > 1).'
+                    mem = u(gu == g);                      % input order
+                    ev  = val(mem);
+                    if ~isP, ev = -ev; end                 % smaller is stronger
+                    [~,ord] = sortrows([~hasOv(mem) ev (1:numel(mem)).']);
+                    setAside = [setAside; mem(ord(2:end))]; %#ok<AGROW>
+                end
+                usable(setAside) = false;
+                u = find(usable);
+            end
+
             [L,o] = sort(sgn*levels(u));
             u  = u(o);
             nU = numel(u);
@@ -814,7 +866,7 @@ function r = mrow(id,label,metric,model,mode,crit)
 r = struct('Id',string(id),'Label',string(label),'Metric',string(metric), ...
     'Model',string(model),'CriterionMode',string(mode),'Criterion',crit, ...
     'CriterionUnit',criterionUnit(string(mode),string(metric)), ...
-    'NeedsMeasures',needsMeasures(string(metric)));
+    'NeedsMeasures',needsMeasures(string(metric)),'ConnectedOnly',true);
 end
 
 function v = setting(s,name,default)
@@ -945,6 +997,7 @@ if why ~= ""
 end
 if ~isfield(m,'CriterionUnit'), m.CriterionUnit = criterionUnit(m.CriterionMode,m.Metric); end
 if ~isfield(m,'NeedsMeasures'), m.NeedsMeasures = needsMeasures(m.Metric); end
+if ~isfield(m,'ConnectedOnly'), m.ConnectedOnly = true; end
 end
 
 function Y = normalizeY(Y,n)
@@ -1109,13 +1162,54 @@ switch m.Model
         end
 
     case "glm"
-        f = mabr.analysis.Threshold.fit(L,double(D),Type="glm",Penalty="firth", ...
-            Weights=ones(n,1),Criterion=m.Criterion,Extrapolate=opts.Extrapolate, ...
+        % CONNECTED LEVELS ONLY. A psychometric function has one transition,
+        % and a single false detection far below it gives the fit a second
+        % one to average over: D = [1 0 0 0 1 1 1 1 1] over 0-80 dB fitted
+        % to 21.7 dB with an interval open on both sides, where the
+        % descending rule (and an eye) reads 35 dB. At a 5 % false-positive
+        % rate about one series in five with four sub-threshold levels
+        % holds such a level. So the fit sees only the levels connected to
+        % the top response -- those the descending rule reads, from the
+        % loudest down to its stop (descendingRun) -- and the one level
+        % below the stop, which is a miss and is what gives the fit a floor
+        % to rise from. The detections beyond it are isolated and are
+        % flagged, not fitted. Nothing is dropped unless there is a
+        % detection to drop: a series without an isolated detection is fitted
+        % on every level, exactly as it always was, however many silent
+        % levels it has. The loudest K levels all silent leave no response
+        % for a detection below them to be connected to: no response, as
+        % the descending rule says.
+        Lg = L;  Dg = D;
+        dropped = false;
+        if m.ConnectedOnly && any(D)
+            [~,~,lo] = mabr.analysis.SeriesThreshold.descendingRun(D,K);
+            k0 = max(lo-1,1);
+            if any(D(1:k0-1))
+                R.Flags(end+1) = "isolated detection below threshold";
+                if lo > n
+                    R = setRight(R,L(n));
+                    R.Status    = "no-response";
+                    R.Converged = true;
+                    R.Message   = sprintf(['psychometric fit not attempted: the loudest %d level(s) ' ...
+                        'show no response, so the detection(s) below are isolated.'],K);
+                    R.Predict   = @(xx) zeros(numel(xx),1);
+                    return
+                end
+                Lg = L(k0:n);  Dg = D(k0:n);
+                dropped = true;
+            end
+        end
+        f = mabr.analysis.Threshold.fit(Lg,double(Dg),Type="glm",Penalty="firth", ...
+            Weights=ones(numel(Lg),1),Criterion=m.Criterion,Extrapolate=opts.Extrapolate, ...
             NearestLevel=opts.NearestLevel,CIAlpha=opts.CIAlpha, ...
             CINumSamples=opts.CINumSamples,Seed=opts.Seed);
         R = fromFit(R,f);
         R.FitTarget = "binary";
         R.Message = joinText(["psychometric (advisory)" f.Message]);
+        if dropped
+            R.Message = joinText([R.Message sprintf(['fitted to the %d level(s) connected to the ' ...
+                'loudest response (detections below them are isolated)'],numel(Lg))]);
+        end
         if any(f.CIOpen), R.Flags(end+1) = "profile CI open"; end
 
     case "presto"
@@ -1296,11 +1390,44 @@ for b = 1:B
         th(b) = NaN;
     end
 end
-fin = th(isfinite(th));
-if numel(fin) >= 10
-    R.CI       = reshape(mabr.analysis.Stats.percentile(fin,[opts.CIAlpha/2 1-opts.CIAlpha/2]),1,2);
+% A censored replicate -- Inf for no response at any level, -Inf for a
+% response at every level -- is part of the sampling distribution. Dropping
+% them pulled the far end of the interval inward: with a quarter of the
+% replicates right-censored the upper limit still came out finite. They are
+% kept, and an end the percentile lands on at infinity is reported OPEN
+% (NaN in CI, true in CIOpen), the way the profile interval reports its own.
+use = th(~isnan(th));
+if numel(use) >= 10
+    q = censoredPercentile(use,[opts.CIAlpha/2 1-opts.CIAlpha/2]);
+    R.CIOpen   = ~isfinite(q);
+    q(R.CIOpen) = NaN;
+    R.CI       = reshape(q,1,2);
     R.CIMethod = "bootstrap";
-    R.CIOpen   = [false false];
+    if any(R.CIOpen), R.Flags(end+1) = "bootstrap CI open"; end
+end
+end
+
+function q = censoredPercentile(x,p)
+% mabr.analysis.Stats.percentile's rule (position p*n + 0.5, clamped, linear
+% between neighbours) over values that may be +-Inf: an infinite neighbour
+% with any weight makes the percentile infinite rather than NaN (0*Inf) or
+% silently dropped.
+x = sort(x(:));
+n = numel(x);
+q = nan(size(p));
+for i = 1:numel(p)
+    pos = min(max(p(i)*n + 0.5,1),n);
+    i0 = floor(pos);  i1 = min(i0 + 1,n);  w = pos - i0;
+    a = x(i0);  b = x(i1);
+    if w == 0 || a == b
+        q(i) = a;
+    elseif ~isfinite(a)
+        q(i) = a;                       % weight 1-w > 0 on an infinite end
+    elseif ~isfinite(b)
+        q(i) = b;                       % weight w > 0 on an infinite end
+    else
+        q(i) = (1 - w)*a + w*b;
+    end
 end
 end
 

@@ -192,7 +192,10 @@ classdef PermTest
             %                whichever orientation the caller used)
             %   n            number of sweeps summed over (scalar)
             %   t            (returned) t-statistic, same shape as sumX
-            v  = (sumSq - (sumX.^2)/n) ./ (n-1);
+            % max(.,0): the one-pass form rounds slightly negative for a
+            % constant sweep set, and sqrt of that is a complex t that
+            % isfinite accepts and abs() then reads as huge.
+            v  = max(sumSq - (sumX.^2)/n,0) ./ (n-1);
             se = sqrt(v./n);
             t  = (sumX./n) ./ se;
             t(~isfinite(t)) = 0;
@@ -335,17 +338,17 @@ classdef PermTest
             C = [zeros(nr,1) cumsum(T.*mask,2)];        % nr x (ns+1)
 
             d = diff([false(nr,1) mask false(nr,1)],1,2);   % nr x (ns+1)
-            [rs,cs] = find(d ==  1);
-            [re,ce] = find(d == -1);
-            % On a one-row map find() returns ROW vectors, and [rs cs] would be
-            % one row to sortrows -- every run after the first silently lost.
-            % The observed map of every run is one row, so this matters.
-            rs = rs(:); cs = cs(:); re = re(:); ce = ce(:);
-
-            % find() walks column-major; sort both by (row,column) so the k-th
-            % start and the k-th end belong to the same run.
-            [~,i] = sortrows([rs cs]); rs = rs(i); cs = cs(i);
-            [~,i] = sortrows([re ce]); ce = ce(i);
+            % find() walks column-major, so on the TRANSPOSE it walks each row
+            % in turn and along it: the k-th start and the k-th end are then
+            % the same run with no sort at all (starts and ends alternate
+            % within a row, and the padding closes every run). The two
+            % sortrows this replaces were half of a TFCE pass; the result is
+            % the same to the bit. find on a column gives columns, so a
+            % one-row map needs no reshaping either.
+            dt = d.';
+            [cs,rs] = find(dt ==  1);
+            [ce,~]  = find(dt == -1);
+            rs = rs(:); cs = cs(:); ce = ce(:);
 
             len  = ce - cs;                                  % samples in the run
             mass = C(sub2ind([nr ns+1],rs,ce)) - C(sub2ind([nr ns+1],rs,cs));
@@ -382,12 +385,11 @@ classdef PermTest
                 mask = X > h;
                 if ~any(mask(:)), continue; end
 
-                d = diff([false(nr,1) mask false(nr,1)],1,2);
-                [rs,cs] = find(d ==  1);
-                [re,ce] = find(d == -1);
-                rs = rs(:); cs = cs(:); re = re(:); ce = ce(:);   % one-row map: see maxPositiveMass
-                [~,i] = sortrows([rs cs]); rs = rs(i); cs = cs(i);
-                [~,i] = sortrows([re ce]); ce = ce(i);
+                d  = diff([false(nr,1) mask false(nr,1)],1,2);
+                dt = d.';                                   % see maxPositiveMass
+                [cs,rs] = find(dt ==  1);
+                [ce,~]  = find(dt == -1);
+                rs = rs(:); cs = cs(:); ce = ce(:);
 
                 len  = ce - cs;
                 keep = len >= minSz;

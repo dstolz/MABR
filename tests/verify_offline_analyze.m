@@ -70,6 +70,11 @@ function verify_offline_analyze()
 %           without polarities the noiseless sweeps are tested with a raised
 %           TFCE step (once a hang), and a noisy condition's test is
 %           PermTest's own, bit for bit
+%   Part N  MEASURE READS THE SETTINGS IT IS GIVEN: the next-louder pairing
+%           behind XCorrUp/DTWUp follows the typed LevelParam, GroupBy and
+%           LevelDirection of an analyze() call, not the series the last
+%           threshold pass happened to leave behind; a sweep bootstrap of a
+%           split-half (presto) threshold runs and is reproducible
 %
 %   Everything is written under one tempname folder removed on the way out;
 %   figures are invisible and closed. No preference is read or written
@@ -993,6 +998,77 @@ fprintf(['  PASS Part M: a noiseless session and an all-zero channel analyse in 
     'PowerP/Fsp/SplitR NaN, both series "insufficient" for zero variance, warnings naming them; ' ...
     'unpolarized noiseless sweeps tested with a raised TFCE step (%.2f s); a noisy test is PermTest''s ' ...
     'own (%.1f s)\n'],secs,tRaised,toc(tp));
+
+% =========================================================================
+%  Part N -- measure reads the settings it is given
+% =========================================================================
+tp = tic;
+fn = fullfile(root,"SUBJ-ID-9010_N");
+mabrtest.SyntheticABR.writeSession(fn,truth,Stimuli="Tone");
+sn = mabr.analysis.Session(fn,Verbose=false);
+sn.analyze(st);                                       % Level is the axis; one series per frequency
+% The loudest level of a series has no next-louder one to be compared with:
+% XCorrUp is NaN there and finite below. Which level is the loudest is what
+% the typed settings say, so each re-measure moves the NaN to a new place.
+topNaN = @(C,grp,lpar,sgn) arrayfun(@(g) isnan(C.XCorrUp(find(grp == g & sgn*C.(lpar) == max(sgn*C.(lpar)(grp == g)),1))), unique(grp));
+okBelow = @(C,grp,lpar,sgn) all(arrayfun(@(g) all(isfinite(C.XCorrUp(grp == g & sgn*C.(lpar) < max(sgn*C.(lpar)(grp == g))))), unique(grp)));
+C = sn.Conditions;
+X0n = C.XCorrUp;
+assert(all(topNaN(C,C.Frequency,"Level",1)) && okBelow(C,C.Frequency,"Level",1),'Default: XCorrUp is not NaN exactly at the top level.');
+% LevelParam typed as Frequency: the series are now the conditions of one
+% level, and the loudest is the highest frequency -- not the highest level
+% the thresholds of the last pass were grouped by.
+st2 = st;  st2.LevelParam = "Frequency";
+sn.analyze(st2,Steps="measure");
+C = sn.Conditions;
+assert(all(topNaN(C,C.Level,"Frequency",1)) && okBelow(C,C.Level,"Frequency",1), ...
+    'A typed LevelParam is not what measure paired the levels along.');
+% LevelDirection "descending" on the Level axis: the loudest is the lowest number.
+st3 = st;  st3.LevelDirection = "descending";
+sn.analyze(st3,Steps="measure");
+C = sn.Conditions;
+assert(all(topNaN(C,C.Frequency,"Level",-1)) && okBelow(C,C.Frequency,"Level",-1), ...
+    'A typed LevelDirection is not what measure paired the levels along.');
+% A typed GroupBy that lumps the frequencies into one series pairs each
+% condition with the next-louder one of ANY frequency (the first in table
+% order), so XCorrUp moves for every frequency but that one's; with the
+% default settings again it comes back to what it was.
+st4 = st;  st4.GroupBy = "Stimulus";
+sn.analyze(st4,Steps="measure");
+assert(~isequaln(sn.Conditions.XCorrUp,X0n),'A typed GroupBy did not change the series measure pairs levels in.');
+sn.analyze(st,Steps="measure");
+assert(isequaln(sn.Conditions.XCorrUp,X0n),'Re-measuring with the default settings does not restore XCorrUp.');
+% An edit's cascade re-tests with the option the analysis was run with: with
+% DetectPairPolarity off, nine positive sweeps rejected leave the other
+% sweeps all in the test (nSweeps = the clean sweeps), where on pairs they
+% would leave 2 x min(nPos,nNeg) of them.
+stR = st;  stR.DetectPairPolarity = false;
+sn.analyze(stR,Steps="detect");
+Cn = sn.Conditions;
+kR = Cn.Key(find(Cn.Frequency == 8 & Cn.Level == max(Cn.Level),1));
+rR = sn.rowOf(kR);
+colsR = find(~Cn.Rejected{rR} & Cn.Polarity{rR} > 0,9);
+sn.setSweepsRejected(kR,colsR,true);
+Cn = sn.Conditions;
+assert(Cn.nPos(rR) ~= Cn.nNeg(rR) && Cn.Detection{rR}.nSweeps == Cn.nClean(rR), ...
+    'The cascade after an edit did not keep PairPolarity=false (nSweeps %d, clean %d, + %d / - %d).', ...
+    Cn.Detection{rR}.nSweeps,Cn.nClean(rR),Cn.nPos(rR),Cn.nNeg(rR));
+sn.analyze(st,Steps="detect");
+Cn = sn.Conditions;
+assert(Cn.Detection{rR}.nSweeps == 2*min(Cn.nPos(rR),Cn.nNeg(rR)) && Cn.Detection{rR}.nSweeps < Cn.nClean(rR), ...
+    'On pair averages the test should use 2 x min(nPos,nNeg) sweeps (%d of %d clean).',Cn.Detection{rR}.nSweeps,Cn.nClean(rR));
+% A sweep bootstrap of a split-half threshold: partition, then resample
+% within each half (the order that keeps r near 0 under the null).
+stp = st;  stp.ThresholdMethod = "presto";  stp.ThresholdBootstrap = 20;
+sn.analyze(stp,From="thresholds");
+T1 = sn.Thresholds;
+sn.analyze(stp,From="thresholds");
+T2 = sn.Thresholds;
+assert(any(T1.CIMethod == "bootstrap") && isequaln(T1.CILower,T2.CILower) && isequaln(T1.CIUpper,T2.CIUpper), ...
+    'Bootstrap of a presto threshold: methods %s, or not reproducible.',strjoin(unique(T1.CIMethod),','));
+fprintf(['  PASS Part N: a typed LevelParam, LevelDirection and GroupBy move the next-louder pairing of XCorrUp at ' ...
+    'the next analyze (measure), and re-measuring with the defaults restores it; an edit''s cascade keeps PairPolarity off; a presto threshold bootstraps ' ...
+    '(20 replicates, %d of %d series with an interval) reproducibly (%.1f s)\n'],sum(T1.CIMethod == "bootstrap"),height(T1),toc(tp));
 
 % =========================================================================
 %  Leaks

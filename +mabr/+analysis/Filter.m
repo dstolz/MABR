@@ -110,8 +110,16 @@ classdef Filter
                 Fs (1,1) double {mustBePositive,mustBeFinite}
             end
             if obj.Custom
-                % Coefficients were handed in; nothing to design, but record
-                % the rate they are being used at so callers can check it.
+                % Coefficients were handed in; nothing to design. A fixed set
+                % of coefficients moves its corners with the rate, so one
+                % stamped for another rate is refused rather than silently
+                % applied (a 48 kHz design on a 12 kHz session scaled every
+                % corner by four and nobody checked the stamp).
+                if isfinite(obj.SampleRate) && obj.SampleRate > 0 && abs(obj.SampleRate - Fs) > 1e-6*Fs
+                    error('mabr:analysis:Filter:rateMismatch', ...
+                        ['These filter coefficients were given for %g Hz and cannot be ' ...
+                         'applied at %g Hz.'],obj.SampleRate,Fs);
+                end
                 obj.SampleRate = Fs;
                 obj.Designed   = true;
                 return

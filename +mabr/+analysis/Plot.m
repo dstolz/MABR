@@ -32,7 +32,9 @@ classdef Plot
             % Tiled grid of averaged responses: one tile per condition.
             %
             %   S        [nRows x nCols] cell; each cell is a mean vector or a
-            %            [nSamples x nSweeps] matrix (averaged here). Empty
+            %            [nSamples x nSweeps] matrix (averaged here: the plain
+            %            mean, or the polarity-balanced one when opts.Polarity
+            %            says which sweep is which). Empty
             %            cells are drawn as empty tiles, which is the honest
             %            picture of a condition that was never collected.
             %   t        time vector (ms), one entry per sample
@@ -50,6 +52,14 @@ classdef Plot
             %   opts.RowFormat  sprintf format for row tick labels (default "%g")
             %   opts.ColFormat  sprintf format for column tick labels (default "%g")
             %   opts.Threshold  1 x nCol levels; draws a rule across that row per column
+            %   opts.Polarity   {} (default) or a cell the size of S, each entry
+            %                   [] or the 1 x nSweeps stimulus polarity (+1/-1)
+            %                   of the sweeps in that cell of S. A cell with
+            %                   both polarities is then drawn as the balanced
+            %                   mean (Stats.balancedMean), which cancels a
+            %                   polarity-locked component; the plain mean of
+            %                   uneven classes lets the cochlear microphonic
+            %                   into the picture.
             %   opts.Scale      multiplier applied to the data before drawing (default 1e6, V to uV)
             %   opts.Unit       unit string for the scale bar (default "\muV")
             %   opts.Parent     tiledlayout to draw into (default: a new figure)
@@ -70,6 +80,7 @@ classdef Plot
                 opts.RowFormat (1,1) string = "%g"
                 opts.ColFormat (1,1) string = "%g"
                 opts.Threshold (1,:) double = []        % one per column; marks the row
+                opts.Polarity cell = {}                 % per cell of S: sweep polarities
                 opts.Scale (1,1) double = 1e6           % volts -> microvolts
                 opts.Unit (1,1) string = "\muV"
                 opts.Parent = []
@@ -81,6 +92,11 @@ classdef Plot
                     'S is %dx%d but %d rows and %d columns were given.', ...
                     size(S,1),size(S,2),nRow,nCol);
             end
+            if ~isempty(opts.Polarity) && ~isequal(size(opts.Polarity),size(S))
+                error('mabr:analysis:Plot:sizeMismatch', ...
+                    'Polarity is %dx%d but S is %dx%d.',size(opts.Polarity,1), ...
+                    size(opts.Polarity,2),size(S,1),size(S,2));
+            end
 
             keep = t >= opts.Window(1) & t <= opts.Window(2);
             tv   = t(keep);
@@ -90,7 +106,7 @@ classdef Plot
             for i = 1:numel(S)
                 x = S{i};
                 if isempty(x), continue; end
-                if size(x,2) > 1, x = mean(x,2); end
+                x = mabr.analysis.Plot.cellMean(x,mabr.analysis.Plot.cellPolarity(opts.Polarity,i));
                 M{i} = opts.Scale * x(keep);
             end
 
@@ -201,6 +217,9 @@ classdef Plot
             %   opts.Unit       unit string for the scale bar (default "\muV")
             %   opts.RowFormat  sprintf format for the y tick labels (default "%g dB")
             %   opts.Threshold  level at which to draw a dashed threshold line (default NaN = none)
+            %   opts.Polarity   {} (default) or an [n x 1] cell of sweep
+            %                   polarities, as grid's: a level holding sweeps of
+            %                   both is drawn as the balanced mean
             %   opts.Parent     axes to draw into (default: a new figure's axes)
             %   ax  (returned) the axes
             arguments
@@ -215,6 +234,7 @@ classdef Plot
                 opts.Unit (1,1) string = "\muV"
                 opts.RowFormat (1,1) string = "%g dB"
                 opts.Threshold (1,1) double = NaN
+                opts.Polarity cell = {}
                 opts.Parent = []
             end
             keep = t >= opts.Window(1) & t <= opts.Window(2);
@@ -225,7 +245,7 @@ classdef Plot
             for i = 1:n
                 x = S{i};
                 if isempty(x), continue; end
-                if size(x,2) > 1, x = mean(x,2); end
+                x = mabr.analysis.Plot.cellMean(x,mabr.analysis.Plot.cellPolarity(opts.Polarity,i));
                 M{i} = opts.Scale * x(keep);
             end
 
@@ -492,6 +512,15 @@ classdef Plot
             %   opts.Sweeps      draw the individual sweeps too (default false)
             %   opts.Band        "none", "std", "sem" (default), or "ci"
             %   opts.Confidence  CI level when Band="ci" (default 0.95)
+            %   opts.Polarity    1 x nSweeps stimulus polarity (+1/-1) of X ([] =
+            %                    unknown: the plain mean and the spread across
+            %                    all sweeps). With both signs present the line
+            %                    is the balanced mean and the band its pooled
+            %                    standard error (Stats.balancedMean, taking
+            %                    opts.Strata as the file of each sweep): a
+            %                    polarity-locked component cancels in the line
+            %                    and is not counted as noise in the band.
+            %   opts.Strata      1 x nSweeps file index ([] = one file)
             %   opts.Color       [1x3] RGB for the mean trace/band (default [0 0.35 0.7])
             %   opts.Scale       multiplier applied to X before drawing (default 1e6)
             %   opts.Unit        unit string for the y label (default "\muV")
@@ -503,6 +532,8 @@ classdef Plot
                 opts.Sweeps (1,1) logical = false
                 opts.Band (1,1) string {mustBeMember(opts.Band,["none","std","sem","ci"])} = "sem"
                 opts.Confidence (1,1) double = 0.95
+                opts.Polarity double = []
+                opts.Strata double = []
                 opts.Color (1,3) double = [0 0.35 0.7]
                 opts.Scale (1,1) double = 1e6
                 opts.Unit (1,1) string = "\muV"
@@ -513,14 +544,24 @@ classdef Plot
                 ax = opts.Parent;
             end
             Y = opts.Scale*X;
-            m = mean(Y,2);
+            balanced = ~isempty(opts.Polarity) && any(opts.Polarity < 0) && any(~(opts.Polarity < 0));   % 0 and NaN count as +1
+            if balanced
+                [m,sem,info] = mabr.analysis.Stats.balancedMean(Y,opts.Polarity,opts.Strata);
+            else
+                m = mean(Y,2);
+            end
 
             hold(ax,'on');
             if opts.Sweeps && size(Y,2) > 1
                 line(ax,t,Y,'Color',[0.8 0.8 0.85]);
             end
             if opts.Band ~= "none" && size(Y,2) > 1
-                hw = mabr.analysis.Plot.bandHalfWidth(Y,opts.Band,opts.Confidence);
+                if balanced
+                    % The pooled within-group spread: N - G degrees of freedom.
+                    hw = mabr.analysis.Plot.balancedHalfWidth(sem,info,opts.Band,opts.Confidence);
+                else
+                    hw = mabr.analysis.Plot.bandHalfWidth(Y,opts.Band,opts.Confidence);
+                end
                 patch(ax,'XData',[t; flipud(t)],'YData',[m-hw; flipud(m+hw)], ...
                     'FaceColor',opts.Color,'FaceAlpha',0.20,'EdgeColor','none');
             end
@@ -557,6 +598,48 @@ classdef Plot
                 t = linspace(0.05,0.92,n).';
             end
             cm = min(max(interp1(ta,A,t,'pchip'),0),1);
+        end
+
+        function hw = balancedHalfWidth(sem,info,kind,conf)
+            % Half-width of the error band of a balanced mean.
+            %
+            %   sem   [nSamples x 1] its standard error (Stats.balancedMean)
+            %   info  the third output of balancedMean (N, G, S2)
+            %   kind  "std" (the pooled within-group SD), "sem", "ci", or
+            %         anything else (-> zeros)
+            %   conf  CI level, used only when kind == "ci"
+            %   hw    (returned) [nSamples x 1]
+            df = info.N - info.G;
+            switch kind
+                case "std", hw = sqrt(info.S2);
+                case "sem", hw = sem;
+                case "ci"
+                    if df < 1, hw = nan(size(sem)); return; end
+                    hw = mabr.metrics.t_quantile(1-(1-conf)/2,df)*sem;
+                otherwise, hw = zeros(size(sem));
+            end
+        end
+
+        function x = cellMean(x,pol)
+            % The mean of one cell of a grid or stack: x as it is when it is
+            % a vector, else the plain mean of its columns -- or, when pol
+            % names both stimulus polarities of those columns, the balanced
+            % one (Stats.balancedMean), which cancels a polarity-locked
+            % component the plain mean of uneven classes lets through.
+            %
+            %   x    [nSamples x nSweeps]
+            %   pol  [] or 1 x nSweeps +1/-1
+            if size(x,2) <= 1, return; end
+            if ~isempty(pol) && numel(pol) == size(x,2) && any(pol < 0) && any(~(pol < 0))
+                x = mabr.analysis.Stats.balancedMean(x,pol,[]);
+            else
+                x = mean(x,2);
+            end
+        end
+
+        function p = cellPolarity(P,i)
+            % Entry i of a polarity cell array ([] when none was given).
+            if isempty(P) || i > numel(P), p = []; else, p = P{i}; end
         end
 
         function hw = bandHalfWidth(Y,kind,conf)
