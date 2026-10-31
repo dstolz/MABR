@@ -2069,8 +2069,11 @@ classdef AcqController < handle
                 blk.AmplifierGain  = gain*obj.InputFullScale;
                 % Per-sweep polarity, in the same order as the Recording's
                 % SweepOnsets, so the offline pipeline can average (or split)
-                % the two polarities of an alternating condition.
-                blk.SweepPolarity = pol(seq == u);
+                % the two polarities of an alternating condition -- and on the
+                % Recording too, so its plus/minus noise estimate can balance
+                % its halves in sign (mabr.metrics.plus_minus).
+                blk.SweepPolarity     = pol(seq == u);
+                blk.ADC.SweepPolarity = blk.SweepPolarity;
                 % The rig notebook as it stands right now, copied onto the
                 % block as a plain struct so the value carries its own record
                 % (and io writes it into the .abr). Taken here rather than at

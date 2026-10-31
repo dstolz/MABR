@@ -105,7 +105,16 @@ classdef Block
             else
                 m.corr = mabr.metrics.mean_pairwise_corr(D);
                 m.rms  = mabr.metrics.rms_metric(D);
-                m.snr  = mabr.metrics.snr(D);
+                % The clean sweeps' polarities, so the plus/minus halves are
+                % balanced in sign under alternation (mabr.metrics.plus_minus).
+                % Read off the Recording when it carries them, else off this
+                % block's own list through the same clean-sweep mapping.
+                pol = obj.ADC.cleanPolarity();
+                if isempty(pol) && numel(obj.SweepPolarity) == numel(obj.ADC.SweepOnsets)
+                    pol = obj.SweepPolarity(obj.ADC.ValidSweeps);
+                    pol = pol(obj.ADC.CleanSweeps);
+                end
+                m.snr  = mabr.metrics.snr(D,pol);
             end
             obj.Metrics = m;
         end
