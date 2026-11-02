@@ -413,7 +413,21 @@ classdef StimulusSet < handle
             src = struct('Kind','file','File',char(ffn));
             for i = 1:numel(fn)
                 v = S.(fn{i});
-                if isa(v,'mabr.stim.StimulusSet'), set = v; return; end
+                if isa(v,'mabr.stim.StimulusSet')
+                    % A saved set is waveforms already rendered at the rate it
+                    % was saved at, and it skips the constructor's rate check
+                    % on the way in -- so it is checked here, or a bank on
+                    % another clock loads without a word and is only refused
+                    % when a Schedule is built from it.
+                    assert(v.numStimuli == 0 || v.SampleRate == cfg.DACSampleRate, ...
+                        'mabr:stim:StimulusSet:sampleRate', ...
+                        ['"%s" holds a stimulus bank rendered at %g Hz, but the ' ...
+                         'device is set to %g Hz. A saved bank is waveforms, not ' ...
+                         'parameters, so it cannot be re-rendered; rebuild it at ' ...
+                         '%g Hz.'],ffn,v.SampleRate,cfg.DACSampleRate,cfg.DACSampleRate);
+                    set = v;
+                    return
+                end
                 if isstruct(v) && isfield(v,'signal') && isfield(v,'ID')
                     set = mabr.stim.StimulusSet(v,cfg,src);
                     return

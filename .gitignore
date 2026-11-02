@@ -5,3 +5,4 @@
 *.esgc
 .runtime_data/
 .vscode/
+docs/tools/out/
