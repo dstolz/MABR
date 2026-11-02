@@ -74,7 +74,9 @@ classdef Config
         OnsetRearm           (1,1) double = 0.0005;
 
         % --- Release metadata -----------------------------------------------
-        SoftwareVersion = '23A';
+        % The release tag (git tag -l --sort=-v:refname | head -1), stamped
+        % into every .abr and export manifest; bump it with the tag.
+        SoftwareVersion = 'v1.1.0';
         % Written into every .abr. Bumped when the meaning of a stored field
         % changes, so a reader can tell the eras apart: '26B' is the first
         % whose ADC.SweepOnsets sit on the resampled grid exactly (before it
