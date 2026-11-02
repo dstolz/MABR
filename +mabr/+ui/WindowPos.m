@@ -67,8 +67,18 @@ classdef WindowPos
             % Store the window's current position. Silent no-op for a window
             % that has already been destroyed -- callers invoke this from
             % close paths where the figure may or may not still be there.
+            % Equally silent about the preference itself: a corrupt
+            % matlabprefs.mat makes setpref throw, and every caller is a close
+            % path (a viewer's CloseRequestFcn, the main window's delete),
+            % where an error leaves the window open. The position is a
+            % courtesy, so a failed write is logged and dropped.
             if isempty(fig) || ~isgraphics(fig), return; end
-            setpref('MABR',['WindowPos_' name],fig.Position);
+            try
+                setpref('MABR',['WindowPos_' name],fig.Position);
+            catch me
+                mabr.log.vprintf(1,'WindowPos: position of "%s" not remembered (%s).', ...
+                    name,me.message);
+            end
         end
 
         function s = snapshot()

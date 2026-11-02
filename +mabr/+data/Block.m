@@ -58,6 +58,15 @@ classdef Block
         % also what every file from before the setting holds. Written to the
         % .abr as ADC.InputFullScale.
         InputFullScale (1,1) double = 1;
+        % The alignment verdict of the run this block came from
+        % (mabr.metrics.alignment_report's struct: Aligned, Offset, Jitter,
+        % Extra, NumExpected, NumRecovered, Summary, ...), or [] when none was
+        % computed. Carried on the block, and from there into the .abr as
+        % ABR_Data.Alignment, because a run whose sweeps were paired with the
+        % wrong presentations used to be told apart from a good one only by a
+        % status line that the next run's "Saved ..." overwrote within
+        % seconds -- offline, the file could not say it was suspect.
+        Alignment = [];
     end
 
     properties (Dependent)
@@ -105,7 +114,16 @@ classdef Block
             else
                 m.corr = mabr.metrics.mean_pairwise_corr(D);
                 m.rms  = mabr.metrics.rms_metric(D);
-                m.snr  = mabr.metrics.snr(D);
+                % The clean sweeps' polarities, so the plus/minus halves are
+                % balanced in sign under alternation (mabr.metrics.plus_minus).
+                % Read off the Recording when it carries them, else off this
+                % block's own list through the same clean-sweep mapping.
+                pol = obj.ADC.cleanPolarity();
+                if isempty(pol) && numel(obj.SweepPolarity) == numel(obj.ADC.SweepOnsets)
+                    pol = obj.SweepPolarity(obj.ADC.ValidSweeps);
+                    pol = pol(obj.ADC.CleanSweeps);
+                end
+                m.snr  = mabr.metrics.snr(D,pol);
             end
             obj.Metrics = m;
         end

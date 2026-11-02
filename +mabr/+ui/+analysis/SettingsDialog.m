@@ -24,7 +24,11 @@ classdef SettingsDialog < handle
 %   Settings.problems() reports. Both are listed under the tabs
 %   (AnalysisSettingsProblems), and Apply and OK stay disabled until the
 %   list is empty -- and while the Model is busy (an analysis, a batch, an
-%   export), since the settings cannot change under a running job. Beside
+%   export), since the settings cannot change under a running job. A NOTE
+%   (AnalysisSettingsNote, amber, never blocking) says what is legal but
+%   probably not meant: a cap on sweeps per condition below the minimum a
+%   level needs would drop every level as insufficient -- legal, because a
+%   fast test caps at 64 under the default minimum of 100 on purpose. Beside
 %   them a line says what Apply would change and how much of the analysis
 %   it makes out of date ("2 changes (NumPermutations, Alpha) -- re-runs the
 %   permutation test (slow)"); after Apply it carries the applyFcn's report.
@@ -279,6 +283,12 @@ classdef SettingsDialog < handle
             p = obj.problemList();
         end
 
+        function n = notes(obj)
+            % Every note shown (what is legal but probably not meant; never
+            % a reason to refuse OK), string column.
+            n = obj.noteList();
+        end
+
         function showTab(obj,name)
             % Bring one tab forward, building its controls the first time:
             % "Signal" ... "Profiles" (a prefix is enough; "Detection &
@@ -387,12 +397,21 @@ classdef SettingsDialog < handle
             end
         end
 
-        function b = onsetBiasOf(fsADC,fsDAC)
+        function b = onsetBiasOf(fsADC,fsDAC,dataVersion)
             % The onset bias of a file, ms: (1 - 1/df)/fsADC with df =
-            % round(fsDAC/fsADC) -- SweepOnsets = round(iRaw/df) puts time
+            % round(fsDAC/fsADC) -- SweepOnsets = round(iRaw/df) put time
             % zero that many ADC samples early, so latencies read long by it
             % (0.078125 ms at 192 kHz / 12 kHz). NaN when a rate is unknown.
+            %
+            % Files written at mabr.Config.DataVersion '26B' or later carry
+            % onsets on the resampled grid exactly (1 + round((iRaw-1)/df))
+            % and have no such bias: 0 for those, so the "Use it" button
+            % cannot add a correction they do not need.
             b = NaN;
+            if nargin >= 3 && strlength(string(dataVersion)) > 0 && string(dataVersion) >= "26B"
+                b = 0;
+                return
+            end
             if ~(isfinite(fsADC) && fsADC > 0 && isfinite(fsDAC) && fsDAC > 0), return; end
             df = round(fsDAC/fsADC);
             if df < 1, return; end
@@ -405,8 +424,8 @@ classdef SettingsDialog < handle
         % ---- building -----------------------------------------------------
         function build(obj)
             f = obj.Figure;
-            g = uigridlayout(f,[4 1]);
-            g.RowHeight = {'1x',36,34,30};
+            g = uigridlayout(f,[5 1]);
+            g.RowHeight = {'1x',36,20,34,30};
             g.Padding = [10 10 10 10];
             g.RowSpacing = 6;
 
@@ -429,14 +448,19 @@ classdef SettingsDialog < handle
                 'Tooltip','What makes these settings unusable. Apply and OK stay disabled until the list is empty.');
             pr.Layout.Row = 2;
             obj.Ctrl.Problems = pr;
+            nt = uilabel(g,'Text','','Tag','AnalysisSettingsNote','WordWrap','on', ...
+                'FontColor',mabr.ui.analysis.Style.Warn,'VerticalAlignment','top', ...
+                'Tooltip','Settings that are allowed but probably not what you mean. They do not stop Apply or OK.');
+            nt.Layout.Row = 3;
+            obj.Ctrl.Note = nt;
             ch = uilabel(g,'Text','','Tag','AnalysisSettingsChanges','WordWrap','on', ...
                 'FontColor',mabr.ui.analysis.Style.Muted,'VerticalAlignment','top', ...
                 'Tooltip','What Apply would change, and how much of the analysis it makes out of date.');
-            ch.Layout.Row = 3;
+            ch.Layout.Row = 4;
             obj.Ctrl.Changes = ch;
 
             bg = uigridlayout(g,[1 5],'Padding',[0 0 0 0],'ColumnSpacing',8);
-            bg.Layout.Row = 4;
+            bg.Layout.Row = 5;
             bg.ColumnWidth = {110,'1x',90,90,90};
             d = uibutton(bg,'Text','Defaults','Tag','AnalysisSettingsDefaults', ...
                 'Tooltip','Put every setting back to the MABR defaults (nothing is applied until Apply or OK).', ...
@@ -560,8 +584,9 @@ classdef SettingsDialog < handle
                 "A further fixed offset of the recording system, ms (e.g. the onset rounding bias below), added to the conduction delay.");
             bl = uilabel(g,'Text','','Tag','AnalysisSettingsOnsetBias', ...
                 'FontColor',mabr.ui.analysis.Style.Muted, ...
-                'Tooltip',['SweepOnsets are rounded to the ADC grid, which puts time zero (1 - 1/df) ADC ' ...
-                'samples early: latencies read long by this much.']);
+                'Tooltip',['In files written before data version 26B (October 2026) SweepOnsets were ' ...
+                'rounded (1 - 1/df) ADC samples early, so their latencies read long by this much; ' ...
+                'later files have no such bias and read 0 here.']);
             bl.Layout.Row = 17; bl.Layout.Column = [1 3];
             ub = uibutton(g,'Text','Use it','Tag','AnalysisSettingsUseOnsetBias', ...
                 'Tooltip','Copy the onset bias into the system time offset.', ...
@@ -632,7 +657,7 @@ classdef SettingsDialog < handle
         end
 
         function buildDetection(obj,tab)
-            g = obj.fieldGrid(tab,11);
+            g = obj.fieldGrid(tab,12);
             obj.header(g,1,"Detection (permutation test)");
             obj.dropRow(g,2,"Statistic","DetectMethod",["TFCE","Cluster mass","t-max"], ...
                 ["tfce","clusterMass","tmax"],"The sign-flip permutation statistic a condition is judged by.");
@@ -641,6 +666,11 @@ classdef SettingsDialog < handle
             obj.numRow(g,4,"α","Alpha","Significance level of a detection.",Limits=[0 1]);
             obj.numRow(g,5,"Seed","Seed","Base seed of the permutations (each condition's derives from it).", ...
                 Limits=[0 Inf],Integer=true);
+            obj.checkRow(g,12,"Test ± pair averages (cancels the cochlear microphonic)","DetectPairPolarity", ...
+                ['With both polarities present, the k-th positive and the k-th negative sweep of a file ' ...
+                 'are averaged before the sign-flip test, so a polarity-locked component (the cochlear ' ...
+                 'microphonic, a stimulus artifact) does not inflate the noise the response is judged ' ...
+                 'against. Off tests the raw sweeps, as before October 2026.']);
             obj.header(g,6,"Single-trial measures");
             obj.dropRow(g,7,"Split-half sub-average","SplitHalfMode",["Median","Mean"],["median","mean"], ...
                 "How each half of a split is averaged.");
@@ -746,6 +776,10 @@ classdef SettingsDialog < handle
             obj.numRow(h,9,"Undetected levels tolerated","FlagNonMonotoneTol", ...
                 "Undetected levels above the first detection tolerated before a series is flagged non-monotone.", ...
                 Limits=[0 Inf],Integer=true);
+            obj.checkRow(h,10,"Fit only levels connected to the top response","GLMConnectedOnly", ...
+                ['The perm-glm (Firth) fit ignores an isolated detection below the run of detected levels ' ...
+                 'at the top -- one false positive at a quiet level used to pull the threshold down by ' ...
+                 '10-15 dB -- and flags the series. Off fits every level, as before October 2026.']);
         end
 
         function buildPeaks(obj,tab)
@@ -1367,6 +1401,9 @@ classdef SettingsDialog < handle
                 % the row holds two lines; the tooltip holds them all
                 obj.put('probTip',obj.Ctrl.Problems,'Tooltip',char(strjoin(p,newline)));
             end
+            nn = obj.noteList();
+            obj.put('noteTxt',obj.Ctrl.Note,'Text',char(strjoin(nn,"   ·   ")));
+            obj.put('noteTip',obj.Ctrl.Note,'Tooltip',char(obj.pickTip(nn)));
             if obj.LastReport ~= ""
                 txt = obj.LastReport;
             else
@@ -1398,6 +1435,44 @@ classdef SettingsDialog < handle
                 tip = 'Use these settings for the project and close.';
             end
             obj.put('okTip',obj.Ctrl.OK,'Tooltip',tip);
+        end
+
+        function t = pickTip(~,nn)
+            % The note label's tooltip: the notes in full, or what the line is for.
+            if isempty(nn)
+                t = "Settings that are allowed but probably not what you mean. They do not stop Apply or OK.";
+            else
+                t = strjoin(nn,newline);
+            end
+        end
+
+        function n = noteList(obj)
+            % What is legal but probably not meant (never blocks OK). A cap
+            % on the sweeps per condition is applied BEFORE the counts are
+            % judged, so one below the minimum a level needs leaves every
+            % level "insufficient" with nothing saying why -- yet it cannot
+            % be a problem: verify_offline_analyze caps at 64 under the
+            % default minimum of 100 on purpose.
+            n = strings(0,1);
+            try
+                s = obj.Current;
+                cap = s.MaxSweepsPerCondition;
+                if isfinite(cap)
+                    why = strings(1,0);
+                    if cap < s.MinSweeps
+                        why(end+1) = sprintf('%d clean sweeps per level',s.MinSweeps);
+                    end
+                    if cap < 2*s.MinPerPolarity
+                        why(end+1) = sprintf('%d per polarity (2 × %d)',2*s.MinPerPolarity,s.MinPerPolarity);
+                    end
+                    if ~isempty(why)
+                        n(end+1,1) = sprintf(['Note: at most %g sweeps per condition is fewer than the ' ...
+                            'thresholds ask for (%s) — every level would be dropped as insufficient.'], ...
+                            cap,strjoin(why," and "));
+                    end
+                end
+            catch
+            end
         end
 
         function p = problemList(obj)
@@ -1619,7 +1694,9 @@ classdef SettingsDialog < handle
                     p = fullfile(string(F.folder(r)),string(F.fileName(r)));
                     if ~isfile(p), continue; end
                     rec = mabr.analysis.AbrFile.read(p,'ReadTrace',false);
-                    v = mabr.ui.analysis.SettingsDialog.onsetBiasOf(rec.SampleRate,rec.DACSampleRate);
+                    dv = "";
+                    if isfield(rec,'DataVersion'), dv = rec.DataVersion; end
+                    v = mabr.ui.analysis.SettingsDialog.onsetBiasOf(rec.SampleRate,rec.DACSampleRate,dv);
                     if isfinite(v), b(end+1) = v; end %#ok<AGROW>
                     if numel(b) >= 4, break; end
                 end

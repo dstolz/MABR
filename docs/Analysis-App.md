@@ -33,7 +33,7 @@ A batch is refused outright while MABR is acquiring. Browsing and reviewing stay
 
 ## Opening a study
 
-**File ▸ Open Folder… (Ctrl+O)** opens a data folder. You can also use the Start panel's big button, or pick a recent folder. Each folder of `.abr` files below it becomes one **session**, the way MABR writes them: by default a folder for each **Start**, `<Subject>\<Subject>_<yyMMdd>T<HHmmss>`.
+**File ▸ Open Folder… (Ctrl+O)** opens a data folder. You can also use the Start panel's big button, or pick a recent folder. Whether a folder answers is found out inside the scan's progress window, so a share that is slow, asleep or behind a VPN that is down shows that window rather than a frozen one. A recent folder on a drive or share that does not answer stays in the list ("not reachable (drive/VPN?)"); only one that its reachable drive no longer holds is forgotten. Each folder of `.abr` files below it becomes one **session**, the way MABR writes them: by default a folder for each **Start**, `<Subject>\<Subject>_<yyMMdd>T<HHmmss>`.
 
 **Open the study folder, not one animal's.** Results, timepoint labels and study plots are kept for the whole folder you open. If you open `SUBJ-ID-1254` inside a study that has no results yet, the app asks:
 
@@ -86,13 +86,13 @@ The same happens when the study's `project.mat` cannot be read, or was written b
 | notepad and pencil · cog | Note… (Ctrl+N) · Analysis Settings… |
 | keyboard with F1 lit · ? in a blue disc | Keyboard shortcuts (F1) · this guide |
 
-**Every change is undoable and saved.** Edits go through one model object. **Ctrl+Z** undoes and **Ctrl+Y** redoes, with 100 steps per session for as long as the window is open. Each session keeps its own history when you switch to another.
+**Every change is undoable and saved.** Edits go through one model object. **Ctrl+Z** undoes and **Ctrl+Y** redoes, with 100 steps per session for as long as the window is open. Each session keeps its own history when you switch to another. Edits to the *project* (labels, Hide, pools, columns, the duplicate policy, wave windows made from picks) belong to no session, so they have a history of their own, and Ctrl+Z takes back whichever of the two was made last: label the timepoints, open a session, press Ctrl+Z, and the labels come back off.
 
 About 2 s after an edit the session's results file is rewritten. The header shows Saved / Saving… / Save pending. Results are also saved when you switch session, close, start a batch or export.
 
 **Save conflicts.** If a results file was changed somewhere else, for example by a batch in another MATLAB, the app does not overwrite it. A red bar offers **Keep mine** or **Load theirs**.
 
-Re-analysing a session clears its undo history, and the status line says so.
+Re-analysing a session clears its undo history, and the status line says so. So does a change of settings that re-fits the open session in place (thresholds or peaks), and so does a batch for every session it re-analysed: their picks were rewritten, and an old entry would put picks of the old analysis back under the new settings.
 
 ## Browser
 
@@ -125,7 +125,7 @@ Badges appear only when they apply:
 
 **Exclude and hide** (context menu, **Session ▸ Exclude and Hide Selected**, or **Delete** after clicking the tree) is for sessions that are not part of the study: a pilot run, an abandoned recording, a calibration. They leave the study and the tree. A subject with nothing else listed disappears. A hidden session is left out of the Study tab and of every *In study* and *All* scope of a batch, an export or a review queue. The details below the tree say how many sessions are hidden. **Show ▸ Hidden** lists them, and only them; there the same menu item reads **Unhide** (also **Session ▸ Unhide Selected**). Hiding does not change the session's *In study* tick, so unhiding puts it back as it was. Ctrl+Z undoes either.
 
-**Opening a session.** Double-click it, press **Enter** after clicking the tree, or press **Open**. A session with a results file opens from its results in a moment, without reading any `.abr`. The Trials tab and a re-analysis load the raw files when they need them.
+**Opening a session.** Double-click it, press **Enter** after clicking the tree, or press **Open**. A session with a results file opens from its results in a moment, without reading any `.abr`. The last three sessions you left are kept in memory (at most one with its raw data loaded), so going back to one is instant — provided its results file is the one that was saved when you left it; if anything wrote to it meanwhile, it is read again. The Trials tab and a re-analysis load the raw files when they need them.
 
 **Open from raw files** (context menu) reads the `.abr` files instead of the results: the edits stored in the results file are kept, and the session can be analysed afresh. It is also what happens by itself when a results file cannot be read, for example after a partial sync or a damaged disk. The status line says so, and the unreadable file is first copied to `.history\<session>_unreadable_<yyMMddTHHmmss>.mat`, so the next save cannot destroy it. Its edits cannot be carried over; press **Analyse**.
 
@@ -142,7 +142,7 @@ The context menu does the same for several nodes at once. Labels are stored in t
 
 **Pool sweeps of selected sessions…** reads several folders of one animal as one session. Its confirmation lists what is pooled per condition. The pool appears as ⊕ under its visit, its members leave the study, and **Unpool** puts them back. Pooling animals is refused.
 
-**Analyse n sessions…** opens the batch dialog on the selection.
+**Analyse selected (batch)…** (it reads *Analyse n sessions…* once something is selected) opens the batch dialog on the selection. Four controls say "Analyse", and they differ in scope: the header's **Analyse** is the open session; this is the sessions selected in the browser; **Batch ▸ Analyse Sessions…** chooses the sessions by scope; the Study tab's **Analyse n selected…** is the rows selected there. See the [Glossary](#glossary).
 
 ## Session tab
 
@@ -311,7 +311,7 @@ The fit is a proposal. Each button records a **decision**, which is undoable. Yo
 |---|---|---|
 | Accept fit | `a` | the method's threshold, as fitted |
 | At selected level | `t` | manual: the selected level is the lowest with a response (an interval below it) |
-| Value field + Set | | manual: exactly this value |
+| Value field + Set | | manual: exactly this value (labelled in the level axis' unit; a value outside the levels tested is refused, and the message names No response or All respond) |
 | No response | `i` | right-censored at the loudest level |
 | All respond | Alt+↓ | left-censored at the quietest level |
 | Exclude | `x` | out of every analysis; the note editor opens for the reason |
@@ -397,7 +397,7 @@ A manual pick at one level moves the picks below it only when you re-track (**u*
 The **Peaks** sub-tab shows a matrix of latency, P–N amplitude or baseline–peak amplitude per level and wave. Manual picks are bold, absent ones show "—", and picks below threshold are grey italic. Under the matrix is an I/O or latency–intensity plot. Its buttons:
 
 - **Bootstrap CIs** loads the raw data and adds standard-error columns.
-- **Use current picks as wave windows** writes this series' picks back as the project's wave windows, in the recording's time like every window (a conduction delay does not shift them).
+- **Use current picks as wave windows** writes this series' picks back as the project's wave windows, in the recording's time like every window (a conduction delay does not shift them). The windows belong to the whole project, so when other sessions are up to date the app first says how many will become out of date, and asks. It is one undo step: Ctrl+Z puts the old windows back, and the sessions made with them are up to date again.
 - **Waves…** edits the windows, adds a wave, or switches one off.
 
 ## Trials
@@ -492,7 +492,7 @@ T = mabr.analysis.Batch.runFolder("D:\data\OFC_NoiseExposure", mabr.analysis.Set
 - subject, folder, date, timepoint and group disappear from every title, readout and status line;
 - *Compare with* is hidden and the Study tab is off.
 
-**f** / **Shift+F** and **Ctrl+PgDn** / **Ctrl+PgUp** move through the queue. **Session ▸ End Review** stops it.
+**f** / **Shift+F** and **Ctrl+PgDn** / **Ctrl+PgUp** move through the queue. Outside a queue, **f** goes to the next series with no decision, then to the next session that has one; at the end of the list it asks "Reached the end — restart from the first unreviewed?" and wraps once, and a session that will not open is skipped rather than tried again and again. **Session ▸ End Review** stops it.
 
 ## Export and R
 
@@ -613,7 +613,7 @@ A delay set while a session was closed makes it open out of date from *peaks*. A
 | Peaks | the wave table and the tracking priors |
 | Profiles | built-in profiles, and loading and saving `.mabraset` files |
 
-A line at the bottom lists anything that cannot work, such as too few permutations for α or a response window outside the window. **OK** and **Apply** stay disabled until it is empty.
+A line at the bottom lists anything that cannot work, such as too few permutations for α or a response window outside the window. **OK** and **Apply** stay disabled until it is empty. Below it, an amber **Note** (never blocking) says what is allowed but probably not meant: a cap on the sweeps per condition below the minimum a level needs (*Min sweeps*, or twice *Min per polarity*) would drop every level as insufficient.
 
 **The project's settings govern the project.** They are stored in its `project.mat`, and every session is judged against them. The settings you last applied in any project are only the default for a *new* project.
 
@@ -641,6 +641,27 @@ A results file records the settings each step used. A change therefore makes a s
 - **Load from File… / Save Current as File…**: a `.mabraset` file you name.
 
 The header shows "Profile: MABR default", or "(modified)" once the settings no longer match it.
+
+## Glossary
+
+Help ▸ **Glossary…** shows this list without a network. Words that look alike:
+
+| Term | What it does |
+|---|---|
+| **Exclude series** (`x`, Series tab) | A decision on one *series*: it leaves the study tables and the export; the session stays. Undone with Ctrl+Z; `x` again brings it back. |
+| **Remove session from study** (*Exclude and hide*; `Delete` in the browser; Session ▸ Exclude and Hide Selected) | The project's *Hidden* label. The session leaves the study and every *In study* / *All* scope, and is listed only under Show ▸ Hidden, where *Unhide* brings it back as it was. |
+| **In study** | A tick on a session or an animal: the study tables, plots and export use it. Unlike Hide, the session stays listed. |
+| **Leave out run group** (Session tab, Files) | Drops the files of one run group from *this session's* analysis (then Analyse). A choice of data, not of study. |
+| **Detection verdict** (`d`) | The detection test's call on one condition (response / none). `d` cycles your override: automatic, response, none. It moves thresholds only when they are fitted again. |
+| **Unit overrides** (Session tab) | The input full scale and amplifier gain to use when a file's recorded units are wrong. Stored per session in the project; the analysis is then out of date. |
+| **Analyse** (header) | The *open* session, from the first step whose settings or data changed; the button names its cost. |
+| **Analyse selected (batch)…** (browser) | The sessions selected in the browser, as a batch (Cancel stops after the current one). |
+| **Batch ▸ Analyse Sessions…** | The same batch, choosing the sessions by scope (all, in study, out of date, …) and the settings profile. |
+| **Analyse n selected** (Study tab) | The rows selected in the Study tab's Sessions table (or the out-of-date ones), through the same batch. |
+| **Out of date** | Results made with other settings, files or overrides than those in force. Nothing re-runs behind your back. |
+| **Re-fit** | Thresholds and peaks computed again from the stored statistics: instant, works without the raw files. It ends the session's undo history. |
+| **No response / All respond** | A threshold above the loudest level tested (right-censored), or at or below the quietest. A value typed beside *Set* must lie within the levels tested; outside them it is refused, and the message names the button to use. |
+| **Reviewed** | A series with a decision (accept, value, no response, all respond, exclude). *Reviewed k/n* counts them. |
 
 ## Keyboard shortcuts
 
@@ -680,7 +701,7 @@ This list is generated from the app's one keymap, `mabr.ui.analysis.Commands.she
 | Keys | Command |
 |---|---|
 | Enter | Open the selected session |
-| Delete | Exclude and hide the selected sessions (Show ▸ Hidden lists them) |
+| Delete | Remove the selected sessions from the study (exclude and hide; Show ▸ Hidden lists them) |
 
 ### Session tab
 
@@ -708,9 +729,9 @@ This list is generated from the app's one keymap, `mabr.ui.analysis.Commands.she
 | t | Threshold at selected level |
 | i | No response |
 | Alt+↓ | All levels respond |
-| x | Exclude (then note) |
+| x | Exclude series (then note) |
 | c | Clear decision |
-| d | Cycle detection override (auto → response → none) |
+| d | Detection verdict: cycle the override (auto → response → none) |
 | n | Normalise traces |
 | = or Shift+= or Num + or + | Scale up |
 | − or Num − or - | Scale down |
@@ -741,9 +762,9 @@ Mouse on the Grid tab:
 | t | Threshold at selected level |
 | i | No response |
 | Alt+↓ | All levels respond |
-| x | Exclude (then note) |
+| x | Exclude series (then note) |
 | c | Clear decision |
-| d | Cycle detection override (auto → response → none) |
+| d | Detection verdict: cycle the override (auto → response → none) |
 | p | Auto-pick series |
 | u | Re-track down |
 | Shift+U | Re-track down, overwriting manual picks |

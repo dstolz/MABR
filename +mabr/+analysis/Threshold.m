@@ -7,7 +7,10 @@ classdef Threshold
 %                     in this [nSamples x nSweeps] matrix? -- and returns a
 %                     p-value, a detection strength, and a verdict. Sweeps
 %                     with no noise are not tested (p NaN, ZeroVariance), and
-%                     TFCE is bounded to MaxTFCESteps steps.
+%                     TFCE is bounded to MaxTFCESteps steps. Given each
+%                     sweep's polarity it tests the averages of +/- pairs, so
+%                     a polarity-locked CM cancels instead of inflating the
+%                     variance (pairPolarity).
 %
 %     fit(x,y,...)    fits ONE series -- level against detection -- and returns
 %                     the level at which the criterion is met, with a
@@ -130,10 +133,38 @@ classdef Threshold
             % -- a valid test, integrated more coarsely -- and Flags says
             % so. Below that nothing changes, bit for bit.
             %
+            % PAIRED POLARITIES. A polarity-locked component (the cochlear
+            % microphonic, a stimulus artifact) is +c in the condensation
+            % sweeps and -c in the rarefaction ones. The mean over both
+            % cancels it, but the sign-flip t-test divides by the standard
+            % deviation ACROSS sweeps, which c inflates: a response that
+            % stood 5 standard errors clear of the noise loses detections
+            % to a CM of a few noise SDs (0.97 -> 0.72 in a simulation at
+            % CM 2-4 sigma) although the CM is exactly what the balanced
+            % average removes. So when Polarity names both signs and
+            % PairPolarity is on (the default), the k-th condensation sweep
+            % of each file is averaged with its k-th rarefaction sweep
+            % (pairPolarity) and the test is run on those averages: a CM
+            % cancels in every one, a neural response (the same sign in
+            % both) does not, and the noise of an average is symmetric about
+            % zero, which is all the sign-flip null needs, so the test stays
+            % exact. It is as powerful as the raw test without a CM (t is
+            % unchanged: n/2 averages of variance sigma^2/2) and keeps its
+            % power with one; a false-positive rate of 0.025 under H0 with a
+            % 3 sigma CM was measured. The sweeps beyond the pairs (an odd
+            % count, a file short of one polarity) are not used: a sweep
+            % with no partner would bring its CM back. Fewer than two pairs
+            % leave the raw sweeps as they were (there is nothing to test
+            % on, or nothing to learn from so few). With PairPolarity off,
+            % or no Polarity, the sweeps are tested as given.
+            %
             %   d.p             global p-value (NaN: not tested)
             %   d.isSig         p < Alpha
             %   d.strength      max-statistic (graded evidence, method-specific)
-            %   d.nSweeps       sweeps the test was run on
+            %   d.nSweeps       recorded sweeps the test used: all of them,
+            %                   or twice the pairs when paired (the test
+            %                   itself ran on d.result.nSweeps columns).
+            %                   Threshold.fromSeries weights a level by it.
             %   d.result        the full mabr.analysis.PermTest result
             %                   (struct() when not tested)
             %   d.ZeroVariance  true when the sweeps hold no noise (not tested)
@@ -151,6 +182,7 @@ classdef Threshold
                 opts.Seed = []
                 opts.Polarity double = []      % 1 x nSweeps +1/-1 ([] = one polarity)
                 opts.Strata double = []        % 1 x nSweeps file index ([] = one file)
+                opts.PairPolarity (1,1) logical = true   % average +/- pairs first (see above)
             end
 
             d = struct('p',NaN,'isSig',false,'strength',NaN,'nSweeps',0,'result',struct(), ...
@@ -165,6 +197,15 @@ classdef Threshold
                 d.ZeroVariance = true;
                 d.Flags        = mabr.analysis.SingleTrial.FlagZeroVariance;
                 return
+            end
+
+            % Pairing comes AFTER the no-noise check, which judges the raw
+            % sweeps (a CM that differs with the polarity is not noise, and
+            % the averages of noiseless sweeps are noiseless too), and BEFORE
+            % the TFCE bound, which has to see the matrix that is tested.
+            nUsed = n;
+            if opts.PairPolarity
+                [Y,nUsed] = mabr.analysis.Threshold.pairPolarity(Y,opts.Polarity,opts.Strata);
             end
 
             tfce = opts.TFCE;
@@ -189,8 +230,71 @@ classdef Threshold
                 d.isSig = d.p < opts.Alpha;
             end
             d.strength = res.statistic;
-            d.nSweeps  = res.nSweeps;
+            d.nSweeps  = nUsed;
             d.result   = res;
+        end
+
+        function [Y,nUsed,nPairs] = pairPolarity(Y,pol,strata)
+            % Average each file's condensation and rarefaction sweeps in pairs.
+            %
+            %   Y       [nSamples x nSweeps] sweeps
+            %   pol     1 x nSweeps stimulus polarity, +1/-1 ([] = one
+            %           polarity: nothing to pair). 0 and NaN count as +1,
+            %           as AbrFile reads them and Stats.balancedMean takes them.
+            %   strata  1 x nSweeps file index ([] = one file)
+            %   Y       (returned) [nSamples x nPairs] the pair averages, or Y
+            %           as given when it cannot be paired
+            %   nUsed   (returned) recorded sweeps in Y: 2*nPairs, or all
+            %   nPairs  (returned) pairs averaged (0: Y is unchanged)
+            %
+            %   The k-th positive sweep of a file is paired with its k-th
+            %   negative one, in the order they stand in Y (the order they
+            %   were recorded in), so a pair is as close in time as the
+            %   alternation allows and a slow drift is mostly differenced
+            %   away. A file's sweeps of the more numerous polarity beyond
+            %   its pairs are dropped, and so is a file that has only one
+            %   polarity: an unpaired sweep keeps the polarity-locked
+            %   component that the pairs cancel, and putting it into the
+            %   test would give that component back its inflated variance
+            %   (and, with a one-signed file, a mean to be mistaken for a
+            %   response). Pairing is a choice of which sweeps to average and
+            %   uses no random number, so it does not touch the seed
+            %   bookkeeping of detect(). Fewer than two pairs leave Y as
+            %   given: a one-sample test needs two observations, and a
+            %   condition that short has no power to lose.
+            arguments
+                Y double
+                pol double = []
+                strata double = []
+            end
+            n = size(Y,2);
+            nUsed = n;  nPairs = 0;
+            if isempty(pol) || n < 4, return; end
+            pol = reshape(pol,1,[]);
+            if numel(pol) ~= n
+                error('mabr:analysis:Threshold:polarity', ...
+                    'pol has %d entries for %d sweeps.',numel(pol),n);
+            end
+            strata = reshape(strata,1,[]);
+            if isempty(strata), strata = ones(1,n); end
+            if isscalar(strata), strata = repmat(strata,1,n); end
+            if numel(strata) ~= n
+                error('mabr:analysis:Threshold:strata', ...
+                    'strata has %d entries for %d sweeps.',numel(strata),n);
+            end
+            neg = pol < 0;                       % 0 and NaN are +1
+            ia = zeros(1,0);  ib = zeros(1,0);
+            for g = reshape(unique(strata),1,[])
+                ip = find(~neg & strata == g);
+                iq = find( neg & strata == g);
+                m  = min(numel(ip),numel(iq));
+                ia = [ia ip(1:m)]; %#ok<AGROW>
+                ib = [ib iq(1:m)]; %#ok<AGROW>
+            end
+            if numel(ia) < 2, return; end
+            Y      = (Y(:,ia) + Y(:,ib))/2;
+            nPairs = numel(ia);
+            nUsed  = 2*nPairs;
         end
 
         % =================================================================
@@ -675,6 +779,18 @@ classdef Threshold
             % NaN with open = true: the data cannot say where that end is,
             % only that it is at least two steps outside the levels tested.
             %
+            % Each end is where the deviance crosses the cut, found by linear
+            % interpolation between the two grid points either side of it,
+            % not the first grid point inside the cut. Read off the grid,
+            % every end was rounded INWARD by up to one grid step (0.6 dB for
+            % levels 0-80 dB in 10 dB steps, so an interval up to 1.2 dB
+            % too narrow -- an interval that claims its coverage should not
+            % be shortened by the way it is drawn).
+            % The deviance between neighbouring grid points is smooth and
+            % nearly quadratic, so a straight line between them puts the
+            % crossing well within a hundredth of a step; a finer grid would
+            % cost 201 more slope searches per interval to do the same.
+            %
             % The slope is maximised by a vectorised search (all 201 theta at
             % once: a 48-point grid on log b1, then golden section between the
             % grid points either side of the best) rather than 201 separate
@@ -715,12 +831,25 @@ classdef Threshold
             % error and producing a negative deviance.
             llMax = max([llHat; prof]);
             q     = mabr.analysis.Stats.zquantile(1-alpha/2)^2;
-            keep  = 2*(llMax - prof) <= q;
+            dev   = 2*(llMax - prof);
+            keep  = dev <= q;
             if ~any(keep), return; end
 
             i0 = find(keep,1,'first');
             i1 = find(keep,1,'last');
             ci = [theta(i0) theta(i1)];
+            % The crossing between the last grid point outside the cut and
+            % the first inside it (and the mirror image at the upper end).
+            % A neighbour whose deviance is not a finite number (a failed
+            % slope search) leaves the grid point itself.
+            if i0 > 1
+                ci(1) = mabr.analysis.Threshold.profileCrossing( ...
+                    theta(i0-1),dev(i0-1),theta(i0),dev(i0),q);
+            end
+            if i1 < numel(theta)
+                ci(2) = mabr.analysis.Threshold.profileCrossing( ...
+                    theta(i1),dev(i1),theta(i1+1),dev(i1+1),q);
+            end
             if i0 == 1,             ci(1) = NaN; open(1) = true; end
             if i1 == numel(theta),  ci(2) = NaN; open(2) = true; end
         end
@@ -985,6 +1114,21 @@ classdef Threshold
             dh = reach/cap;
             par.dh = dh;
             why = sprintf("TFCE step raised to %.3g (|t| reaches %.3g: near-noiseless sweeps)",dh,reach);
+        end
+
+        function t = profileCrossing(tOut,dOut,tIn,dIn,cut)
+            % The theta where a profile deviance equals cut, by a straight
+            % line between two grid points: (tOut,dOut) beyond the cut and
+            % (tIn,dIn) within it. A deviance that is not a finite number
+            % (a failed slope search) or no slope at all leaves tIn, the
+            % grid point inside the interval; the result never leaves the
+            % two points.
+            if isfinite(dOut) && isfinite(dIn) && dOut ~= dIn
+                t = tIn + (cut - dIn)/(dOut - dIn)*(tOut - tIn);
+                t = min(max(t,min(tOut,tIn)),max(tOut,tIn));
+            else
+                t = tIn;
+            end
         end
 
         function out = fitLogistic(out,x,y,w,opts,stream)

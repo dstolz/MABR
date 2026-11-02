@@ -82,8 +82,20 @@ end
 
 if ok
     try
+        % A log root the process cannot write to -- a read-only clone, a
+        % share without write access -- used to make granary try once, latch
+        % a failure, print one stderr line and drop every message after it,
+        % while logFile still returned the path nothing was written to. So
+        % the folder is tried first, and tempdir stands in when it fails.
+        logRoot = mabr.Config.root;
+        logDir  = fullfile(logRoot,'.error_logs');
+        if ~writable(logDir)
+            fprintf(2,['MABR: cannot write to %s; this session logs to %s instead. ' ...
+                'Set the log folder with granary.setLogDir.\n'],logDir,fullfile(tempdir,'.error_logs'));
+            logRoot = tempdir;
+        end
         granary.config( ...
-            'LogRoot',     mabr.Config.root, ...
+            'LogRoot',     logRoot, ...
             'LogDirName',  '.error_logs', ...
             'PrefGroup',   'MABR', ...
             'FacadeFiles', {'vprintf.m','StimgenLogSink.m'});
@@ -92,6 +104,7 @@ if ok
         % earlier granary.printf -- before MABR configured anything -- is
         % already pointed at tempdir and would stay there.
         granary.Logger.instance('-reset');
+        pruneOldLogs(fullfile(logRoot,'.error_logs'));
     catch me
         ok  = false;
         why = sprintf('granary could not be configured: %s',me.message);
@@ -100,4 +113,48 @@ end
 
 done   = ok;
 reason = why;
+end
+
+
+% =====================================================================
+function tf = writable(folder)
+% Whether this process can create files in `folder` (made if absent).
+tf = false;
+try
+    if ~isfolder(folder)
+        [made,~] = mkdir(folder);
+        if ~made, return; end
+    end
+    probe = fullfile(folder,sprintf('.write_probe_%d',feature('getpid')));
+    fid = fopen(probe,'w');
+    if fid < 0, return; end
+    fclose(fid);
+    delete(probe);
+    tf = true;
+catch
+end
+end
+
+function pruneOldLogs(folder)
+% Daily logs older than the preference MABR/LogRetentionDays (default 365;
+% 0 or less keeps everything) are deleted, and the deletion is said in the
+% log that remains. Nothing pruned them before: the folder only ever grew (46
+% daily files, back to the first rig session), and the ddmmmyyyy names sort
+% by day of month rather than by date, so the oldest were also the hardest to
+% find.
+try
+    days = getpref('MABR','LogRetentionDays',365);
+    if ~(isnumeric(days) && isscalar(days) && isfinite(days) && days > 0), return; end
+    d = dir(fullfile(folder,'error_log_*.txt'));
+    old = d([d.datenum] < now - days); %#ok<TNOW1>
+    for k = 1:numel(old)
+        delete(fullfile(old(k).folder,old(k).name));
+    end
+    if ~isempty(old)
+        granary.printf(1,'Pruned %d daily log(s) older than %g days from %s (preference MABR/LogRetentionDays).', ...
+            numel(old),days,folder);
+    end
+catch
+    % A log that cannot be pruned is still a log.
+end
 end

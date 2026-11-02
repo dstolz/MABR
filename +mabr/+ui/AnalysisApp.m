@@ -68,6 +68,7 @@ classdef AnalysisApp < handle
         ActiveTab (1,1) string = "Session"
         Dialogs = {}                 % dialogs and windows this app opened
         KeysWindow = []              % the F1 window
+        GlossaryWindow = []          % Help > Glossary
         ToolGlyphs (1,:) string = strings(1,0)   % the toolbar's glyphs, in order
     end
 
@@ -208,6 +209,10 @@ classdef AnalysisApp < handle
             catch
             end
             try
+                if ~isempty(app.GlossaryWindow) && isvalid(app.GlossaryWindow), delete(app.GlossaryWindow); end
+            catch
+            end
+            try
                 if ~isempty(app.Browser) && isvalid(app.Browser), delete(app.Browser); end
             catch
             end
@@ -338,6 +343,20 @@ classdef AnalysisApp < handle
                 end
                 return
             end
+            % 3b. a field that has the keyboard keeps the editing chords: in
+            % a text box (the browser's Search, an editable dropdown, the
+            % Series "Value" field, a table cell's editor) Ctrl+Z undoes the
+            % TYPING, Ctrl+Y redoes it and Ctrl+A/C/V/X act on its text. They
+            % fall through to the control; run here, Ctrl+Z would take back
+            % the last curation instead and the typing would stay.
+            if mods == "control" && any(key == ["z","y","a","c","v","x"])
+                cur = [];
+                try
+                    cur = app.Figure.CurrentObject;
+                catch
+                end
+                if mabr.ui.analysis.Compat.isTextComponent(cur), return; end
+            end
             % 4. which part of the window
             if m.FocusArea == "browser"
                 scopes = ["browser","global"];
@@ -437,6 +456,11 @@ classdef AnalysisApp < handle
                             extra = [extra {'Scope',"current"}];
                         end
                         varargin = [extra varargin];
+                    end
+                    % From the Study tab -- a view of the whole study -- the
+                    % export is the study's too, not the one open session.
+                    if app.ActiveTab == "Study" && ~mabr.ui.AnalysisApp.hasOption(varargin,'Scope')
+                        varargin = [{'Scope',"instudy"} varargin];
                     end
                     cls = "ExportDialog";
                     args = [{m},vis,varargin];
@@ -555,6 +579,47 @@ classdef AnalysisApp < handle
             f.Visible = char(app.Visible);
         end
 
+        function showGlossary(app)
+            % Help ▸ Glossary…: the words that look alike (four Excludes,
+            % four Analyses) and what each does. It is the app's own text, so
+            % it reads offline; the button opens the same section of the
+            % guide (a wiki page, docs/Analysis-App.md in the repository).
+            if ~isempty(app.GlossaryWindow) && isvalid(app.GlossaryWindow)
+                if strcmp(app.GlossaryWindow.Visible,'on'), figure(app.GlossaryWindow); end
+                return
+            end
+            pos = [340 140 640 560];
+            f = uifigure('Name','MABR Offline Analysis — glossary', ...
+                'Tag','MABR_OFFLINE_GLOSSARY','Position',pos,'Visible','off');
+            mabr.ui.analysis.Compat.setLightTheme(f);
+            f.CloseRequestFcn = @(~,~) app.closeGlossary();
+            f.WindowKeyPressFcn = @(~,e) app.glossaryKey(e);
+            g = uigridlayout(f,[2 1],'RowHeight',{'1x',26},'Padding',[8 8 8 6],'RowSpacing',6);
+            G = mabr.ui.AnalysisApp.glossary();
+            lines = cellstr(G(:,1) + " — " + G(:,2));
+            t = uitextarea(g,'Value',lines,'Editable','off','Tag','AnalysisGlossaryText', ...
+                'Tooltip','Words that look alike in the window, and what each one does');
+            t.Layout.Row = 1;
+            b = uibutton(g,'Text','Open the guide','Tag','AnalysisGlossaryGuide', ...
+                'Tooltip','The Analysis App guide (online); this list is the same without a network', ...
+                'ButtonPushedFcn',app.cb(@(~,~) app.openGuide("glossary")));
+            b.Layout.Row = 2;
+            app.GlossaryWindow = f;
+            app.keepDialog(f);
+            f.Visible = char(app.Visible);
+        end
+
+        function glossaryKey(app,e)
+            if strcmp(e.Key,'escape'), app.closeGlossary(); end
+        end
+
+        function closeGlossary(app)
+            f = app.GlossaryWindow;
+            if isempty(f) || ~isvalid(f), return; end
+            delete(f);
+            app.GlossaryWindow = [];
+        end
+
         function flush(app)
             % Run pending work now: the active view's debounced redraws and
             % the Model's pending save (tests call this instead of waiting).
@@ -584,6 +649,27 @@ classdef AnalysisApp < handle
                 "OfflineAnalysisSession","OfflineAnalysisGrid","OfflineAnalysisSeries", ...
                 "OfflineAnalysisTrials","OfflineAnalysisStudy"];
             keys = [keys,"WindowPos_" + mabr.ui.AnalysisApp.windowNames()];
+        end
+
+        function G = glossary()
+            % Term / meaning of the words that look alike (Help ▸ Glossary…;
+            % the same text is the guide's Glossary section).
+            G = [
+                "Exclude series (x)",     "A decision on one SERIES, Series tab: it leaves the study tables and the export, the session stays. Undone with Ctrl+Z; x again brings it back."
+                "Remove session from study", "Exclude and hide (Delete in the browser; Session ▸ Exclude and Hide Selected): the project's Hidden label. The session leaves the study and every 'all' / 'in study' scope, and is listed only under Show ▸ Hidden, where Unhide brings it back as it was."
+                "In study",               "A tick on a session or an animal: the study tables, plots and export use it. Unlike Hide it stays listed."
+                "Leave out run group",    "Session tab, Files: drops the files of one run group from THIS session's analysis (then Analyse). A choice of data, not of study."
+                "Detection verdict (d)",  "The detection test's call on one condition (response / none). d cycles your override: automatic, response, none. It moves thresholds only when they are fitted again."
+                "Unit overrides",         "Session tab: the input full scale and amplifier gain to use when a file's recorded units are wrong. Stored per session in the project; the analysis is then out of date."
+                "Analyse (header)",       "The OPEN session, from the first step whose settings or data changed; the button names its cost ('Re-fit thresholds', 'Up to date')."
+                "Analyse selected (batch)…", "Browser: the sessions selected there, in a batch (cancel stops after the current one)."
+                "Batch ▸ Analyse Sessions…", "The same batch, choosing the sessions by scope (all, in study, out of date, ...) and the settings profile."
+                "Analyse n selected (Study)", "Study tab, Sessions: the rows selected there (or the out-of-date ones), through the same batch."
+                "Out of date",            "Results made with other settings, files or overrides than those in force. Nothing re-runs behind your back: press Analyse or run a batch."
+                "Re-fit",                 "Thresholds and peaks computed again from the stored statistics: instant, works without the raw files. A re-fit ends the session's undo history."
+                "No response / All respond", "A threshold above the loudest level tested (censored), or at or below the quietest. A typed value must lie within the levels tested."
+                "Reviewed",               "A series with a decision (accept, value, no response, all respond, exclude). 'Reviewed k/n' counts them."
+            ];
         end
 
         function cls = viewClass(tab)
@@ -911,6 +997,7 @@ classdef AnalysisApp < handle
 
             m = uimenu(f,'Text','&Help','Tag','AnalysisTopMenuHelp');
             app.item(m,T("Keyboard Shortcuts","help.keys"),'AnalysisMenuKeys',@() app.showShortcuts());
+            app.item(m,"Glossary…",'AnalysisMenuGlossary',@() app.showGlossary());
             app.item(m,"Analysis App Guide",'AnalysisMenuGuide',@() app.openGuide(""));
             app.item(m,"Threshold Methods",'AnalysisMenuMethods',@() app.openGuide("threshold-methods"));
             app.item(m,"Open Log Folder",'AnalysisMenuLog',@() app.openLogFolder(),true);
@@ -1011,8 +1098,22 @@ classdef AnalysisApp < handle
                         % with one AFTER moving the stacks, so the Edit
                         % menu's labels are re-read on every one)
                         app.refreshMenus();
-                        if strlength(e.Text) > 0
-                            app.setStatus(e.Text,e.Level);
+                        txt = e.Text;
+                        lvl = e.Level;
+                        % (a note editor closed by a session change leaves
+                        % its notice for the "Opened ..." sentence that ends
+                        % that change, which would otherwise overwrite it)
+                        notice = "";
+                        try
+                            notice = app.NoteEditor.takeNotice();
+                        catch
+                        end
+                        if notice ~= ""
+                            txt = strtrim(notice + " " + txt);
+                            lvl = max(lvl,1);
+                        end
+                        if strlength(txt) > 0
+                            app.setStatus(txt,lvl);
                         end
                     case "SelectionChanged"
                         % nothing in the shell depends on what is selected
@@ -1720,12 +1821,7 @@ classdef AnalysisApp < handle
             if iscell(v), v = v{1}; end
             p = string(v);
             if p == "", return; end                 % (the "no recent folders" line)
-            if ~isfolder(p)
-                app.forgetRoot(p);
-                app.setStatus("That folder is not there any more: " + p,1);
-                return
-            end
-            app.openRoot(p);
+            app.openRecent(p);
         end
 
         function openSelected(app)
@@ -2031,10 +2127,31 @@ classdef AnalysisApp < handle
         function closeNow(app)
             if ~isvalid(app) || app.Closing, return; end
             m = app.Model;
+            stay = false;
             try
-                if ~isempty(m) && isvalid(m), m.flush(); end
+                % (flushes; edits that cannot be written -- a read-only or
+                % unreachable results folder, a conflict still showing --
+                % are asked about, and the window is not closed over them
+                % unless the person says Discard)
+                if ~isempty(m) && isvalid(m), stay = ~m.leaveSession("closing the window"); end
             catch me
                 mabr.log.vprintf(1,'Analysis app: pending edits were not saved on close (%s).',me.message);
+            end
+            if stay
+                % The window stays: what a close asked for during a job had
+                % put it into (views deactivated, events ignored) is undone.
+                m.CloseRequested = false;
+                if app.ClosePending
+                    app.ClosePending = false;
+                    try
+                        if ~isempty(app.Browser) && isvalid(app.Browser), app.Browser.activate(); end
+                        app.refreshAll();
+                        app.ensureActiveView();
+                    catch me
+                        mabr.log.vprintf(2,'Analysis app: window not restored after Stay (%s).',me.message);
+                    end
+                end
+                return
             end
             if app.RememberState
                 mabr.ui.WindowPos.remember(app.Figure,'OfflineAnalysis');
@@ -2129,14 +2246,25 @@ classdef AnalysisApp < handle
                 if ~isstruct(st) || ~isfield(st,'Root'), return; end
                 root = string(st.Root);
                 if isempty(root) || ismissing(root) || root == "", return; end
-                if ~isfolder(root)
-                    app.put('start_msg',app.H.StartMessage,'Text', ...
-                        char("The last folder, " + root + ", is not there any more."));
-                    app.setStatus("The last folder is not there any more: " + root,1);
+                m = app.Model;
+                try
+                    m.openRoot(root,SuggestStudyRoot=false);
+                catch me
+                    % (the Model's job did the probing: see Model.openRoot)
+                    if strcmp(me.identifier,'mabr:ui:analysis:unreachable')
+                        txt = "The last folder, " + root + ", is not reachable (drive/VPN?).";
+                    elseif strcmp(me.identifier,'mabr:ui:analysis:noFolder')
+                        txt = "The last folder, " + root + ", is not there any more.";
+                    else
+                        rethrow(me);
+                    end
+                    app.put('start_msg',app.H.StartMessage,'Text',char(txt));
+                    app.setStatus(txt,1);
                     return
                 end
-                m = app.Model;
-                m.openRoot(root,SuggestStudyRoot=false);
+                % (a scan cancelled in its progress window returns with no
+                % catalog: there is nothing to look a session up in)
+                if isempty(m.Catalog), return; end
                 key = mabr.ui.AnalysisApp.field(st,'SessionKey');
                 if key ~= ""
                     if any(string(m.Catalog.Sessions.Key) == key) || startsWith(key,"pool:")
@@ -2257,12 +2385,26 @@ classdef AnalysisApp < handle
         end
 
         function openRecent(app,p)
-            if ~isfolder(p)
-                app.forgetRoot(p);
-                app.setStatus("That folder is not there any more: " + p,1);
-                return
+            % Open a recent folder. Whether it answers is found out by the
+            % Model's job (a progress window on a slow share, not a frozen
+            % one). A folder on a drive or share that is not answering right
+            % now (unplugged, VPN down, a server asleep) STAYS in the list --
+            % it is where the work is, and it will be back; only a folder
+            % the reachable drive no longer holds is forgotten.
+            try
+                app.openRoot(p);
+            catch me
+                switch me.identifier
+                    case 'mabr:ui:analysis:unreachable'
+                        app.setStatus("That folder is not reachable (drive/VPN?): " + p + ...
+                            " — it stays in the recent list.",1);
+                    case 'mabr:ui:analysis:noFolder'
+                        app.forgetRoot(p);
+                        app.setStatus("That folder is not there any more: " + p,1);
+                    otherwise
+                        rethrow(me);
+                end
             end
-            app.openRoot(p);
         end
 
         % ---- dialogs the injectable functions default to ------------------

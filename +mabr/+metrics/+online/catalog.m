@@ -145,8 +145,11 @@ v = mabr.metrics.snr(ctx.Sweeps);
 end
 
 function v = metric_noise(ctx)
+% The plus/minus reference: half the odd-minus-even difference, which is the
+% noise left in the average (see mabr.metrics.snr). The unhalved difference
+% read twice the residual noise.
 if size(ctx.Sweeps,2) < 2, v = NaN; return; end
-d = mean(ctx.Sweeps(:,1:2:end),2,'omitnan') - mean(ctx.Sweeps(:,2:2:end),2,'omitnan');
+d = (mean(ctx.Sweeps(:,1:2:end),2,'omitnan') - mean(ctx.Sweeps(:,2:2:end),2,'omitnan'))/2;
 v = sqrt(mean(d.^2,'omitnan'))*1e6;
 end
 

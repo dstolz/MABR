@@ -27,10 +27,21 @@ if nargin == 0 || isempty(rootDir)
     rootDir = fileparts(mfilename('fullpath'));
 end
 
-% add every subfolder except .git
-p = split(string(genpath(rootDir)),pathsep);
-p(p == "" | contains(p,'.git')) = [];
-addpath(char(join(p,pathsep)));
+% Add every CODE subfolder: not .git or .github, not the daily logs or the
+% runtime buffers, not docs/ or plans/, and not the submodules' own tests/,
+% documentation/ and templates/ folders. contains(p,'.git') was a substring
+% test -- a root such as ...\.gitrepos\MABR dropped every folder -- and
+% genpath put twenty folders of non-code on the path (and savepath, which
+% Installation.md recommends, froze them all). MABR's own tests/ stays:
+% run_all_verifications and Help > Verification Tests... are found there.
+% (MABRAnalysis.m applies the same rule.)
+p  = cellstr(split(string(genpath(rootDir)),pathsep));
+nonCode = ~cellfun(@isempty,regexp(p, ...
+    '[\\/](\.git\w*|\.error_logs|\.runtime_data|docs|plans|documentation|templates)([\\/]|$)','once'));
+subTests = contains(p,[filesep 'external' filesep]) & ...
+    ~cellfun(@isempty,regexp(p,'[\\/]tests([\\/]|$)','once'));
+p = p(~cellfun(@isempty,p) & ~nonCode & ~subTests);
+addpath(strjoin(p,pathsep));
 
 % Wire the logger to this installation before anything logs, so the first
 % message of the session already lands in <root>/.error_logs rather than in

@@ -14,8 +14,10 @@ MABR ships a verification suite that runs with **no audio hardware**. It require
   PASS test 1: full block (head 512000, 125 onsets, loopback err 4.9e-06)
   ...
 
-==== 24 / 24 verifications passed ====
+==== 60 / 60 verifications passed (900 s) ====
 ```
+
+**Run one MATLAB at a time, or give test runs their own preferences folder.** Several scripts write MATLAB preferences (and put them back); MATLAB's `setpref` takes no lock, and two sessions writing `matlabprefs.mat` at once have corrupted it on the reference machine more than once ("File might be corrupt" at the next start, every remembered setting gone). A headless run can be isolated from your own preferences entirely by pointing `MATLAB_PREFDIR` at a scratch folder before starting MATLAB, for example from a shell: `MATLAB_PREFDIR=C:\Temp\mabr_tests_prefs matlab -batch run_all_verifications`.
 
 A script passes by returning without throwing, which is the whole contract — `run_all_verifications` needs nothing else from it, and neither does the GUI's **Help ▸ Verification Tests…** window, which discovers the scripts rather than listing them.
 

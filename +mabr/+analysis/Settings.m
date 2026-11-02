@@ -148,6 +148,13 @@ classdef Settings
         Alpha (1,1) double {mustBeInRange(Alpha,0,1,"exclusive")} = 0.05
         % Base seed (per-condition seeds derive from it and the condition key).
         Seed (1,1) double {mustBeInteger,mustBeNonnegative} = 1
+        % Test the averages of condensation/rarefaction pairs, not the raw
+        % sweeps: a polarity-locked component (the cochlear microphonic)
+        % cancels in a pair, where in the raw sweeps it inflates the variance
+        % the sign-flip t-test divides by and costs detections. The test
+        % stays exact; sweeps without a partner are not used.
+        % Threshold.detect gives the reasons. Off tests every sweep.
+        DetectPairPolarity (1,1) logical = true
 
         % ---- single-trial measures ---------------------------------------
         % Sub-average of each split half.
@@ -211,6 +218,14 @@ classdef Settings
         % Undetected levels above the first detection tolerated before
         % "non-monotone".
         FlagNonMonotoneTol (1,1) double {mustBeInteger,mustBeNonnegative} = 0
+        % A psychometric (glm) threshold is fitted only to the levels
+        % connected to the loudest response -- those the descending rule
+        % reads, and one miss below -- so one false detection far below the
+        % transition cannot pull the fit down to it (the detection is
+        % flagged "isolated detection below threshold" instead). Off fits
+        % every usable level, as MABR once did. Series without an isolated
+        % detection are fitted identically either way.
+        GLMConnectedOnly (1,1) logical = true
 
         % ---- peaks -------------------------------------------------------
         % Wave priors (Peaks.defaultWaves(): the TraceInspector rodent
@@ -641,8 +656,9 @@ classdef Settings
             L(end+1) = sprintf('Rejection: %s; %s; %s; response window %s.',rig,rule,ceil_,ms(obj.ResponseWindow));
 
             dm = replace(obj.DetectMethod,["tfce","clusterMass","tmax"],["TFCE","cluster-mass","t-max"]);
-            L(end+1) = sprintf('Detection: %s permutation test, %d permutations, α %s, seed %d.', ...
-                dm,obj.NumPermutations,g(obj.Alpha),obj.Seed);
+            if obj.DetectPairPolarity, pp = " on condensation/rarefaction pairs"; else, pp = " on every sweep"; end
+            L(end+1) = sprintf('Detection: %s permutation test%s, %d permutations, α %s, seed %d.', ...
+                dm,pp,obj.NumPermutations,g(obj.Alpha),obj.Seed);
 
             if isempty(obj.SplitHalfWindow), shw = "the response window";
             else, shw = ms(obj.SplitHalfWindow); end
@@ -1008,6 +1024,7 @@ classdef Settings
                 "NumPermutations","detect"
                 "Alpha","detect"
                 "Seed","detect"
+                "DetectPairPolarity","detect"
                 "SplitHalfMode","measure"
                 "SplitHalfResamples","measure"
                 "SplitHalfWindow","measure"
@@ -1033,6 +1050,7 @@ classdef Settings
                 "ThresholdBootstrap","thresholds"
                 "FlagWideCI","thresholds"
                 "FlagNonMonotoneTol","thresholds"
+                "GLMConnectedOnly","thresholds"
                 "Waves","peaks"
                 "PeakOctaveShift","peaks"
                 "PeakRefFrequency","peaks"

@@ -260,7 +260,12 @@ classdef CalibrationAdapter < stimgen.calibration.HwAdapter
             tf = false;
             c = obj.Controller;
             if isempty(c) || ~isvalid(c), return; end
-            tf = c.State ~= mabr.ui.ProgState.Idle;
+            % Any terminal state, not Idle alone: a schedule that ran to its
+            % end leaves the controller in SchedComplete (Idle is only the
+            % abort path), and one that failed leaves it in Error. Judging
+            % against Idle refused every calibration after a completed
+            % session with "stop the running schedule" when nothing ran.
+            tf = ~mabr.ui.ProgState.isTerminal(c.State);
             if ~tf && isprop(c,'Monitoring'), tf = c.Monitoring; end
         end
     end

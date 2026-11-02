@@ -275,6 +275,10 @@ classdef LivePlot < handle
         % were Rebuilt and the gutters re-Measured, and NumAxes. Started
         % afresh by every render() that actually runs.
         RenderTiming = []
+        % Whether the run on screen presents more than one condition -- the
+        % only case in which Means and Group can change anything. Readable
+        % (verify_live_plot asserts it), set only from the render.
+        MultiCondition (1,1) logical = true
     end
 
     % --- Display settings ------------------------------------------------
@@ -338,9 +342,6 @@ classdef LivePlot < handle
         % which makes the next render choose afresh from the data.
         MeanLim    = zeros(1,0)
         MeanShrink = zeros(1,0)
-        % Whether the run on screen presents more than one condition -- the
-        % only case in which Means and Group can change anything.
-        MultiCondition (1,1) logical = true
         % The conditions already FINISHED this session, one entry per
         % stimulus (a repeat, make-up or Loop pass is pooled into its
         % condition's entry): stimulus index, label, parameter row, and the
@@ -1619,9 +1620,18 @@ classdef LivePlot < handle
             end
         end
 
+    end
+
+    methods
         function requestWindow(obj)
             % Tell the host the time base now in force (see WindowFcn). A
             % host that fails must not take the strip down with it.
+            %
+            % Public, not private: mabr.ui.AcqController.setLivePlot calls it
+            % to adopt the view's remembered time base the moment the two are
+            % wired together, so a private method here meant every Start
+            % threw "Cannot access method" (three verification scripts and
+            % the app itself).
             if isempty(obj.WindowFcn), return; end
             try
                 obj.WindowFcn(obj.TimeBase);
@@ -1629,6 +1639,9 @@ classdef LivePlot < handle
                 mabr.log.vprintf(1,0,'Live view: could not apply the time base to the sweep window: %s',ME.message);
             end
         end
+    end
+
+    methods (Access = private)
 
         function onManualControl(obj)
             v = str2double(obj.Ctrl.manual.String);

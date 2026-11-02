@@ -363,6 +363,17 @@ classdef SingleTrial
             % dataset. That is not sampling uncertainty, and nothing here or
             % downstream calls it a confidence interval.
             %
+            % BOOTSTRAP. With opts.Bootstrap each half's sweeps are, after
+            % the partition, drawn again with replacement (K of the K it
+            % holds, per polarity), so r varies with the sweeps as well as
+            % with the partition: the replicate of a sweep bootstrap of a
+            % threshold's interval. The order matters. Resampling the
+            % sweeps FIRST and partitioning the resample puts copies of one
+            % sweep in both halves, and r then partly measures a sweep's
+            % agreement with itself -- about +0.3 on pure noise, where the
+            % true value is 0. Resampling inside each half keeps the halves
+            % disjoint, as the partition made them.
+            %
             %   X     [nT x N] sweeps
             %   pol   1 x N +1/-1
             %   rows  nT x 1 logical ([] = all finite rows)
@@ -374,6 +385,8 @@ classdef SingleTrial
             %   opts.Mode            "median" (default) | "mean"
             %   opts.Stream          RandStream ([] = threefry seeded 1)
             %   opts.MinPerPolarity  smallest K worth reporting (default 25)
+            %   opts.Bootstrap       resample each half with replacement after
+            %                        the partition (default false)
             %   R  (returned) struct R (Resamples x 1), Mean, SD, P025, P975,
             %      K, N, Mode. K < MinPerPolarity: R empty, the rest NaN.
             arguments
@@ -385,6 +398,7 @@ classdef SingleTrial
                 opts.Mode (1,1) string {mustBeMember(opts.Mode,["median","mean"])} = "median"
                 opts.Stream = []
                 opts.MinPerPolarity (1,1) double {mustBeNonnegative} = 25
+                opts.Bootstrap (1,1) logical = false
             end
             N   = size(X,2);
             pol = mabr.analysis.SingleTrial.labels(pol,[],N);
@@ -409,6 +423,7 @@ classdef SingleTrial
             nB = opts.Resamples;
             if bal, h = 2*K; else, h = K; end            % sweeps per half
             IA = zeros(h,nB);  IB = zeros(h,nB);
+            drawAgain = @(v) v(randi(stream,numel(v),numel(v),1));   % with replacement
             for b = 1:nB
                 if bal
                     a = iP(randperm(stream,numel(iP),2*K));
@@ -419,6 +434,17 @@ classdef SingleTrial
                     a = randperm(stream,N,2*K);
                     IA(:,b) = a(1:K).';
                     IB(:,b) = a(K+1:end).';
+                end
+                if opts.Bootstrap
+                    % Within each half and polarity, K draws of the K it
+                    % has: the halves stay disjoint (see BOOTSTRAP).
+                    if bal
+                        IA(:,b) = [drawAgain(IA(1:K,b)); drawAgain(IA(K+1:end,b))];
+                        IB(:,b) = [drawAgain(IB(1:K,b)); drawAgain(IB(K+1:end,b))];
+                    else
+                        IA(:,b) = drawAgain(IA(:,b));
+                        IB(:,b) = drawAgain(IB(:,b));
+                    end
                 end
             end
 
@@ -431,8 +457,20 @@ classdef SingleTrial
                 A3 = reshape(Xr(:,IA(:,bb)),nR,h,numel(bb));
                 B3 = reshape(Xr(:,IB(:,bb)),nR,h,numel(bb));
                 if opts.Mode == "median"
-                    Am = reshape(median(A3,2),nR,[]);
-                    Bm = reshape(median(B3,2),nR,[]);
+                    if bal
+                        % Per polarity, then the two medians averaged. The
+                        % median across both signs of a half is set by the
+                        % tails of the two clusters a polarity-locked component
+                        % (the cochlear microphonic) pulls apart, so it does
+                        % not cancel it as the mean does -- r fell from 0.24 to
+                        % about 0 with a CM a few noise SDs wide. Columns are
+                        % [K positive, K negative] (IA/IB above).
+                        Am = reshape((median(A3(:,1:K,:),2) + median(A3(:,K+1:end,:),2))/2,nR,[]);
+                        Bm = reshape((median(B3(:,1:K,:),2) + median(B3(:,K+1:end,:),2))/2,nR,[]);
+                    else
+                        Am = reshape(median(A3,2),nR,[]);
+                        Bm = reshape(median(B3,2),nR,[]);
+                    end
                 else
                     Am = reshape(mean(A3,2),nR,[]);
                     Bm = reshape(mean(B3,2),nR,[]);
@@ -513,7 +551,7 @@ classdef SingleTrial
         % =================================================================
         %  Per-sweep features
         % =================================================================
-        function T = features(X,rows,baselineRows)
+        function T = features(X,rows,baselineRows,clean)
             % One row of quality-control features per sweep.
             %
             % RMS, P2P and MaxAbs over rows; BaselineRMS over baselineRows
@@ -533,14 +571,26 @@ classdef SingleTrial
             %   X             [nT x N] sweeps
             %   rows          nT x 1 logical ([] = all finite rows)
             %   baselineRows  nT x 1 logical or indices ([] = none)
+            %   clean         1 x N logical: the sweeps the template is built
+            %                 from ([] = all). A rejected sweep still gets its
+            %                 row, projected onto the clean mean; left in the
+            %                 template, a 500 uV pop added 500/(N-1) uV to
+            %                 every other sweep's template, collapsing
+            %                 TemplateR exactly where rejection had done its
+            %                 job.
             %   T  (returned) N-row table RMS, P2P, MaxAbs, BaselineRMS,
             %      TemplateAmp, TemplateR (volts, except the last two)
             arguments
                 X double
                 rows = []
                 baselineRows = []
+                clean = []
             end
             N  = size(X,2);
+            if isempty(clean), clean = true(1,N); end
+            clean = reshape(logical(clean),1,[]);
+            assert(numel(clean) == N,'mabr:analysis:SingleTrial:cleanMask', ...
+                'clean has %d entries for %d sweeps.',numel(clean),N);
             rows = mabr.analysis.SingleTrial.useRows(X,rows);
             Xr = X(rows,:);
             if isempty(Xr)
@@ -560,11 +610,17 @@ classdef SingleTrial
             end
 
             TemplateAmp = nan(N,1);  TemplateR = nan(N,1);
-            if N >= 2 && ~isempty(Xr)
-                M = (sum(Xr,2) - Xr)/(N - 1);            % leave-one-out means
+            nC = nnz(clean);
+            if nC >= 2 && ~isempty(Xr)
+                % Leave-one-out means over the clean sweeps: a clean sweep's
+                % template is the clean sum without itself over nC-1, a
+                % rejected sweep's the whole clean mean (it was never in it).
+                S  = sum(Xr(:,clean),2);
+                M  = (S - Xr.*clean)./(nC - clean);
                 beta = (sum(Xr.*M,1)./sum(M.^2,1)).';
-                mb = mean(beta);
-                if mb > mabr.analysis.SingleTrial.TemplateMinT*std(beta)/sqrt(N)
+                bc = beta(clean);
+                mb = mean(bc);
+                if mb > mabr.analysis.SingleTrial.TemplateMinT*std(bc)/sqrt(nC)
                     TemplateAmp = beta/mb;
                 end
                 TemplateR   = mabr.analysis.SingleTrial.pearsonCols(Xr,M).';

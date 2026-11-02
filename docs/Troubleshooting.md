@@ -4,7 +4,7 @@
 
 **"MABR is Windows-only"** — MABR uses ASIO audio and Windows process APIs. There is no macOS or Linux path.
 
-**A missing-toolbox error when the app opens** — The message names what is missing and the minimum version. All five listed in [Installation](Installation.md) are required; the Parallel Computing Toolbox in particular is not optional, because acquisition runs on a parallel worker.
+**A missing-toolbox error when the app opens** — The message names what is missing and the minimum version. All four listed in [Installation](Installation.md) are required; the Parallel Computing Toolbox in particular is not optional, because acquisition runs on a parallel worker.
 
 **"Timed out waiting for the acquisition worker handshake"** — The background worker did not start. Usually one of:
 
@@ -53,7 +53,7 @@ Confirm the software side is fine by ticking **Testing** and running: the check 
 
 **Offline analysis finds no files or wrong parameters** — Filenames are parsed to recover stimulus parameters. Renaming files breaks this. See [Data Files](Data-Files.md#filenames).
 
-**`batchABRAnalysis` errors on its arguments** — Known and intentionally unfixed. Call the pipeline functions individually with name-value syntax; see [Offline Analysis](Offline-Analysis.md).
+**A legacy `abr_analysis/` function stops with `abr_analysis:missingDependency`** — That folder needs the author's [helper_fnc](https://github.com/dstolz/helper_fnc) repository on the path and the Statistics and Curve Fitting toolboxes; the message names which one is missing. The Analysis App and the `mabr.analysis` classes need none of them.
 
 ## During a session
 

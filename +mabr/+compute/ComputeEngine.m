@@ -264,15 +264,20 @@ classdef ComputeEngine < handle
             obj.broadcast(mabr.compute.Cmd.RunEnd,struct('RunId',runId));
         end
 
-        function tf = finalize(obj,runId,seq)
+        function tf = finalize(obj,runId,seq,expected)
             % Ask the DSP worker to finalize the run just ended. The reply
             % arrives as the Finalized event; false means there is no DSP
-            % worker to ask and the caller should finalize itself.
+            % worker to ask and the caller should finalize itself. `expected`
+            % (optional) is the plan's onset list, so the worker can pair
+            % recovered onsets with planned presentations by nearest onset
+            % when the order pairing has been broken (Pipeline.pairOnsets).
+            if nargin < 4, expected = []; end
             tf = obj.hasDSP();
             if ~tf, return; end
             obj.DSP.LastChange = tic;
             obj.sendTo('dsp',mabr.compute.Cmd.Finalize, ...
-                struct('RunId',runId,'StimIndex',double(seq(:)')));
+                struct('RunId',runId,'StimIndex',double(seq(:)'), ...
+                       'ExpectedOnsets',double(expected(:)')));
         end
 
         % --- The metrics worker's table -------------------------------------
@@ -390,6 +395,13 @@ classdef ComputeEngine < handle
             if nargin < 4 || isempty(window) || numel(window) ~= 2, window = [0 0]; end
             obj.Jobs(slot,:)       = [1 metricIdx double(window(:)')];
             obj.StalledSlots(slot) = false;
+            % A catalog metric replaces whatever custom function the slot
+            % held: left in place, a later stall from any cause blamed "this
+            % metric hung the analysis worker" on a built-in, and a relaunch
+            % replayed the stale handle.
+            if metricIdx ~= mabr.compute.RequestBuffer.Custom
+                obj.CustomFcns{slot} = [];
+            end
             obj.writeRequests();
         end
 

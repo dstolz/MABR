@@ -175,8 +175,16 @@ classdef Pipeline < handle
                 obj.invalidateFiltered(true);
             end
             if ~obj.Configured || ~isequal(window,obj.Window)
-                obj.Window     = window;
-                obj.restartExtraction();
+                obj.Window = window;
+                % The onsets do not depend on the window -- only which
+                % samples around each one a sweep is -- so the cursor is
+                % rewound and the sweeps read back off the ring, with the
+                % onset list kept. Starting extraction over entirely
+                % (restartExtraction) re-read and re-detected the whole block
+                % so far on the next step: a 5-minute run is a 230 MB read,
+                % about a second, in-process AND on both workers, each time
+                % the operator typed a time base.
+                obj.invalidateFiltered(true);
             end
             if ~obj.Configured || ~isequal(artifacts.toStruct(),obj.Artifacts.toStruct())
                 obj.Artifacts   = artifacts;
@@ -242,7 +250,7 @@ classdef Pipeline < handle
                 'window',obj.Window,'decimation',obj.Config.decimationFactor, ...
                 'threshold',mabr.Config.OnsetThreshold, ...
                 'shadow',mabr.Config.OnsetShadow,'rearm',mabr.Config.OnsetRearm);
-            [pre,post,~,obj.SweepState,tw] = ...
+            [pre,post,~,obj.SweepState,tw,ord] = ...
                 mabr.metrics.extract_sweeps(rb,params,obj.SweepState);
             obj.StepCount = obj.StepCount + 1;
 
@@ -271,7 +279,12 @@ classdef Pipeline < handle
                 Y = obj.filterCols(pre/obj.Gain,post/obj.Gain);
                 obj.Filt(:,cols) = Y;
                 obj.Bad(cols)    = obj.judgeCols(Y(L+1:end,:));
-                obj.Idx(cols)    = obj.stimulusAt(cols);
+                % Paired by the onset's place in the BLOCK (extract_sweeps'
+                % ordinals), not by its place among the sweeps returned: a
+                % sweep extract_sweeps skips -- its baseline before the
+                % retained ring -- would otherwise shift every later live
+                % sweep onto the wrong condition.
+                obj.Idx(cols)    = obj.stimulusAt(ord(:)');
                 obj.NumFiltered  = n0 + k;
             end
             n = obj.NumFiltered;
@@ -331,7 +344,7 @@ classdef Pipeline < handle
         end
 
         % --- Finalization ---------------------------------------------------
-        function F = finalize(obj,rb,seq)
+        function F = finalize(obj,rb,seq,expected)
             % The DSP half of finalizing a completed run: read the whole
             % retained block, recover the onsets, decimate to the analysis
             % rate, split by stimulus, filter, and judge each sweep. Returns
@@ -400,13 +413,20 @@ classdef Pipeline < handle
             % is 256 MB a channel as single, 512 MB as double).
             rawTiming = []; %#ok<NASGU>
             F.OnsetsAll = base + onsetsRaw(:)' - 1;   % before any trimming
+            F.Pairing   = mabr.compute.Pipeline.emptyPairing();
             if isempty(onsetsRaw), return; end
 
+            % Which planned presentation each recovered onset belongs to --
+            % by order when the recording agrees with the plan, by nearest
+            % planned onset when it does not (see pairOnsets). `expected`
+            % (optional) is the plan's onset list, mabr.stim.Schedule's
+            % ExpectedOnsets, in the ring's frame.
+            if nargin < 4, expected = []; end
             seq = double(seq(:)');
-            n   = min(numel(onsetsRaw),numel(seq));
+            [onsetsRaw,seq,F.Pairing] = mabr.compute.Pipeline.pairOnsets( ...
+                onsetsRaw(:)',F.OnsetsAll,seq,expected);
+            n = numel(onsetsRaw);
             if n < 1, return; end
-            onsetsRaw = onsetsRaw(1:n);
-            seq       = seq(1:n);
 
             % Decimate to the analysis rate at finalization so the Recording
             % (and its filter design) are self-consistent. io then saves it
@@ -418,8 +438,32 @@ classdef Pipeline < handle
             rawSignal = []; %#ok<NASGU>          % only the double copy from here
             adcData   = single(resample(x,1,df)/obj.Gain);
             x         = []; %#ok<NASGU>
-            onsets   = max(1,round(onsetsRaw(:)./df));
+            % resample keeps raw sample 1 at ADC sample 1 and puts raw sample
+            % 1 + (j-1)*df at j, so a raw onset o lands on 1 + (o-1)/df.
+            % round(o/df) put it (1 - 1/df) of an ADC sample EARLY on average
+            % -- 78 us at 192/12 kHz -- so every saved sweep began before its
+            % stimulus and every offline latency read long by that much (the
+            % analysis settings carry a "System time offset" for files written
+            % under the old rule; see mabr.ui.analysis.SettingsDialog.onsetBiasOf,
+            % which keys on the file's DataVersion).
+            onsets   = max(1,1 + round((onsetsRaw(:) - 1)./df));
             sweepLen = max(1,round(adcFs*diff(obj.FileWindow)));
+
+            % The chain runs over the continuous trace ONCE, here, and every
+            % part adopts its own slice of the result. It used to run over
+            % each intermixed part's COMPACTED trace -- its sweep windows laid
+            % end to end -- so filtfilt crossed every join and rang a step the
+            % size of the EEG jump between neighbouring windows into the first
+            % milliseconds of each sweep, where waves I and II are, while a
+            % homogeneous run was filtered whole. The artifact flags saved
+            % with an intermixed run (and its Block.Metrics) therefore did not
+            % mean what a conventional run's did. One pass is also cheaper
+            % than one per stimulus.
+            whole = mabr.data.Recording(adcFs,adcData,onsets,sweepLen,1);
+            whole.Filters = obj.Filters;
+            whole   = whole.designFilters();
+            procAll = whole.ProcessedData;
+            whole   = []; %#ok<NASGU>
 
             present = unique(seq,'stable');
             parts   = mabr.compute.Pipeline.emptyParts();
@@ -430,21 +474,24 @@ classdef Pipeline < handle
                     % Homogeneous run: the continuous trace, exactly as the
                     % one-block-per-condition path always has.
                     data = adcData;
+                    proc = procAll;
                 else
                     % Intermixed run: keep only this stimulus's sweep windows,
                     % so each .abr carries its own data instead of N copies of
                     % one shared trace. Still plain Data + SweepOnsets, so the
-                    % offline pipeline reads it unchanged.
+                    % offline pipeline reads it unchanged. The filtered trace
+                    % is cut with the same windows so the two stay aligned.
+                    proc       = mabr.compute.Pipeline.compact_sweeps(procAll,sel,sweepLen);
                     [data,sel] = mabr.compute.Pipeline.compact_sweeps(adcData,sel,sweepLen);
                 end
 
                 % The Recording carries the raw trace and the chain separately:
-                % designFilters only decides what SweepData looks like, and io
+                % withProcessed only decides what SweepData looks like, and io
                 % writes Data. So the .abr this becomes is unfiltered no matter
                 % what the operator has the filter dialog set to.
                 rec = mabr.data.Recording(adcFs,data,sel,sweepLen,1);
                 rec.Filters = obj.Filters;
-                rec = rec.designFilters();
+                rec = rec.withProcessed(proc,obj.Filters);
 
                 % Judge each sweep AFTER filtering: baseline drift in a raw
                 % trace trips a voltage threshold on its own. Rejected sweeps
@@ -454,8 +501,19 @@ classdef Pipeline < handle
                 % Mapped back through ValidSweeps so the flags stay aligned
                 % with SweepOnsets even when a truncated run left the last
                 % window short (those sweeps are absent from SweepData).
+                %
+                % The same rule as the live preview (judgeCols): with the high
+                % pass OFF nothing removes a baseline offset, so each sweep's
+                % own mean stands in for it. Judged raw here while the preview
+                % demeaned, a run on a DC offset showed 0 rejected live and
+                % then had every sweep flagged in the file -- and, with Repeat
+                % set, make-up runs appended for all of them.
+                D = double(rec.SweepData);
+                if ~obj.Filters.HighPass && ~isempty(D)
+                    D = D - mean(D,1,'omitnan');
+                end
                 flags = false(numel(sel),1);
-                flags(rec.ValidSweeps) = obj.Artifacts.detect(rec.SweepData);
+                flags(rec.ValidSweeps) = obj.Artifacts.detect(D);
 
                 parts(end+1) = struct('Stimulus',u,'Data',data, ...
                     'Processed',rec.ProcessedData,'Onsets',sel(:), ...
@@ -689,6 +747,93 @@ classdef Pipeline < handle
         function p = emptyParts()
             p = struct('Stimulus',{},'Data',{},'Processed',{},'Onsets',{}, ...
                        'SweepLength',{},'Flags',{},'Count',{});
+        end
+
+        function P = emptyPairing()
+            P = struct('Method',"order",'NumRecovered',0,'NumPlanned',0, ...
+                       'NumPaired',0,'Dropped',0,'Unmatched',0,'Offset',0, ...
+                       'Tolerance',0);
+        end
+
+        function [onsets,seq,P] = pairOnsets(onsets,onsetsAbs,seq,expected)
+            % Which planned presentation each recovered onset belongs to.
+            %
+            %   onsets     recovered onsets, indices into the block's trace
+            %   onsetsAbs  the same onsets in the ring's absolute frame
+            %   seq        the plan's stimulus index per planned presentation
+            %   expected   the plan's onsets in the ring's frame ([] = unknown)
+            %
+            % By ORDER when the recording agrees with the plan -- the k-th
+            % pulse is the k-th presentation, the lists trimmed to the shorter
+            % (a run that ended early played fewer) -- which is the pairing
+            % everything always rested on. By NEAREST planned onset when it
+            % does not: with one spurious pulse (more recovered than planned)
+            % or one lost pulse (the offset jumping by about an interval), the
+            % order pairing put every later sweep under the wrong condition,
+            % and the per-condition files with it, while the alignment report
+            % could only say so afterwards. Here a recovered onset is given to
+            % the planned presentation nearest it once the run's constant
+            % offset (the mode of the per-onset differences, as
+            % mabr.metrics.alignment_report takes it) is removed, within half
+            % the plan's shortest interval; a pulse that matches nothing is
+            % dropped, two pulses claiming one presentation keep the nearer,
+            % and a presentation with no pulse simply has no sweep. P says
+            % which method was used and what it dropped, for the log.
+            onsets    = double(onsets(:)');
+            onsetsAbs = double(onsetsAbs(:)');
+            seq       = double(seq(:)');
+            P = mabr.compute.Pipeline.emptyPairing();
+            P.NumRecovered = numel(onsets);
+            P.NumPlanned   = numel(seq);
+            n = min(numel(onsets),numel(seq));
+            byOrder = @() deal(onsets(1:n),seq(1:n));
+            if n < 1 || isempty(expected) || numel(expected) ~= numel(seq)
+                [onsets,seq] = byOrder();
+                P.NumPaired = n;
+                return
+            end
+            expected = double(expected(:)');
+            gap = min(diff(expected));
+            if isempty(gap) || ~isfinite(gap) || gap < 2
+                [onsets,seq] = byOrder();
+                P.NumPaired = n;
+                return
+            end
+            tol = floor(gap/2);
+            d   = onsetsAbs(1:n) - expected(1:n);
+            off = mode(d);
+            P.Offset = off; P.Tolerance = tol;
+            % The order pairing stands unless something broke it: an onset
+            % beyond the plan, or an offset that moved by a presentation.
+            if numel(onsets) <= numel(seq) && all(abs(d - off) < tol)
+                [onsets,seq] = byOrder();
+                P.NumPaired = n;
+                return
+            end
+            P.Method = "nearest";
+            target = expected + off;
+            match  = zeros(1,numel(onsets));            % planned index per recovered onset
+            miss   = inf(1,numel(onsets));
+            for k = 1:numel(onsets)
+                [m,j] = min(abs(target - onsetsAbs(k)));
+                if m <= tol, match(k) = j; miss(k) = m; end
+            end
+            % Two pulses on one presentation: the nearer keeps it.
+            [u,~,g] = unique(match(match > 0));
+            for i = 1:numel(u)
+                k = find(match == u(i));
+                if numel(k) > 1
+                    [~,best] = min(miss(k));
+                    k(best) = [];
+                    match(k) = 0;
+                end
+            end
+            keep = match > 0;
+            P.Dropped   = nnz(~keep);
+            P.NumPaired = nnz(keep);
+            P.Unmatched = numel(seq) - numel(unique(match(keep)));
+            onsets = onsets(keep);
+            seq    = seq(match(keep));
         end
 
         function [data,newOnsets] = compact_sweeps(src,onsets,sweepLen)

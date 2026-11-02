@@ -50,7 +50,7 @@ Without any hardware attached, run the verification suite:
 This exercises the acquisition engine in loopback mode (no audio device), writes and re-reads a data file, imports a legacy file, and confirms the early-stop logic. You should see:
 
 ```
-==== 4 / 4 verifications passed ====
+==== 60 / 60 verifications passed (900 s) ====
 ```
 
 The first run is slow — MATLAB has to start the parallel pool. Subsequent runs reuse it.

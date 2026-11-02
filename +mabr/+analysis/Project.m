@@ -34,7 +34,16 @@ classdef Project < handle
 %   edited twice ends as the later edit. Columns, pools and the scalar
 %   settings merge as wholes, the side that changed them since it loaded
 %   winning. The write itself is atomic (Project.atomicSave: a .tmp-<pid>
-%   file moved over the old one), and every save bumps Revision.
+%   file moved over the old one), and every save bumps Revision. The whole
+%   read-merge-write is taken under a LOCK FOLDER, project.mat.lock, made
+%   with mkdir (which only one of two writers can succeed in): without it,
+%   two saves that both read revision n before either wrote would each
+%   merge only the file they had read, and the second move would drop the
+%   first writer's rows without a trace. A writer that finds the lock held
+%   waits (LockWaitSeconds); a lock older than LockStaleSeconds is a crashed
+%   writer's and is broken; one that cannot get it throws
+%   mabr:analysis:Project:locked, saying whose lock it is and that nothing
+%   was written (the project stays Dirty, in memory).
 %
 %   LABELS ARE ROUTED BY LEVEL. A column belongs to the animal (Subjects:
 %   Group, and any free subject column) or to the visit (Sessions:
@@ -159,6 +168,12 @@ classdef Project < handle
         % The logical columns that are false until set (every other logical
         % column, InStudy above all, is true for a row that lacks it).
         OffByDefault = "Hidden"
+        % save()'s lock folder: how long a writer waits for it, and how old
+        % it must be before it is taken for a crashed writer's. A save is a
+        % read, a merge and a small file written, so a lock held this long is
+        % not a save in progress.
+        LockWaitSeconds  = 12
+        LockStaleSeconds = 10
         % The small results variables view() and results() read by default:
         % everything a status, a review count and a processing mode need, and
         % nothing per sweep.
@@ -190,6 +205,11 @@ classdef Project < handle
             %
             %   save()
             %
+            %   The whole read-merge-write is taken under the lock folder
+            %   project.mat.lock (see the class help), so two writers cannot
+            %   interleave: one that cannot get it within LockWaitSeconds
+            %   throws mabr:analysis:Project:locked and writes nothing.
+            %
             %   If the file on disk is not the one this project was loaded
             %   from (another MATLAB saved meanwhile), it is read back and
             %   merged first: rows by key, the later Modified winning;
@@ -204,6 +224,8 @@ classdef Project < handle
             if obj.File == ""
                 error('mabr:analysis:Project:noFile','This project has no results folder to save into.');
             end
+            % Held until save() returns or throws (the onCleanup releases it).
+            guard = obj.takeLock(); %#ok<NASGU>
             if isfile(obj.File)
                 [D,ok,why] = readProjectFile(obj.File);
                 if ~ok
@@ -1300,6 +1322,48 @@ classdef Project < handle
     end
 
     methods (Access = private)
+        % =================================================================
+        %  The save lock
+        % =================================================================
+        function guard = takeLock(obj)
+            % Take project.mat.lock (a folder), waiting for it if it is held.
+            %
+            %   guard  (returned) an onCleanup that removes the lock; [] when
+            %          the lock folder cannot be made at all (a folder this
+            %          process cannot write to: the save then fails on its
+            %          own, with the system's own message)
+            guard = [];
+            lockDir = char(obj.File + ".lock");
+            d = fileparts(lockDir);
+            if ~isempty(d) && ~isfolder(d), mkdir(d); end
+            t0 = tic;
+            told = false;
+            while ~lockMkdir(lockDir)
+                if ~isfolder(lockDir), return; end        % could not be made, and is not held
+                age = lockAge(lockDir);
+                % Looked at twice: a lock released and taken by someone else
+                % between the two looks is not stale.
+                if age > obj.LockStaleSeconds && lockAge(lockDir) > obj.LockStaleSeconds
+                    if ~told
+                        mabr.log.vprintf(1,'Project: breaking a save lock %.0f s old (%s).',age,lockDir);
+                        told = true;            % (once: a lock that cannot be removed is retried until the wait is up)
+                    end
+                    try
+                        rmdir(lockDir);
+                    catch
+                    end
+                end
+                if toc(t0) > obj.LockWaitSeconds
+                    error('mabr:analysis:Project:locked', ['%s is being saved by another MATLAB ' ...
+                        '(its lock %s has been held for %.0f s). Nothing was written; try again in ' ...
+                        'a moment. If no other MATLAB is saving this project, delete that folder.'], ...
+                        obj.File,lockDir,age);
+                end
+                pause(0.1);
+            end
+            guard = onCleanup(@() releaseLock(lockDir));
+        end
+
         % =================================================================
         %  Loading and merging
         % =================================================================
@@ -2556,6 +2620,35 @@ catch ME
 end
 end
 
+function got = lockMkdir(p)
+% Make the lock folder; true only for the caller that made it. Java's
+% File.mkdir says so itself and is atomic; MATLAB's mkdir reports success for
+% a folder that is already there, and tells only by its message id.
+if usejava('jvm')
+    got = logical(java.io.File(p).mkdir());
+else
+    [ok,~,id] = mkdir(p);
+    got = ok && ~strcmp(id,'MATLAB:MKDIR:DirectoryExists');
+end
+end
+
+function age = lockAge(p)
+% Seconds since the lock folder was made (NaN when it is not there).
+age = NaN;
+[parent,name,ext] = fileparts(p);
+d = dir(parent);
+d = d([d.isdir] & strcmp({d.name},[name ext]));
+if isscalar(d), age = max(0,seconds(datetime('now') - datetime(d.datenum,'ConvertFrom','datenum'))); end
+end
+
+function releaseLock(p)
+% Remove the lock folder; a failure leaves it to go stale.
+try
+    rmdir(p);
+catch
+end
+end
+
 function s = fileStamp(f)
 s = struct('bytes',NaN,'datenum',NaN);
 d = dir(char(f));
@@ -2580,6 +2673,9 @@ for k = 1:numel(d)
     rel = relPath(store,d(k).folder);
     if rel == "" && strcmpi(d(k).name,mabr.analysis.Project.FileName), continue; end
     if contains(lower(string(d(k).name)),".tmp"), continue; end
+    % (a batch's <name>.conflict.mat is its copy beside a results file that
+    % was changed meanwhile, not another session's results)
+    if endsWith(lower(string(d(k).name)),".conflict.mat"), continue; end
     if rel ~= ""
         parts = lower(split(rel,"/"));
         if any(startsWith(parts,".")) || any(ismember(parts,["logs" "figures" "exports" "scripts"]))

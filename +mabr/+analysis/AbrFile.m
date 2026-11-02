@@ -32,7 +32,10 @@ classdef AbrFile
 %   (subjectOf), which no file records anywhere else.
 %     Era        "E0" for a legacy +abr file (no SoftwareVersion), else "E1+".
 %                Eras are told apart by which fields exist, never by version
-%                strings, which never changed.
+%                strings, which did not change until DataVersion '26B'.
+%     DataVersion  the writer's mabr.Config.DataVersion ("" when the file has
+%                none): '26B' and later put SweepOnsets on the resampled grid
+%                exactly, earlier ones (1 - 1/df) of a sample early.
 %     Params     SIG.informativeParams, each value from SIG.(name) when that
 %                is a real non-integer number, else from SIG.dataParams.(name)
 %                -- where an E0 file keeps its values, its SIG fields having
@@ -83,7 +86,10 @@ classdef AbrFile
 
     properties (Constant)
         % Bump when read() returns something different for the same file.
-        ReaderVersion = 1
+        % 2: the record carries the writer's DataVersion.
+        % 3: NumNotes and Aligned, and the stored Subject preferred over the
+        %    filename's token.
+        ReaderVersion = 3
 
         % Column names the analysis tables keep for themselves. A stimulus
         % parameter spelled like one of them (in any case) is read as
@@ -333,6 +339,38 @@ if ~isfield(S,'ABR_Data') || ~isstruct(S.ABR_Data) || ~isscalar(S.ABR_Data)
 end
 A = S.ABR_Data;
 if isfield(A,'SoftwareVersion'), rec.Era = "E1+"; else, rec.Era = "E0"; end
+% The writer's mabr.Config.DataVersion, so a reader can tell eras whose fields
+% mean different things apart ('26B': SweepOnsets on the resampled grid exactly;
+% see mabr.ui.analysis.SettingsDialog.onsetBiasOf). "" when the file has none.
+if isfield(A,'DataVersion') && (ischar(A.DataVersion) || isstring(A.DataVersion))
+    rec.DataVersion = string(A.DataVersion);
+end
+% The subject as TYPED, when the writer stored it (mabr.data.io, from October
+% 2026), preferred over the filename's token: that token was lossy -- an ID
+% not of the SUBJ-ID-<n> form kept only its digits, so M12 and F12 were one
+% subject here, in the project and in every export. Canonical as matchSubject
+% spells it, SUBJ-ID-<ALNUM>.
+if isfield(A,'Subject') && (ischar(A.Subject) || isstring(A.Subject))
+    typed = strtrim(string(A.Subject));
+    if isscalar(typed) && strlength(typed) > 0
+        c = matchSubject(typed);
+        if c == ""
+            alnum = upper(regexprep(typed,'[^A-Za-z0-9]',''));
+            if strlength(alnum) > 0, c = "SUBJ-ID-" + alnum; end
+        end
+        if c ~= "", rec.Subject = c; rec.SubjectRaw = typed; end
+    end
+end
+% How many notes the file carries (0 when none), so a catalog looking for a
+% session's notebook can skip the files without one instead of loading each
+% in full; and the run's alignment verdict (ABR_Data.Alignment, from October
+% 2026): 1 aligned, 0 misaligned, NaN when the file says nothing.
+rec.NumNotes = 0;
+if isfield(A,'Notes') && isstruct(A.Notes), rec.NumNotes = numel(A.Notes); end
+if isfield(A,'Alignment') && isstruct(A.Alignment) && isscalar(A.Alignment) ...
+        && isfield(A.Alignment,'Aligned') && ~isempty(A.Alignment.Aligned)
+    rec.Aligned = double(logical(A.Alignment.Aligned(1)));
+end
 if ~(isfield(A,'ADC') && isstruct(A.ADC) && isscalar(A.ADC) ...
         && isfield(A.ADC,'Data') && isfield(A.ADC,'SweepOnsets'))
     rec.Skipped = true;
@@ -776,9 +814,9 @@ rec = struct( ...
     'Path',ffn,'Folder',string(folder),'FileName',string([name ext]), ...
     'Bytes',NaN,'Modified',NaT, ...
     'Ok',false,'Skipped',false,'Error',"", ...
-    'Era',"",'StartTime',NaT,'SampleRate',NaN,'DACSampleRate',NaN, ...
+    'Era',"",'DataVersion',"",'StartTime',NaT,'SampleRate',NaN,'DACSampleRate',NaN, ...
     'NumSweeps',0,'SweepLength',NaN,'Layout',"",'AcqMode',"", ...
-    'Duration',NaN,'MinISI',NaN,'TestMode',false, ...
+    'Duration',NaN,'MinISI',NaN,'TestMode',false,'NumNotes',NaN,'Aligned',NaN, ...
     'Stimulus',"",'StimClass',"",'StimID',"", ...
     'ParamNames',strings(1,0),'Params',struct(),'ParamText',"", ...
     'AlternatePolarity',false,'Units',"",'AmplifierGain',NaN,'InputFullScale',NaN, ...

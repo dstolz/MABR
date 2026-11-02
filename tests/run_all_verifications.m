@@ -1,5 +1,14 @@
-function run_all_verifications()
+function results = run_all_verifications()
 % run_all_verifications  Run the MABR no-hardware verification suite.
+%
+%   run_all_verifications          runs every script, printing each one's
+%                                  output, its verdict and how long it took,
+%                                  and ends with the failures listed by name
+%   R = run_all_verifications      also returns a struct array, one row per
+%                                  script: Name, Passed, Seconds, Message
+%                                  (the failure's first line, '' on a pass)
+%                                  -- so a build job can do
+%                                  assert(all([R.Passed])) and exit non-zero
 %
 %   Runs, in order:
 %       verify_logging           - MABR's printing and logging, which run
@@ -287,16 +296,29 @@ tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_p
          @verify_timing_loopback, @verify_test_runner, ...
          @verify_shutdown_pool};
 
-nPass = 0;
+R = struct('Name',cellfun(@func2str,tests,'UniformOutput',false), ...
+           'Passed',false,'Seconds',NaN,'Message','');
+tAll = tic;
 for i = 1:numel(tests)
-    name = func2str(tests{i});
+    t0 = tic;
     try
         tests{i}();
-        nPass = nPass + 1;
+        R(i).Passed = true;
     catch me
-        fprintf(2,'\n*** %s FAILED: %s\n%s\n\n',name,me.message,getReport(me,'basic'));
+        R(i).Message = strtok(me.message,newline);
+        fprintf(2,'\n*** %s FAILED: %s\n%s\n\n',R(i).Name,me.message,getReport(me,'basic'));
     end
+    R(i).Seconds = toc(t0);
+    fprintf('     (%s %.1f s)\n',R(i).Name,R(i).Seconds);
 end
 
-fprintf('\n==== %d / %d verifications passed ====\n',nPass,numel(tests));
+nPass  = sum([R.Passed]);
+failed = {R(~[R.Passed]).Name};
+fprintf('\n==== %d / %d verifications passed (%.0f s) ====\n',nPass,numel(tests),toc(tAll));
+% The names again at the end, where a long transcript is read from: a
+% failure 40 scripts back is otherwise found only by scrolling.
+if ~isempty(failed)
+    fprintf(2,'FAILED: %s\n',strjoin(failed,', '));
+end
+if nargout > 0, results = R; end
 end

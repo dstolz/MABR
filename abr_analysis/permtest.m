@@ -20,8 +20,14 @@ function [pVal, result] = permtest(A, options)
 %   options.method         = "clusterMass"  ("clusterMass"|"tmax"|"tfce")
 %   options.tfce.E         = 0.5           (Extent parameter)
 %   options.tfce.H         = 2.0           (Height parameter)
-%   options.tfce.dh        = 0.1           (threshold step in t-units)
+%   options.tfce.dh        = 0.1           (threshold step in t-units; coarsened with a
+%                                           warning if max|t|/dh would exceed 1e5 steps)
 %   options.showPlot       = false
+%   options.Seed           = []            (empty: draw sign flips from the global random
+%                                           stream, as before. A nonnegative integer draws
+%                                           them from RandStream('threefry','Seed',Seed)
+%                                           so the same input and seed reproduce the result
+%                                           without touching the global stream)
 %
 % Outputs
 %   pVal   scalar global p-value for the chosen max-statistic
@@ -30,6 +36,11 @@ function [pVal, result] = permtest(A, options)
 %
 % Notes
 % - Uses sign-flip (Rademacher) permutations, appropriate for a one-sample test.
+%   The statistic is a one-sample t against ZERO at every sample; there is no baseline
+%   comparison, so any pre-stimulus baseline must be subtracted from A beforehand if
+%   one is wanted.
+% - A sample whose trials have zero variance (e.g. constant trials) gets t = 0 rather
+%   than an infinite or complex t.
 % - For "tmax"/"tfce", "where in time" is best read from result.pCorrSample.
 %
 % Mensen, A., & Khatami, R. (2013). Advanced EEG analysis using 
@@ -47,6 +58,7 @@ arguments
     options.method (1,1) string {mustBeMember(options.method, ["clusterMass","tmax","tfce"])} = "clusterMass"
     options.tfce struct = struct("E",0.5,"H",2.0,"dh",0.1)
     options.showPlot (1,1) logical = false
+    options.Seed double {mustBeScalarOrEmpty,mustBeNonnegative,mustBeInteger} = []
 end
 
 pVal = NaN;
@@ -61,13 +73,19 @@ n = trials;
 sumA   = sum(A, 1);
 sumSqA = sum(A.^2, 1);
 
-varA = (sumSqA - (sumA.^2)/n) ./ (n - 1);
+% The one-pass variance can round slightly NEGATIVE for (near-)constant trials, which
+% would make sqrt return a complex t; clamp at zero. A zero variance gives a non-finite
+% t below, which is then set to 0 (no evidence), not left complex.
+varA = max((sumSqA - (sumA.^2)/n) ./ (n - 1), 0);
 seA  = sqrt(varA ./ n);
 
 tValsReal = (sumA ./ n) ./ seA;
 tValsReal(~isfinite(tValsReal)) = 0;
 
 tThresh = tinv(1 - options.alpha/2, n - 1);
+
+% True once any TFCE call below had to coarsen its threshold step; warned about once at the end.
+tfceCoarsened = false;
 
 % --- Compute observed max-statistic (depends on method) ---
 switch options.method
@@ -80,8 +98,9 @@ switch options.method
         maxStatReal = max(abs(tValsReal));
 
     case "tfce"
-        tfcePosReal = tfce_1d(max(tValsReal,0), options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
-        tfceNegReal = tfce_1d(max(-tValsReal,0), options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
+        [tfcePosReal, c1] = tfce_1d(max(tValsReal,0), options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
+        [tfceNegReal, c2] = tfce_1d(max(-tValsReal,0), options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
+        tfceCoarsened = tfceCoarsened || c1 || c2;
         tfceAbsReal = max(tfcePosReal, tfceNegReal);
         maxStatReal = max(tfceAbsReal);
 end
@@ -92,13 +111,26 @@ maxStatPerm = zeros(options.nPerm, 1);
 batchSize = min(options.nPerm, 512);
 p0 = 0;
 
+% A private stream when a Seed is given, so the sign flips (and therefore the p-values)
+% reproduce exactly and the caller's global stream is neither used nor advanced.
+rs = [];
+if ~isempty(options.Seed)
+    rs = RandStream('threefry', 'Seed', options.Seed);
+end
+
 while p0 < options.nPerm
     nb = min(batchSize, options.nPerm - p0);
 
-    s = 2*(rand(trials, nb) > 0.5) - 1;     % trials x nb
+    if isempty(rs)
+        u = rand(trials, nb);
+    else
+        u = rand(rs, trials, nb);
+    end
+    s = 2*(u > 0.5) - 1;                    % trials x nb
     sumPerm = (s.' * A);                    % nb x nSamples
 
-    varPerm = (sumSqA - (sumPerm.^2)/n) ./ (n - 1);
+    % Clamped at zero for the same rounding reason as varA above.
+    varPerm = max((sumSqA - (sumPerm.^2)/n) ./ (n - 1), 0);
     sePerm  = sqrt(varPerm ./ n);
     tBlock  = (sumPerm ./ n) ./ sePerm;
     tBlock(~isfinite(tBlock)) = 0;
@@ -119,13 +151,20 @@ while p0 < options.nPerm
                 maxStatPerm(p0+j) = max(abs(tPerm));
 
             case "tfce"
-                tfcePos = tfce_1d(max(tPerm,0),  options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
-                tfceNeg = tfce_1d(max(-tPerm,0), options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
+                [tfcePos, c1] = tfce_1d(max(tPerm,0),  options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
+                [tfceNeg, c2] = tfce_1d(max(-tPerm,0), options.tfce.E, options.tfce.H, options.tfce.dh, options.minClusterSize);
+                tfceCoarsened = tfceCoarsened || c1 || c2;
                 maxStatPerm(p0+j) = max(max(tfcePos, tfceNeg));
         end
     end
 
     p0 = p0 + nb;
+end
+
+if tfceCoarsened
+    warning('permtest:tfceStepCoarsened', ...
+        ['TFCE threshold step options.tfce.dh was coarsened so that no more than 1e5 steps ' ...
+         'are taken; |t| is extremely large, which means the trials are almost noiseless.']);
 end
 
 % Global p-value (+1 correction) for the max-statistic
@@ -226,15 +265,25 @@ for k = 1:numel(starts)
 end
 end
 
-function tfce = tfce_1d(xNonneg, E, H, dh, minSz)
+function [tfce, coarsened] = tfce_1d(xNonneg, E, H, dh, minSz)
 % Simple 1D TFCE for a nonnegative map.
 % Integrates over thresholds h with step dh; at each h, finds clusters where x>h and
 % adds (extent^E)*(h^H)*dh to all samples in those clusters.
 %
 % xNonneg: 1 x nSamples, must be >=0
+% coarsened: true when dh had to be enlarged (see below) so the caller can warn once.
 tfce = zeros(size(xNonneg));
+coarsened = false;
 mx = max(xNonneg);
 if mx <= 0 || dh <= 0, return; end
+
+% Near-noiseless trials give |t| ~ 1e8, and a fixed dh = 0.1 would then loop ~1e9
+% times. Cap the number of thresholds; the integral just becomes a coarser sum.
+maxSteps = 1e5;
+if mx/dh > maxSteps
+    dh = mx/maxSteps;
+    coarsened = true;
+end
 
 hs = dh:dh:mx;
 for h = hs

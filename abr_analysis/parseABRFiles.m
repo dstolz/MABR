@@ -21,7 +21,9 @@ function T = parseABRFiles(sessionPath, options)
 %   NOTES
 %     - Expects each .abr file to contain a variable 'ABR_Data' with fields:
 %       SIG.informativeParams, SIG.(param), StartTime, etc.
-%     - Uses PARFOR_PROGRESS for progress reporting if available on the path.
+%     - Needs PARFOR_PROGRESS (progress reporting) from the author's helper_fnc
+%       repository, https://github.com/dstolz/helper_fnc, on the MATLAB path. Without
+%       it this stops at once with error abr_analysis:missingDependency.
 %
 %   EXAMPLE
 %     T = parseABRFiles("C:\data\session1", filePattern="^SUBJ\d+");
@@ -33,6 +35,8 @@ arguments
     options.filePattern = "^SUBJ*"
 end
 
+checkABRDependencies("parseABRFiles", "parfor_progress");
+
 
 
 d = dir(fullfile(sessionPath, '*.abr'));
@@ -40,6 +44,13 @@ d = dir(fullfile(sessionPath, '*.abr'));
 ind = cellfun(@isempty,regexp({d.name},options.filePattern,'once'));
 d(ind) = [];
 
+% No file matches: return an empty table now. The loop below would never create T, and
+% the cleanup after it would die on an undefined variable, which broke batchABRAnalysis
+% (it tests isempty(T) to skip such a folder).
+if isempty(d)
+    T = table();
+    return
+end
 
 warning('off','audio:audioPlayerRecorder:invalidDevice')
 

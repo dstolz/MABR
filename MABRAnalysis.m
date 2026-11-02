@@ -24,10 +24,16 @@ function h = MABRAnalysis(varargin)
 
 rootDir = fileparts(mfilename('fullpath'));
 
-% add every subfolder except .git (the MABR.m rule)
-p = split(string(genpath(rootDir)),pathsep);
-p(p == "" | contains(p,'.git')) = [];
-addpath(char(join(p,pathsep)));
+% Add every CODE subfolder (the MABR.m rule, and see its comment): not .git,
+% the logs, the runtime buffers, docs/, plans/, or the submodules' tests/,
+% documentation/ and templates/.
+p  = cellstr(split(string(genpath(rootDir)),pathsep));
+nonCode = ~cellfun(@isempty,regexp(p, ...
+    '[\\/](\.git\w*|\.error_logs|\.runtime_data|docs|plans|documentation|templates)([\\/]|$)','once'));
+subTests = contains(p,[filesep 'external' filesep]) & ...
+    ~cellfun(@isempty,regexp(p,'[\\/]tests([\\/]|$)','once'));
+p = p(~cellfun(@isempty,p) & ~nonCode & ~subTests);
+addpath(strjoin(p,pathsep));
 
 [hasLog,why] = mabr.log.configure();
 if ~hasLog

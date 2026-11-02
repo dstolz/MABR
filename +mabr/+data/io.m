@@ -78,7 +78,7 @@ classdef io
             if nargin < 3, baseName = ''; end
             if ~isfolder(outputPath), mkdir(outputPath); end
 
-            ABR_Data = mabr.data.io.buildStruct(block); %#ok<NASGU>
+            ABR_Data = mabr.data.io.buildStruct(block,baseName); %#ok<NASGU>
 
             fn  = mabr.data.io.buildFilename(block,baseName);
             ffn = mabr.data.io.uniqueFile(fullfile(outputPath,fn));
@@ -87,7 +87,32 @@ classdef io
 
             x = whos('ABR_Data');
             mabr.log.vprintf(1,'Saving %s (%.1f MB) [%s]',fn,x.bytes/1e6,ffn);
-            save(ffn,'ABR_Data','-mat','-nocompression');
+            mabr.data.io.saveAtomic(ffn,'ABR_Data',ABR_Data);
+        end
+
+        function saveAtomic(ffn,name,value)
+            % Save one variable to ffn so that the file either holds it whole
+            % or does not exist. save() straight onto the final name left a
+            % truncated file under that name after a crash or a full disk:
+            % unreadable, retried by every catalog scan, and indistinguishable
+            % from a transient lock. So: write beside it under a name no scan
+            % matches (.part), check the variable reads back, then rename
+            % into place -- atomic on one volume.
+            S = struct(name,value); %#ok<NASGU>
+            w = whos('S');
+            % -v7 skips a variable over 2 GB with only a warning, which would
+            % leave a file holding nothing.
+            if w.bytes > 1.9e9, fmt = '-v7.3'; else, fmt = '-v7'; end
+            tmp = [ffn '.part'];
+            save(tmp,'-struct','S',fmt,'-nocompression');
+            if isempty(whos('-file',tmp,name))
+                delete(tmp);
+                error('mabr:data:io:saveFailed','%s was not written to %s.',name,tmp);
+            end
+            [ok,msg] = movefile(tmp,ffn,'f');
+            if ~ok
+                error('mabr:data:io:saveFailed','Could not move %s into place: %s',tmp,msg);
+            end
         end
 
         function ffn = writeStimLog(info,outputPath,baseName)
@@ -111,7 +136,7 @@ classdef io
             fn  = [n e];
 
             mabr.log.vprintf(1,'Saving stimulation log %s [%s]',fn,ffn);
-            save(ffn,'MABR_StimLog','-mat','-nocompression');
+            mabr.data.io.saveAtomic(ffn,'MABR_StimLog',MABR_StimLog);
         end
 
         function S = buildStimLog(info)
@@ -301,16 +326,25 @@ classdef io
             fn   = sprintf('%s_Notes_%s.notes',subj,t);
         end
 
-        function ABR_Data = buildStruct(block)
+        function ABR_Data = buildStruct(block,subject)
             % Build the offline-compatible ABR_Data struct from a Block.
+            % `subject` (optional) is the subject ID as typed, stored in the
+            % file as ABR_Data.Subject: the filename token is lossy (an ID not
+            % of the SUBJ-ID-<n> form keeps only its digits, so M12 and F12
+            % share a stem), and until now nothing else in the file said
+            % which animal it was.
+            if nargin < 2, subject = ''; end
             rec = block.ADC;
             df  = rec.DecimationFactor;
 
             if df > 1
                 data   = single(resample(double(rec.Data),1,df));
-                % max(1,...): onsets below df/2 round to 0, which is an invalid
-                % index into ADC.Data for the offline pipeline.
-                onsets = max(1,round(rec.SweepOnsets(:)./df));
+                % resample keeps sample 1 at sample 1 and puts raw sample
+                % 1 + (j-1)*df at j, so raw onset o is ADC sample
+                % 1 + (o-1)/df (round(o/df) sat (1 - 1/df) of a sample early;
+                % see mabr.compute.Pipeline.finalize). max(1,...) because the
+                % offline pipeline indexes ADC.Data with these.
+                onsets = max(1,1 + round((rec.SweepOnsets(:) - 1)./df));
                 Fs     = rec.SampleRate./df;
             else
                 data   = rec.Data;
@@ -319,6 +353,12 @@ classdef io
             end
 
             ABR_Data = struct();
+            if ~isempty(subject), ABR_Data.Subject = char(string(subject)); end
+            % The run's alignment verdict (see mabr.data.Block.Alignment), so
+            % a file from a misaligned run says so.
+            if isprop(block,'Alignment') && isstruct(block.Alignment) && ~isempty(block.Alignment)
+                ABR_Data.Alignment = block.Alignment;
+            end
             ABR_Data.ADC.SampleRate  = Fs;
             ABR_Data.ADC.Data        = single(data(:));
             ABR_Data.ADC.SweepOnsets = onsets;
@@ -604,14 +644,17 @@ classdef io
             if startsWith(subj,'SUBJ')
                 subj = mabr.data.io.wordToken(subj);
             else
-                % Prefer the numeric part, but fall back to the sanitized name:
-                % stripping non-digits from a purely alphabetic ID yielded
-                % 'SUBJ-ID-', collapsing every such subject onto one filename.
-                digits = regexprep(subj,'\D','');
-                if isempty(digits)
+                % The WHOLE ID, letters and digits (as one run, so the reader's
+                % SUBJ-ID-<alnum> pattern takes all of it): keeping only the
+                % digits made M12 and F12 -- or "Rat 7 L" and "Rat 7 R" -- one
+                % subject on disk, in the catalog, in the project and in every
+                % export, and a purely alphabetic ID collapsed onto 'SUBJ-ID-'.
+                % A purely numeric ID is itself, as it always was.
+                alnum = regexprep(subj,'[^A-Za-z0-9]','');
+                if isempty(alnum)
                     subj = ['SUBJ-ID-' mabr.data.io.wordToken(subj)];
                 else
-                    subj = ['SUBJ-ID-' digits];
+                    subj = ['SUBJ-ID-' alnum];
                 end
             end
         end

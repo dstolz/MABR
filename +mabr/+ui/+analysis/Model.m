@@ -44,8 +44,14 @@ classdef Model < handle
 %   (newest 3 per session).
 %
 %   UNDO. One stack per session key, for the app's lifetime: an entry holds
-%   Session.editSnapshot() before and after (and the project rows a label
-%   edit touched). Re-analysing a session clears its stack.
+%   Session.editSnapshot() before and after. Re-analysing a session -- or a
+%   settings change or batch that rewrites its peaks and thresholds in
+%   place -- clears its stack. PROJECT-level edits (labels, Hide, pools,
+%   columns, the duplicate policy, wave windows from picks) belong to no
+%   session, so they live on one more stack, "@project", whichever session
+%   is open; Undo and Redo take the NEWER top of the open session's stack
+%   and the project's (each entry carries a monotone stamp), so "label the
+%   timepoints, open a session, Ctrl+Z" undoes the labels.
 %
 %   The functions that would talk to the user -- ConfirmFcn, AlertFcn,
 %   PromptFcn, PickFolderFcn, PickFileFcn, ProgressFcn -- are properties:
@@ -157,7 +163,8 @@ classdef Model < handle
     end
 
     properties (Access = private)
-        UndoStacks                          % containers.Map: session key -> struct Undo, Redo
+        UndoStacks                          % containers.Map: session key (or "@project") -> struct Undo, Redo
+        UndoClock (1,1) double = 0          % orders entries across stacks (a counter: two edits in one tick must still order)
         AutosaveTimer = []
         Stamp                               % (bytes, datenum) of the results file as last read/written
         ResultsFile (1,1) string = ""       % the open session's results file
@@ -176,6 +183,10 @@ classdef Model < handle
         ViewCache = []
         BatchRun = []                       % the latest Batch.run table (what batch() returns)
         BlindCache = []                     % blindPattern's struct Sig, Pat
+        OpenFailedKeys (:,1) string = strings(0,1)   % sessions whose open failed since the folder was scanned
+        RootProbe = struct('State',"ok",'Study',"")   % probeRootWork's finding: the folder's state, and the study it may belong to
+        SessionCache = struct('Key',{},'Stamp',{},'Session',{},'Saved',{},'Source',{})   % sessions just left, oldest first
+        SessionTainted (1,1) logical = false   % the open session holds edits that were discarded: never kept (stashSession)
     end
 
     events
@@ -192,6 +203,8 @@ classdef Model < handle
     properties (Constant)
         HistoryKeep = 3                     % .history files kept per session
         PrefGroup = 'MABR'
+        ProjectUndoKey = "@project"         % the undo stack of the project's own edits
+        SessionCacheDepth = 3               % sessions kept after they are left (see stashSession)
     end
 
     % =====================================================================
@@ -237,23 +250,21 @@ classdef Model < handle
 
         % ---- dependent ---------------------------------------------------
         function tf = get.CanUndo(obj)
-            st = obj.stack();
-            tf = ~isempty(st.Undo);
+            tf = obj.undoSide("Undo") ~= "";
         end
 
         function tf = get.CanRedo(obj)
-            st = obj.stack();
-            tf = ~isempty(st.Redo);
+            tf = obj.undoSide("Redo") ~= "";
         end
 
         function s = get.UndoLabel(obj)
-            st = obj.stack();
-            if isempty(st.Undo), s = ""; else, s = string(st.Undo{end}.Label); end
+            k = obj.undoSide("Undo");
+            if k == "", s = ""; else, st = obj.stack(k); s = string(st.Undo{end}.Label); end
         end
 
         function s = get.RedoLabel(obj)
-            st = obj.stack();
-            if isempty(st.Redo), s = ""; else, s = string(st.Redo{end}.Label); end
+            k = obj.undoSide("Redo");
+            if k == "", s = ""; else, st = obj.stack(k); s = string(st.Redo{end}.Label); end
         end
 
         function set.KeyTarget(obj,v)
@@ -297,6 +308,18 @@ classdef Model < handle
             %
             % Writes nothing in the data tree: the catalog cache lives in
             % CacheFolder and the project is created on the first save.
+            %
+            % Whether the folder answers, and whether it is one animal of a
+            % study, are looked up in a job of their own (progress window,
+            % Busy, but no BusyChanged: the events of the open itself stay
+            % the fixed ones): on a network share that is slow, asleep or
+            % behind a VPN that is down, isfolder alone blocks for tens of
+            % seconds, and with the probe out here on the UI thread the
+            % window froze with no progress window to say why. An error is
+            % 'mabr:ui:analysis:unreachable' (the drive or share does not
+            % answer: a temporary state, so a recent-folder entry is kept)
+            % or 'mabr:ui:analysis:noFolder' (the drive is there and the
+            % folder is not).
             arguments
                 obj
                 path (1,1) string
@@ -304,13 +327,25 @@ classdef Model < handle
             end
             obj.assertNotBusy();
             path = mabr.ui.analysis.Model.absolutePath(path);
-            if ~isfolder(path)
-                error('mabr:ui:analysis:noFolder','The folder "%s" does not exist.',path);
+            [~,nm] = fileparts(char(path));
+            obj.RootProbe = struct('State',"ok",'Study',"");
+            if ~obj.runJob("Looking for " + string(nm), ...
+                    @(sink) obj.probeRootWork(path,opts.SuggestStudyRoot,sink),Quiet=true)
+                return
+            end
+            switch obj.RootProbe.State
+                case "unreachable"
+                    error('mabr:ui:analysis:unreachable', ...
+                        'The folder "%s" is not reachable right now (drive or VPN?).',path);
+                case "missing"
+                    error('mabr:ui:analysis:noFolder','The folder "%s" does not exist.',path);
             end
             if opts.SuggestStudyRoot
-                path = obj.offerStudyRoot(path);
+                path = obj.offerStudyRoot(path,obj.RootProbe.Study);
             end
-            obj.flush();
+            % (opening a folder drops the open session: edits that cannot
+            % be written are asked about first, never lost silently)
+            if ~obj.leaveSession("opening another folder"), return; end
             [~,nm] = fileparts(char(path));
             obj.runJob("Scanning " + string(nm),@(sink) obj.openRootWork(path,sink));
         end
@@ -325,9 +360,10 @@ classdef Model < handle
         end
 
         function closeRoot(obj)
-            % Close the folder (saving first).
+            % Close the folder (saving first; edits that cannot be written
+            % are asked about, and Stay keeps the folder open).
             obj.assertNotBusy();
-            obj.flush();
+            if ~obj.leaveSession("closing the folder"), return; end
             obj.Session = [];
             obj.SessionKey = "";
             obj.SessionKeys = strings(0,1);
@@ -336,6 +372,8 @@ classdef Model < handle
             obj.Selection = mabr.ui.analysis.Model.emptySelection();
             obj.Catalog = [];
             obj.Project = [];
+            obj.SessionCache(:) = [];
+            obj.clearUndo(obj.ProjectUndoKey);      % (its labels are another project's now)
             obj.Queue = [];
             obj.BlindReview = false;
             obj.ReadOnly = false;
@@ -472,6 +510,61 @@ classdef Model < handle
         % =================================================================
         %  Sessions
         % =================================================================
+        function ok = leaveSession(obj,action)
+            % May the open session be left now -- another opened, the
+            % folder opened or closed, the window closed? Pending edits are
+            % written first. Edits that CANNOT be written (the results
+            % folder is read-only or unreachable, or the results file
+            % changed elsewhere and the conflict bar is still up) would
+            % otherwise vanish without a word: flush() does nothing in a
+            % conflict, saveNow() returns early when read-only or after a
+            % failed save, and opening the next session then resets the
+            % dirty flag. So the person is asked, through ConfirmFcn like
+            % every other question: Discard lets the switch go ahead (and
+            % forgets the undo history of edits that no longer exist), Stay
+            % refuses it -- false comes back and the status line says why.
+            %
+            %   action  what was about to happen, as a phrase for the
+            %           status line ("opening another folder")
+            arguments
+                obj
+                action (1,1) string = "leaving the session"
+            end
+            obj.flush();
+            ok = true;
+            if isempty(obj.Session) || ~obj.SessionDirty, return; end
+            if ~any(obj.SaveState == ["conflict","readonly","failed"]), return; end
+            switch obj.SaveState
+                case "conflict"
+                    why = "its results file was changed elsewhere";
+                    if ~isnat(obj.ConflictTime)
+                        why = why + " at " + string(obj.ConflictTime,'HH:mm');
+                    end
+                case "readonly"
+                    why = obj.ReadOnlyWhy;
+                    if why == "", why = "results cannot be written to " + obj.resultsFolder(); end
+                otherwise
+                    why = "the last save to " + obj.resultsFolder() + " failed";
+            end
+            c = obj.confirm("This session has unsaved edits that cannot be written (" + why + ...
+                "). Discard them?","Unsaved edits",["Discard","Stay"],"Stay");
+            if c == "Discard"
+                mabr.log.vprintf(1,'Model: unsaved edits of %s discarded (%s).',obj.SessionKey,why);
+                obj.clearUndo(obj.SessionKey);
+                % (decided: nothing waits to be saved any more, so a second
+                % door to the same switch -- a review queue's first item
+                % opens a session after its own check -- does not ask twice)
+                obj.SessionDirty = false;
+                obj.SessionTainted = true;
+                obj.HistoryPending = false;
+                if obj.ReadOnly, obj.setSaveState("readonly"); else, obj.setSaveState("saved"); end
+                return
+            end
+            ok = false;
+            obj.say("Stayed on this session — its unsaved edits cannot be written (" + why + ...
+                "), so " + action + " was cancelled.",1,"leaveSession");
+        end
+
         function openSession(obj,key,opts)
             % Open one session (or pool): from its results file when there
             % is one (instant, results only), else from the raw files
@@ -501,7 +594,9 @@ classdef Model < handle
             end
             info = obj.sessionInfo(key);
             prev = obj.Selection;
-            obj.flush();
+            % (the session being left: its edits are written, or -- when
+            % they cannot be -- the person decides whether they are dropped)
+            if ~obj.leaveSession("opening " + info.Name), return; end
             useResults = isfile(info.ResultsFile) && opts.Source ~= "raw";
             obj.LastOpenError = [];
             try
@@ -528,7 +623,9 @@ classdef Model < handle
                     obj.runJob("Opening " + info.Name, ...
                         @(sink) obj.openSessionWork(info,"raw",opts,prev,sink));
                 end
+                obj.OpenFailedKeys(obj.OpenFailedKeys == key) = [];     % (opened after all)
             catch me
+                obj.OpenFailedKeys = union(obj.OpenFailedKeys,key);
                 obj.LastOpenError = struct('Key',key,'Name',info.Name, ...
                     'Message',string(me.message),'Paths',info.Paths);
                 obj.say("Could not open " + info.Name + ": " + string(me.message),2,"openSession");
@@ -537,9 +634,10 @@ classdef Model < handle
         end
 
         function closeSession(obj)
-            % Close the open session (saving first).
+            % Close the open session (saving first; edits that cannot be
+            % written are asked about, and Stay keeps the session open).
             obj.assertNotBusy();
-            obj.flush();
+            if ~obj.leaveSession("closing the session"), return; end
             obj.Session = [];
             obj.SessionKey = "";
             obj.SessionKeys = strings(0,1);
@@ -703,6 +801,7 @@ classdef Model < handle
             % follows from the same call (View.onModelEvent) -- the order
             % of the events is the contract's (11 sec. 2.3).
             refitted = false;
+            undoCleared = false;
             failure = [];
             S = obj.Session;
             changed = struct('Step',"",'Fields',strings(0,1),'Old',[],'New',s);
@@ -722,6 +821,13 @@ classdef Model < handle
                 if ismember(k,["thresholds","peaks"]) && S.missingMeasure(s) == ""
                     try
                         S.analyze(s,'From',k);
+                        % The peaks and thresholds were rewritten in place,
+                        % so an undo entry from before holds picks made
+                        % under the OLD windows: restoring it would put
+                        % them back under the new settings while the header
+                        % says "Up to date". Like every re-analysis, the
+                        % refit therefore ends the session's undo history.
+                        undoCleared = obj.clearUndo(obj.SessionKey);
                         obj.HistoryPending = true;
                         obj.markDirty("session");
                         refitted = true;
@@ -739,6 +845,7 @@ classdef Model < handle
             end
             obj.updateStatus();
             txt = obj.settingsReport(refitted,changed);
+            if undoCleared, txt = txt + " The undo history of this session was cleared."; end
             obj.ev("StatusChanged","status","setSettings",Text=txt);
             if ~isempty(failure), rethrow(failure); end
         end
@@ -1146,7 +1253,12 @@ classdef Model < handle
 
         function nextNeedingReview(obj,step)
             % The next (+1) or previous (-1) series with no decision yet --
-            % in this session, then in the next session that has one.
+            % in this session, then in the next session that has one. At the
+            % end of the list it offers to wrap ONCE (a person working
+            % through a study should not have to find the first unreviewed
+            % session by hand), and a session that will not open is skipped,
+            % as openAdjacent skips it: stopping on it would send every
+            % further F to the same failed open.
             arguments
                 obj
                 step (1,1) double = 1
@@ -1169,21 +1281,59 @@ classdef Model < handle
             if isempty(i)
                 if step > 0, i = 0; else, i = numel(order) + 1; end
             end
+            if step > 0, from = ""; else, from = "<end>"; end
+            canWrap = i >= 1 && i <= numel(order);     % (no session open: the scan began at an end)
+            wrapped = false;
+            skipped = 0;
             j = i + sign(step);
-            while j >= 1 && j <= numel(order)
-                if obj.sessionNeedsReview(order(j))
-                    obj.openSession(order(j));
-                    if obj.SessionKey == order(j)
-                        keys = obj.seriesKeys();
-                        if step > 0, from = ""; else, from = "<end>"; end
-                        sk = obj.needingReview(keys,from,step);
-                        if sk ~= "", obj.selectSeries(sk); end
+            while true
+                if j < 1 || j > numel(order)
+                    % the end of the list: wrap once, and then only as far as
+                    % the session we started from (its own series before the
+                    % selection are still unvisited)
+                    if wrapped || ~canWrap, break; end
+                    if step > 0
+                        q = "Reached the end — restart from the first unreviewed?";
+                    else
+                        q = "Reached the start — restart from the last unreviewed?";
                     end
-                    return
+                    c = obj.confirm(q,"Needs review",["Restart","Stop"],"Restart");
+                    if c ~= "Restart", break; end
+                    wrapped = true;
+                    if step > 0, j = 1; else, j = numel(order); end
+                end
+                if wrapped && ((step > 0 && j > max(i,0)) || (step < 0 && j < min(i,numel(order)+1)))
+                    break
+                end
+                key = order(j);
+                if key == obj.SessionKey && ~isempty(obj.Session)
+                    sk = obj.needingReview(obj.seriesKeys(),from,step);
+                    if sk ~= ""
+                        obj.selectSeries(sk);
+                        obj.say("Needs review: " + obj.seriesLabel(sk),0,"nextNeedingReview");
+                        return
+                    end
+                elseif obj.sessionNeedsReview(key)
+                    if obj.isOpenable(key)
+                        obj.openSession(key);
+                        if obj.SessionKey == key
+                            sk = obj.needingReview(obj.seriesKeys(),from,step);
+                            if sk ~= "", obj.selectSeries(sk); end
+                            return
+                        end
+                        % (not opened: it failed, which openSession has
+                        % said, or the person kept the session they had)
+                        if isempty(obj.LastOpenError) || obj.LastOpenError.Key ~= key, return; end
+                    end
+                    skipped = skipped + 1;
                 end
                 j = j + sign(step);
             end
-            obj.say("Nothing else needs review.",0,"nextNeedingReview");
+            txt = "Nothing else needs review.";
+            if skipped > 0
+                txt = txt + sprintf(' (%d session(s) that need review could not be opened and were skipped.)',skipped);
+            end
+            obj.say(txt,0,"nextNeedingReview");
         end
 
         % =================================================================
@@ -1378,6 +1528,12 @@ classdef Model < handle
             % recording's own time (re the timing pulse), where the picks are
             % and where the next analysis searches -- never less the latency
             % offset, which only changes reported latencies.
+            %
+            % This is a PROJECT-wide change from one click, so the person is
+            % asked first when other sessions would become out of date, and
+            % the change is one undo step (a "settings" entry holding the
+            % old Settings: Ctrl+Z puts the old windows back, and the
+            % sessions that were up to date with them are up to date again).
             obj.assertMutable();
             sk = obj.targetSeries("");
             W = obj.Session.picksAsWindows(sk);
@@ -1387,9 +1543,42 @@ classdef Model < handle
             if ~isempty(W) && isfield(W,'Stimulus'), stim = string(W(1).Stimulus); end
             keep = old(string({old.Stimulus}) ~= stim);
             s.Waves = [reshape(keep,[],1); reshape(W,[],1)];
+            n = obj.upToDateElsewhere();
+            if n > 0
+                if n == 1, who = "1 other session"; else, who = n + " other sessions"; end
+                c = obj.confirm("Make the picks of " + obj.seriesLabel(sk) + " the wave windows of " + ...
+                    stim + "? The windows belong to the whole project: " + who + " will become" + ...
+                    " out of date (batch-analyse them to re-pick), and this session is re-fitted " + ...
+                    "now. Ctrl+Z puts the old windows back.", ...
+                    "Use picks as wave windows",["Use as windows","Cancel"],"Use as windows");
+                if c ~= "Use as windows"
+                    obj.say("Wave windows left as they were.",0,"usePicksAsWindows");
+                    return
+                end
+            end
+            before = obj.Settings;
             obj.setSettings(s,Refit=true);
+            e = obj.newEntry("Wave windows from " + obj.seriesLabel(sk),"settings");
+            e.Before = before; e.After = s;
+            obj.pushUndo(e);
             obj.say("Wave windows now follow the picks of " + obj.seriesLabel(sk) + ...
-                " (Settings ▸ Peaks to edit them).",0,"usePicksAsWindows");
+                " (Settings ▸ Peaks to edit them; Ctrl+Z to undo).",0,"usePicksAsWindows");
+        end
+
+        function n = upToDateElsewhere(obj)
+            % How many sessions (not hidden, not the open one) are up to
+            % date with the settings in force -- the ones a project-wide
+            % settings change would make out of date.
+            n = 0;
+            try
+                V = obj.projectView();
+                if isempty(V) || height(V) == 0, return; end
+                ok = string(V.Status) == "current" & string(V.Key) ~= obj.SessionKey & ...
+                    ismember(string(V.Key),obj.allKeys());
+                n = nnz(ok);
+            catch me
+                mabr.log.vprintf(2,'Model: could not count the up-to-date sessions (%s).',me.message);
+            end
         end
 
         % =================================================================
@@ -1911,6 +2100,13 @@ classdef Model < handle
             end
             q = struct('Keys',keys,'Position',1,'Order',opts.Order,'Seed',opts.Seed, ...
                 'Blind',opts.Blind,'UnreviewedOnly',opts.UnreviewedOnly);
+            % (the first item replaces the open session: its unwritable
+            % edits are asked about BEFORE the queue, and blind review,
+            % exist -- Stay must leave everything as it was)
+            if ~(obj.SessionKey == keys(1) && ~isempty(obj.Session)) && ...
+                    ~obj.leaveSession("starting the review")
+                return
+            end
             obj.Queue = q;
             obj.BlindReview = opts.Blind;
             try
@@ -1951,6 +2147,9 @@ classdef Model < handle
                 obj.say(sprintf('End of the review queue (%d sessions).',numel(q.Keys)),0,"nextInQueue");
                 return
             end
+            % (asked before the position moves: after Stay the queue must
+            % still point at the session that stays open)
+            if ~obj.leaveSession("going to the next review item"), return; end
             q.Position = j;
             obj.Queue = q;
             obj.openSession(q.Keys(j));
@@ -2098,8 +2297,25 @@ classdef Model < handle
                 % a script runs by its name, so the suggestion is a valid one
                 nm = string(matlab.lang.makeValidName(char(name + "_replicate")));
                 def = string(fullfile(obj.resultsFolder(),'scripts',nm + ".m"));
-                file = string(obj.PickFileFcn("*.m","Export analysis script","save",def));
-                if strlength(file) == 0, file = ""; return; end
+                picked = obj.PickFileFcn("*.m","Export analysis script","save",def);
+                try
+                    file = string(picked);
+                catch
+                    file = strings(1,2);        % (not text at all: refused below)
+                end
+                % (a chooser that returns several names, or none, is not a
+                % file: ScriptWriter.write would only fail with "must be a
+                % scalar" after the script was written in memory)
+                if isempty(file) || (isscalar(file) && (ismissing(file) || strlength(file) == 0))
+                    file = "";
+                    return
+                end
+                if ~isscalar(file)
+                    file = "";
+                    obj.say("The file chooser did not return a single file name, so no script was written.", ...
+                        1,"exportScript");
+                    return
+                end
             end
             if single
                 % The session's labels (subject, timepoint, group, overrides)
@@ -2145,47 +2361,70 @@ classdef Model < handle
         %  Undo, save, misc
         % =================================================================
         function undo(obj)
-            % Undo the last edit of this session (or of the project, with
-            % no session open).
+            % Undo the last edit: the newer of the open session's last edit
+            % and the project's last edit (labels, Hide, pools, columns ...),
+            % so a label made before this session was opened can still be
+            % taken back from it.
             obj.assertNotBusy();
-            st = obj.stack();
-            if isempty(st.Undo)
+            key = obj.undoSide("Undo");
+            if key == ""
                 obj.say("Nothing to undo.",0,"undo");
                 return
             end
+            st = obj.stack(key);
             e = st.Undo{end};
             obj.applyEntry(e,"Before");
-            st = obj.stack();          % applyEntry may have run a job
+            % (the same stack by NAME: applyEntry may have run a job, or
+            % closed the session whose key the default would be)
+            st = obj.stack(key);
             st.Undo(end) = [];
+            e.RedoStamp = obj.nextStamp();
             st.Redo{end+1} = e;
-            obj.setStack(st);
+            obj.setStack(st,key);
             obj.say("Undid " + e.Label + " — Ctrl+Y to redo",0,"undo");
         end
 
         function [u,r] = undoHistory(obj)
-            % The labels of this session's undo and redo stacks, oldest
-            % first (what Edit ▸ Undo would take back, in order).
-            st = obj.stack();
+            % The labels of the undo and redo stacks in force (this
+            % session's and the project's together), oldest first -- what
+            % Edit ▸ Undo would take back, in order.
             u = strings(0,1);
             r = strings(0,1);
-            for k = 1:numel(st.Undo), u(end+1,1) = string(st.Undo{k}.Label); end %#ok<AGROW>
-            for k = 1:numel(st.Redo), r(end+1,1) = string(st.Redo{k}.Label); end %#ok<AGROW>
+            tu = zeros(0,1);
+            tr = zeros(0,1);
+            for key = unique([obj.SessionKey, obj.ProjectUndoKey],'stable')
+                st = obj.stack(key);
+                for k = 1:numel(st.Undo)
+                    u(end+1,1) = string(st.Undo{k}.Label); %#ok<AGROW>
+                    tu(end+1,1) = st.Undo{k}.Stamp; %#ok<AGROW>
+                end
+                for k = 1:numel(st.Redo)
+                    r(end+1,1) = string(st.Redo{k}.Label); %#ok<AGROW>
+                    tr(end+1,1) = st.Redo{k}.RedoStamp; %#ok<AGROW>
+                end
+            end
+            [~,i] = sort(tu);
+            u = u(i);
+            [~,i] = sort(tr);
+            r = r(i);
         end
 
         function redo(obj)
-            % Redo the last undone edit.
+            % Redo the last undone edit (of the session or the project:
+            % whichever was undone last).
             obj.assertNotBusy();
-            st = obj.stack();
-            if isempty(st.Redo)
+            key = obj.undoSide("Redo");
+            if key == ""
                 obj.say("Nothing to redo.",0,"redo");
                 return
             end
+            st = obj.stack(key);
             e = st.Redo{end};
             obj.applyEntry(e,"After");
-            st = obj.stack();
+            st = obj.stack(key);
             st.Redo(end) = [];
             st.Undo{end+1} = e;
-            obj.setStack(st);
+            obj.setStack(st,key);
             obj.say("Redid " + e.Label + " — Ctrl+Z to undo",0,"redo");
         end
 
@@ -2804,9 +3043,17 @@ classdef Model < handle
                 opts.Throwing (1,1) logical = true
                 opts.Batch (1,1) logical = false
                 opts.Outer (1,1) string = ""
+                opts.Quiet (1,1) logical = false   % no BusyChanged (a lookup before the job whose events are the contract's)
             end
             obj.assertNotBusy();
             obj.Busy = true;
+            % Ctrl+C in the command window is not an error the try below
+            % can catch: it unwinds straight through this function, which
+            % would leave Busy true for good -- every later edit "Busy, try
+            % again", and the window's X unable to close it. The guard
+            % ends the job state however this function is left (abortJob
+            % does nothing when the normal tail below has already run).
+            guard = onCleanup(@() obj.abortJob());
             obj.CancelRequested = false;
             obj.JobTitle = title;
             obj.JobStep = "";
@@ -2816,7 +3063,7 @@ classdef Model < handle
             obj.JobBatch = opts.Batch;
             obj.SinkClock = tic;
             obj.SinkLast = -Inf;
-            obj.ev("BusyChanged","busy","runJob",Text=title);
+            if ~opts.Quiet, obj.ev("BusyChanged","busy","runJob",Text=title); end
             h = [];
             try
                 h = obj.ProgressFcn("open",title);
@@ -2859,7 +3106,7 @@ classdef Model < handle
                 end
                 obj.say(txt,1,"runJob");
             end
-            obj.ev("BusyChanged","idle","runJob");
+            if ~opts.Quiet, obj.ev("BusyChanged","idle","runJob"); end
             if obj.CloseRequested && ~isempty(obj.CloseFcn)
                 try
                     obj.CloseFcn();
@@ -2869,6 +3116,35 @@ classdef Model < handle
             end
             if ~isempty(err)
                 rethrow(err);
+            end
+        end
+
+        function abortJob(obj)
+            % runJob's guard (an onCleanup): the job was left without
+            % reaching runJob's own tail -- Ctrl+C in the command window.
+            % It ends the job state the way that tail does (progress
+            % window closed, Busy off, BusyChanged(idle) so the buttons
+            % come back, a close asked for meanwhile carried out) and says
+            % so. Every step of a job is atomic, so nothing is half-done.
+            try
+                if ~isvalid(obj) || ~obj.Busy, return; end
+                h = obj.ProgressHandle;
+                try
+                    h.close();
+                catch
+                end
+                obj.ProgressHandle = [];
+                obj.Busy = false;
+                obj.CancelRequested = false;
+                obj.JobTitle = "";
+                obj.JobBatch = false;
+                obj.say("Interrupted — the job was stopped from the command window.",1,"runJob");
+                obj.ev("BusyChanged","idle","runJob");
+                if obj.CloseRequested && ~isempty(obj.CloseFcn)
+                    obj.CloseFcn();
+                end
+            catch me
+                mabr.log.vprintf(2,'Model: ending an interrupted job failed (%s).',me.message);
             end
         end
 
@@ -2950,6 +3226,23 @@ classdef Model < handle
         end
 
         % ---- job bodies ----------------------------------------------------
+        function probeRootWork(obj,path,suggest,sink)
+            % openRoot's two lookups, which touch the folder and can both
+            % block on a slow share: does it answer, and is it one animal's
+            % folder of a study.
+            sink("Looking for the folder",0,0);
+            st = mabr.ui.analysis.Model.probeFolder(path);
+            study = "";
+            if st == "ok" && suggest
+                try
+                    study = string(mabr.analysis.Catalog.suggestStudyRoot(path));
+                catch
+                end
+                if isempty(study) || ismissing(study), study = ""; end
+            end
+            obj.RootProbe = struct('State',st,'Study',study);
+        end
+
         function openRootWork(obj,path,sink)
             rf = obj.resultsFolderFor(path);
             args = {};
@@ -2974,6 +3267,9 @@ classdef Model < handle
             % commit
             obj.Catalog = c;
             obj.Project = p;
+            obj.SessionCache(:) = [];               % (another folder's sessions)
+            obj.OpenFailedKeys = strings(0,1);
+            obj.clearUndo(obj.ProjectUndoKey);      % (the labels it undoes belonged to the project left)
             obj.Settings = s;
             obj.Session = [];
             obj.SessionKey = "";
@@ -3007,6 +3303,8 @@ classdef Model < handle
             c = obj.Catalog;
             c.scan('ProgressFcn',sink);
             obj.Project.ensureSessions(c);
+            obj.OpenFailedKeys = strings(0,1);      % (files may have been repaired)
+            obj.SessionCache(:) = [];
             obj.ViewCache = [];
             obj.updateStatus();
             obj.ev("RootChanged","all","rescan",Keys=string(c.Root));
@@ -3014,6 +3312,18 @@ classdef Model < handle
             obj.ev("SettingsChanged","all","rescan");
             [txt,lvl] = obj.scanReport();
             obj.ev("StatusChanged","status","rescan",Text=txt,Level=lvl);
+        end
+
+        function tf = anyAnalysed(obj)
+            % Does any session of the open folder have results?
+            tf = true;
+            try
+                V = obj.projectView();
+                if ~isempty(V) && ismember('Status',V.Properties.VariableNames)
+                    tf = any(string(V.Status) ~= "none");
+                end
+            catch
+            end
         end
 
         function [txt,lvl] = scanReport(obj)
@@ -3034,6 +3344,13 @@ classdef Model < handle
                 lvl = 1;
             else
                 txt = sprintf('%d session(s), %d file(s) under %s.',nS,nF,string(c.Root));
+                % A folder nothing has been run on yet is a dead end for a
+                % newcomer (every tab is empty): say what to do next.
+                if nS > 0 && ~obj.anyAnalysed()
+                    if nS == 1, sw = "1 session"; else, sw = nS + " sessions"; end
+                    txt = sw + ", none analysed yet — Batch ▸ Analyse Sessions… " + ...
+                        "(or open one and press Analyse).";
+                end
                 if bad > 0
                     txt = sprintf('%d files could not be read. %s',bad,txt);
                     lvl = 1;
@@ -3042,13 +3359,28 @@ classdef Model < handle
         end
 
         function openSessionWork(obj,info,source,opts,prev,sink)
-            if source == "results"
-                S = mabr.analysis.Session.fromResults(info.ResultsFile,'Verbose',false);
-            else
-                S = obj.buildRawSession(info,sink);
-            end
+            % The file's (bytes, datenum) are taken BEFORE the load, which
+            % can run for minutes: another process writing the results file
+            % meanwhile must differ from the stamp (a conflict at the next
+            % save), not be taken for our own write and overwritten.
             stamp = mabr.ui.analysis.Model.fileStamp(info.ResultsFile);
-            obj.SavedUnitOverride = obj.unitOverrideOf(S);
+            S = [];
+            if source == "results"
+                % a session just left, whose results file is the one it
+                % was saved to, comes back as it was (see stashSession)
+                [S,saved,src] = obj.cachedSession(info,stamp);
+            end
+            if ~isempty(S)
+                obj.SavedUnitOverride = saved;
+                source = src;
+            else
+                if source == "results"
+                    S = mabr.analysis.Session.fromResults(info.ResultsFile,'Verbose',false);
+                else
+                    S = obj.buildRawSession(info,sink);
+                end
+                obj.SavedUnitOverride = obj.unitOverrideOf(S);
+            end
             obj.applyProjectOverrides(S,info.Key);
             try
                 S.Analyst = obj.Analyst;
@@ -3059,6 +3391,7 @@ classdef Model < handle
             catch
             end
             % commit
+            obj.stashSession(info.Key);
             obj.Session = S;
             if string(obj.SessionKey) ~= string(info.Key)
                 % Another session keeps the series in view but not the level:
@@ -3071,6 +3404,7 @@ classdef Model < handle
             obj.ResultsFile = info.ResultsFile;
             obj.Stamp = stamp;
             obj.SessionDirty = false;
+            obj.SessionTainted = false;
             obj.HistoryPending = false;
             obj.PendingFileUse = mabr.ui.analysis.Model.emptyFileUse();
             if obj.ReadOnly, obj.SaveState = "readonly"; else, obj.SaveState = "saved"; end
@@ -3110,6 +3444,63 @@ classdef Model < handle
                 lvl = 1;
             end
             obj.ev("StatusChanged",w,"openSession",Text=txt,Level=lvl);
+        end
+
+        function stashSession(obj,incoming)
+            % Keep the session being left (a few of them, newest last) so
+            % that going back to it -- the usual thing to do while comparing
+            % two animals -- is instant: no results file read again, and the
+            % raw data of a session that had it loaded does not have to be
+            % parsed and segmented a second time.
+            %
+            % Only a session that IS its results file qualifies: saved (its
+            % edits were written when it was left), with a file whose
+            % (bytes, datenum) are the ones this Model last read or wrote.
+            % cachedSession hands it back only if the file still has them,
+            % so anything written meanwhile -- a batch, a second MATLAB,
+            % this session's own re-analysis -- makes the entry worthless
+            % rather than wrong. Raw sweeps are large: at most one kept
+            % session holds them.
+            S = obj.Session;
+            if isempty(S) || obj.SessionKey == "" || obj.SessionKey == incoming, return; end
+            if obj.SessionDirty || obj.SessionTainted || obj.HistoryPending || ...
+                    obj.SaveState ~= "saved" || ~obj.Stamp.Exists
+                return
+            end
+            e = struct('Key',obj.SessionKey,'Stamp',obj.Stamp,'Session',S, ...
+                'Saved',obj.SavedUnitOverride,'Source',obj.SessionSource);
+            C = obj.SessionCache;
+            if ~isempty(C)
+                drop = [C.Key] == e.Key;
+                if S.HasSweeps
+                    drop = drop | cellfun(@(x) x.HasSweeps,{C.Session});
+                end
+                C(drop) = [];
+            end
+            C(end+1) = e;
+            if numel(C) > obj.SessionCacheDepth
+                C = C(end-obj.SessionCacheDepth+1:end);
+            end
+            obj.SessionCache = C;
+        end
+
+        function [S,saved,source] = cachedSession(obj,info,stamp)
+            % The kept session for INFO, if its results file is unchanged
+            % since (stamp: the file now); [] otherwise. A hit leaves the
+            % cache: the open session owns the object again.
+            S = [];  saved = [];  source = "results";
+            C = obj.SessionCache;
+            if isempty(C), return; end
+            i = find([C.Key] == info.Key,1);
+            if isempty(i), return; end
+            e = C(i);
+            obj.SessionCache(i) = [];
+            if stamp.Exists && e.Stamp.Exists && stamp.Bytes == e.Stamp.Bytes && ...
+                    stamp.Datenum == e.Stamp.Datenum
+                S = e.Session;
+                saved = e.Saved;
+                source = e.Source;
+            end
         end
 
         function S = buildRawSession(obj,info,sink)
@@ -3363,6 +3754,12 @@ classdef Model < handle
                 mabr.log.vprintf(1,'Model: project not saved after the batch (%s).',me.message);
             end
             obj.ViewCache = [];
+            % Every session the batch re-analysed has new peaks and
+            % thresholds on disk: whatever undo history this window kept
+            % for it (a session visited earlier) would restore picks of the
+            % old analysis over them.
+            done = string(T.Key(startsWith(string(T.Status),"ok")));
+            for i = 1:numel(done), obj.clearUndo(done(i)); end
             obj.ev("ProjectChanged","status","batch",Keys=string(items.Key));
             % The open session re-analysed by the batch is read back.
             if obj.SessionKey ~= "" && ismember(obj.SessionKey,string(T.Key))
@@ -3370,6 +3767,10 @@ classdef Model < handle
                 st = string(T.Status(r));
                 if startsWith(st,"ok") && isfile(obj.ResultsFile)
                     sel = obj.Selection;
+                    % (stamped before the read, as openSessionWork does: a
+                    % write by another process during it must show up as a
+                    % conflict, not be taken for ours)
+                    stamp = mabr.ui.analysis.Model.fileStamp(obj.ResultsFile);
                     S = mabr.analysis.Session.fromResults(obj.ResultsFile,'Verbose',false);
                     obj.applyProjectOverrides(S,obj.SessionKey);
                     try
@@ -3379,9 +3780,10 @@ classdef Model < handle
                     end
                     obj.Session = S;
                     obj.SessionSource = "results";
-                    obj.Stamp = mabr.ui.analysis.Model.fileStamp(obj.ResultsFile);
+                    obj.Stamp = stamp;
                     obj.SavedUnitOverride = obj.unitOverrideOf(S);
                     obj.SessionDirty = false;
+                    obj.SessionTainted = false;
                     obj.clearUndo(obj.SessionKey);
                     obj.Selection = obj.initialSelection(sel.SeriesKey,sel.Level,sel);
                     obj.ev("SessionChanged","all","batch",Keys=obj.SessionKey);
@@ -3407,6 +3809,15 @@ classdef Model < handle
             items = obj.Project.exportItems(keys,obj.Catalog);
             rawTables = intersect(o.Tables,mabr.analysis.Export.RawTables,'stable');
             resTables = setdiff(o.Tables,rawTables,'stable');
+            % The raw writer APPENDS, session after session, to whatever the
+            % folder holds: an export into a folder that an earlier one used
+            % would stack the same sessions again (and leave the files of
+            % sessions since dropped). What this export is about to write is
+            % therefore removed first -- before the result tables are
+            % written, so nothing of THIS export is lost with it.
+            if ~isempty(rawTables)
+                mabr.ui.analysis.Model.clearRawOutputs(folder,rawTables,o.RawFormats);
+            end
             subj = [];
             try
                 subj = obj.Project.Subjects;
@@ -3509,10 +3920,11 @@ classdef Model < handle
             if isempty(rep), rep = struct('Text',txt); end
         end
 
-        function e = newEntry(~,label,kind)
+        function e = newEntry(obj,label,kind)
             e = struct('Label',string(label),'Kind',string(kind),'Before',[],'After',[], ...
                 'What',"all",'Keys',strings(0,1),'NeedsRaw',false,'Name',"",'Level',"", ...
-                'Type',"",'Levels',strings(1,0),'Op',"",'PoolKey',"",'Project',[]);
+                'Type',"",'Levels',strings(1,0),'Op',"",'PoolKey',"",'Project',[], ...
+                'Stamp',obj.nextStamp(),'RedoStamp',0);
         end
 
         function applyEntry(obj,e,which)
@@ -3563,6 +3975,12 @@ classdef Model < handle
                     obj.markDirty("project");
                     obj.ev("ProjectChanged","labels","undo");
                     obj.ev("StatusChanged","save","undo");
+                case "settings"
+                    % (the project's settings, back as they were: the open
+                    % session is re-fitted -- its own undo history ends
+                    % there, as after any refit -- and the sessions made
+                    % with those settings are up to date again)
+                    obj.setSettings(e.(which),Refit=true);
                 case "pools"
                     add = (e.Op == "add") == (which == "After");
                     if add
@@ -3617,13 +4035,40 @@ classdef Model < handle
         end
 
         function pushUndo(obj,e)
-            st = obj.stack();
+            % A session edit goes on the open session's stack; everything
+            % else (labels, columns, pools, the duplicate policy, settings)
+            % is the PROJECT's and goes on its own stack, whichever session
+            % is open -- or none: pushed on the open session's stack it
+            % was lost to Ctrl+Z as soon as another session was opened.
+            if e.Kind == "session", key = obj.SessionKey; else, key = obj.ProjectUndoKey; end
+            st = obj.stack(key);
             st.Undo{end+1} = e;
             if numel(st.Undo) > obj.UndoDepth
                 st.Undo = st.Undo(end-obj.UndoDepth+1:end);
             end
             st.Redo = {};
-            obj.setStack(st);
+            obj.setStack(st,key);
+        end
+
+        function key = undoSide(obj,side)
+            % The stack the next Undo (SIDE "Undo") or Redo ("Redo") takes
+            % from -- the open session's or the project's, whichever top
+            % entry is newer (for a redo: was undone last); "" when both
+            % are empty.
+            key = "";
+            best = -Inf;
+            for k = unique([obj.SessionKey, obj.ProjectUndoKey],'stable')
+                st = obj.stack(k);
+                if isempty(st.(side)), continue; end
+                e = st.(side){end};
+                if side == "Undo", t = e.Stamp; else, t = e.RedoStamp; end
+                if t > best, best = t; key = k; end
+            end
+        end
+
+        function t = nextStamp(obj)
+            obj.UndoClock = obj.UndoClock + 1;
+            t = obj.UndoClock;
         end
 
         function st = stack(obj,key)
@@ -3641,9 +4086,15 @@ classdef Model < handle
             obj.UndoStacks(char(key)) = st;
         end
 
-        function clearUndo(obj,key)
+        function had = clearUndo(obj,key)
+            % Forget a stack; HAD says whether it held any entry.
             k = char(key);
-            if isKey(obj.UndoStacks,k), remove(obj.UndoStacks,k); end
+            had = false;
+            if isKey(obj.UndoStacks,k)
+                st = obj.UndoStacks(k);
+                had = ~isempty(st.Undo) || ~isempty(st.Redo);
+                remove(obj.UndoStacks,k);
+            end
         end
 
         % ---- saving ------------------------------------------------------
@@ -4582,8 +5033,10 @@ classdef Model < handle
         end
 
         function tf = isOpenable(obj,key)
-            % Not failed, not empty.
+            % Not failed, not empty, and not a session whose open already
+            % failed (until the folder is scanned again).
             tf = true;
+            if any(obj.OpenFailedKeys == key), tf = false; return; end
             try
                 if ~startsWith(key,"pool:")
                     T = obj.Catalog.Sessions;
@@ -4708,12 +5161,9 @@ classdef Model < handle
             f = regexprep(string(key),'[^A-Za-z0-9_\-]','_');
         end
 
-        function path = offerStudyRoot(obj,path)
-            study = "";
-            try
-                study = string(mabr.analysis.Catalog.suggestStudyRoot(path));
-            catch
-            end
+        function path = offerStudyRoot(obj,path,study)
+            % Ask whether to open STUDY (found by openRootWork) instead of
+            % the animal's folder PATH; the folder to open comes back.
             if isempty(study) || ismissing(study) || study == "", return; end
             [~,sn] = fileparts(char(study));
             [~,fn] = fileparts(char(path));
@@ -4743,8 +5193,77 @@ classdef Model < handle
     end
 
     methods (Static, Access = private)
+        function st = probeFolder(path)
+            % "ok" | "unreachable" (the drive letter or \\server\share does
+            % not answer: a temporary state) | "missing" (the volume
+            % answers, the folder is not on it).
+            st = "ok";
+            if isfolder(path), return; end
+            c = char(path);
+            if numel(c) >= 3 && c(2) == ':'
+                vol = c(1:3);
+            else
+                vol = regexp(c,'^\\\\[^\\]+\\[^\\]+','match','once');
+            end
+            if ~isempty(vol) && ~isfolder(vol), st = "unreachable"; else, st = "missing"; end
+        end
+
         function P = emptyFileUse()
             P = struct('FileIds',strings(0,1),'Use',false(0,1));
+        end
+
+        function clearRawOutputs(folder,tables,formats)
+            % Remove the earlier outputs of the raw tables an export is about
+            % to write into FOLDER (see exportWork): mabr_<table>.csv, the
+            % per-session Parquet files of a table's dataset folder, the
+            % sweeps' <session>_sweeps.mat files, and mabr_export.mat when a
+            % raw table is written to MAT (the raw writer stacks into it).
+            % Only files the raw writer itself would add to are touched; a
+            % workbook's sheets are replaced per session anyway.
+            folder = char(folder);
+            doomed = {};
+            for name = reshape(string(tables),1,[])
+                if isstruct(formats)
+                    if isfield(formats,char(name)),      fm = formats.(char(name));
+                    elseif isfield(formats,'default'),   fm = formats.default;
+                    else,                                fm = "csv";
+                    end
+                else
+                    fm = formats;
+                end
+                fm = lower(string(fm));
+                dest = fullfile(folder,char(name));
+                if name == "sweeps"
+                    if any(fm == "parquet"), doomed = [doomed; mabr.ui.analysis.Model.listFiles(dest,'*.parquet')]; end %#ok<AGROW>
+                    if any(fm == "mat"),     doomed = [doomed; mabr.ui.analysis.Model.listFiles(dest,'*_sweeps.mat')]; end %#ok<AGROW>
+                    continue
+                end
+                if any(fm == "csv"),     doomed = [doomed; {fullfile(folder,char("mabr_" + name + ".csv"))}]; end %#ok<AGROW>
+                if any(fm == "parquet"), doomed = [doomed; mabr.ui.analysis.Model.listFiles(dest,'*.parquet')]; end %#ok<AGROW>
+                if any(fm == "mat"),     doomed = [doomed; {fullfile(folder,'mabr_export.mat')}]; end %#ok<AGROW>
+            end
+            for k = 1:numel(doomed)
+                f = doomed{k};
+                if ~isfile(f), continue; end
+                try
+                    delete(f);
+                catch
+                end
+                if isfile(f)
+                    error('mabr:ui:analysis:notWritable', ...
+                        ['Cannot replace %s from the earlier export (is it open in another ' ...
+                        'program?); close it or export into a new folder.'],f);
+                end
+            end
+        end
+
+        function c = listFiles(folder,pattern)
+            % The full paths of the files in FOLDER matching PATTERN.
+            c = {};
+            if ~isfolder(folder), return; end
+            L = dir(fullfile(folder,pattern));
+            L = L(~[L.isdir]);
+            c = reshape(fullfile({L.folder},{L.name}),[],1);
         end
 
         function a = defaultAnalyst()

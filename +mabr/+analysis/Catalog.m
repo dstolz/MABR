@@ -74,7 +74,9 @@ classdef Catalog < handle
 %   animal before this one. notes() therefore reads the newest file's
 %   notebook (or the folder's newest journal, with times rebuilt from its
 %   header), removes repeats, and by default keeps only what was written
-%   while this session was being recorded.
+%   while this session was being recorded. Which files hold a notebook at
+%   all is known from the scan (Files.NumNotes), so a session without notes
+%   opens no file to find that out.
 %
 %   SESSIONS, one row per folder holding .abr files:
 %     Key, Path, Name           key, absolute folder, folder name
@@ -99,10 +101,12 @@ classdef Catalog < handle
 %     NotesFile                 its newest .notes journal ("" for none)
 %     InferredLabel             inferLabel of its name, else its Day
 %     ResultsFile, HasResults   resultsFile(Key), and whether it exists
-%   FILES carry mabr.analysis.AbrFile's fields of the same names, plus FileId
-%   (Session's "<folder name>/<file name>"), SessionKey, Subject (the file
-%   name's, else its session's) and DuplicateOf: for a recording copied into
-%   a second session folder, the original's "<key>/<file name>".
+%   FILES carry mabr.analysis.AbrFile's fields of the same names (NumNotes,
+%   the notes a file carries, among them: NaN when a cache or a ReadMetadata
+%   = false listing does not know), plus FileId (Session's "<folder
+%   name>/<file name>"), SessionKey, Subject (the file name's, else its
+%   session's) and DuplicateOf: for a recording copied into a second session
+%   folder, the original's "<key>/<file name>".
 %
 %   Nothing here prints, raises a dialog, or touches a preference. A scan is
 %   atomic: one that fails or is cancelled through its progress sink (which
@@ -167,7 +171,8 @@ classdef Catalog < handle
 
         FileColumns = ["Path" "Folder" "FileName" "FileId" "Bytes" "Modified" "SessionKey" ...
             "Subject" "StartTime" "Stimulus" "ParamText" "NumSweeps" "SampleRate" "Layout" ...
-            "AcqMode" "TestMode" "Units" "LevelUnit" "Duration" "Ok" "Error" "DuplicateOf"]
+            "AcqMode" "TestMode" "Units" "LevelUnit" "Duration" "Ok" "Error" "DuplicateOf" ...
+            "NumNotes"]
         SessionColumns = ["Key" "Path" "Name" "Subject" "SubjectRaw" "Day" "Start" "Stop" ...
             "NumFiles" "NumIncluded" "NumSweeps" "NumConditions" "Stimuli" "Summary" ...
             "AcqModes" "HasCompact" "ShortRuns" "TestMode" "Units" "LevelUnit" "NotesFile" ...
@@ -278,7 +283,12 @@ classdef Catalog < handle
 
             % ---- What is there. Results stores and hidden folders are not
             % data, and a ResultsFolder override inside Root is a store too.
-            d = listFiles(obj.Root,'*.abr',true);
+            % The tree is walked ONCE and the .abr files, the .notes
+            % journals and the stores' project.mat files are told apart by
+            % name: on a synced or network drive a walk costs a round trip
+            % per folder, and one per kind of file walked it three times.
+            every = listAll(obj.Root);
+            d = pickFiles(every,obj.Root,'*.abr',true);
             if ~isempty(d)
                 inStore = isUnder(string({d.folder})',obj.ResultsFolder);
                 d = d(~inStore);
@@ -360,10 +370,10 @@ classdef Catalog < handle
             end
 
             % ---- Index, then commit everything at once.
-            notesFiles = listFiles(obj.Root,'*.notes',true);
+            notesFiles = pickFiles(every,obj.Root,'*.notes',true);
             [F,S,R,w] = obj.buildIndex(recs,blank,notesFiles);
             warns = [warns; w];
-            stores = nestedStores(obj.Root,obj.AnalysisRoot,obj.ResultsFolder);
+            stores = nestedStores(obj.Root,obj.AnalysisRoot,obj.ResultsFolder,every);
 
             obj.Files         = F;
             obj.Sessions      = S;
@@ -834,7 +844,7 @@ classdef Catalog < handle
             F = table(c('Path'),c('Folder'),c('FileName'),FileId,c('Bytes'),c('Modified'), ...
                 SessionKey,fsubj,c('StartTime'),c('Stimulus'),c('ParamText'),c('NumSweeps'), ...
                 c('SampleRate'),c('Layout'),c('AcqMode'),c('TestMode'),c('Units'), ...
-                c('LevelUnit'),c('Duration'),c('Ok'),c('Error'),DuplicateOf, ...
+                c('LevelUnit'),c('Duration'),c('Ok'),c('Error'),DuplicateOf,c('NumNotes'), ...
                 'VariableNames',cellstr(mabr.analysis.Catalog.FileColumns));
             F.Modified.Format  = 'yyyy-MM-dd HH:mm:ss';
             F.StartTime.Format = 'yyyy-MM-dd HH:mm:ss';
@@ -866,7 +876,8 @@ classdef Catalog < handle
             % Where a session's notebook is: the newest readable file whose
             % ABR_Data.Notes holds anything (newest by start, then modified
             % time), else the newest journal in its folder, else nowhere.
-            % Never throws -- an unreadable journal is no notes.
+            % Files whose scanned NumNotes is 0 are not opened. Never
+            % throws -- an unreadable journal is no notes.
             M = struct('Raw',noteStruct(0),'From',"none",'File',"");
             % A legacy (E0) file predates the notebook, so it is never opened
             % for one: a folder of them would otherwise be read whole for
@@ -880,7 +891,15 @@ classdef Catalog < handle
                 t = timeNum(F.StartTime);  t(isnan(t)) = -Inf;
                 m = timeNum(F.Modified);   m(isnan(m)) = -Inf;
                 [~,o] = sortrows([t m],[-1 -2]);
+                % A session without notes -- the common case -- would have
+                % every one of its files opened in full, on the first click
+                % and again for each session of an export with Notes, to
+                % learn that. The scan already counted them: 0 skips the
+                % file; NaN (a cache older than the count, or a listing that
+                % read nothing) says nothing, so that file is opened.
+                counted = ismember('NumNotes',F.Properties.VariableNames);
                 for i = reshape(o,1,[])
+                    if counted && F.NumNotes(i) == 0, continue; end
                     [~,~,~,nt] = mabr.analysis.AbrFile.read(F.Path(i),ReadTrace=false,ReadNotes=true);
                     if ~isempty(nt)
                         M = struct('Raw',nt,'From',"file",'File',F.Path(i));
@@ -1315,11 +1334,13 @@ end
 % =========================================================================
 %  Results stores
 % =========================================================================
-function T = nestedStores(root,analysisRoot,resultsFolder)
+function T = nestedStores(root,analysisRoot,resultsFolder,every)
 % Every MABR_Analysis/project.mat below root that is not the store this
-% catalog files into: a store a project can import.
+% catalog files into: a store a project can import. every is listAll(root),
+% when the caller has walked the tree already.
 T = emptyStores();
-d = listFiles(root,char(mabr.analysis.Catalog.ProjectFile),false);
+if nargin < 4, every = listAll(root); end
+d = pickFiles(every,root,char(mabr.analysis.Catalog.ProjectFile),false);
 if isempty(d), return; end
 own = string(fullfile(char(analysisRoot),char(mabr.analysis.Catalog.StoreFolder)));
 P = strings(0,1);  Rt = strings(0,1);  N = zeros(0,1);
@@ -1349,6 +1370,9 @@ for k = 1:numel(d)
     rel = relPath(store,d(k).folder);
     if rel == "" && strcmpi(d(k).name,mabr.analysis.Catalog.ProjectFile), continue; end
     if contains(lower(string(d(k).name)),".tmp"), continue; end
+    % (a batch's <name>.conflict.mat, written beside a results file that a
+    % second writer changed meanwhile, is not another session's results)
+    if endsWith(lower(string(d(k).name)),".conflict.mat"), continue; end
     if rel ~= ""
         parts = lower(split(rel,"/"));
         if any(startsWith(parts,".")) || any(ismember(parts,["logs" "figures" "exports" "scripts"]))
@@ -1382,9 +1406,21 @@ end
 function d = listFiles(base,pattern,skipStores)
 % Every file matching pattern anywhere under base, sorted by path, outside
 % hidden (".") folders -- and outside results stores when skipStores.
-d = dir(fullfile(char(base),'**',pattern));
+d = pickFiles(listAll(base),base,pattern,skipStores);
+end
+
+function d = listAll(base)
+% Every file (no folder) anywhere under base: dir's entries, from ONE walk
+% of the tree. pickFiles tells the kinds apart by name.
+d = dir(fullfile(char(base),'**','*'));
 d = d(~[d.isdir]);
 d = d(:);
+end
+
+function d = pickFiles(listing,base,pattern,skipStores)
+% The entries of listAll(base) matching pattern, sorted by path, outside
+% hidden (".") folders -- and outside results stores when skipStores.
+d = listing;
 if isempty(d), return; end
 d = d(matchesPattern({d.name},pattern));
 if isempty(d), return; end
@@ -1597,7 +1633,7 @@ end
 % =========================================================================
 function T = emptyFiles()
 s = strings(0,1);  x = zeros(0,1);  t = NaT(0,1);  b = false(0,1);
-T = table(s,s,s,s,x,t,s,s,t,s,s,x,x,s,s,b,s,s,x,b,s,s, ...
+T = table(s,s,s,s,x,t,s,s,t,s,s,x,x,s,s,b,s,s,x,b,s,s,x, ...
     'VariableNames',cellstr(mabr.analysis.Catalog.FileColumns));
 end
 

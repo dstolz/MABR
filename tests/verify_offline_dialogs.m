@@ -590,10 +590,19 @@ d = app.openDialog("settings");
 assert(isa(d,'mabr.ui.analysis.SettingsDialog') && d.Model == am,'The app''s settings dialog did not find its Model.');
 fig = d.Figure;
 assert(startsWith(string(fig.Name),"Project settings — "),'The settings dialog title.');
+% Files written at DataVersion 26B or later (SyntheticABR stamps the current
+% one) put their onsets on the resampled grid exactly and have no bias: the
+% readout says 0 and "Use it" fills 0. The pre-26B rule (0.078125 ms at
+% 192/12 kHz, also for a file carrying no version) is checked on the
+% arithmetic itself.
 bias = string(tag(fig,'AnalysisSettingsOnsetBias').Text);
-assert(contains(bias,"+0.078 ms"),'The onset bias of the session''s files: "%s".',bias);
+assert(contains(bias,"+0.000 ms"),'The onset bias of the session''s files: "%s".',bias);
 press(tag(fig,'AnalysisSettingsUseOnsetBias'));
-assert(abs(d.read().TimeOffset - 0.078125) < 1e-12,'Use it did not fill the time offset.');
+assert(abs(d.read().TimeOffset) < 1e-12,'Use it did not fill the (zero) time offset.');
+ob = @mabr.ui.analysis.SettingsDialog.onsetBiasOf;
+assert(abs(ob(12000,192000,"22A") - 0.078125) < 1e-12 && ob(12000,192000,"26B") == 0 && ...
+       ob(12000,192000,"") == 0.078125 && abs(ob(12000,192000) - 0.078125) < 1e-12 && isnan(ob(NaN,192000)), ...
+    'onsetBiasOf: 0.078125 ms before 26B (or unversioned), 0 from 26B on, NaN with no rate.');
 d.showTab("Thresholds");
 lp = tag(fig,'AnalysisSettingsLevelParam');
 assert(any(strcmp(lp.Items,'Level')) && any(strcmp(lp.Items,'Frequency')),'Level parameter: the session''s parameters.');
@@ -602,7 +611,7 @@ setv(tag(fig,'AnalysisSettingsNumPermutations'),120);
 assert(d.apply(),'Apply through the app refused.');
 rpt = string(tag(fig,'AnalysisSettingsChanges').Text);
 assert(startsWith(rpt,"Settings applied") && contains(rpt,"out of date"),'The app''s setSettings report: "%s".',rpt);
-assert(am.Settings.NumPermutations == 120 && abs(am.Settings.TimeOffset - 0.078125) < 1e-12, ...
+assert(am.Settings.NumPermutations == 120 && abs(am.Settings.TimeOffset) < 1e-12, ...
     'Apply did not make the edited settings the project''s.');
 assert(ispref('MABR','OfflineAnalysisSettings'),'The app''s Apply did not remember the settings (Persist).');
 % settings changed elsewhere: shown when nothing is pending, never over an edit
@@ -623,7 +632,7 @@ am.closeSession();
 assert(contains(string(tag(fig,'AnalysisSettingsOnsetBias').Text),"open a session"), ...
     'The onset bias did not follow the session closing.');
 am.openSession(F.Keys(1));
-assert(contains(string(tag(fig,'AnalysisSettingsOnsetBias').Text),"+0.078 ms"), ...
+assert(contains(string(tag(fig,'AnalysisSettingsOnsetBias').Text),"+0.000 ms"), ...
     'The onset bias did not follow the session opening.');
 dlg = {d, app.openDialog("export"), app.openDialog("batch"), app.openDialog("review"), app.openDialog("levels")};
 cls = ["SettingsDialog","ExportDialog","BatchDialog","ReviewDialog","LevelsDialog"];

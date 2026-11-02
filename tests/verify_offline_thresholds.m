@@ -101,6 +101,56 @@ o = F(x,double(x>=40),Type="glm",Extrapolate=false,Seed=1);
 assert(isequal(o.CI,[0 80]), 'Extrapolate=false must still clamp finite CI ends: [%g %g].',o.CI);
 fprintf('  PASS defect 1 (untestable condition: p NaN, not significant) and defect 2 (NaN CI not clamped)\n');
 
+%% ====================================================== B1. detection on +/- pair averages
+% A polarity-locked component (the CM) is +c in condensation sweeps and -c in
+% rarefaction ones. The balanced mean cancels it but the sign-flip t divides
+% by the spread ACROSS sweeps, which c inflates: detections were lost at a
+% CM of a few noise SDs. Averaging each file's +/- pairs cancels it in every
+% pair; the test stays exact (the noise of an average is still symmetric).
+tp = tic;
+nT = 60;  nS = 160;
+polD = repmat([1 -1],1,nS/2);
+hw   = 0.5 - 0.5*cos(2*pi*(0:nT-1).'/(nT-1));
+bump = 0.36*exp(-0.5*(((0:nT-1).' - 25)/5).^2);          % a small response, the same sign in both polarities
+cmW  = 3*sin(2*pi*(0:nT-1).'/14).*hw;                     % a 3-sigma polarity-locked CM
+% pairPolarity itself: exact cancellation, remainders dropped, one polarity untouched
+Xt = [bump + cmW, bump - cmW, bump + cmW, bump - cmW, bump + cmW];            % five sweeps, +-+-+
+[Yt,nu,np] = mabr.analysis.Threshold.pairPolarity(Xt,[1 -1 1 -1 1],[1 1 1 1 1]);
+assert(np == 2 && nu == 4 && isequal(size(Yt),[nT 2]) && max(abs(Yt - bump),[],'all') < 1e-12, ...
+    'pairPolarity: %d pairs, %d sweeps used, residual CM %g.',np,nu,max(abs(Yt - bump),[],'all'));
+[Yt,nu,np] = mabr.analysis.Threshold.pairPolarity(Xt,[1 1 1 1 1],[1 1 1 1 1]);
+assert(np == 0 && nu == 5 && isequal(Yt,Xt),'One polarity should be tested as it is.');
+[~,nu,np] = mabr.analysis.Threshold.pairPolarity(Xt,[1 -1 1 -1 1],[1 1 2 2 3]);          % file 3 has no partner
+assert(np == 2 && nu == 4,'Pairing is within a file: %d pairs.',np);
+[Yt,nu,np] = mabr.analysis.Threshold.pairPolarity(Xt(:,1:2),[1 -1],[1 1]);
+assert(np == 0 && nu == 2 && isequal(Yt,Xt(:,1:2)),'Fewer than two pairs should leave the sweeps as they are.');
+% the power it buys and the false-positive rate it keeps (seeded, so fixed;
+% the CM is 2-4 noise SDs with a random phase, as in the audit's simulation)
+nSim = 100;
+hit = zeros(nSim,2);  fp = zeros(nSim,2);
+rs = RandStream('threefry','Seed',7);
+for i = 1:nSim
+    Nz = movmean(randn(rs,nT+8,nS),9,1);  Nz = Nz(5:nT+4,:);  Nz = Nz./std(Nz(:));
+    cmI = (2 + 2*rand(rs))*sin(2*pi*(0:nT-1).'/14 + 2*pi*rand(rs)).*hw;
+    for mode = 1:2
+        dA = mabr.analysis.Threshold.detect(Nz + bump + cmI*polD,Method="tfce",NumPermutations=100, ...
+            Seed=i,Polarity=polD,Strata=ones(1,nS),PairPolarity=(mode == 2));
+        dN = mabr.analysis.Threshold.detect(Nz + cmI*polD,Method="tfce",NumPermutations=100, ...
+            Seed=i,Polarity=polD,Strata=ones(1,nS),PairPolarity=(mode == 2));
+        hit(i,mode) = dA.isSig;  fp(i,mode) = dN.isSig;
+        if mode == 2
+            assert(dA.nSweeps == nS && dA.result.nSweeps == nS/2,'Paired test: %d sweeps used, %d columns tested.', ...
+                dA.nSweeps,dA.result.nSweeps);
+        end
+    end
+end
+assert(mean(hit(:,2)) >= 0.9 && mean(hit(:,2)) - mean(hit(:,1)) >= 0.15 && mean(fp(:,2)) <= 0.10, ...
+    'CM 2-4 sigma: power %.2f raw, %.2f paired; false positives %.2f raw, %.2f paired.', ...
+    mean(hit(:,1)),mean(hit(:,2)),mean(fp(:,1)),mean(fp(:,2)));
+fprintf(['  PASS detection on +/- pair averages: a polarity-locked component cancels exactly in a pair; with a 2-4 sigma CM power ' ...
+    '%.2f raw -> %.2f paired, false positives %.2f -> %.2f under H0 (%d simulations, %.1f s)\n'],mean(hit(:,1)),mean(hit(:,2)), ...
+    mean(fp(:,1)),mean(fp(:,2)),nSim,toc(tp));
+
 %% ====================================================== B2. TFCE bounded in PermTest itself
 % Threshold.detect raises the TFCE step before a near-noiseless test, but
 % PermTest is public: called directly on sweeps whose |t| runs to ~1e7, its
@@ -203,7 +253,23 @@ assert(o.Type == "glm" && o.CIMethod == "profile" && isequal(o.CIOpen,[true true
     'Firth with CIAlpha 0: %s, CI open [%d %d] (%s).',o.Type,o.CIOpen,o.Message);
 o = F(x,sepD,Type="glm",Penalty="firth",CIAlpha=1);
 assert(o.Type == "glm" && o.CIMethod == "profile",'Firth with CIAlpha 1: %s (%s).',o.Type,o.Message);
-fprintf('  PASS Firth GLM: finite under separation, profile CI covers the truth, open bounds reported\n');
+% The ends are where the deviance crosses the chi-square cut, interpolated
+% between the profile's 201 grid points (0.6 dB apart here) rather than read
+% off the first grid point inside it, which rounded each end inward by up to
+% one point. Re-derived with a fresh search over the slope, the deviance at
+% an interval end is the cut to 1e-3; read off the grid it was off by ~0.1.
+q95 = mabr.analysis.Stats.zquantile(0.975)^2;
+nEnds = 0;
+for yy = {double(x >= 40), double(x >= 70), [0 0 0 1 0 1 1 1 1].'}
+    [cc,oo] = mabr.analysis.Threshold.firthProfileCI(x,yy{1},ones(numel(x),1),0.5,0.05);
+    for e = find(~oo)
+        dv = firthDeviance(x,yy{1},cc(e));
+        assert(abs(dv - q95) < 2e-3,'Profile CI end %g has deviance %.4f, not the cut %.4f.',cc(e),dv,q95);
+        nEnds = nEnds + 1;
+    end
+end
+assert(nEnds >= 3,'Too few closed profile ends were checked (%d).',nEnds);
+fprintf('  PASS Firth GLM: finite under separation, profile CI covers the truth, open bounds reported; %d interpolated ends sit at the chi-square cut\n',nEnds);
 
 %% ====================================================== D. predictor
 xx = linspace(-10,95,43).';
@@ -318,7 +384,28 @@ for j = 1:6
             'perm-glm at 32 kHz: %g (%s, %s), expected right-censored at 80 dB.',o.Threshold,o.Status,o.Censored);
     end
 end
-fprintf('  PASS real-data fixture: perm-descending 65/55/35/35/65/>80, lowest_level 70/60/40/40/70, perm-glm %s\n', ...
+% The 16 kHz series holds a detection at 40 dB that the descending rule itself
+% calls isolated (the run at 70-80 dB is cut off from it by two misses). The
+% psychometric fit used to be pulled down to it -- 56.3 dB, 8.7 dB under the
+% descending 65 -- and now sees only the levels connected to the loudest
+% response (60-80 dB), and says so: 65.8 dB. The other five series hold no
+% detection the fit could be misled by (32 kHz, detected only at 0 dB under a
+% silent top, is no-response either way) and are fitted exactly as before.
+mOffGLM = ST.resolve("perm-glm",struct('GLMConnectedOnly',false));
+for j = 1:6
+    oOn  = ST.estimate(lev,fixY(j),ST.resolve("perm-glm"));
+    oOff = ST.estimate(lev,fixY(j),mOffGLM);
+    if j == 5
+        assert(any(oOn.Flags == "isolated detection below threshold") && abs(oOn.Threshold - 65.8) < 0.05 && ...
+            abs(oOff.Threshold - 56.3) < 0.05 && ~any(oOff.Flags == "isolated detection below threshold"), ...
+            '16 kHz perm-glm: connected levels only %.2f dB, every level %.2f dB.',oOn.Threshold,oOff.Threshold);
+    else
+        assert(isequaln(oOn.Threshold,oOff.Threshold) && isequaln([oOn.CILower oOn.CIUpper],[oOff.CILower oOff.CIUpper]) ...
+            && oOn.Status == oOff.Status,'Column %d: connected-only changed a series with nothing to drop (%g vs %g).', ...
+            j,oOn.Threshold,oOff.Threshold);
+    end
+end
+fprintf('  PASS real-data fixture: perm-descending 65/55/35/35/65/>80, lowest_level 70/60/40/40/70, perm-glm %s (16 kHz: 56.3 with every level)\n', ...
     strjoin(compose('%.1f',gl),'/'));
 
 %% ====================================================== G. canonical series
@@ -388,6 +475,81 @@ xc = o.Threshold;
 fprintf(['  PASS canonical series (monotone, isolated FP, failed top, all, none, top-level-only run, ' ...
     'runs below one and two misses, top two missed; GLM ends); descending from the top: suthakar-liberman 32 kHz ' ...
     '%.1f dB, not 18\n'],xc);
+
+%% ====================================================== G2. glm on the connected levels
+% D = [1 0 0 0 1 1 1 1 1] over 0-80 dB: the false detection at 0 dB gave the
+% Firth fit a second transition to average over -- 21.7 dB with both interval
+% ends open -- where the descending rule (and an eye) reads 35 dB. The fit now
+% sees the levels connected to the loudest response (and the one miss below
+% them), flags the rest, and a series with nothing to drop is fitted as ever.
+mOff = ST.resolve("perm-glm",struct('GLMConnectedOnly',false));
+assert(ST.resolve("perm-glm").ConnectedOnly && ~mOff.ConnectedOnly && ...
+    ST.resolve("perm-glm",mabr.analysis.Settings(GLMConnectedOnly=false)).ConnectedOnly == false, ...
+    'GLMConnectedOnly does not reach the resolved method.');
+yFP = detY([1 0 0 0 1 1 1 1 1]);
+oOn  = ST.estimate(L,yFP,"perm-glm",MinSweeps=0,MinPerPolarity=0);
+oOff = ST.estimate(L,yFP,mOff,MinSweeps=0,MinPerPolarity=0);
+oDs  = ST.estimate(L,yFP,"perm-descending",MinSweeps=0,MinPerPolarity=0);
+assert(abs(oOff.Threshold - 21.7) < 0.1 && ~any(oOff.Flags == "isolated detection below threshold"), ...
+    'Every level: %.2f dB {%s}, expected the 21.7 of the audit.',oOff.Threshold,strjoin(oOff.Flags,'|'));
+assert(abs(oOn.Threshold - oDs.Threshold) < 1.5 && any(oOn.Flags == "isolated detection below threshold") && ...
+    contains(oOn.Message,"6 level(s) connected to the loudest response") && oOn.NumSig == 6 && ...
+    isequal(oOn.Detected.',logical([1 0 0 0 1 1 1 1 1])) && oOn.Status == "ok", ...
+    'Connected levels only: %.2f dB (descending %g) {%s} "%s".',oOn.Threshold,oDs.Threshold,strjoin(oOn.Flags,'|'),oOn.Message);
+% nothing to drop, nothing changes (bit for bit, flags and interval too)
+for Dk = {[0 0 0 0 1 1 1 1 1],[0 0 0 0 1 1 1 1 0],ones(1,9),zeros(1,9),[0 0 0 0 0 0 0 0 1],[0 0 1 1 0 1 1 1 1]}
+    a = ST.estimate(L,detY(Dk{1}),"perm-glm",MinSweeps=0,MinPerPolarity=0);
+    b = ST.estimate(L,detY(Dk{1}),mOff,MinSweeps=0,MinPerPolarity=0);
+    assert(isequaln(a.Threshold,b.Threshold) && isequaln([a.CILower a.CIUpper],[b.CILower b.CIUpper]) && ...
+        isequal(a.Flags,b.Flags) && a.Status == b.Status && isequal(a.Message,b.Message), ...
+        'Connected-only changed %s, which has no isolated detection.',mat2str(Dk{1}));
+end
+% a run below two misses is cut off: 55.6 dB with the 60-80 dB run, not the 33.6 of the lot
+a = ST.estimate(L,detY([0 0 1 1 0 0 1 1 1]),"perm-glm",MinSweeps=0,MinPerPolarity=0);
+b = ST.estimate(L,detY([0 0 1 1 0 0 1 1 1]),mOff,MinSweeps=0,MinPerPolarity=0);
+assert(a.Threshold > 50 && a.Threshold < 60 && b.Threshold < 40 && any(a.Flags == "isolated detection below threshold"), ...
+    'Run below two misses: %.2f (connected) vs %.2f (all).',a.Threshold,b.Threshold);
+% silent top, detections below: no response, as the descending rule says (the
+% fit used to call it 20 dB through the isotonic fallback)
+a = ST.estimate(L,detY([0 0 1 1 1 1 1 0 0]),"perm-glm",MinSweeps=0,MinPerPolarity=0);
+assert(a.Status == "no-response" && a.Censored == "right" && isinf(a.Threshold) && a.ThrLo == 80 && ...
+    any(a.Flags == "isolated detection below threshold") && all(a.Fit.Predict(L) == 0), ...
+    'Silent top, detections below: %s %g {%s}.',a.Status,a.Threshold,strjoin(a.Flags,'|'));
+fprintf(['  PASS glm fits the levels connected to the loudest response: the isolated false positive moves the ' ...
+    'threshold from 21.7 to %.1f dB (descending: %g), flagged; series with nothing to drop are bit-identical; ' ...
+    'a silent top is no-response\n'],oOn.Threshold,oDs.Threshold);
+
+%% ====================================================== G3. repeated levels
+% Two entries at one level (a typed GroupBy that leaves out a column that
+% varies) used to count as two consecutive levels: a detection at the top
+% level alone read as a run of two, and "top-level-only run" was never raised.
+% Now the level is flagged and the fit gets one entry for it: an overridden
+% one, else the strongest evidence (smallest p; largest r, SNR or statistic).
+levR = [0:10:70, 80, 80].';
+Pr = 0.5*ones(10,1);  Pr(9) = 0.04;  Pr(10) = 0.01;
+Yr = struct('P',Pr,'NClean',512*ones(10,1));
+rep80 = "repeated level at 80 dB: 2 conditions share it; the one with the smallest p is used";
+o = ST.estimate(levR,Yr,"perm-descending",MinSweeps=0,MinPerPolarity=0);
+assert(any(o.Flags == rep80) && any(o.Flags == "top-level-only run") && o.Threshold == 75 && ...
+    o.NumLevels == 10 && o.NumUsable == 9 && o.NumSig == 1 && o.Usable(10) && ~o.Usable(9) && ...
+    o.Detected(10) && ~o.Detected(9),'Repeated top level: {%s} threshold %g.',strjoin(o.Flags,'|'),o.Threshold);
+Yr.Override = NaN(10,1);  Yr.Override(9) = 0;                      % a curator's "no" on the first entry
+o = ST.estimate(levR,Yr,"perm-descending",MinSweeps=0,MinPerPolarity=0);
+assert(o.Usable(9) && ~o.Usable(10) && ~o.Detected(9) && ~o.Detected(10) && o.Status == "no-response", ...
+    'An overridden entry should stand for its level: Usable %s, %s.',mat2str(o.Usable(9:10).'),o.Status);
+Yg = struct('SplitR',[zeros(8,1); 0.2; 0.6],'NClean',512*ones(10,1));
+o = ST.estimate(levR,Yg,"presto",MinSweeps=0,MinPerPolarity=0);
+assert(o.Usable(10) && ~o.Usable(9) && any(o.Flags == "repeated level at 80 dB: 2 conditions share it; the one with the strongest metric is used"), ...
+    'A graded metric keeps the larger r: Usable %s {%s}.',mat2str(o.Usable(9:10).'),strjoin(o.Flags,'|'));
+% a level repeated among entries one of which is unusable is flagged too
+Yu = struct('P',Pr,'NClean',[512*ones(9,1); 3]);
+o = ST.estimate(levR,Yu,"perm-descending",MinSweeps=100,MinPerPolarity=0);
+assert(any(startsWith(o.Flags,"repeated level at 80 dB")) && o.NumUsable == 9 && o.Usable(9) && ~o.Usable(10), ...
+    'Repeated level with an unusable entry: {%s}.',strjoin(o.Flags,'|'));
+% a series without repeats is not flagged
+o = ST.estimate(L,detY([0 0 0 0 1 1 1 1 1]),"perm-glm",MinSweeps=0,MinPerPolarity=0);
+assert(~any(startsWith(o.Flags,"repeated level")),'A series without repeats was flagged.');
+fprintf('  PASS repeated levels: flagged, collapsed to the overridden / strongest entry (smallest p, largest r), the top-level-only run flag no longer hidden\n');
 
 %% ====================================================== H. usable levels
 Y = struct('P',[0.5 0.5 0.5 0.01].','NClean',[10 10 10 200].');
@@ -834,7 +996,7 @@ defaults = {
     'PeakTrackEarly',0.1; 'PeakTrackLate',0.15; 'PeakCandidateRN',1; 'PeakDetectableRN',4;
     'PeakPolarity',"balanced"; 'PeaksAboveThresholdOnly',true; 'PeakBootstrap',0; 'PeakEdgeMs',1.0;
     'ConductionDelayMode',"none"; 'ConductionDelay',0; 'SpeakerDistance',10; 'SpeedOfSound',343;
-    'TimeOffset',0};
+    'TimeOffset',0; 'DetectPairPolarity',true; 'GLMConnectedOnly',true};
 for k = 1:size(defaults,1)
     assert(isequaln(S.(defaults{k,1}),defaults{k,2}),'Settings default %s is wrong.',defaults{k,1});
 end
@@ -900,7 +1062,7 @@ end
 % setting -- TimeOffset included -- and no longer a report-only one.
 latRef = ["ConductionDelayMode","ConductionDelay","SpeakerDistance","SpeedOfSound","TimeOffset"];
 spot = ["Window","segment"; "ResponseWindow","reject"; "BaselineWindow","measure"; "BaselineAmpWindow","peaks";
-        "Seed","detect"; "ThresholdMethod","thresholds"; "Waves","peaks"; "Profile","none";
+        "Seed","detect"; "DetectPairPolarity","detect"; "GLMConnectedOnly","thresholds"; "ThresholdMethod","thresholds"; "Waves","peaks"; "Profile","none";
         "SettingsVersion","none"; latRef.' repmat("peaks",numel(latRef),1)];
 for k = 1:size(spot,1)
     assert(mabr.analysis.Settings.stepOf(spot(k,1)) == spot(k,2),'stepOf(%s) should be %s.',spot(k,1),spot(k,2));
@@ -1208,6 +1370,26 @@ fprintf('verify_offline_thresholds: all checks passed (%.1f s)\n',toc(t0));
 end
 
 % =========================================================================
+function d = firthDeviance(x,y,theta)
+% The deviance 2*(l*max - l*(theta)) of the Firth-penalised logistic
+% likelihood at a threshold theta (criterion 0.5, so b0 = -b1*theta), with the
+% slope maximised afresh by a bounded search: an independent derivation of
+% what Threshold.firthProfileCI interpolates its interval ends from.
+[~,~,~,llHat] = mabr.analysis.Threshold.logisticFirth(x,y);
+f  = @(u) -firthPLL(x,y,-exp(u)*theta,exp(u));
+us = linspace(log(1e-6),log(50/median(diff(unique(x)))),400);
+[~,j] = min(arrayfun(f,us));
+[~,fv] = fminbnd(f,us(max(j-1,1)),us(min(j+1,numel(us))),optimset('TolX',1e-12));
+d = 2*(llHat + fv);
+end
+
+function L = firthPLL(x,y,b0,b1)
+% Firth's penalised log-likelihood: l(b) + 0.5*log|X'WX|.
+mu = 1./(1+exp(-(b0 + b1*x)));
+X  = [ones(size(x)) x];
+L  = sum(y.*log(mu) + (1-y).*log(1-mu)) + 0.5*log(det(X.'*((mu.*(1-mu)).*X)));
+end
+
 function Y = detY(D)
 % A series' Y from a detection pattern: p 0.01 where detected, 0.5 where not.
 D = double(D(:));

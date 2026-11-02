@@ -795,7 +795,12 @@ classdef PresentationOrder < handle
         % --- Controller events -------------------------------------------------
         function onState(obj,e)
             prev = obj.StateNow;
-            s    = e.State;
+            % ProgState.Paused as this window has always seen it: the run
+            % still acquiring (the engine's own Paused, heard separately,
+            % drives the pause clock). Taken literally it ended the run's
+            % phase, blanked the highlight, and the Acquire on Resume began
+            % a new run with its counters zeroed.
+            s    = foldPaused(e.State);
             obj.setStateNow(s);
             if s == mabr.ui.ProgState.PrepBlock
                 obj.beginRun();
@@ -861,6 +866,7 @@ classdef PresentationOrder < handle
         end
 
         function setStateNow(obj,s)
+            s = foldPaused(s);          % see onState
             obj.StateNow = s;
             [~,txt] = mabr.ui.ProgState.appearance(s);
             obj.Phase = struct( ...
@@ -1636,6 +1642,12 @@ end
 
 function s = plural(n)
 if n == 1, s = ''; else, s = 's'; end
+end
+
+function s = foldPaused(s)
+% ProgState.Paused as the window has always seen it: the run still acquiring
+% (the same fold mabr.ui.ProgressMonitor applies).
+if s == mabr.ui.ProgState.Paused, s = mabr.ui.ProgState.Acquire; end
 end
 
 function s = groupDigits(n)

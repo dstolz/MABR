@@ -7,11 +7,17 @@
 %
 % Output:
 %   S - Filtered ABR responses.
+%
+% Needs PARFOR_PROGRESS from the author's helper_fnc repository
+% (https://github.com/dstolz/helper_fnc) and the Signal Processing Toolbox (firpm,
+% filtfilt); without either it stops at once with abr_analysis:missingDependency.
 
 arguments
     S cell
     Fs (1,1) {mustBeNumeric, mustBePositive}
 end
+
+checkABRDependencies("filterABRData", "parfor_progress", "signal");
 
 
 

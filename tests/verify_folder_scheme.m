@@ -173,10 +173,17 @@ fn  = mabr.data.io.buildFilename(odd,'SUBJ_ID_42');
 assert(strcmp(fn,'SUBJ-ID-42_Frequency-11p3kHz_Level-m10dB_261001T143012.abr'), ...
     'decimal/negative values or an underscored subject: got "%s"',fn);
 assert(~isempty(regexp(fn,strict,'once')),'"%s" must match the strict offline pattern',fn);
+% A subject that is not SUBJ-ID-<n> keeps its WHOLE alphanumeric ID in the
+% token (it used to keep only the digits, so "Rat 7 L" and "Rat 7 R" were one
+% subject on disk and in every catalog); the reader's SUBJ-ID-<alnum> pattern
+% takes all of it.
 byID = mabr.data.Block(struct('Meta',struct('ID','Click 80_dB.v2')),rec,char(t0));
 fn   = mabr.data.io.buildFilename(byID,'Rat 7');
-assert(strcmp(fn,'SUBJ-ID-7_Click-80-dB-v2_261001T143012.abr'), ...
+assert(strcmp(fn,'SUBJ-ID-Rat7_Click-80-dB-v2_261001T143012.abr'), ...
     'a condition named by its ID must be one token: got "%s"',fn);
+assert(strcmp(mabr.data.io.buildFilename(byID,'Rat 7 L'),'SUBJ-ID-Rat7L_Click-80-dB-v2_261001T143012.abr') && ...
+       strcmp(mabr.data.io.buildFilename(byID,'1254'),'SUBJ-ID-1254_Click-80-dB-v2_261001T143012.abr'), ...
+    'the subject token must keep letters and digits alike, and a numeric ID as it is');
 fprintf('  PASS Part F: %s\n',fullfile('...','SUBJ-ID-1254','SUBJ-ID-1254_261001T143012','8kHz',[n x]));
 
 % ---- Part G: persistence ----------------------------------------------------

@@ -18,11 +18,21 @@
 %
 % with no disk reads.
 
-%%
-addpath('c:\src\MABR\')
+%% ------------------------------------------------------------------ PATH
+% The same setup MABRAnalysis.m uses: every subfolder of the toolbox except .git.
+% Adding only the root would leave granary (the logger behind every message MABR
+% prints) off the path, and every run would then print a red logging notice. The
+% root is found from this file's location (it lives in <root>/examples), so it
+% works wherever the toolbox is installed.
+rootDir = fileparts(fileparts(mfilename('fullpath')));
+p = split(string(genpath(rootDir)),pathsep);
+p(p == "" | contains(p,'.git')) = [];
+addpath(char(join(p,pathsep)));
 
 %% ------------------------------------------------------------------ CONFIG
-DATAROOT = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_data/";                  % folder to search (recursively)
+DATAROOT = "C:/path/to/your/abr_data/";         % <-- EDIT THIS: folder to search (recursively)
+assert(isfolder(DATAROOT),"quick_analysis:dataroot", ...
+    "Set DATAROOT under CONFIG to the folder holding your .abr files (it is '%s').",DATAROOT);
 RESULTS  = fullfile(DATAROOT,"analysis");       % where the .mat results go
 PLOT     = false;                                % draw grid + audiogram per session
 NPERM    = 1000;                                % permutation count (2000 for final)
@@ -76,28 +86,3 @@ if ~isempty(ALL)
     writetable(ALL,fullfile(RESULTS,"thresholds.csv"));
     fprintf('\nWrote %s\n',fullfile(RESULTS,"thresholds.csv"));
 end
-
-
-%%
-
-s = "SUBJ-ID-959_2weeks";
-
-
-ind = ALL.Session == s;
-a = ALL(ind,:);
-
-plot(a.frequency,a.Threshold,'-o')
-
-
-%%
-
-pth = "C:/Users/dstolz/My Drive/PROJECTS/MABR/MABR_Analysis/abr_data/analysis";
-
-sess = "SUBJ-ID-959_Baseline";
-
-ffn = fullfile(pth,sess+".mat");
-
-r = load(ffn);
-
-% s.plotGrid();
-% s.plotAudiogram();

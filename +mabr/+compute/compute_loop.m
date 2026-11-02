@@ -68,10 +68,11 @@ assert(isDSP || strcmp(role,'metrics'),'mabr:compute:compute_loop:role', ...
     'role must be ''dsp'' or ''metrics'' (got "%s").',role);
 
 cmdQueue = parallel.pool.PollableDataQueue;
-send(resultQueue,struct('type','handshake','cmdQueue',cmdQueue, ...
-    'pid',feature('getpid'),'role',role));
 
-% Paths and buffer sizes only; the rate arrives with Configure.
+% Paths and buffer sizes only; the rate arrives with Configure. Opened BEFORE
+% the handshake: sent first, a buffer that failed to map left the client
+% holding a "ready" worker whose future had already finished, and
+% waitUntilReady had already returned.
 cfg = mabr.Config;
 req = mabr.compute.RequestBuffer(cfg,false);
 if isDSP, out = mabr.compute.LiveBuffer(cfg,true);
@@ -79,6 +80,9 @@ else,     out = mabr.compute.MetricBuffer(cfg,true);
 end
 out.zero();
 rb = mabr.acq.RingBuffer(cfg,false);
+
+send(resultQueue,struct('type','handshake','cmdQueue',cmdQueue, ...
+    'pid',feature('getpid'),'role',role));
 
 pipe       = [];                % mabr.compute.Pipeline, once configured
 run        = [];                % the RunStart payload while a run streams
@@ -100,9 +104,15 @@ lastTic    = uint64(0);
 send_state(resultQueue,mabr.compute.State.Idle);
 mabr.log.vprintf(1,'Compute worker (%s) started',role);
 
-try
-    running = true;
-    while running
+% One try per cycle, not one around the loop: an error in a cycle -- a
+% window the buffer cannot hold, a condition table over its cap, a metric
+% that throws -- used to end the worker, which the client learned of only
+% from 5-10 s of silence; the relaunch then replayed the same inputs, died
+% the same way, and the role was written off for the session. Now the cycle
+% is reported and skipped, and the worker stays up for the next one.
+running = true;
+while running
+    try
         period = periods(1 + ~isDSP);
         if cycle_due(pipe,run,isDSP)
             wait = max(0,period - elapsed(lastTic));
@@ -152,7 +162,8 @@ try
                         try
                             assert(~isempty(pipe),'mabr:compute:compute_loop:notConfigured', ...
                                 'Finalize before Configure.');
-                            reply.result = pipe.finalize(rb,msg.data.StimIndex);
+                            reply.result = pipe.finalize(rb,msg.data.StimIndex, ...
+                                getf(msg.data,'ExpectedOnsets',[]));
                         catch me
                             reply.error = me.message;
                             mabr.log.vprintf(0,1,'Finalization failed on the worker: %s',me.message);
@@ -208,11 +219,11 @@ try
             [rosterId,rosterKeys] = metric_cycle(pipe,rb,run,store,jobs,custom, ...
                 customGen,catalog,out,resultQueue,rosterId,rosterKeys,reqSeq,period,cfg,memo);
         end
+    catch me
+        send_error(resultQueue,me.identifier,me.message);
+        mabr.log.vprintf(0,1,me);
+        pause(0.05);                    % never a tight loop on a repeating fault
     end
-
-catch me
-    send_error(resultQueue,me.identifier,me.message);
-    mabr.log.vprintf(0,1,me);
 end
 
 send_state(resultQueue,mabr.compute.State.Idle);
@@ -225,6 +236,7 @@ function [rosterId,rosterKeys] = metric_cycle(pipe,rb,run,store,jobs,custom, ...
     customGen,catalog,out,resultQueue,rosterId,rosterKeys,reqSeq,budget,cfg,memo)
 % One pass of the metrics worker: the run in progress as live conditions
 % over the finalized table, then every requested metric over the result.
+persistent said                 % metric failures already reported (see below)
 nSlots = cfg.MaxComputeJobs;
 J = build_jobs(jobs,custom,customGen,catalog,nSlots);
 active = find(~cellfun(@isempty,{J.Fcn}));
@@ -263,10 +275,23 @@ end
 vals   = nan(nSlots,numel(C));
 incomplete = 0;
 if ~isempty(active) && ~isempty(C)
-    [v,~,done] = mabr.compute.evaluateJobs(C,J(active),budget,memo);
+    [v,errs,done] = mabr.compute.evaluateJobs(C,J(active),budget,memo);
     vals(active,:) = v;
     late = active(any(~done,2));
     incomplete = sum(2.^(late-1));
+    % A metric that throws on the worker used to leave only NaN gaps and no
+    % line anywhere (a handle to a function on the user's own path, which
+    % the worker never had, failed silently every cycle). Said once per
+    % slot per distinct message, since the cycle repeats every second.
+    if isempty(said), said = containers.Map('KeyType','char','ValueType','logical'); end
+    for k = find(~cellfun(@isempty,errs)).'
+        key = sprintf('%d|%s',active(k),errs{k});
+        if ~isKey(said,key)
+            said(key) = true;
+            mabr.log.vprintf(1,1,'Compute worker (metrics): %s (slot %d) failed: %s', ...
+                J(active(k)).Name,active(k),errs{k});
+        end
+    end
 end
 out.publish(struct('RosterId',rosterId,'Values',vals,'ReqSeq',reqSeq, ...
     'Incomplete',incomplete, ...

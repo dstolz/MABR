@@ -224,7 +224,21 @@ try
                             continue
                         end
                     end
-                    [reason,nStreamed,xr,timing] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
+                    [reason,nStreamed,xr,timing,devErr] = stream_block(cmdQueue,resultQueue,rb,apr,prepared,cfg,testing);
+                    if strcmp(reason,'deviceError')
+                        % The device is in an unknown state: drop it (the next
+                        % Prep rebuilds it) and tell the client, which halts the
+                        % schedule after this block (AcqController.on_engine_error).
+                        % The block still reports streamed and Completed below,
+                        % so what was recorded before the failure is finalized
+                        % and saved, where the whole run used to be lost with
+                        % the device (an unplugged interface mid-block:
+                        % dsp:audioDeviceIO:inputFrameSizeChanged in the logs).
+                        if ~isempty(apr), try, release(apr); end, end %#ok<TRYNC>
+                        apr = []; aprSig = ''; idle.clocking = false; prepared = [];
+                        send_error(resultQueue,'mabr:acq:worker:deviceError', ...
+                            sprintf('The audio device failed while streaming: %s',devErr));
+                    end
                     % Keep the device clocked until the next run, so that run
                     % starts on the next frame of a stream already running
                     % rather than paying the device's start-up (a quarter to
@@ -313,11 +327,13 @@ end
 
 
 % =====================================================================
-function [reason,nStreamed,xr,timing] = stream_block(cmdQueue,resultQueue,rb,apr,spec,cfg,testing)
+function [reason,nStreamed,xr,timing,err] = stream_block(cmdQueue,resultQueue,rb,apr,spec,cfg,testing)
 % Stream one prepared block frame-by-frame. Returns 'completed', 'stopped',
-% or 'killed', plus the number of play-matrix samples actually emitted --
-% which is the whole matrix unless a Stop/Kill cut it short. Analogue of the
-% legacy acquire_block.m tight loop.
+% 'killed' or 'deviceError' (the device call threw; err holds its message
+% and the block ends there, with what was recorded so far intact in the
+% ring), plus the number of play-matrix samples actually emitted -- which is
+% the whole matrix unless something cut it short. Analogue of the legacy
+% acquire_block.m tight loop.
 %
 % xr is what the device reported while it ran, in the units it reports them
 % in (samples): underruns (output it ran dry for -- silence is played, then
@@ -356,6 +372,7 @@ end
 mabr.log.vprintf(1,'Streaming %s: %d samples (%d frames)',kind,N,ceil(N/fl));
 
 reason = 'completed';
+err    = '';
 xr = struct('underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0));
 i = 1;
 % Per frame, in ms: command poll, frame render, device call, ring write, and
@@ -378,7 +395,7 @@ while i <= N
             case mabr.acq.Cmd.Kill, reason = 'killed';  break
             case mabr.acq.Cmd.Pause
                 send_state(resultQueue,mabr.acq.State.Paused);
-                term = wait_while_paused(cmdQueue);      % blocks until resumed/terminated
+                term = wait_while_paused(cmdQueue,apr,fl,~stimOnly);   % blocks until resumed/terminated
                 if ~isempty(term), reason = term; break; end
                 send_state(resultQueue,mabr.acq.State.Acquire);
                 % Paused time is not owed back: restart the pacing clock so
@@ -388,6 +405,14 @@ while i <= N
                 % ...nor is it this frame's work.
                 tIter = tic;
                 dPoll = 0;
+            otherwise
+                % A command the frame loop cannot act on -- Prep, Run, Release,
+                % a Resume with nothing paused -- used to be consumed here in
+                % silence, and the client then waited for a Ready that never
+                % came. Refuse it out loud; the client's error handler fails
+                % that command, not the block.
+                send_error(resultQueue,'mabr:acq:worker:busy', ...
+                    sprintf('Command %s ignored: a block is streaming.',char(msg.cmd)));
         end
     end
 
@@ -419,13 +444,24 @@ while i <= N
         % Output only: both columns (signal AND timing pulse) go out, the
         % device clock paces the loop, and nothing comes back to record.
         t = tic;
-        nUnder = apr(frame);
+        try
+            nUnder = apr(frame);
+        catch me
+            % The device failed under the loop (unplugged, a driver fault):
+            % end the block here rather than the worker, so the caller can
+            % still report what was streamed.
+            reason = 'deviceError'; err = me.message; break
+        end
         dDev = toc(t);
         xr = note_xruns(xr,nUnder,0,i);
         dRing = 0;
     else
         t = tic;
-        [audioADC,nUnder,nOver] = apr(frame);
+        try
+            [audioADC,nUnder,nOver] = apr(frame);
+        catch me
+            reason = 'deviceError'; err = me.message; break
+        end
         dDev = toc(t);
         xr = note_xruns(xr,nUnder,nOver,i);
         t = tic;
@@ -549,12 +585,29 @@ end
 
 
 % =====================================================================
-function term = wait_while_paused(cmdQueue)
+function term = wait_while_paused(cmdQueue,apr,fl,duplex)
 % Block in place while paused. Returns '' on resume (Run), or a terminal
 % reason ('stopped'/'killed') if the block should end.
+%
+% The device is kept CLOCKED meanwhile -- one frame of silence per pass, its
+% input discarded, the idea idle_frame applies between runs. Left unfed, the
+% driver underran its output and overran its input for the whole pause, the
+% first frame after Resume reported a huge xrun, and the stale input FIFO
+% stepped the round-trip latency: a MISALIGNED "offset jumped" verdict for a
+% run that was merely paused. In Test Mode (no device) the loop just polls.
 term = '';
+silence = zeros(fl,2,'single');
 while true
-    [msg,ok] = poll(cmdQueue,0.05);
+    if isempty(apr)
+        [msg,ok] = poll(cmdQueue,0.05);
+    else
+        [msg,ok] = poll(cmdQueue,0);
+        try
+            if duplex, [~,~,~] = apr(silence); else, apr(silence); end   % the device paces this loop
+        catch
+            pause(0.05);    % a device failing here is reported when the block resumes
+        end
+    end
     if ~ok, continue; end
     switch msg.cmd
         case mabr.acq.Cmd.Resume, return

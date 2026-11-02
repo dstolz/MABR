@@ -10,7 +10,7 @@ classdef Export
 %       items = project.exportItems(keys,catalog);          % or hand-built
 %       T     = mabr.analysis.Export.tables(items);           % struct of tables
 %       files = mabr.analysis.Export.write(T,folder,Formats=["csv" "parquet"]);
-%       mabr.analysis.Export.writeDictionary(folder,T);      % mabr_columns.csv
+%       mabr.analysis.Export.writeDictionary(folder,T,Files=files);   % mabr_columns.csv
 %       mabr.analysis.Export.writeRScript(folder,files,T);   % mabr_import.R
 %       mabr.analysis.Export.writeManifest(folder,T,Files=files);
 %
@@ -61,7 +61,10 @@ classdef Export
 %
 %   UNITS. Amplitudes are volts inside the model and MICROVOLTS here (every
 %   column ending _uv); amp_unit says what that unit really is for files whose
-%   gain was not recorded. Latencies (and every time_ms) are milliseconds
+%   gain was not recorded, and every table with a _uv column carries it
+%   (conditions, thresholds, peaks, waveforms, trials and the raw tables), so
+%   sessions of different eras pooled in one table are never silently mixed.
+%   Latencies (and every time_ms) are milliseconds
 %   re SOUND ARRIVAL when a conduction delay is set: the latency re the
 %   recorded (electrical) stimulus onset minus the session's latency offset
 %   = conduction_delay_ms + time_offset_ms (Peaks.reported, the one place
@@ -481,20 +484,30 @@ classdef Export
             writeText(f,txt);
         end
 
-        function f = writeDictionary(folder,T)
+        function f = writeDictionary(folder,T,opts)
             % Write mabr_columns.csv: one row per column written.
             %
             %   folder  the export folder
             %   T       the tables written
+            %   opts.Files  write()'s / writeRaw()'s file list ([] = look in
+            %           the folder). The raw tables (trial_waves, blocks,
+            %           block_waves, sweeps) are written one session at a
+            %           time and are not in T, but the R script reads their
+            %           column types from this dictionary: every raw table the
+            %           file list names (or, with no list, the folder holds
+            %           under writeRaw's names) is described too, with the
+            %           columns its files actually have.
             %   f       (returned) the file's path; columns table, column,
             %           type, unit, description (lower case for R)
             arguments
                 folder {mustBeTextScalar}
                 T (1,1) struct
+                opts.Files = []
             end
             folder = string(folder);
             ensureFolder(folder);
             D = mabr.analysis.Export.dictionary(T);
+            D = [D; rawDictionary(rawWritten(folder,opts.Files,T,true),T)];
             D.Properties.VariableNames = lower(D.Properties.VariableNames);
             f = fullfile(folder,"mabr_columns.csv");
             writeCsvRaw(D,f,false);
@@ -554,6 +567,13 @@ classdef Export
                     fl = cellstr(relativeTo(folder,unique(string(r.File),'stable')));
                 end
                 tabs(end+1) = struct('name',char(name),'files',{fl},'rows',height(T.(name))); %#ok<AGROW>
+            end
+            % The raw tables are not in T (writeRaw writes them one session
+            % at a time) but they are in the export: listed from the file list.
+            R = rawWritten(folder,F,T,false);
+            for k = 1:numel(R)
+                tabs(end+1) = struct('name',char(R(k).Table), ...
+                    'files',{cellstr(relativeTo(folder,R(k).Files))},'rows',R(k).Rows); %#ok<AGROW>
             end
             M = struct();
             M.SchemaVersion = mabr.analysis.Export.SchemaVersion;
@@ -688,7 +708,7 @@ O.thresholds = [ID,"stimulus","acq_mode","<group params>","series_key","level_pa
     "method","metric","model","criterion","criterion_unit","threshold_db","cens","thr_lo_db", ...
     "thr_hi_db","thr_upper_db","convention","threshold_fit_db","fit_status","ci_lo_db", ...
     "ci_hi_db","ci_method","threshold_imputed_db","imputation_rule","level_step_db", ...
-    "n_levels","n_levels_used","n_detected","n_used_min","rn_uv_at_threshold","decision", ...
+    "n_levels","n_levels_used","n_detected","n_used_min","rn_uv_at_threshold","amp_unit","decision", ...
     "reviewed","reviewed_by","reviewed_at","note","flags","used_in_study","is_primary", ...
     "level_ref",TAIL];
 O.peaks = [ID,"stimulus","acq_mode","<params>","condition_key","series_key", ...
@@ -703,19 +723,19 @@ O.peak_measures = [ID,"stimulus","acq_mode","<params>","condition_key","measure"
 O.io_slopes = [ID,"stimulus","acq_mode","<group params>","series_key","wave","quantity", ...
     "slope","unit","intercept","n_levels","level_min","level_max","used_in_study",TAIL];
 O.waveforms = [ID,"stimulus","acq_mode","<params>","condition_key","polarity","time_ms", ...
-    "mean_uv","sem_uv","n",TAIL];
+    "mean_uv","sem_uv","amp_unit","n",TAIL];
 O.notes = [ID,"time","run","sweep","stamp","text","source","scope",TAIL];
 O.trials = [ID,"stimulus","acq_mode","<params>","condition_key","sweep_order","file_id", ...
     "sweep_in_file","time_s","t_session_s","polarity","rejected","reject_reason","excess", ...
-    "rms_uv","p2p_uv","maxabs_uv","baseline_rms_uv","template_amp","template_r",TAIL];
+    "rms_uv","p2p_uv","maxabs_uv","baseline_rms_uv","amp_unit","template_amp","template_r",TAIL];
 O.trial_waves = [ID,"stimulus","acq_mode","<params>","condition_key","sweep_order","wave", ...
-    "lat_peak_ms","lat_peak_raw_ms","conduction_delay_ms","time_offset_ms","p_uv","pn_uv","proj",TAIL];
+    "lat_peak_ms","lat_peak_raw_ms","conduction_delay_ms","time_offset_ms","p_uv","pn_uv","amp_unit","proj",TAIL];
 O.blocks = [ID,"stimulus","acq_mode","<params>","condition_key","block","n","first_order", ...
-    "last_order","rn_uv","response_rms_uv",TAIL];
+    "last_order","rn_uv","response_rms_uv","amp_unit",TAIL];
 O.block_waves = [ID,"stimulus","acq_mode","<params>","condition_key","block","wave", ...
-    "lat_peak_ms","lat_peak_raw_ms","conduction_delay_ms","time_offset_ms","amp_pt_uv",TAIL];
+    "lat_peak_ms","lat_peak_raw_ms","conduction_delay_ms","time_offset_ms","amp_pt_uv","amp_unit",TAIL];
 O.sweeps = [ID,"stimulus","acq_mode","<params>","condition_key","sweep_order","polarity", ...
-    "rejected","excess","time_ms","value_uv",TAIL];
+    "rejected","excess","time_ms","value_uv","amp_unit",TAIL];
 end
 
 function M = columnSpecs()
@@ -1596,6 +1616,12 @@ lu = unique(lu(idx));
 lu = lu(lu ~= "");
 if isempty(lu), lu = string(getf(R.Summary,'LevelUnit',"")); elseif numel(lu) > 1, lu = "mixed"; end
 base.level_ref = lu;
+% What rn_uv_at_threshold is in: the series' conditions' unit (a pool of
+% sessions of different eras is "mixed").
+au = c.AmpUnits(idx(idx >= 1 & idx <= numel(c.AmpUnits)));
+au = unique(au(au ~= ""));
+if isempty(au), au = c.SessionAmpUnit; elseif numel(au) > 1, au = "mixed"; end
+base.amp_unit = au;
 base.used_in_study = usedFor(c,sk);
 end
 
@@ -2016,6 +2042,7 @@ npos = toDbl(tcol(C,'nPos',NaN),height(C)); nneg = toDbl(tcol(C,'nNeg',NaN),heig
 nb = N(cols); np = npos(ci); nn = nneg(ci);
 cnt = [nb(:) np(:) nn(:)].';                             % 3 x nCw
 fx.n = reshape(repelem(cnt(:),nW,1),[],1);
+fx.amp_unit = condTextVec(c.AmpUnits,condRow,c.SessionAmpUnit);
 fx = tailCols(fx,c);
 dyn.params = paramDyn(c,paramValues(C,c.Params,height(C),condRow));
 t = assemble("waveforms",n,fx,dyn);
@@ -2125,6 +2152,7 @@ fx.rms_uv = 1e6*siCol(SI,'RMS',n);
 fx.p2p_uv = 1e6*siCol(SI,'P2P',n);
 fx.maxabs_uv = 1e6*siCol(SI,'MaxAbs',n);
 fx.baseline_rms_uv = 1e6*siCol(SI,'BaselineRMS',n);
+fx.amp_unit = condTextVec(c.AmpUnits,cond,c.SessionAmpUnit);
 fx.template_amp = siCol(SI,'TemplateAmp',n);
 fx.template_r = siCol(SI,'TemplateR',n);
 fx = tailCols(fx,c);
@@ -2181,6 +2209,10 @@ else
     ctx.CondKeys = keyFor(C,kp);
 end
 ctx.Conditions = C;
+% What the raw tables' _uv columns are, as for the results tables: a
+% condition's own Units, else the session's.
+ctx.AmpUnits = ampUnit(toStr(tcol(C,'Units',string(getf(s,'Units',""))),nC));
+ctx.SessionAmpUnit = ampUnit(string(getf(s,'Units',"")));
 end
 
 function ctx = rawCtxFrom(it)
@@ -2283,6 +2315,7 @@ fx.lat_peak_raw_ms = lat;
 fx.conduction_delay_ms = repmat(ctx.ConductionDelay,n,1);
 fx.time_offset_ms = repmat(ctx.TimeOffset,n,1);
 fx.p_uv = 1e6*p; fx.pn_uv = 1e6*pn; fx.proj = pj;
+fx.amp_unit = condTextVec(ctx.AmpUnits,ci,ctx.SessionAmpUnit);
 fx = tailCols(fx,ctx);
 dyn.params = paramDyn(ctx,paramValues(C,ctx.Params,height(C),ci));
 t = assemble("trial_waves",n,fx,dyn);
@@ -2303,6 +2336,7 @@ fx = condIdentityAt(fx,table(),C,ci,n);
 fx.condition_key = keyAt(ctx.CondKeys,ci);
 fx.block = b; fx.n = nb; fx.first_order = fo; fx.last_order = lo;
 fx.rn_uv = 1e6*rn; fx.response_rms_uv = 1e6*rr;
+fx.amp_unit = condTextVec(ctx.AmpUnits,ci,ctx.SessionAmpUnit);
 fx = tailCols(fx,ctx);
 dyn.params = paramDyn(ctx,paramValues(C,ctx.Params,height(C),ci));
 t = assemble("blocks",n,fx,dyn);
@@ -2326,6 +2360,7 @@ fx.lat_peak_raw_ms = lat;
 fx.conduction_delay_ms = repmat(ctx.ConductionDelay,n,1);
 fx.time_offset_ms = repmat(ctx.TimeOffset,n,1);
 fx.amp_pt_uv = 1e6*amp;
+fx.amp_unit = condTextVec(ctx.AmpUnits,ci,ctx.SessionAmpUnit);
 fx = tailCols(fx,ctx);
 dyn.params = paramDyn(ctx,paramValues(C,ctx.Params,height(C),ci));
 t = assemble("block_waves",n,fx,dyn);
@@ -2367,6 +2402,7 @@ for f = fm
                 fx.excess = reshape(repelem(exc(:),nr,1),[],1);
                 fx.time_ms = repmat(tk(:),ns,1);
                 fx.value_uv = 1e6*Xk(:);
+                fx.amp_unit = condTextVec(ctx.AmpUnits,ci,ctx.SessionAmpUnit);
                 fx = tailCols(fx,ctx);
                 dyn.params = paramDyn(ctx,paramValues(C,ctx.Params,height(C),ci));
                 parts{end+1} = assemble("sweeps",m,fx,dyn); %#ok<AGROW>
@@ -2403,7 +2439,9 @@ for f = fm
                 Q(end+1) = q; %#ok<AGROW>
                 nTot = nTot + size(X,2);
             end
-            MABRSweeps = struct('SessionId',ctx.Id,'Subject',ctx.Subject,'Unit',"uV", ...
+            % (Unit names the scale of Sweeps; AmpUnit says what it really is
+            % for a session whose gain was not recorded, as amp_unit does.)
+            MABRSweeps = struct('SessionId',ctx.Id,'Subject',ctx.Subject,'Unit',"uV",'AmpUnit',ctx.SessionAmpUnit, ...
                 'TimeMs',tr(:),'TimeRawMs',time(:),'ConductionDelayMs',ctx.ConductionDelay, ...
                 'TimeOffsetMs',ctx.TimeOffset,'LatencyOffsetMs',ctx.LatencyOffset,'SettingsHash',ctx.SettingsHash, ...
                 'Conditions',Q);
@@ -2580,11 +2618,22 @@ if ~isempty(S), c = reshape(string({S.Placeholder}),1,[]); end
 end
 
 function c = paramColumns(params)
-% Export columns of parameters, never colliding with a fixed column.
+% Export columns of parameters, never colliding with a fixed column or with
+% one another. Two parameters can snake-case to one name ("Freq Hz" and
+% "freq_hz"), and two columns of one name would make the table unreadable
+% (or one parameter silently the other's): the later one takes a numeric
+% suffix, _2, _3, ... -- and a suffixed name never takes one that a later
+% parameter has as its own.
 c = mabr.analysis.Export.columnName(params);
-used = allFixedColumns();
+c0 = reshape(c,[],1);
+used = reshape(allFixedColumns(),[],1);
 for k = 1:numel(c)
     if ismember(c(k),used), c(k) = "stim_" + c(k); end
+    base = c(k);  j = 1;
+    while ismember(c(k),[reshape(c(1:k-1),[],1); used]) || (j > 1 && ismember(c(k),c0(k+1:end)))
+        j = j + 1;
+        c(k) = base + "_" + j;
+    end
 end
 end
 
@@ -2835,6 +2884,141 @@ ud = t.Properties.UserData;
 if isstruct(ud) && isfield(ud,'Dynamic') && ~isempty(ud.Dynamic)
     d = ud.Dynamic;
     if isfield(d,'Values'), d = rmfield(d,'Values'); end
+end
+end
+
+function R = rawWritten(folder,files,T,infer)
+% The raw tables an export holds that T does not carry: struct array Table,
+% Files (their data files or dataset folders, one string column), Formats and
+% Rows (the rows of the fullest format; NaN when only the folder was
+% looked at). From the file list when there is one; with none and infer, from
+% the folder under writeRaw's names (mabr_<table>.csv, or a folder named after
+% the table holding Parquet files) -- so a caller that never passed its list,
+% like the analysis window's export, still gets its raw tables described.
+R = struct('Table',{},'Files',{},'Formats',{},'Rows',{});
+have = tableNames(T);
+listed = istable(files) && height(files) > 0 && ...
+    all(ismember({'Table','Format','File','Rows'},files.Properties.VariableNames));
+for name = mabr.analysis.Export.RawTables
+    if ismember(name,have), continue; end
+    fl = strings(0,1); fm = strings(0,1); rows = NaN;
+    if listed
+        r = files(string(files.Table) == name & string(files.File) ~= "",:);
+        if ~isempty(r)
+            fl = unique(string(r.File),'stable');
+            fm = unique(lower(string(r.Format)),'stable');
+            rows = 0;
+            for f = reshape(string(r.Format),1,[])
+                rows = max(rows,sum(r.Rows(string(r.Format) == f)));
+            end
+        end
+    elseif infer
+        csv = fullfile(folder,"mabr_" + name + ".csv");
+        dsd = fullfile(folder,name);
+        if isfile(csv)
+            fl = string(csv);  fm = "csv";
+        elseif isfolder(dsd) && ~isempty(dir(fullfile(char(dsd),'*.parquet')))
+            fl = string(dsd);  fm = "parquet";
+        end
+    end
+    if ~isempty(fl)
+        R(end+1) = struct('Table',name,'Files',fl(:),'Formats',fm(:),'Rows',rows); %#ok<AGROW>
+    end
+end
+end
+
+function D = rawDictionary(R,T)
+% Dictionary rows (Table, Column, Type, Unit, Description) of the raw tables
+% rawWritten found: the schema's columns, with the stimulus-parameter columns
+% those tables' files really have (a click session has no frequency_khz) --
+% described as the results tables described them when T has one with the
+% same column. A raw table whose files cannot be read (or that only exist as
+% MAT) gets the schema as it stands: the parameters of T, else the
+% placeholder row.
+tb = strings(0,1); cl = tb; ty = tb; un = tb; de = tb;
+dyn = emptyDyn();
+dyn = rmfield(dyn,'Values');
+for name = tableNames(T)
+    d = tableDynamic(T.(name));
+    d = d(string({d.Placeholder}) == "<params>");
+    for k = 1:numel(d)
+        if isempty(dyn) || ~ismember(string(d(k).Column),string({dyn.Column}))
+            dyn(end+1) = d(k); %#ok<AGROW>
+        end
+    end
+end
+for r = 1:numel(R)
+    name = R(r).Table;
+    % The sweeps' MAT-file describes itself (MABRSweeps); only its Parquet
+    % form is the table the schema lists.
+    if name == "sweeps" && all(R(r).Formats == "mat"), continue; end
+    cols = strings(1,0);
+    for f = reshape(R(r).Files,1,[])
+        cols = [cols dataColumns(f)]; %#ok<AGROW>
+    end
+    cols = unique(cols,'stable');
+    spec = specFor(name);
+    fixed = colsOf(spec(~phOf(spec)));
+    for s = spec
+        if s.Placeholder
+            if isempty(cols)
+                names = colsOf(dyn);
+                if isempty(names), names = s.Column; end
+            else
+                names = cols(~ismember(cols,fixed));
+            end
+            for c = names
+                k = find(colsOf(dyn) == c,1);
+                if ~isempty(k)
+                    row = {dyn(k).Type, dyn(k).Unit, dyn(k).Description};
+                elseif c == s.Column
+                    row = {s.Type, s.Unit, s.Description};
+                else
+                    row = {"double","","Stimulus parameter (see the conditions table)."};
+                end
+                tb(end+1,1) = name; cl(end+1,1) = c; %#ok<AGROW>
+                ty(end+1,1) = row{1}; un(end+1,1) = row{2}; de(end+1,1) = row{3}; %#ok<AGROW>
+            end
+        elseif isempty(cols) || ismember(s.Column,cols)
+            tb(end+1,1) = name; cl(end+1,1) = s.Column; %#ok<AGROW>
+            ty(end+1,1) = s.Type; un(end+1,1) = s.Unit; de(end+1,1) = s.Description; %#ok<AGROW>
+        end
+    end
+end
+D = table(tb,cl,ty,un,de,'VariableNames',{'Table','Column','Type','Unit','Description'});
+end
+
+function c = dataColumns(f)
+% The column names of an exported data file: a CSV's header, a Parquet file's
+% footer, or the union over the Parquet files of a dataset folder; none for
+% anything else or anything unreadable.
+c = strings(1,0);
+f = char(f);
+try
+    if isfolder(f)
+        d = dir(fullfile(f,'*.parquet'));
+        for k = 1:numel(d)
+            c = [c dataColumns(fullfile(d(k).folder,d(k).name))]; %#ok<AGROW>
+        end
+        c = unique(c,'stable');
+        return
+    end
+    [~,~,e] = fileparts(f);
+    switch lower(e)
+        case '.csv'
+            fid = fopen(f,'r','n','UTF-8');
+            if fid < 0, return; end
+            closer = onCleanup(@() fclose(fid));
+            ln = fgetl(fid);
+            if ischar(ln)
+                ln = strrep(strrep(ln,char(65279),''),'"','');
+                c = strtrim(string(strsplit(ln,',')));
+            end
+        case '.parquet'
+            c = reshape(string(parquetinfo(f).VariableNames),1,[]);
+    end
+catch
+    c = strings(1,0);
 end
 end
 
@@ -3133,8 +3317,18 @@ end
 
 function s = safeName(id)
 % A session key as a file name: anything but letters, digits, . _ - becomes _.
-s = regexprep(char(id),'[^A-Za-z0-9._-]','_');
+% Two keys that differ only in such characters ("a/b" and "a_b", or two
+% folders named alike but for a space) would then share one Parquet file and
+% the second session would overwrite -- or, appended, duplicate -- the
+% first. Whenever the sanitising changed the text, the hash of the original
+% key follows the name, so distinct keys keep distinct files and the same
+% key always gets the same one.
+raw = char(id);
+s = regexprep(raw,'[^A-Za-z0-9._-]','_');
 if isempty(s), s = 'session'; end
+if ~strcmp(s,raw)
+    s = [s '_' char(mabr.analysis.Stats.hex8(raw))];
+end
 s = string(s);
 end
 
@@ -3268,7 +3462,8 @@ L(end+1) = "    d <- readr::read_csv(p, na = c("""", ""NA"", ""NaN""), col_types
 L(end+1) = "  } else {";
 L(end+1) = "    if (!requireNamespace(""arrow"", quietly = TRUE))";
 L(end+1) = "      stop(""Reading "", f, "" needs the arrow package: install.packages('arrow')"")";
-L(end+1) = "    d <- if (dir.exists(p)) dplyr::collect(arrow::open_dataset(p)) else arrow::read_parquet(p)";
+L(end+1) = "    # unify_schemas: a click session has no frequency_khz, and arrow would take the schema of the first file only";
+L(end+1) = "    d <- if (dir.exists(p)) dplyr::collect(arrow::open_dataset(p, unify_schemas = TRUE)) else arrow::read_parquet(p)";
 L(end+1) = "  }";
 L(end+1) = "  mabr_prepare(d, table)";
 L(end+1) = "}";
@@ -3277,11 +3472,20 @@ for name = [mabr.analysis.Export.DefaultTables mabr.analysis.Export.OptionalTabl
     if name == "sweeps"
         % A study's sweeps do not fit in memory: open the dataset and filter.
         L(end+1) = "# sweeps: one row per sample -- open, filter, then collect:"; %#ok<AGROW>
-        L(end+1) = "# sweeps <- arrow::open_dataset(file.path(export_dir, mabr_files$sweeps))"; %#ok<AGROW>
+        L(end+1) = "# sweeps <- arrow::open_dataset(file.path(export_dir, mabr_files$sweeps), unify_schemas = TRUE)"; %#ok<AGROW>
         continue
     end
     L(end+1) = sprintf('%-14s<- mabr_read("%s")',name,name); %#ok<AGROW>
 end
+L(end+1) = "";
+L(end+1) = "# The *_uv columns are microvolts only where amp_unit is ""uV"" (volts at the electrodes x 1e6);";
+L(end+1) = "# sessions of converter-unit or unscaled files carry other numbers under the same names.";
+L(end+1) = "if (!is.null(conditions) && ""amp_unit"" %in% names(conditions)) {";
+L(end+1) = "  mabr_units <- unique(conditions$amp_unit[!is.na(conditions$amp_unit)])";
+L(end+1) = "  if (length(setdiff(mabr_units, ""uV"")) > 0)";
+L(end+1) = "    warning(""amp_unit: the *_uv columns are not all microvolts ("", paste(mabr_units, collapse = "", ""),";
+L(end+1) = "            ""); filter or model by amp_unit before pooling amplitudes."", call. = FALSE)";
+L(end+1) = "}";
 L(end+1) = "";
 L(end+1) = "# Frequency as a factor in ascending order; a click series is named by its stimulus";
 L(end+1) = "mabr_freq <- function(d) {";

@@ -1,4 +1,4 @@
-function [preSweep,postSweep,onsets,state,tvec] = extract_sweeps(rb,params,state)
+function [preSweep,postSweep,onsets,state,tvec,ordinals] = extract_sweeps(rb,params,state)
 % mabr.metrics.extract_sweeps  Slice pre-/post-onset sweep windows from the
 % acquisition ring buffer, incrementally.
 %
@@ -46,10 +46,17 @@ function [preSweep,postSweep,onsets,state,tvec] = extract_sweeps(rb,params,state
 %                negative time axis. Returned here rather than recomputed by
 %                the caller so the baseline offsets cannot drift apart from
 %                the ones the samples were actually taken at.
+%     ordinals   [nNew x 1] which onset of the block each returned sweep is
+%                (1 = the first onset found), so a caller pairing sweeps with
+%                planned presentations by order uses the onset's place in the
+%                block rather than its place among the sweeps RETURNED -- a
+%                sweep skipped because its baseline fell before the retained
+%                ring (see below) would otherwise shift every later pairing.
 %
 % Daniel Stolzberg (c) 2019-2026
 
-onsets = zeros(0,1);
+onsets   = zeros(0,1);
+ordinals = zeros(0,1);
 
 if nargin < 3 || isempty(state), state = struct(); end
 if ~isfield(state,'onsets'),     state.onsets     = zeros(0,1); end
@@ -161,4 +168,6 @@ if ~any(ok), return; end
 postSweep = double(rb.readSignalAt(postI(:,ok))).';   % [k x L]
 preSweep  = double(rb.readSignalAt(preI(:,ok))).';
 onsets    = o(ok).';
+ordinals  = (first:last).';
+ordinals  = ordinals(ok);
 end

@@ -40,6 +40,12 @@ classdef Recording
         SweepLength (1,1) double {mustBePositive,mustBeInteger} = 1;   % samples
         SweepValue  = [];
         IsArtifact  (:,1) logical = false(0,1);
+        % The sign (+1/-1) each sweep was presented with, aligned with
+        % SweepOnsets, or [] when unknown/all one sign. Set by the block
+        % assembly (mabr.data.Block.SweepPolarity holds the same list) so the
+        % plus/minus noise estimate can balance its halves in sign; see
+        % mabr.metrics.plus_minus for why that matters under alternation.
+        SweepPolarity (1,:) double = [];
 
         DecimationFactor (1,1) double {mustBePositive} = 1;
 
@@ -247,11 +253,24 @@ classdef Recording
         function r = get.noisePower(obj)
             % plus/minus averaging as a noise estimate, over the clean sweeps
             % only -- an artifact left in would be measured as noise it is not.
+            % HALF the difference of the two half-averages, which is the
+            % noise left in SweepMean (see mabr.metrics.snr for why); fewer
+            % than two clean sweeps have no noise estimate, so NaN rather than
+            % the RMS of the one sweep (signal and all), which read as 0 dB.
             x = obj.CleanSweepData;
-            if size(x,2) > 1
-                x = mean(x(:,1:2:end),2) - mean(x(:,2:2:end),2);
-            end
-            r = sqrt(mean(x.^2));
+            if size(x,2) < 2, r = NaN; return; end
+            pm = mabr.metrics.plus_minus(x,obj.cleanPolarity());
+            r  = sqrt(mean(pm.^2));
+        end
+
+        function p = cleanPolarity(obj)
+            % SweepPolarity mapped onto the columns of CleanSweepData (through
+            % ValidSweeps and CleanSweeps), or [] when the Recording holds no
+            % usable polarity list.
+            p = obj.SweepPolarity;
+            if numel(p) ~= numel(obj.SweepOnsets), p = []; return; end
+            p = p(obj.ValidSweeps);
+            p = p(obj.CleanSweeps);
         end
 
         function r = get.signalPower(obj)
