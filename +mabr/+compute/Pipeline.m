@@ -20,6 +20,27 @@ classdef Pipeline < handle
 %       F     = p.finalize(ringBuffer,seq);      % the DSP half of finalization
 %       p.endRun();
 %
+%   A RUN OF ANY LENGTH
+%   The ring holds Config.maxInputBufferLength samples (5.8 min at 192 kHz),
+%   and a run that fits is finalized by reading it whole out of the ring, as
+%   it always was. A run that does not fit is ARCHIVED as it streams
+%   (runInfo.Archive, set by mabr.ui.AcqController for every run whose plan
+%   is longer than the ring): each step() -- or archive(), for a process
+%   keeping a copy while another does the live work -- reads what the ring
+%   holds that is new into a mabr.compute.RunArchive, which keeps the
+%   onsets and the signal decimated to the analysis rate, exactly as a
+%   whole read would have found and resampled them. finalize() then works
+%   from the archive, and the ring only ever has to hold what arrived since
+%   the last step. The live sweeps of an archived run are windowed at the
+%   archive's onsets, so live and saved data are paired by one list. A
+%   wrapped block with NO archive is refused rather than finalized from its
+%   last lap, which would pair the first pulse left with the first
+%   presentation. One thing stays bounded by the ring: a new chain, gain or
+%   window mid-run re-reads the live sweeps from it (see configure), so the
+%   live statistics rebuilt after such a change of a run longer than the
+%   ring cover the sweeps still in it. The saved data are not affected --
+%   they come from the archive.
+%
 %   INCREMENTAL, AND EXACT
 %   mabr.metrics.extract_sweeps already caches the raw windowed sweeps in its
 %   cursor state and windows only the newly completed ones. This object keeps
@@ -135,6 +156,11 @@ classdef Pipeline < handle
         % on where the step boundaries fell.
         Acc  = []
         LastStats = []               % step()'s last answer, reused while nothing changes
+        % The run as it streams (mabr.compute.RunArchive), for a run asked to
+        % be archived; [] otherwise. Kept past endRun -- finalize reads it --
+        % and let go once finalize has used it, at the next beginRun, or by
+        % dropArchive.
+        Archive = []
     end
 
     methods
@@ -167,6 +193,10 @@ classdef Pipeline < handle
             if gain ~= obj.Gain
                 obj.Gain = gain;
                 obj.invalidateFiltered(true);
+                % An archive divides by the gain as it reads, so it takes a
+                % new one only before its first sample; after that the gain
+                % it used is what finalize reports.
+                if ~isempty(obj.Archive), obj.Archive.setGain(gain); end
             end
 
             if ~obj.Configured || ~filters.sameSettings(obj.Filters)
@@ -203,6 +233,12 @@ classdef Pipeline < handle
             %              order the per-condition rows of step() come in
             %   Labels     {1 x nStim} their IDs (optional)
             %   Meta       {1 x nStim} their StimulusSet.meta structs (optional)
+            %   Archive    (optional, default false) keep the run as it
+            %              streams, so finalize does not need the ring to
+            %              hold it (see the class help). For any run longer
+            %              than the ring; harmless for one that is not.
+            %   Samples    (optional) the run's planned length in raw
+            %              samples, so the archive can be sized once
             assert(isstruct(runInfo) && isfield(runInfo,'StimIndex'), ...
                 'mabr:compute:Pipeline:runInfo', ...
                 'beginRun needs a struct with at least a StimIndex field.');
@@ -215,14 +251,60 @@ classdef Pipeline < handle
             obj.Row = zeros(1,max([st 0]));
             obj.Row(st) = 1:numel(st);
             obj.restartExtraction();
+            obj.dropArchive();
+            if isfield(runInfo,'Archive') && ~isempty(runInfo.Archive) && runInfo.Archive
+                planned = 0;
+                if isfield(runInfo,'Samples') && ~isempty(runInfo.Samples)
+                    planned = runInfo.Samples;
+                end
+                obj.Archive = mabr.compute.RunArchive(obj.Config,obj.Gain,planned);
+            end
         end
 
         function endRun(obj)
+            % The run stops being attributed to. Its archive, if it has one,
+            % stays for finalize.
             obj.Run = [];
         end
 
         function tf = inRun(obj)
             tf = ~isempty(obj.Run);
+        end
+
+        % --- The run archive --------------------------------------------------
+        function tf = archiving(obj)
+            % Whether this run is being archived and the archive is still open.
+            tf = ~isempty(obj.Archive) && ~obj.Archive.Closed;
+        end
+
+        function archive(obj,rb)
+            % Bring the archive up to what the ring holds, and nothing else:
+            % no sweeps, no statistics, and not counted in StepCount. For a
+            % process that keeps a copy of a run another process does the
+            % live work for (mabr.ui.AcqController, while the DSP worker
+            % serves the live view), so the run survives that process.
+            if obj.archiving(), obj.Archive.update(rb,false); end
+        end
+
+        function tf = archiveLost(obj)
+            % Whether this run's archive lost samples (RunArchive.Truncated).
+            tf = ~isempty(obj.Archive) && obj.Archive.Truncated;
+        end
+
+        function S = archiveSummary(obj)
+            % What finalize would say about the archive (F.Archive), now.
+            if isempty(obj.Archive)
+                S = mabr.compute.RunArchive.noArchive();
+            else
+                S = obj.Archive.summary();
+            end
+        end
+
+        function dropArchive(obj)
+            % Let the archive go (another process's copy was used, or a new
+            % run begins).
+            if ~isempty(obj.Archive), obj.Archive.release(); end
+            obj.Archive = [];
         end
 
         % --- The live cycle -------------------------------------------------
@@ -250,6 +332,14 @@ classdef Pipeline < handle
                 'window',obj.Window,'decimation',obj.Config.decimationFactor, ...
                 'threshold',mabr.Config.OnsetThreshold, ...
                 'shadow',mabr.Config.OnsetShadow,'rearm',mabr.Config.OnsetRearm);
+            % An archived run: the archive reads what is new first, and the
+            % live sweeps are windowed at ITS onsets -- those of the whole
+            % block, the ones finalize pairs by -- whether or not this
+            % process has followed the run from its start.
+            if ~isempty(obj.Archive)
+                obj.archive(rb);
+                params.onsets = obj.Archive.onsets();
+            end
             [pre,post,~,obj.SweepState,tw,ord] = ...
                 mabr.metrics.extract_sweeps(rb,params,obj.SweepState);
             obj.StepCount = obj.StepCount + 1;
@@ -372,6 +462,10 @@ classdef Pipeline < handle
             %   F.Filters     the settings (FilterPolicy.toStruct) the
             %                 Processed traces were made with
             %   F.AmplifierGain  the gain Data was divided by (see Gain)
+            %   F.Archive     where the samples came from: RunArchive.summary
+            %                 for an archived run (Used true; Complete false
+            %                 when the archive lost samples, LostAt the first),
+            %                 RunArchive.noArchive for a run read from the ring
             %   F.Parts       one per stimulus present, in first-seen order:
             %       Stimulus, Data (single, decimated, raw), Processed (the
             %       same trace through the chain), Onsets (into Data),
@@ -390,54 +484,103 @@ classdef Pipeline < handle
             F = struct('NumOnsets',0,'Seq',zeros(1,0),'OnsetsRaw',zeros(1,0), ...
                        'OnsetsAll',zeros(1,0),'Filters',obj.Filters.toStruct(), ...
                        'AmplifierGain',obj.Gain, ...
+                       'Archive',mabr.compute.RunArchive.noArchive(), ...
                        'Parts',mabr.compute.Pipeline.emptyParts());
-            [rawSignal,rawTiming] = rb.readBlock();   % chronological, wrap-safe
-            if numel(rawSignal) < 2, return; end
-            % readBlock starts at the oldest sample still retained, which is
-            % sample 1 of the block for any run the ring can hold (longer runs
-            % are refused at build -- mabr:stim:Schedule:tooLong). Recovering
-            % the base anyway is what keeps OnsetsRaw absolute rather than
-            % quietly relative to whatever survived.
-            base = rb.WriteHead - numel(rawSignal) + 1;
+            if nargin < 4, expected = []; end
 
             cfg   = obj.Config;
             Fs    = cfg.DACSampleRate;         % ring-buffer (DAC) rate
             df    = cfg.decimationFactor;
             adcFs = cfg.ADCSampleRate;         % analysis/storage rate
 
-            onsetsRaw = mabr.metrics.find_timing_onsets(rawTiming, ...
-                round(mabr.Config.OnsetShadow*Fs),mabr.Config.OnsetThreshold, ...
-                round(mabr.Config.OnsetRearm*Fs));
-            % The timing channel has said all it will: let it go before the
-            % resample below makes its double copy of the signal (a full ring
-            % is 256 MB a channel as single, 512 MB as double).
-            rawTiming = []; %#ok<NASGU>
-            F.OnsetsAll = base + onsetsRaw(:)' - 1;   % before any trimming
-            F.Pairing   = mabr.compute.Pipeline.emptyPairing();
-            if isempty(onsetsRaw), return; end
+            if ~isempty(obj.Archive)
+                % ARCHIVED as it streamed (see the class help): the onsets
+                % and the decimated signal are already made, from every
+                % sample of the run however long it was, and the ring is
+                % only asked for what arrived since the last step. The
+                % archive starts at the block's sample 1, so its onsets are
+                % both the block-relative and the absolute indices (base 1).
+                A = obj.Archive;
+                obj.Archive = [];               % used here, and only here
+                A.close(rb);
+                F.Archive       = A.summary();
+                F.AmplifierGain = A.Gain;
+                if A.Head < 2, A.release(); return; end
+                base      = 1;
+                onsetsRaw = A.onsets();
+                F.OnsetsAll = base + onsetsRaw(:)' - 1;
+                F.Pairing   = mabr.compute.Pipeline.emptyPairing();
+                if isempty(onsetsRaw), A.release(); return; end
+                seq = double(seq(:)');
+                [onsetsRaw,seq,F.Pairing] = mabr.compute.Pipeline.pairOnsets( ...
+                    onsetsRaw(:)',F.OnsetsAll,seq,expected);
+                n = numel(onsetsRaw);
+                if n < 1, A.release(); return; end
+                % single(resample(x,1,df)/gain), made a slice at a time.
+                adcData = A.signal();
+                A.release();
+                % An archive that lost its samples within the filter's reach
+                % of the start holds onsets but no complete output.
+                if numel(adcData) < 2, F.Pairing.NumPaired = 0; return; end
+            else
+                % READ FROM THE RING, whole -- a run that fits it.
+                %
+                % A block longer than the ring that was not archived is
+                % refused: readBlock would return only its last lap, and the
+                % first pulse left in it would be paired with the first
+                % presentation of the plan. (mabr.ui.AcqController archives
+                % every run whose plan is longer than the ring; this is only
+                % reachable by driving the pipeline without that.)
+                if rb.WriteHead > rb.MaxLength
+                    error('mabr:compute:Pipeline:notArchived', ...
+                        ['The run recorded %.1f s, more than the %.1f s the ring buffer holds, ' ...
+                         'and was not archived as it streamed: its first %.1f s are gone and its ' ...
+                         'sweeps cannot be attributed to presentations. Begin such a run with ' ...
+                         'runInfo.Archive = true.'], ...
+                        rb.WriteHead/Fs,rb.MaxLength/Fs,(rb.WriteHead - rb.MaxLength)/Fs);
+                end
+                [rawSignal,rawTiming] = rb.readBlock();   % chronological, wrap-safe
+                if numel(rawSignal) < 2, return; end
+                % readBlock starts at the oldest sample still retained, which
+                % is sample 1 of the block for any run the ring can hold (the
+                % check above). Recovering the base anyway is what keeps
+                % OnsetsRaw absolute rather than quietly relative to whatever
+                % survived.
+                base = rb.WriteHead - numel(rawSignal) + 1;
 
-            % Which planned presentation each recovered onset belongs to --
-            % by order when the recording agrees with the plan, by nearest
-            % planned onset when it does not (see pairOnsets). `expected`
-            % (optional) is the plan's onset list, mabr.stim.Schedule's
-            % ExpectedOnsets, in the ring's frame.
-            if nargin < 4, expected = []; end
-            seq = double(seq(:)');
-            [onsetsRaw,seq,F.Pairing] = mabr.compute.Pipeline.pairOnsets( ...
-                onsetsRaw(:)',F.OnsetsAll,seq,expected);
-            n = numel(onsetsRaw);
-            if n < 1, return; end
+                onsetsRaw = mabr.metrics.find_timing_onsets(rawTiming, ...
+                    round(mabr.Config.OnsetShadow*Fs),mabr.Config.OnsetThreshold, ...
+                    round(mabr.Config.OnsetRearm*Fs));
+                % The timing channel has said all it will: let it go before the
+                % resample below makes its double copy of the signal (a full ring
+                % is 256 MB a channel as single, 512 MB as double).
+                rawTiming = []; %#ok<NASGU>
+                F.OnsetsAll = base + onsetsRaw(:)' - 1;   % before any trimming
+                F.Pairing   = mabr.compute.Pipeline.emptyPairing();
+                if isempty(onsetsRaw), return; end
 
-            % Decimate to the analysis rate at finalization so the Recording
-            % (and its filter design) are self-consistent. io then saves it
-            % as-is (DecimationFactor = 1) yielding the same offline-format
-            % 12 kHz .abr the legacy save_abr_data produced.
-            % Referred to the electrodes here, once, so the .abr, the
-            % filtered trace, and the artifact verdicts below all agree.
-            x         = double(rawSignal);
-            rawSignal = []; %#ok<NASGU>          % only the double copy from here
-            adcData   = single(resample(x,1,df)/obj.Gain);
-            x         = []; %#ok<NASGU>
+                % Which planned presentation each recovered onset belongs to --
+                % by order when the recording agrees with the plan, by nearest
+                % planned onset when it does not (see pairOnsets). `expected`
+                % (optional) is the plan's onset list, mabr.stim.Schedule's
+                % ExpectedOnsets, in the ring's frame.
+                seq = double(seq(:)');
+                [onsetsRaw,seq,F.Pairing] = mabr.compute.Pipeline.pairOnsets( ...
+                    onsetsRaw(:)',F.OnsetsAll,seq,expected);
+                n = numel(onsetsRaw);
+                if n < 1, return; end
+
+                % Decimate to the analysis rate at finalization so the Recording
+                % (and its filter design) are self-consistent. io then saves it
+                % as-is (DecimationFactor = 1) yielding the same offline-format
+                % 12 kHz .abr the legacy save_abr_data produced.
+                % Referred to the electrodes here, once, so the .abr, the
+                % filtered trace, and the artifact verdicts below all agree.
+                x         = double(rawSignal);
+                rawSignal = []; %#ok<NASGU>          % only the double copy from here
+                adcData   = single(resample(x,1,df)/obj.Gain);
+                x         = []; %#ok<NASGU>
+            end
             % resample keeps raw sample 1 at ADC sample 1 and puts raw sample
             % 1 + (j-1)*df at j, so a raw onset o lands on 1 + (o-1)/df.
             % round(o/df) put it (1 - 1/df) of an ADC sample EARLY on average
@@ -572,12 +715,18 @@ classdef Pipeline < handle
         function ensureCapacity(obj,need)
             % Room for `need` sweeps, and for the run's planned presentations
             % from the start, so a run fills its cache in place; doubling past
-            % that (extra onsets are not planned for, and not expected).
+            % that (extra onsets are not planned for, and not expected). The
+            % plan is reserved up to MaxReserve sweeps (~125 MB at a 10 ms
+            % window): a run may be hours long now, and committing all of it
+            % at the first sweep would claim gigabytes the run may never fill;
+            % past that the cache doubles as sweeps arrive. Storage only --
+            % every value is the same either way.
+            MaxReserve = 2^16;
             cap = size(obj.Filt,2);
             if need <= cap && size(obj.Filt,1) == 2*obj.L, return; end
             planned = 0;
             if ~isempty(obj.Run), planned = numel(obj.Run.StimIndex); end
-            newCap = max([need, 2*cap, planned + 64, 64]);
+            newCap = max([need, 2*cap, min(planned,MaxReserve) + 64, 64]);
             n = obj.NumFiltered;
             F = zeros(2*obj.L,newCap);
             B = false(1,newCap);

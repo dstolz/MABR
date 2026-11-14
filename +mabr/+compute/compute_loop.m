@@ -33,7 +33,9 @@ function compute_loop(rootPath,resultQueue,role)
 %       client -> worker : struct('cmd',mabr.compute.Cmd,'data',payload)
 %           Configure       DACSampleRate, Window, Filters (struct),
 %                           Artifacts (struct), AmplifierGain
-%           RunStart        RunId, StimIndex, Stimuli, Labels, Meta
+%           RunStart        RunId, StimIndex, Stimuli, Labels, Meta,
+%                           Archive, Samples (dsp: archive the run as it
+%                           streams -- a run longer than the ring)
 %           RunEnd          RunId
 %           Finalize        RunId, StimIndex             (dsp)
 %           AddCondition    a ConditionStore condition    (metrics)
@@ -142,6 +144,11 @@ while running
 
                 case mabr.compute.Cmd.RunStart
                     run = msg.data;
+                    % A run longer than the ring is archived as it streams
+                    % (Pipeline's class help) by the process that finalizes
+                    % it -- this one only if it is the DSP worker. The
+                    % metrics worker needs the sweeps, never the archive.
+                    if ~isDSP && isfield(run,'Archive'), run.Archive = false; end
                     if ~isempty(pipe), pipe.beginRun(run); end
                     lastTic = uint64(0);            % first cycle right away
                     mabr.log.vprintf(2,'Compute worker (%s) run %d started (%d presentations)', ...

@@ -377,7 +377,12 @@ xr = struct('underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros
 i = 1;
 % Per frame, in ms: command poll, frame render, device call, ring write, and
 % the whole iteration. Preallocated -- nothing in the loop may grow.
-ft = zeros(ceil(N/fl),5,'single');
+% A run may be of any length, so the log is bounded: past MaxFrameLog frames
+% (about 93 min at 192 kHz, 20 MB) it keeps the most recent ones, and the
+% summary says how many it covers.
+MaxFrameLog = 2^20;
+ftCap = max(1,min(ceil(N/fl),MaxFrameLog));
+ft = zeros(ftCap,5,'single');
 nf = 0;
 % Pace against a running deadline rather than pause()-per-frame: pause has
 % millisecond-scale granularity on Windows and the frame work itself takes
@@ -471,7 +476,7 @@ while i <= N
 
     i  = hi + 1;
     nf = nf + 1;
-    ft(nf,:) = 1e3*[dPoll dRender dDev dRing toc(tIter)];
+    ft(mod(nf-1,ftCap)+1,:) = 1e3*[dPoll dRender dDev dRing toc(tIter)];
 
     if testing && testDelay > 0
         paceFrames = paceFrames + 1;
@@ -488,7 +493,7 @@ nStreamed = min(i-1,N);
 mabr.log.vprintf(1,'Block %s (%d of %d samples, head = %d)', ...
     reason,nStreamed,N,rb.WriteHead);
 
-timing = summarize_frames(ft(1:nf,:),fl,spec.SampleRate);
+timing = summarize_frames(ft,nf,fl,spec.SampleRate);
 log_block_report(xr,timing,spec.SampleRate);
 end
 
@@ -513,14 +518,18 @@ end
 
 
 % =====================================================================
-function T = summarize_frames(ft,fl,fs)
-% Where the frame loop's time went. ft is [nFrames x 5] ms per frame: command
-% poll, frame render, device call, ring write, whole iteration. The device
+function T = summarize_frames(ft,nf,fl,fs)
+% Where the frame loop's time went. ft is the frame log, [cap x 5] ms per
+% frame -- command poll, frame render, device call, ring write, whole
+% iteration -- of which the first nf rows are used, or all of them in
+% rotation once nf passes cap (a run longer than the log: the most recent
+% cap frames are summarized, T.summarized says how many). The device
 % call is where the loop WAITS -- the device paces it -- so what can make an
 % underrun is everything else, `work` below: if one frame's work outlasts the
 % device's buffered slack, the output runs dry.
 %
 %   T.frames     frames streamed           T.frameMs  one frame's duration
+%   T.summarized frames the figures below cover (= frames up to the log's cap)
 %   T.columns    {'poll','render','device','ring','work'}
 %   T.p50 T.p99 T.max   [1 x 5] ms, in the order of columns
 %   T.slowest    [k x 7], the (up to) 8 frames with the most work, worst
@@ -529,18 +538,30 @@ function T = summarize_frames(ft,fl,fs)
 %                from its start), then the five columns in ms
 T = struct('frames',0,'frameMs',1e3*fl/fs, ...
     'columns',{{'poll','render','device','ring','work'}}, ...
-    'p50',zeros(1,5),'p99',zeros(1,5),'max',zeros(1,5),'slowest',zeros(0,7));
-n = size(ft,1);
-T.frames = n;
-if n == 0, return; end
-X = double([ft(:,1:4), ft(:,5) - ft(:,3)]);
+    'p50',zeros(1,5),'p99',zeros(1,5),'max',zeros(1,5),'slowest',zeros(0,7), ...
+    'summarized',0);
+cap = size(ft,1);
+T.frames = nf;
+if nf == 0 || cap == 0, return; end
+if nf <= cap
+    rows  = ft(1:nf,:);
+    frame = (1:nf)';
+else
+    % The log went round: oldest retained frame first.
+    r0    = mod(nf,cap) + 1;
+    rows  = ft([r0:cap, 1:r0-1],:);
+    frame = (nf-cap+1:nf)';
+end
+n = size(rows,1);
+T.summarized = n;
+X = double([rows(:,1:4), rows(:,5) - rows(:,3)]);
 S = sort(X,1);
 T.p50 = S(max(1,ceil(0.50*n)),:);
 T.p99 = S(max(1,ceil(0.99*n)),:);
 T.max = S(n,:);
 [~,ord] = sort(X(:,5),'descend');
 k = ord(1:min(8,n));
-T.slowest = [k(:), (k(:)-1)*fl, X(k,:)];
+T.slowest = [frame(k), (frame(k)-1)*fl, X(k,:)];
 end
 
 

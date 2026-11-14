@@ -120,6 +120,15 @@ function results = run_all_verifications()
 %                                  exact: those of the sweeps, bit-identical
 %                                  however the run is sliced, and rebuilt
 %                                  exactly on a policy, gain or chain change
+%       verify_run_archive       - a run of any length: a recorded run longer
+%                                  than the ring buffer archived as it
+%                                  streams -- the incremental onsets and
+%                                  decimation equal to the whole read, a run
+%                                  seven laps long finalized as if the ring
+%                                  held it, a lost lap detected and stopped
+%                                  at, an unarchived wrapped block refused,
+%                                  the schedule rendering it, the write head
+%                                  past 2^32
 %       verify_compute_worker    - the compute workers: publish buffers, a
 %                                  run served by the DSP worker with no
 %                                  in-process DSP, bit-identical parity with
@@ -257,7 +266,7 @@ function results = run_all_verifications()
 %   verify_offline_export, verify_offline_script, verify_offline_app,
 %   verify_offline_browser, verify_offline_grid, verify_offline_series,
 %   verify_offline_trials, verify_offline_study, verify_offline_dialogs,
-%   verify_filters, verify_live_plot,
+%   verify_filters, verify_live_plot, verify_run_archive,
 %   verify_progress_monitor, verify_presentation_order, verify_metric_plot,
 %   verify_trace_organizer,
 %   verify_trace_inspector, verify_audio_settings, verify_input_calibration,
@@ -282,7 +291,8 @@ tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_p
          @verify_custom_advance, @verify_custom_strategy, ...
          @verify_artifact_rejection, @verify_loop_mode, @verify_filters, ...
          @verify_live_plot, @verify_live_refresh, ...
-         @verify_live_pipeline, @verify_compute_worker, @verify_stimulus_alignment, ...
+         @verify_live_pipeline, @verify_run_archive, ...
+         @verify_compute_worker, @verify_stimulus_alignment, ...
          @verify_test_mode, ...
          @verify_progress_monitor, @verify_presentation_order, @verify_metric_plot, ...
          @verify_trace_organizer, @verify_trace_inspector, ...

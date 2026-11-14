@@ -8,6 +8,9 @@ classdef RingBuffer < handle
 %       * signalBufferFile - recorded signal channel (single, maxLen)
 %       * timingBufferFile - recorded timing channel (single, maxLen)
 %       * headerFile       - tiny header holding the monotonic write head
+%                            (a double, so it counts past 2^32 samples -- a
+%                            uint32 head stopped at 6.2 h of 192 kHz) and the
+%                            block sequence
 %
 %   It is a TRUE circular buffer. WriteHead is the monotonic count of samples
 %   written since the last reset() (NOT a physical index); physical storage
@@ -15,8 +18,14 @@ classdef RingBuffer < handle
 %   are split across the wrap. Readers address samples by their monotonic
 %   absolute index and the buffer maps them back to physical storage, so a
 %   block longer than one lap is still read in chronological order (only the
-%   oldest MaxLength samples survive). Commands and state travel over
+%   newest MaxLength samples survive). Commands and state travel over
 %   DataQueues, NOT through here.
+%
+%   A run may be longer than one lap: mabr.compute.RunArchive reads the ring
+%   as it is written and keeps what finalization needs, so a sample only has
+%   to survive until that reader has passed it. The oldest sample retained
+%   is max(1, WriteHead - MaxLength + 1) -- less a frame for a reader racing
+%   the writer, whose data can lead its header by that much.
 %
 %   Usage:
 %       rb = mabr.acq.RingBuffer(cfg,true)    % worker (writable)
@@ -56,8 +65,11 @@ classdef RingBuffer < handle
                 @() zeros(obj.MaxLength,1,'single'), obj.MaxLength*4);
             mabr.acq.RingBuffer.ensure_file(cfg.timingBufferFile, ...
                 @() zeros(obj.MaxLength,1,'single'), obj.MaxLength*4);
+            % 16 bytes: a double write head, a uint32 block sequence, and a
+            % uint32 of padding. A header left by an older MABR (two uint32,
+            % 8 bytes) is the wrong size and is recreated.
             mabr.acq.RingBuffer.ensure_file(cfg.headerFile, ...
-                @() zeros(1,2,'uint32'), 8);
+                @() zeros(1,4,'uint32'), 16);
 
             obj.mapSignal = memmapfile(cfg.signalBufferFile, ...
                 'Writable',obj.Writable,'Format','single','Repeat',Inf);
@@ -66,8 +78,9 @@ classdef RingBuffer < handle
             obj.mapHeader = memmapfile(cfg.headerFile, ...
                 'Writable',obj.Writable,'Repeat',1, ...
                 'Format',{ ...
-                    'uint32',[1 1],'WriteHead'; ...
-                    'uint32',[1 1],'BlockSeq'});
+                    'double',[1 1],'WriteHead'; ...
+                    'uint32',[1 1],'BlockSeq'; ...
+                    'uint32',[1 1],'Reserved'});
 
             % Seed the writer cache from whatever is on disk (reset() will
             % zero the head and bump the sequence at the next block).
@@ -97,7 +110,7 @@ classdef RingBuffer < handle
             obj.assert_writable();
             obj.CacheHead = 0;
             obj.CacheSeq  = obj.CacheSeq + 1;
-            obj.mapHeader.Data.WriteHead = uint32(0);
+            obj.mapHeader.Data.WriteHead = 0;
             obj.mapHeader.Data.BlockSeq  = uint32(obj.CacheSeq);
         end
 
@@ -125,7 +138,7 @@ classdef RingBuffer < handle
             end
 
             obj.CacheHead = obj.CacheHead + n;
-            obj.mapHeader.Data.WriteHead = uint32(obj.CacheHead);
+            obj.mapHeader.Data.WriteHead = obj.CacheHead;
         end
 
         % --- Reader-side slicing --------------------------------------------

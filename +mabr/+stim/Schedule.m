@@ -919,25 +919,19 @@ classdef Schedule < handle
             end
             N = onsets(end) + tail - 1;
 
-            % Check the run fits the ring buffer BEFORE allocating anything: an
-            % over-ambitious plan is many gigabytes, and running out of memory
-            % here would mask the real problem behind a MATLAB:nomem.
+            % The run's length, bracketed in silence (P in front, T behind) and
+            % rounded up to whole frames. There is no ceiling on it: nothing
+            % here is allocated in proportion to it (the plan below holds the
+            % bank, not the run), and a recorded run longer than the
+            % acquisition ring buffer is archived as it streams
+            % (mabr.compute.RunArchive, decided by mabr.ui.AcqController), so
+            % the ring only has to hold the last fraction of a second of it.
+            % (A recorded run used to be refused here past one ring lap --
+            % mabr:stim:Schedule:tooLong.)
             P     = round(obj.SilencePad*Fs);         % lead-in
             T     = round(obj.trailPad()*Fs);         % closing silence
             fl    = obj.Config.frameLength;
             total = ceil((N + P + T)/fl)*fl;
-            cap   = obj.Config.maxInputBufferLength;
-            % Only a RECORDED run has to fit: a stimulation-only run writes
-            % nothing into the ring (the worker streams the plan frame by
-            % frame and records no input), so the cap would refuse a long
-            % exposure for a buffer it never touches.
-            if ~obj.StimulationOnly
-                assert(total <= cap,'mabr:stim:Schedule:tooLong', ...
-                    ['Run %d plays %.1f s in one continuous run, but the recorder holds ' ...
-                     '%.1f s (%d samples). Reduce repetitions, shorten the ISI, or use a ' ...
-                     'conventional strategy so each run covers one stimulus.'], ...
-                    r,total/Fs,cap/Fs,cap);
-            end
 
             % The shortest interval is what collides, so a randomized run is
             % judged on the bottom of its range, not its mean.

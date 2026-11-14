@@ -412,15 +412,17 @@ uiwait(fig);
 
     function refreshRateNote()
         % What the selected rate works out to downstream: the derived storage
-        % rate and the stride to it. The longest run the ring buffer can hold
-        % scales with the rate too, which is a real consequence of the choice
-        % and the reason cfg is still worth having here.
+        % rate and the stride to it. How long the ring buffer holds scales
+        % with the rate too; a run longer than that is archived as it streams
+        % (mabr.compute.RunArchive), so it is no longer a limit -- but it is
+        % what decides when that happens.
         [fs,ok] = readRate();
         df  = mabr.Config.decimationFor(fs);
         adc = mabr.Config.adcRateFor(fs);
         rateNote.Text = sprintf('→ %s kHz stored (÷%d)',mabr.Config.rateText(adc),df);
         rateNote.Tooltip = sprintf(['Storage/analysis rate, derived. At %s kHz the ' ...
-            'ring buffer holds a run of up to %.1f min.'], ...
+            'ring buffer holds %.1f min; a longer run is archived at the storage ' ...
+            'rate as it streams.'], ...
             mabr.Config.rateText(fs),cfg.maxInputBufferLength/fs/60);
         if ok
             rateNote.FontColor = [0.3 0.3 0.3];

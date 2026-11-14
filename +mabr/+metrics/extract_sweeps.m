@@ -27,6 +27,12 @@ function [preSweep,postSweep,onsets,state,tvec,ordinals] = extract_sweeps(rb,par
 %               rearm       (optional) seconds the timing channel must stay
 %                           below threshold before a new onset (default 0;
 %                           see mabr.metrics.find_timing_onsets)
+%               onsets      (optional) the block's onsets as the caller has
+%                           already found them -- every one so far, absolute,
+%                           ascending (mabr.compute.RunArchive's, exact over
+%                           the whole block). Given, they are windowed as
+%                           they are and nothing is detected here; ordinals
+%                           are places in this list.
 %     state   struct carried across calls (pass [] or struct() to reset).
 %
 %   Outputs
@@ -37,7 +43,11 @@ function [preSweep,postSweep,onsets,state,tvec,ordinals] = extract_sweeps(rb,par
 %                windowed so far, state.onsets every onset found, and
 %                state.epoch counts the times it started over (a new block,
 %                or a head that went backwards) -- when it moves, the sweeps
-%                returned are the first of a new block, not more of the last
+%                returned are the first of a new block, not more of the last.
+%                state.lost counts timing samples skipped because they had
+%                been overwritten before they were read (a reader a whole lap
+%                behind; never on a run that fits the ring, nor with
+%                params.onsets)
 %     tvec       struct with .pre and .post: the time (SECONDS, relative to
 %                onset) of each column of the matching matrix. The two are
 %                contiguous, so [tvec.pre tvec.post] is one unbroken time
@@ -64,6 +74,7 @@ if ~isfield(state,'lastHead'),   state.lastHead   = 0;  end
 if ~isfield(state,'blockSeq'),   state.blockSeq   = -1; end
 if ~isfield(state,'nWindowed'),  state.nWindowed  = 0;  end
 if ~isfield(state,'epoch'),      state.epoch      = 0;  end
+if ~isfield(state,'lost'),       state.lost       = 0;  end
 
 % Reset on a new block or a head decrease (block boundary).
 seq  = rb.BlockSeq;
@@ -74,6 +85,7 @@ if seq ~= state.blockSeq || state.lastHead > head
     state.onsets    = zeros(0,1);
     state.nWindowed = 0;
     state.epoch     = state.epoch + 1;
+    state.lost      = 0;
 end
 
 Fs = params.SampleRate;
@@ -93,9 +105,28 @@ else
     rearmSamples = 0;
 end
 
+% --- onsets the caller has already found ---------------------------------
+% A run longer than the ring is archived as it streams, and the archive's
+% onsets are those of the whole block; the live sweeps are windowed at them
+% so live and saved data are paired by one list.
+if isfield(params,'onsets')
+    state.onsets   = double(params.onsets(:));
+    state.lastHead = head;
+end
+
 % --- detect new onsets in the freshly arrived region ---------------------
 if head > state.lastHead
     LB = max(1,state.lastHead+1);
+    % Only a run longer than the ring can leave this a lap behind, and such
+    % a run is archived and hands its onsets over above. Should one get
+    % here anyway, what was overwritten is skipped (counted in state.lost)
+    % rather than read wrapped -- and with it the guarantee that the k-th
+    % onset is the k-th presentation, which is why the archive exists.
+    oldest = max(1,head - rb.MaxLength + 1 + mabr.Config.frameLength);
+    if head > rb.MaxLength && LB < oldest + max(1,rearmSamples)
+        state.lost = state.lost + (oldest + max(1,rearmSamples) - LB);
+        LB = min(head + 1,oldest + max(1,rearmSamples));
+    end
 
     % A pulse that began in the PREVIOUS slice is not a new onset, and
     % neither is the far side of a dropout that began there. Read on its
@@ -161,8 +192,10 @@ o     = state.onsets(first:last).';           % [1 x k]
 postI = o + swin(:);                          % [L x k] absolute indices
 preI  = o + bwin(:);
 % A baseline or response outside the retained range is skipped, as it
-% always was (a run longer than the ring is refused at build, so this is a
-% guard rather than a path).
+% always was. Only a run longer than the ring has such sweeps -- one whose
+% windows are re-read a lap later (a new chain or gain rewinds the cursor),
+% or a reader that started late -- and its saved data come from its archive,
+% not from here.
 ok = all(preI >= oldestValid,1) & all(postI <= head,1);
 if ~any(ok), return; end
 postSweep = double(rb.readSignalAt(postI(:,ok))).';   % [k x L]
@@ -170,4 +203,17 @@ preSweep  = double(rb.readSignalAt(preI(:,ok))).';
 onsets    = o(ok).';
 ordinals  = (first:last).';
 ordinals  = ordinals(ok);
+% ...and on such a run, a window the writer lapped WHILE it was read is
+% dropped too: its samples may already be the next lap's. The writer's data
+% can lead its header by a frame. Never true of a run that fits the ring.
+head2 = rb.WriteHead;
+if head2 > rb.MaxLength
+    fresh = preI(1,ok) >= head2 - rb.MaxLength + 1 + mabr.Config.frameLength;
+    if ~all(fresh)
+        postSweep = postSweep(fresh,:);
+        preSweep  = preSweep(fresh,:);
+        onsets    = onsets(fresh);
+        ordinals  = ordinals(fresh);
+    end
+end
 end

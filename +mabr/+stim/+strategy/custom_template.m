@@ -18,7 +18,7 @@ function runs = custom_template(ctx)
 %                                       is how you order by Level or group by
 %                                       Frequency without parsing IDs
 %                 ctx.randStream        shuffle with THIS, never bare randperm
-%                 ctx.maxRunSamples     one run is one ring-buffer pass
+%                 ctx.maxRunSamples     Inf: a run has no length limit
 %               Read only the fields you need; ignore the rest. Any extra
 %               field you put in Schedule.StrategyParams arrives here too.
 %
@@ -37,12 +37,10 @@ function runs = custom_template(ctx)
 %        randperm(n). Building a plan must not perturb global rng, and it is
 %        what makes Schedule.Seed reproduce a whole session -- order and,
 %        under ISIMode 'random', timing with it.
-%     2. WATCH THE RUN LENGTH. One run is recorded in one pass of the ring
-%        buffer, so roughly numel(run)*ctx.meanISI*ctx.sampleRate must stay
-%        under ctx.maxRunSamples (~5.8 min at 192 kHz). renderSpec refuses a
-%        longer one with mabr:stim:Schedule:tooLong rather than discarding the
-%        earliest sweeps. Putting every presentation in one run is what makes
-%        this bite: split into several and the ceiling is per-run.
+%     2. A RUN MAY BE ANY LENGTH. One longer than the acquisition ring
+%        buffer (~5.8 min at 192 kHz) is archived as it streams
+%        (mabr.compute.RunArchive), so putting every presentation in one run
+%        costs nothing but memory: the decimated trace, 48 kB a second.
 %     3. PRESENT EACH ENTRY ITS ctx.repetitions COUNT, unless you mean not to.
 %        Departing is allowed and is logged, not refused -- but the usual
 %        cause is a cycle that assumed equal counts, not a design.
