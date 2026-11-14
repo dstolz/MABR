@@ -659,9 +659,13 @@ while true
     term = wait_while_paused(cmdQueue,apr,fl,duplex);
     if ~isempty(term) || bgTail == 0 || bgLead == 0, return; end
 
-    lead   = src.backgroundLead(i,bgLead);
+    % A frame at a time, each rendered as the device is ready for it, as the
+    % block itself is (bgLead is whole frames). Rendered whole first, a
+    % lead-in of a second was that much audio built with the device unfed --
+    % the underrun wait_while_paused exists to prevent -- and a long one was
+    % more memory than the worker should ever ask for in one piece.
     again  = false;
-    for a = 1:fl:size(lead,1)
+    for a = 1:fl:bgLead
         [msg,ok] = poll(cmdQueue,0);
         if ok
             switch msg.cmd
@@ -670,7 +674,7 @@ while true
                 case mabr.acq.Cmd.Pause, again = true;     break
             end
         end
-        play_unrecorded(apr,lead(a:a+fl-1,:),fl,duplex);
+        play_unrecorded(apr,src.backgroundLead(i,bgLead,a,a+fl-1),fl,duplex);
     end
     if ~isempty(term)
         % Stopped inside the pre-roll: it is audible again, so take it out.

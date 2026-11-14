@@ -76,7 +76,11 @@ stim(2).BackgroundGain = gapEnvelope;                                    % 1 ...
 set = mabr.stim.StimulusSet(stim, cfg, [], bg);
 ```
 
-An entry that only modulates its background still needs a `signal`: zeros of the event's length, which is what places its timing pulse. `Type`, `Level` and the rest describe the background in the records and are never read by the renderer. A run can have one background, so entries naming different ones (or none) cannot share a run — `mabr.stim.Schedule` refuses the plan. Give the entries numeric fields for whatever defines the background (`BackgroundLevel`, …) and list them in `informativeParams`, so a condition in a background is keyed apart from the same stimulus in quiet; `mabr.stim.fromStimgen` does this for a stimgen bank.
+An entry that only modulates its background still needs a `signal`: zeros of the event's length, which is what places its timing pulse. `Type`, `Level` and the rest describe the background in the records and are never read by the renderer. A run can have one background, so entries naming different ones (or none) cannot share a run — `mabr.stim.Schedule` refuses the plan.
+
+**Describe the background** (`Level`, and `HighPass`/`LowPass` for a noise). The set copies the description onto every entry embedded in it — `BackgroundLevel`, `BackgroundHighPass`, `BackgroundLowPass`, or `BackgroundFrequency` for a tone, in dB and Hz — and counts those among the entry's informative parameters. That is what keys a recording made in a background apart from the same stimulus in quiet in offline analysis. A value an entry already carries under one of those names is left as given. A background with none of them described cannot be keyed apart this way, and the log says so in red.
+
+To load such a bank from a file, save the entries and the backgrounds as two variables of one `.mat` (any names): `mabr.stim.StimulusSet.fromFile` takes the struct array with `Key` and `Kind` as the backgrounds.
 
 ### Loading it
 

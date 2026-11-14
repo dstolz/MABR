@@ -103,7 +103,32 @@ m = setL.meta(2);
 assert(strcmp(m.Embedding,'modulate'),'the metadata says how the entry meets its background');
 assert(~any(isfield(m,{'Background','BackgroundGain','BackgroundPhase','signal'})), ...
     'no waveform, envelope or key may travel in the metadata');
-assert(isequal(m.informativeParams,{'Level'}),'the parameters are the entry''s own');
+% What defines the background is among the entry's parameters -- the set puts
+% it there from the background's own description -- so a recording made on a
+% background is keyed apart from the same stimulus in quiet whoever built
+% the bank.
+assert(isequal(m.informativeParams,{'Level','BackgroundLevel','BackgroundHighPass','BackgroundLowPass'}) ...
+    && m.Level == 50 && m.BackgroundLevel == 50 ...
+    && m.BackgroundHighPass == 4000 && m.BackgroundLowPass == 16000, ...
+    'an entry on a noise background carries the background''s level and band as parameters');
+mT = setT.meta(1);
+assert(isequal(mT.informativeParams,{'Level','BackgroundLevel','BackgroundFrequency'}) ...
+    && mT.BackgroundLevel == 60 && mT.BackgroundFrequency == 3000, ...
+    'an entry on a tone background carries the tone''s level and frequency as parameters');
+
+% A struct-array bank saved to a .mat carries its backgrounds in the same
+% file, as a second variable.
+bankFile    = [tempname '.mat'];
+bankEntries = L;      %#ok<NASGU>
+bankBacks   = loopB;  %#ok<NASGU>
+save(bankFile,'bankEntries','bankBacks');
+bankCleaner = onCleanup(@() delete(bankFile));
+setF = mabr.stim.StimulusSet.fromFile(bankFile,cfg);
+assert(setF.numStimuli == 3 && all(setF.hasBackground()) ...
+    && isequal(setF.backgroundOf(1).signal,setL.backgroundOf(1).signal) ...
+    && isequal(setF.gain(2),amGain), ...
+    'a .mat holding the entries and their backgrounds loads as the bank it describes');
+clear bankCleaner
 
 % A modulation-only entry has a signal of zeros; what there is to show of it
 % is the modulation.
@@ -329,6 +354,25 @@ assert(pre(1,1) == 0,'the pre-roll fades in from silence');
 assert(max(abs(double(pre(R+1:end,1)) - bgL(i0-nP+R:i0-1))) < 1e-6, ...
     'past its fade the pre-roll is the background that precedes the resume point, to the sample');
 assert(~any(plan.backgroundLead(1,fl),'all'),'there is nothing to lead in before the run');
+
+% The worker asks for the pre-roll a frame at a time: the same pre-roll.
+preF = zeros(nP,2,'single');
+for a = 1:fl:nP
+    preF(a:a+fl-1,:) = plan.backgroundLead(i0,nP,a,a+fl-1);
+end
+assert(max(abs(double(preF(:)) - double(pre(:)))) < 1e-6, ...
+    'the pre-roll rendered a frame at a time must be the pre-roll rendered whole');
+% Resuming less than a pre-roll into the run: silence where the run had not
+% begun, whole or by frame.
+iE   = fl + 7;
+preE = plan.backgroundLead(iE,nP);
+preG = zeros(nP,2,'single');
+for a = 1:fl:nP
+    preG(a:a+fl-1,:) = plan.backgroundLead(iE,nP,a,a+fl-1);
+end
+assert(~any(preE(1:nP-iE+1,1)) && any(preE(:,1)) ...
+    && max(abs(double(preG(:)) - double(preE(:)))) < 1e-6, ...
+    'a pre-roll reaching back before the run is silence there, whole or by frame');
 assert(~quiet.hasBackground() && ~any(quiet.backgroundTail(i0,fl),'all') ...
     && ~any(quiet.backgroundLead(i0,fl),'all'),'a run in quiet has neither');
 assert(isequal(plan.range(1,N),M),'rendering a tail or a pre-roll must not disturb the plan');
@@ -350,8 +394,14 @@ assert(strcmp(a.Background.Type,'Noise') && strcmp(b.Background.Type,'none') ...
 assert(b.ExpectedOnsets(1) == round(schX.SilencePad*Fs) + 1 ...
     && a.ExpectedOnsets(1) == round(schX.leadPad(1)*Fs) + 1 && schX.leadPad(1) > schX.leadPad(2), ...
     'only the run on a background plays a lead-in');
+mIn = setX.meta(1); mQ = setX.meta(2);
+assert(isfield(mIn,'BackgroundLevel') && ~isfield(mQ,'BackgroundLevel') ...
+    && isequal(mQ.informativeParams,{'Level'}), ...
+    'in one bank, only the entry in the background carries the background''s parameters');
 schX.Strategy = 'interleaved';
 refused('mabr:stim:Schedule:mixedBackground',@() schX.build());
+assert(schX.NumRuns == 0 && schX.current() == 0, ...
+    'a refused plan must not be left in place (%d runs)',schX.NumRuns);
 
 % Two different backgrounds cannot share a run either.
 Y2 = L([]);
@@ -450,6 +500,57 @@ fprintf('  PASS Part H: complete, paused and stopped runs leave the plan''s samp
     numel(found),numel(specH.ExpectedOnsets));
 eng.kill();
 clear engCleaner
+
+% ...and through a DEVICE, where the fade-out and the pre-roll are actually
+% played. mabrtest.FakeAudioDevice is a loop-back paced at the device's rate:
+% what it "records" is the frame it was handed, and only a block's own frames
+% are written to the ring. So a pre-roll or a fade that reached the recording
+% would be in these samples, and the run would no longer be the plan's. This
+% is the one place the suite executes that code; that it SOUNDS continuous is
+% still a rig check.
+specD = specP;
+specD.DeviceFactory    = @mabrtest.FakeAudioDevice;
+specD.IdleClockSeconds = 30;
+engD = mabr.acq.Engine(cfg,false);          % NOT Test Mode: a device is opened
+engDCleaner = onCleanup(@() delete(engD));
+engD.waitUntilReady();
+partWayD = @() engD.State == mabr.acq.State.Acquire && engD.head() > 4*fl && engD.head() < NP;
+
+engD.prep(specD);
+wait_until(@() engD.State == mabr.acq.State.Ready,10);
+engD.run();
+wait_until(partWayD,20);
+engD.pause();
+wait_until(@() engD.State == mabr.acq.State.Paused,10);
+assert(engD.State == mabr.acq.State.Paused,'the block did not pause on a device');
+pause(0.2);                                 % the fade-out has been played by now
+h0 = engD.head();
+pause(0.2);
+assert(engD.head() == h0 && h0 > 0 && h0 < NP, ...
+    'neither the fade-out nor the paused device may be recorded');
+engD.resume();
+wait_until(@() engD.State == mabr.acq.State.Completed,60);
+assert(engD.State == mabr.acq.State.Completed && engD.head() == NP ...
+    && engD.LastStream.samples == NP, ...
+    'the paused block did not finish on a device (head %d of %d)',engD.head(),NP);
+errD = max(abs(double(engD.RingBuffer.readSignal(1,NP)) - double(MP(:,1))));
+assert(errD < 1e-6, ...
+    'on a device the fade-out and the pre-roll must stay out of the recording (max %.2e)',errD);
+
+engD.prep(specD);
+wait_until(@() engD.State == mabr.acq.State.Ready,10);
+engD.run();
+wait_until(partWayD,20);
+engD.stop();
+wait_until(@() engD.State == mabr.acq.State.Completed,30);
+nD = engD.LastStream.samples;
+assert(strcmp(engD.LastStream.reason,'stopped') && nD > 0 && nD < NP && engD.head() == nD, ...
+    'a block stopped on a device reports how far it got (%d of %d, head %d)',nD,NP,engD.head());
+errD = max(abs(double(engD.RingBuffer.readSignal(1,nD)) - double(MP(1:nD,1))));
+assert(errD < 1e-6,'the fade-out a stop plays must not be recorded (max %.2e)',errD);
+fprintf('  PASS Part H (device): paused, resumed and stopped through a device; only the plan''s samples recorded\n');
+engD.kill();
+clear engDCleaner
 
 % ======================================================================
 %  Part I -- the controller's own verdict
