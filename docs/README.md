@@ -13,6 +13,7 @@ Start here if your job is to record ABRs, not to modify the code.
 | [The Acquisition App](Acquisition-App.md) | Every control in the main window, and what it does |
 | [Viewing Data](Viewing-Data.md) | Live plot, Online Analysis, and Trace Organizer |
 | [Data Files](Data-Files.md) | Where files go, how they're named, what's inside |
+| [Ongoing Backgrounds](Background.md) | Stimuli embedded in a sound that keeps playing: a tone in noise, or AM, a gap or FM as a change to the background |
 | [Test Mode](Test-Mode.md) | Checking that stimulus and acquisition are aligned, with no hardware |
 | [The Analysis App](Analysis-App.md) | Analysing saved recordings: labels, thresholds, peaks, study comparisons, export to R |
 | [Offline Analysis](Offline-Analysis.md) | The original `abr_analysis/` function pipeline |

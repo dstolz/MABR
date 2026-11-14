@@ -352,6 +352,15 @@ classdef AcqController < handle
         % these; a stimulation-only run has no input at all, so the rendered
         % positions are what its _STIM_ .mat reports (see log_stim_run).
         CurOnsets  (1,:) double = [];
+        % The run's own play plan (the handle renderSpec built; the worker
+        % streams from a copy) and the record of the ongoing background it
+        % plays on -- mabr.stim.backgroundRecord, Type 'none' for a run in
+        % quiet. The plan is what Test Mode's waveform comparison holds the
+        % ring against when a run has a background, since the samples at an
+        % onset are then the stimulus AND the background under it; the record
+        % goes onto each Block and into the stimulation log.
+        CurPlan       = [];
+        CurBackground = [];
         % The stimuli this run presents and what to call them, worked out once
         % when the run is prepared rather than on every one of the 20 live
         % ticks a second. The live view lays out one mean per entry, so the
@@ -1146,6 +1155,16 @@ classdef AcqController < handle
             obj.CurSeq    = spec.StimulusIndex(:)';
             obj.CurPol    = spec.Polarity(:)';
             obj.CurOnsets = spec.ExpectedOnsets(:)';
+            obj.CurPlan       = [];
+            obj.CurBackground = mabr.stim.backgroundRecord();
+            if isfield(spec,'Plan'),       obj.CurPlan       = spec.Plan;       end
+            if isfield(spec,'Background'), obj.CurBackground = spec.Background; end
+            if ~strcmp(obj.CurBackground.Type,'none')
+                mabr.log.vprintf(1,['Run %d plays on an ongoing background: %s ' ...
+                    '(lead-in %.3g s, ramp %.3g ms).'],r, ...
+                    mabr.stim.backgroundText(obj.CurBackground), ...
+                    obj.CurBackground.LeadIn,1e3*obj.CurBackground.Ramp);
+            end
 
             % 'stable', so an interleaved run's live panels sit in the order
             % the stimuli are actually presented in.
@@ -1484,6 +1503,7 @@ classdef AcqController < handle
             ctx = struct('CurRun',obj.CurRun,'CurSeq',obj.CurSeq, ...
                          'CurPol',obj.CurPol,'CurOnsets',obj.CurOnsets, ...
                          'BlockStart',obj.BlockStart);
+            ctx.Background = obj.CurBackground;
         end
 
         function credit_run(obj,F,ctx)
@@ -2015,7 +2035,10 @@ classdef AcqController < handle
             % behind its traces, not a run without a recording.
             if isempty(obj.LivePlot) || ~isvalid(obj.LivePlot), return; end
             try
-                sig = arrayfun(@(u) obj.Stimuli.signal(u),obj.CurStim, ...
+                % displayWave, not signal: a stimulus that only modulates
+                % its background has a signal of zeros, and what there is to
+                % show of it is the modulation.
+                sig = arrayfun(@(u) obj.Stimuli.displayWave(u),obj.CurStim, ...
                     'UniformOutput',false);
                 obj.LivePlot.setStimulusWaves(obj.CurStim,obj.Stimuli.SampleRate,sig);
             catch me
@@ -2234,6 +2257,14 @@ classdef AcqController < handle
                 return
             end
 
+            % On an ongoing background the samples at an onset are not the
+            % stimulus alone, so that run is held against its plan instead.
+            if ~isempty(obj.CurPlan) && isa(obj.CurPlan,'mabr.stim.PlayPlan') ...
+                    && obj.CurPlan.hasBackground()
+                R = obj.compare_background_run(R,recovered,tol);
+                return
+            end
+
             rb   = obj.Engine.RingBuffer;
             head = rb.WriteHead;
             % A run longer than the ring keeps only its last lap here; the
@@ -2275,6 +2306,95 @@ classdef AcqController < handle
                 R.Summary = sprintf(['MISALIGNED: the samples at presentation %d are not ' ...
                     'stimulus %d (max error %.2e over %d presentations checked)'], ...
                     worstK,obj.CurSeq(max(1,worstK)),worst,checked);
+            end
+        end
+
+        function R = compare_background_run(obj,R,recovered,tol)
+            % compare_waveforms for a run on an ONGOING BACKGROUND.
+            %
+            % There the samples at a presentation are the background -- at
+            % whatever gain or phase that presentation gave it -- plus the
+            % stimulus, so there is no one waveform to hold them against.
+            % Two checks stand in for it, and between them they catch what
+            % the plain comparison catches:
+            %
+            %   1. the PLAN presents what the schedule says it does: its k-th
+            %      presentation is the bank's stimulus CurSeq(k), with the
+            %      polarity CurPol(k) and that stimulus's own gain and phase.
+            %      A plan rendered in one order and labelled in another, or a
+            %      polarity on the wrong presentation, fails here;
+            %   2. the RING holds what the plan renders: around every
+            %      presentation still in it, and over the run's fade-in.
+            %
+            % Compared at the PLANNED onsets against the ring at the
+            % RECOVERED ones, so an onset recovered in the wrong place fails
+            % too.
+            plan = obj.CurPlan;
+            n = min([R.NumCompared numel(obj.CurSeq) numel(obj.CurPol) numel(plan.Onsets)]);
+            for k = 1:n
+                u  = plan.StimIndex(k);
+                s  = obj.CurSeq(k);
+                ok = plan.Polarity(k) == obj.CurPol(k) ...
+                    && isequal(plan.Signals{u},obj.Stimuli.signal(s)) ...
+                    && isequaln(plan.Background.Gains{u}, obj.Stimuli.gain(s)) ...
+                    && isequaln(plan.Background.Phases{u},obj.Stimuli.phase(s));
+                if ~ok
+                    R.Aligned        = false;
+                    R.NumWaveforms   = k;
+                    R.MaxError       = Inf;
+                    R.WaveformsMatch = false;
+                    R.Summary = sprintf(['MISALIGNED: presentation %d of the play plan is ' ...
+                        'not stimulus %d as the schedule placed it (waveform, polarity or ' ...
+                        'the change it makes to the background differs)'],k,s);
+                    return
+                end
+            end
+
+            rb     = obj.Engine.RingBuffer;
+            head   = rb.WriteHead;
+            oldest = max(1,head - rb.MaxLength + 1);
+            margin = 256;                 % samples of background either side
+            worst = 0; worstK = 0; checked = 0; gone = 0;
+            for k = 1:n
+                len = numel(plan.Signals{plan.StimIndex(k)});
+                p0  = plan.Onsets(k) - margin;            % in the plan
+                p1  = plan.Onsets(k) + len - 1 + margin;
+                p0  = max(1,p0);  p1 = min(plan.N,p1);
+                shift = recovered(k) - plan.Onsets(k);    % 0 in Test Mode
+                r0  = p0 + shift; r1 = p1 + shift;        % in the ring
+                if r0 < oldest, gone = gone + 1; continue; end
+                if r0 < 1 || r1 > head, continue; end     % stopped mid-presentation
+                want = plan.range(p0,p1);
+                got  = double(rb.readSignalAt((r0:r1)'));
+                e    = max(abs(got - double(want(:,1))));
+                if e > worst, worst = e; worstK = k; end
+                checked = checked + 1;
+            end
+            % The fade-in, where a run on a background begins.
+            lead = min([plan.Background.Ramp + margin, head, plan.N]);
+            if oldest == 1 && lead >= 1
+                want  = plan.range(1,lead);
+                got   = double(rb.readSignalAt((1:lead)'));
+                worst = max(worst,max(abs(got - double(want(:,1)))));
+            end
+
+            R.NumWaveforms = checked;
+            if checked < 1, return; end
+            R.MaxError       = worst;
+            R.WaveformsMatch = worst <= tol;
+            if R.WaveformsMatch && gone > 0
+                R.Summary = sprintf(['%s; every presentation still in the ring buffer matches ' ...
+                    'the plan on its background (%d compared, max error %.1e; the first %d ' ...
+                    'are no longer in the ring to compare)'],R.Summary,checked,worst,gone);
+            elseif R.WaveformsMatch
+                R.Summary = sprintf(['%s; every presentation matches the plan on its ' ...
+                    'background (max error %.1e)'],R.Summary,worst);
+            else
+                R.Aligned = false;
+                R.Summary = sprintf(['MISALIGNED: the samples at presentation %d are not ' ...
+                    'stimulus %d on its background as the plan rendered it (max error ' ...
+                    '%.2e over %d presentations checked)'], ...
+                    max(1,worstK),obj.CurSeq(max(1,worstK)),worst,checked);
             end
         end
 
@@ -2355,6 +2475,12 @@ classdef AcqController < handle
                 % from now -- reads it off the block rather than having to
                 % know what the audio settings were at the time.
                 blk.TestMode = obj.Testing;
+                % The ongoing background the run played on (Type 'none' for
+                % a run in quiet): the same run-level record on every block
+                % of the run, as the alignment verdict is.
+                if isfield(ctx,'Background') && isstruct(ctx.Background)
+                    blk.Background = ctx.Background;
+                end
                 % The gain Data was already divided by -- the one the parts
                 % were MADE with, like `made` above -- split back into the
                 % external amplifier and the input's full scale, so the file
@@ -2475,6 +2601,9 @@ classdef AcqController < handle
             info.ISI             = obj.Schedule.ISI;
             info.ISIRange        = obj.Schedule.ISIRange;
             info.SilencePad      = obj.Schedule.SilencePad;
+            % The ongoing background the run played on, lead-in and loop
+            % offset included (Type 'none' for a run in quiet).
+            info.Background      = obj.CurBackground;
             info.IDs             = obj.Stimuli.IDs();
             info.StimulusMeta    = arrayfun(@(u) obj.Stimuli.meta(u), ...
                 1:obj.Stimuli.numStimuli,'UniformOutput',false);

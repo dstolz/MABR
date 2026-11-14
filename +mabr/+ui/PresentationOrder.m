@@ -1144,11 +1144,13 @@ classdef PresentationOrder < handle
 
         function k = estimatePlayed(obj,sch,len)
             % A stimulation-only run's presentations begun so far, from its
-            % clock -- onset k at SilencePad + (k-1)*MeanISI.
+            % clock -- onset k at the run's lead-in + (k-1)*MeanISI
+            % (SilencePad, or longer on an ongoing background:
+            % mabr.stim.Schedule.leadPad).
             k = 0;
             if obj.RunT0 == 0, return; end
             if isnan(obj.RunT1), t = obj.runClock(); else, t = obj.RunT1; end
-            t   = t - sch.SilencePad;
+            t   = t - leadSeconds(sch);
             isi = sch.MeanISI;
             if t < 0 || ~(isi > 0), return; end
             k = min(len,floor(t/isi) + 1);
@@ -1659,4 +1661,17 @@ if L > 3
     s = [s(1:k) reshape([repmat(',',1,size(g,2)); g],1,[])];
 end
 if n < 0, s = ['-' s]; end
+end
+
+function t = leadSeconds(sch)
+% Seconds from the current run's first sample to its first onset. Asked of
+% the schedule where it can say (a real mabr.stim.Schedule), else SilencePad
+% -- what a stand-in schedule in a test offers.
+t = sch.SilencePad;
+try
+    if sch.CurrentRun >= 1
+        t = sch.leadPad(sch.CurrentRun);
+    end
+catch
+end
 end

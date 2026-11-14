@@ -45,6 +45,40 @@ classdef StimulusSet < handle
 %   Numeric scalar extras are otherwise advertised as informativeParams so
 %   the offline pipeline picks them up (see mabr.data.io.buildSIG).
 %
+%   AN ONGOING BACKGROUND. A stimulus may be EMBEDDED in a sound that plays
+%   continuously through the run -- a tone in noise, a gap in noise, FM of a
+%   steady tone (docs/Background.md). The run's signal is then
+%
+%       y(i) = env(i) * G(i) * B(i, theta(i))  +  sum of the signals
+%
+%   and three more names are given meaning on an entry:
+%
+%       Background      char      key of the background this entry is embedded
+%                                 in ('' = none), naming an element of the
+%                                 set's Backgrounds
+%       BackgroundGain  [N x 1]   gain G applied to the background over this
+%                                 presentation ([] = 1): AM, a silent gap
+%       BackgroundPhase [N x 1]   phase deviation theta of a TONE background,
+%                                 radians, starting at 0 ([] = none): FM. Its
+%                                 last value is where the tone carries on from
+%
+%   An entry that only modulates the background still carries a `signal`:
+%   zeros of the event's length. The timing pulse, duration and overlap
+%   arithmetic therefore see an ordinary entry.
+%
+%   The backgrounds themselves are the set's fourth constructor argument, a
+%   struct array (see validateBackground):
+%
+%       Key        char     what entries name
+%       Kind       'loop' | 'tone'
+%       signal     [n x 1]  one seamless lap of the background ('loop')
+%       Frequency, Amplitude   Hz and peak, of a 'tone'
+%       Type, Level, HighPass, LowPass, LoopDuration, Seed, Calibrated,
+%       LevelScale          description only, carried into the records
+%
+%   A run has ONE background: mabr.stim.Schedule refuses a run whose stimuli
+%   do not all name the same one.
+%
 %   MABR -- not the stimulus package -- owns presentation. The spacing between
 %   stimuli, how entries are combined across the array (blocked, interleaved,
 %   shuffled), and how many times each is repeated are all decided by
@@ -58,7 +92,8 @@ classdef StimulusSet < handle
     properties (Constant, Access = private)
         % Fields MABR interprets itself; everything else is passthrough metadata.
         ReservedFields = {'signal','ID','SampleRate','Repetitions','Timing', ...
-                          'alternatePolarity','informativeParams'};
+                          'alternatePolarity','informativeParams', ...
+                          'Background','BackgroundGain','BackgroundPhase'};
     end
 
     properties (SetAccess = private)
@@ -76,13 +111,31 @@ classdef StimulusSet < handle
         %   Calibration  .esgc file the waveforms were built against, if any
         %   Generated    datetime the bank was materialized
         Source     (1,1) struct = struct('Kind','','File','','Calibration','','Generated',NaT)
+
+        % The ongoing backgrounds the entries are embedded in, one element
+        % per distinct background (see the class help). Empty for a bank
+        % presented in quiet.
+        Backgrounds (1,:) struct = struct([])
     end
 
     methods
-        function obj = StimulusSet(stim,cfg,source)
+        function obj = StimulusSet(stim,cfg,source,backgrounds)
             if nargin < 2 || isempty(cfg), cfg = mabr.Config; end
             if nargin >= 3 && ~isempty(source)
                 obj.Source = mabr.stim.StimulusSet.normalizeSource(source);
+            end
+            if nargin >= 4 && ~isempty(backgrounds)
+                assert(isstruct(backgrounds),'mabr:stim:StimulusSet:badBackground', ...
+                    'Backgrounds must be a struct array.');
+                b = cell(1,numel(backgrounds));
+                for i = 1:numel(backgrounds)
+                    b{i} = mabr.stim.StimulusSet.validateBackground(backgrounds(i),i);
+                end
+                obj.Backgrounds = [b{:}];
+                keys = {obj.Backgrounds.Key};
+                assert(numel(unique(keys)) == numel(keys), ...
+                    'mabr:stim:StimulusSet:badBackground', ...
+                    'Two backgrounds share one Key.');
             end
             if nargin < 1 || isempty(stim)
                 obj.Stimuli    = struct([]);
@@ -114,6 +167,8 @@ classdef StimulusSet < handle
                 ['Stimulus SampleRate (%g Hz) must equal Config.DACSampleRate ' ...
                  '(%g Hz) -- the ring buffer and sweep windowing assume it.'], ...
                 obj.SampleRate,cfg.DACSampleRate);
+
+            obj.checkEmbedding();
         end
 
         function n = numStimuli(obj)
@@ -180,6 +235,122 @@ classdef StimulusSet < handle
             if obj.numStimuli == 0, d = 0; else, d = max(obj.duration()); end
         end
 
+        % --- Ongoing background --------------------------------------------
+        function key = backgroundKey(obj,i)
+            % Key of the background entry i is embedded in; '' for none.
+            obj.checkRange(i);
+            key = '';
+            if isfield(obj.Stimuli,'Background') && ~isempty(obj.Stimuli(i).Background)
+                key = char(string(obj.Stimuli(i).Background));
+            end
+        end
+
+        function tf = hasBackground(obj,i)
+            % True where an entry is embedded in a background. With no
+            % argument, for the whole bank.
+            if nargin < 2 || isempty(i), i = 1:obj.numStimuli; end
+            tf = false(size(i));
+            for k = 1:numel(i)
+                tf(k) = ~isempty(obj.backgroundKey(i(k)));
+            end
+        end
+
+        function B = background(obj,key)
+            % The background with this Key, or [] for '' (none).
+            B = [];
+            key = char(string(key));
+            if isempty(key), return; end
+            k = [];
+            if ~isempty(obj.Backgrounds)
+                k = find(strcmp({obj.Backgrounds.Key},key),1);
+            end
+            assert(~isempty(k),'mabr:stim:StimulusSet:unknownBackground', ...
+                'This bank holds no background with the key "%s".',key);
+            B = obj.Backgrounds(k);
+        end
+
+        function B = backgroundOf(obj,i)
+            % The background entry i is embedded in, or [].
+            B = obj.background(obj.backgroundKey(i));
+        end
+
+        function g = gain(obj,i)
+            % Gain envelope entry i applies to its background, or [] for none.
+            obj.checkRange(i);
+            g = [];
+            if isfield(obj.Stimuli,'BackgroundGain'), g = obj.Stimuli(i).BackgroundGain; end
+        end
+
+        function p = phase(obj,i)
+            % Phase deviation (rad) entry i applies to a tone background, or [].
+            obj.checkRange(i);
+            p = [];
+            if isfield(obj.Stimuli,'BackgroundPhase'), p = obj.Stimuli(i).BackgroundPhase; end
+        end
+
+        function mode = embeddingMode(obj,i)
+            % How entry i meets its background:
+            %   'none'      it has none
+            %   'add'       its signal is summed onto the background
+            %   'modulate'  it changes the background (gain and/or phase) and
+            %               adds nothing
+            %   'both'      it does both
+            mode = 'none';
+            if ~obj.hasBackground(i), return; end
+            mods = ~isempty(obj.gain(i)) || ~isempty(obj.phase(i));
+            adds = any(obj.Stimuli(i).signal ~= 0);
+            if mods && adds,  mode = 'both';
+            elseif mods,      mode = 'modulate';
+            else,             mode = 'add';
+            end
+        end
+
+        function w = displayWave(obj,i)
+            % A waveform that SHOWS entry i, for a view that draws the
+            % stimulus normalized: its signal -- or, for an entry that only
+            % modulates its background and so has a signal of zeros, the
+            % modulation itself: the gain's departure from 1, else the
+            % frequency deviation its phase describes (Hz).
+            w = obj.signal(i);
+            if any(w ~= 0), return; end
+            g = obj.gain(i);
+            if ~isempty(g)
+                w = single(double(g(:)) - 1);
+                return
+            end
+            p = obj.phase(i);
+            if numel(p) > 1
+                d = diff(double(p(:))).*obj.SampleRate./(2*pi);
+                w = single([d; d(end)]);
+            end
+        end
+
+        function [y,t] = embedded(obj,i,pre,post)
+            % One presentation of entry i rendered in its background, with
+            % `pre` and `post` seconds of background around it (default 0),
+            % as [N x 1] single; t is seconds, 0 at the onset. Without a
+            % background, the signal between silences.
+            %
+            % Rendered by a one-presentation mabr.stim.PlayPlan with no
+            % run-edge ramp and no loop offset, so this is the arithmetic an
+            % acquisition performs and not a second copy of it -- and, for a
+            % stimgen bank, the same samples as that stimulus's
+            % embedded_signal(pre,post).
+            if nargin < 3 || isempty(pre),  pre  = 0; end
+            if nargin < 4 || isempty(post), post = 0; end
+            obj.checkRange(i);
+            Fs   = obj.SampleRate;
+            w    = obj.signal(i);
+            nPre = round(pre*Fs);
+            N    = nPre + numel(w) + round(post*Fs);
+            bg   = mabr.stim.PlayPlan.backgroundSpec(obj.backgroundOf(i),Fs, ...
+                       {obj.gain(i)},{obj.phase(i)},0,0);
+            plan = mabr.stim.PlayPlan({w},{obj.timing(i)},nPre+1,1,1,N,bg);
+            y    = plan.range(1,N);
+            y    = y(:,1);
+            t    = ((0:N-1)' - nPre)./Fs;
+        end
+
         function r = defaultRepetitions(obj)
             % Per-entry starting repetition counts for the GUI: the entry's own
             % Repetitions field where supplied, else 0 meaning "no preference".
@@ -204,10 +375,25 @@ classdef StimulusSet < handle
             % presented is part of what it means, and offline analysis needs it.
             m.alternatePolarity = logical(s.alternatePolarity);
 
+            % An EMPTY extra is a field this entry does not have: a bank
+            % mixing stimulus kinds carries one field set (struct-array
+            % concatenation requires it), and the fields one kind lacks are
+            % filled with []. Copying those through would hand every reader
+            % of the metadata -- the file name, the .abr's SIG -- a parameter
+            % with no value.
             [ip,extra] = mabr.stim.StimulusSet.informativeNames(s);
             for k = 1:numel(extra)
-                m.(extra{k}) = s.(extra{k});
+                if ~isempty(s.(extra{k}))
+                    m.(extra{k}) = s.(extra{k});
+                end
             end
+            ip = ip(isfield(m,ip));
+
+            % How this entry is embedded in its background, where it has one.
+            % A word, not the background itself: that is recorded once per
+            % block (mabr.stim.backgroundRecord).
+            mode = obj.embeddingMode(i);
+            if ~strcmp(mode,'none'), m.Embedding = mode; end
 
             m.informativeParams = ip(:)';
 
@@ -319,6 +505,32 @@ classdef StimulusSet < handle
     end
 
     methods (Access = private)
+        function checkEmbedding(obj)
+            % Every background an entry names must exist, and a phase
+            % deviation needs a tone to act on: noise has no phase to shift.
+            for i = 1:obj.numStimuli
+                key = obj.backgroundKey(i);
+                if isempty(key)
+                    assert(isempty(obj.gain(i)) && isempty(obj.phase(i)), ...
+                        'mabr:stim:StimulusSet:modulationNeedsBackground', ...
+                        ['Stimulus entry %d (%s) carries a BackgroundGain or ' ...
+                         'BackgroundPhase but names no Background to apply it to.'], ...
+                        i,obj.Stimuli(i).ID);
+                    continue
+                end
+                B = obj.background(key);
+                assert(isempty(obj.phase(i)) || strcmp(B.Kind,'tone'), ...
+                    'mabr:stim:StimulusSet:phaseNeedsTone', ...
+                    ['Stimulus entry %d (%s) modulates the PHASE of its background ' ...
+                     '(frequency modulation), which needs a tone; its background is ' ...
+                     'a %s.'],i,obj.Stimuli(i).ID,B.Kind);
+                assert(B.SampleRate == obj.SampleRate, ...
+                    'mabr:stim:StimulusSet:backgroundRate', ...
+                    ['The background of stimulus entry %d (%s) is at %g Hz, but the ' ...
+                     'bank is at %g Hz.'],i,obj.Stimuli(i).ID,B.SampleRate,obj.SampleRate);
+            end
+        end
+
         function checkRange(obj,i)
             assert(isscalar(i) && i >= 1 && i <= obj.numStimuli, ...
                 'mabr:stim:StimulusSet:range', ...
@@ -393,6 +605,104 @@ classdef StimulusSet < handle
                     'Stimulus entry %d: Timing (%d) must match signal (%d).', ...
                     idx,numel(s.Timing),numel(s.signal));
             end
+
+            % The embedding fields, normalized onto every entry for the same
+            % reason alternatePolarity is: one common field set.
+            if ~isfield(s,'Background') || isempty(s.Background)
+                s.Background = '';
+            end
+            assert(ischar(s.Background) || (isstring(s.Background) && isscalar(s.Background)), ...
+                'mabr:stim:StimulusSet:badBackground', ...
+                'Stimulus entry %d: Background must be the key of a background (text).',idx);
+            s.Background = char(string(s.Background));
+
+            if ~isfield(s,'BackgroundGain'),  s.BackgroundGain  = []; end
+            if ~isfield(s,'BackgroundPhase'), s.BackgroundPhase = []; end
+            if ~isempty(s.BackgroundGain)
+                g = double(s.BackgroundGain(:));
+                assert(numel(g) == numel(s.signal) && all(isfinite(g)) && all(g >= 0), ...
+                    'mabr:stim:StimulusSet:badGain', ...
+                    ['Stimulus entry %d: BackgroundGain must be finite, non-negative ' ...
+                     'and the length of signal (%d).'],idx,numel(s.signal));
+                s.BackgroundGain = g;
+            else
+                s.BackgroundGain = [];
+            end
+            if ~isempty(s.BackgroundPhase)
+                ph = double(s.BackgroundPhase(:));
+                assert(numel(ph) == numel(s.signal) && all(isfinite(ph)), ...
+                    'mabr:stim:StimulusSet:badPhase', ...
+                    ['Stimulus entry %d: BackgroundPhase must be finite and the ' ...
+                     'length of signal (%d).'],idx,numel(s.signal));
+                assert(abs(ph(1)) < 1e-9,'mabr:stim:StimulusSet:badPhase', ...
+                    ['Stimulus entry %d: BackgroundPhase must start at 0 (it starts ' ...
+                     'at %g rad), or the background would jump at the onset.'],idx,ph(1));
+                s.BackgroundPhase = ph;
+            else
+                s.BackgroundPhase = [];
+            end
+        end
+
+        function b = validateBackground(b,idx)
+            % Validate and normalize one background against the contract in
+            % the class help. Description fields are filled with NaN / ''
+            % where the source said nothing.
+            if nargin < 2 || isempty(idx), idx = 1; end
+            assert(isstruct(b) && isscalar(b),'mabr:stim:StimulusSet:badBackground', ...
+                'Background %d must be a scalar struct.',idx);
+            assert(isfield(b,'Key') && ~isempty(b.Key),'mabr:stim:StimulusSet:badBackground', ...
+                'Background %d needs a nonempty Key.',idx);
+            assert(isfield(b,'Kind') && any(strcmpi(char(string(b.Kind)),{'loop','tone'})), ...
+                'mabr:stim:StimulusSet:badBackground', ...
+                'Background %d: Kind must be ''loop'' or ''tone''.',idx);
+            assert(isfield(b,'SampleRate') && isscalar(b.SampleRate) && b.SampleRate > 0, ...
+                'mabr:stim:StimulusSet:badBackground', ...
+                'Background %d needs its SampleRate.',idx);
+
+            out = struct();
+            out.Key        = char(string(b.Key));
+            out.Kind       = lower(char(string(b.Kind)));
+            out.SampleRate = double(b.SampleRate);
+            out.signal     = zeros(0,1,'single');
+            out.Frequency  = NaN;
+            out.Amplitude  = NaN;
+
+            switch out.Kind
+                case 'loop'
+                    assert(isfield(b,'signal') && isnumeric(b.signal) && numel(b.signal) >= 2 ...
+                           && all(isfinite(b.signal(:))), ...
+                        'mabr:stim:StimulusSet:badBackground', ...
+                        'Background %d (loop) needs a finite "signal" of at least two samples.',idx);
+                    out.signal = single(b.signal(:));
+                case 'tone'
+                    ok = isfield(b,'Frequency') && isfield(b,'Amplitude') ...
+                         && isscalar(b.Frequency) && isscalar(b.Amplitude) ...
+                         && isfinite(b.Frequency) && isfinite(b.Amplitude) ...
+                         && b.Frequency > 0 && b.Frequency < out.SampleRate/2 ...
+                         && b.Amplitude >= 0;
+                    assert(ok,'mabr:stim:StimulusSet:badBackground', ...
+                        ['Background %d (tone) needs a Frequency between 0 and half ' ...
+                         'the sample rate and a non-negative Amplitude.'],idx);
+                    out.Frequency = double(b.Frequency);
+                    out.Amplitude = double(b.Amplitude);
+            end
+
+            % Description: what the records say about it. Never read by the
+            % renderer.
+            out.Type         = bgText(b,'Type',out.Kind);
+            out.Level        = bgNumber(b,'Level');
+            out.HighPass     = bgNumber(b,'HighPass');
+            out.LowPass      = bgNumber(b,'LowPass');
+            out.LoopDuration = bgNumber(b,'LoopDuration');
+            out.Seed         = bgNumber(b,'Seed');
+            out.Calibrated   = isfield(b,'Calibrated') && ~isempty(b.Calibrated) ...
+                               && logical(b.Calibrated(1));
+            out.LevelScale   = bgNumber(b,'LevelScale');
+            if isnan(out.LevelScale), out.LevelScale = 1; end
+            if strcmp(out.Kind,'loop') && isnan(out.LoopDuration)
+                out.LoopDuration = numel(out.signal)/out.SampleRate;
+            end
+            b = out;
         end
 
         function set = fromFile(ffn,cfg)
@@ -544,4 +854,20 @@ classdef StimulusSet < handle
             tf = all(logical([obj.Stimuli.Calibrated]));
         end
     end
+end
+
+
+% =========================================================================
+function v = bgNumber(b,f)
+% A numeric scalar field of a background description, or NaN.
+v = NaN;
+if isfield(b,f) && isnumeric(b.(f)) && isscalar(b.(f))
+    v = double(b.(f));
+end
+end
+
+function v = bgText(b,f,default)
+% A text field of a background description, or the default.
+v = default;
+if isfield(b,f) && ~isempty(b.(f)), v = char(string(b.(f))); end
 end

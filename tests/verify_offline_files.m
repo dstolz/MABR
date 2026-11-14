@@ -495,6 +495,7 @@ sameFields(fieldnames(Aw),fieldnames(ref),'top level');
 sameFields(fieldnames(Aw.ADC),fieldnames(ref.ADC),'ADC');
 sameFields(fieldnames(Aw.DAC),fieldnames(ref.DAC),'DAC');
 sameFields(fieldnames(Aw.Notes),fieldnames(ref.Notes),'Notes');
+sameFields(fieldnames(Aw.Background),fieldnames(ref.Background),'Background');
 sameFields(setdiff(fieldnames(Aw.SIG),cellstr(Aw.SIG.informativeParams)), ...
     setdiff(fieldnames(ref.SIG),cellstr(ref.SIG.informativeParams)),'SIG (less its parameters)');
 % the writer's own file, named and saved as mabr.data.io.writeABR does (without

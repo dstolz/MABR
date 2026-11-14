@@ -29,6 +29,13 @@ function verify_stimgen_import()
 %        between the signs, not doubled as OnsetPhase = [0 180] would; a
 %        ClickTrain alternates presentations the same way under Polarity = 2,
 %        and its in-train alternation (0) is not flipped a second time
+%     9. an ONGOING BACKGROUND comes across: a tone in noise, AM and a gap of
+%        the noise, FM of a tone -- each entry naming its background, the set
+%        holding it once, a modulation importing as a gain or phase with a
+%        signal of zeros, the background's parameters informative on every
+%        entry that has one, and MABR's render of a presentation in its
+%        background the same samples as stimgen's own embedded_signal.
+%        Skipped where the submodule predates get_embedding
 %
 %   Skips (and passes) when the stimgen submodule is not initialized, so the
 %   suite still runs on a clone that never fetched it.
@@ -387,6 +394,95 @@ assert(max(oneAlt.signal(1)) > 0 && min(oneAlt.signal(1)) >= 0, ...
     'A single-click ClickTrain under Polarity = 2 is not a positive click.');
 fprintf(['  polarity: Tone -1 inverts, 0 alternates presentations (3 + 3 of 6); ' ...
          'ClickTrain 2 alternates presentations, 0 stays in-train\n']);
+
+% --- 9. an ongoing background ----------------------------------------
+if ~ismethod(stimgen.Tone,'get_embedding')
+    fprintf('  SKIP 9: this stimgen submodule predates ongoing backgrounds (no get_embedding)\n');
+else
+    % Calibrated (the table from 6c), so the volts are stimgen's own and
+    % nothing is rescaled on import: what MABR renders can then be held
+    % against what stimgen renders, sample for sample.
+    Fs = cfg.DACSampleRate;
+    bg = {'BackgroundHighPass',4000,'BackgroundLowPass',16000, ...
+          'BackgroundLoopDuration',1,'BackgroundSeed',5};
+    tn  = stimgen.Tone('Frequency',8000,'SoundLevel',[40 60],'Duration',0.005, ...
+              'Background',"Noise",'BackgroundLevel',50,bg{:});
+    tn.DisplayName = "tin";
+    am  = stimgen.BackgroundAM('AMRate',400,'AMDepth',0.5,'Duration',0.005, ...
+              'SoundLevel',50,bg{:});
+    gap = stimgen.BackgroundGap('Duration',0.005,'SoundLevel',50,bg{:});
+    fm  = stimgen.BackgroundFM('BackgroundFrequency',4000,'FMRate',100,'FMDeviation',300, ...
+              'Duration',0.005,'SoundLevel',60);
+    tn.Calibration = cal; am.Calibration = cal; gap.Calibration = cal; fm.Calibration = cal;
+
+    setB = mabr.stim.fromStimgen([tn am gap],cfg);
+    assert(setB.numStimuli == 4,'two tone levels, AM and a gap are four entries');
+    assert(setB.isCalibrated(),'the bank was built against the calibration');
+    assert(numel(setB.Backgrounds) == 1 && strcmp(setB.Backgrounds(1).Kind,'loop') ...
+        && numel(setB.Backgrounds(1).signal) == Fs && setB.Backgrounds(1).Calibrated, ...
+        ['the four entries share ONE background -- a 1 s loop at the DAC rate -- since ' ...
+         'the modulations'' level is their Sound Level and equals the tones'' Background Level']);
+    assert(all(setB.hasBackground()),'every entry is embedded in it');
+    modes = cell(1,4);
+    for i = 1:4, modes{i} = setB.embeddingMode(i); end
+    assert(isequal(modes,{'add','add','modulate','modulate'}), ...
+        'a tone is added to the background; AM and a gap modulate it (%s)',strjoin(modes,', '));
+    assert(~any(setB.signal(3)) && ~isempty(setB.gain(3)) && isempty(setB.phase(3)) ...
+        && isempty(setB.gain(1)),'a modulation imports as a gain and a signal of zeros');
+    assert(~any(setB.alternatesPolarity(3:4)),'a modulation has nothing of its own to invert');
+
+    % The background's defining parameters are informative on every entry.
+    for i = 1:4
+        mi = setB.meta(i);
+        assert(all(ismember({'BackgroundLevel','BackgroundHighPass','BackgroundLowPass'}, ...
+            mi.informativeParams)) && mi.BackgroundLevel == 50 && mi.BackgroundHighPass == 4000, ...
+            'entry %d must carry its background''s parameters as informative',i);
+    end
+
+    % MABR's render of one presentation in its background is stimgen's. (A
+    % modulation's stand-alone Signal draws fresh noise; embedded_signal, like
+    % a presenter, uses the seeded loop.)
+    pre = 0.02; post = 0.03;
+    src = {tn,tn,am,gap};
+    e9  = 0;
+    for i = 1:4
+        s = copy(src{i});
+        s.Fs = Fs;
+        s.VariantReselectOnUpdate = false;
+        if i <= 2, s.set_variant_index(i); else, s.update_signal(); end
+        want = s.embedded_signal(pre,post);
+        got  = setB.embedded(i,pre,post);
+        assert(numel(got) == numel(want), ...
+            'entry %d: MABR rendered %d samples where stimgen rendered %d',i,numel(got),numel(want));
+        e9 = max(e9,max(abs(double(got(:)) - want(:))));
+        assert(e9 < 1e-7 && max(abs(want)) > 1e-4, ...
+            'entry %d rendered in its background differs from stimgen''s (max %.2e)',i,e9);
+    end
+
+    % FM of a steady tone, on its own tone background.
+    setF = mabr.stim.fromStimgen(fm,cfg);
+    assert(strcmp(setF.Backgrounds(1).Kind,'tone') && setF.Backgrounds(1).Frequency == 4000 ...
+        && ~isempty(setF.phase(1)) && isempty(setF.gain(1)) && strcmp(setF.embeddingMode(1),'modulate'), ...
+        'FM imports as a phase deviation of a tone background');
+    f2 = copy(fm); f2.Fs = Fs; f2.update_signal();
+    want = f2.embedded_signal(pre,post);
+    got  = setF.embedded(1,pre,post);
+    eF   = max(abs(double(got(:)) - want(:)));
+    assert(numel(got) == numel(want) && eF < 1e-7, ...
+        'FM rendered in its tone differs from stimgen''s embedded_signal (max %.2e)',eF);
+
+    % And it schedules: the tones and the modulations share a background, so
+    % they may be interleaved.
+    schB = mabr.stim.Schedule(setB,cfg);
+    schB.Strategy = 'interleaved'; schB.Repetitions = 2; schB.ISI = 0.02;
+    schB.build();
+    spB = schB.renderSpec(1);
+    assert(spB.Plan.hasBackground() && strcmp(spB.Background.Type,'Noise') ...
+        && spB.Background.Level == 50 && spB.Background.Calibrated, ...
+        'the run renders on the imported background');
+    fprintf(['  ongoing background: tone-in-noise, AM, gap and FM import as add / gain / phase, ' ...
+        'and render as stimgen''s embedded_signal (max %.1e)\n'],max(e9,eF));
+end
 
 fprintf('== verify_stimgen_import PASSED ==\n');
 end

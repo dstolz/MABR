@@ -82,6 +82,10 @@ classdef App < handle
 
     properties (Constant)
         DefaultRateHz = 21.1;   % stimulus presentation rate (Hz)
+        % s an ongoing background plays before a run's first stimulus -- the
+        % Presentation panel's lead-in field starts here, and it is
+        % mabr.stim.Schedule.BackgroundLeadIn's own default.
+        DefaultBackgroundLeadIn = 1;
 
         % Shared width of the label column in every panel, so the fields line
         % up along one edge down the whole window.
@@ -134,9 +138,10 @@ classdef App < handle
         % stopped at a glance.
         CollapsibleSections = {'Session','Stimulus','Presentation','Acquisition'};
         % What the window is taller than its grid's fixed rows, spacing and
-        % padding add up to -- the 16 px it has always had over the 790 px
-        % those came to (806). fitHeight keeps it whatever is folded, so a
-        % fully open window is exactly the size it always was.
+        % padding add up to -- the 16 px it has always had over what those
+        % come to (820, so 836 open: the Presentation panel's Background row
+        % made it 30 px taller than the 806 it was). fitHeight keeps it
+        % whatever is folded, so a fully open window is exactly that size.
         WindowSlack = 16;
         % A panel's title bar, should measuring the Run panel's fail
         % (collapsedHeight).
@@ -393,6 +398,8 @@ classdef App < handle
         JitterCheck
         ISIMinField
         ISIMaxField
+        BackgroundLabel
+        BackgroundLeadField
         OverlapLabel
         PlanLabel
         RunPanel
@@ -746,7 +753,7 @@ classdef App < handle
             % Output field refits its labels on (buildSessionPanel). Nothing
             % is lost by it: the window's one child is a uigridlayout, which
             % lays itself out whatever this says.
-            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 806], ...
+            app.UIFigure = uifigure('Name','MABR', 'Position',[100 100 480 836], ...
                 'AutoResizeChildren','off', ...
                 'Tag',mabr.ui.App.InstanceTag, ...
                 'CloseRequestFcn',@(~,~) app.onClose());
@@ -902,7 +909,7 @@ classdef App < handle
             % not see through a panel to its nested grid.
             app.Grid = uigridlayout(app.UIFigure,[7 1]);
             app.Grid.ColumnWidth = {'1x'};
-            app.Grid.RowHeight   = {96,96,256,150,'1x',106,22};
+            app.Grid.RowHeight   = {96,96,286,150,'1x',106,22};
             app.Grid.RowSpacing  = 8;
             app.Grid.Padding     = [10 10 10 6];
 
@@ -1125,7 +1132,52 @@ classdef App < handle
             else
                 parts{end+1} = sprintf('%.4g ms ISI',app.ISIField.Value);
             end
+            if app.bankHasBackground(), parts{end+1} = 'in background'; end
             s = strjoin(parts,' · ');
+        end
+
+        function tf = bankHasBackground(app)
+            % Whether any stimulus of the loaded bank is embedded in an
+            % ongoing background.
+            tf = false;
+            try
+                tf = ~isempty(app.Stimuli) && app.Stimuli.numStimuli > 0 ...
+                     && any(app.Stimuli.hasBackground());
+            catch
+            end
+        end
+
+        function syncBackgroundRow(app)
+            % The Presentation panel's Background row, from the loaded bank:
+            % what its stimuli are embedded in, and the lead-in field live
+            % only when there is something for it to lead in. Called when a
+            % bank is adopted and from transport(), since the field is a
+            % config control that setBusy switches on wholesale.
+            if isempty(app.BackgroundLabel) || ~isvalid(app.BackgroundLabel), return; end
+            has = app.bankHasBackground();
+            if ~has
+                txt = 'none (stimuli are presented in quiet)';
+                tip = ['This bank''s stimuli are not embedded in an ongoing background. ' ...
+                       'A background is designed with the stimuli (Design…, Background).'];
+            else
+                B = app.Stimuli.Backgrounds;
+                txt = mabr.stim.backgroundText(B(1));
+                if numel(B) > 1
+                    txt = sprintf('%d backgrounds — one per run',numel(B));
+                end
+                lines = arrayfun(@(k) mabr.stim.backgroundText(B(k)),1:numel(B), ...
+                    'UniformOutput',false);
+                nq = nnz(~app.Stimuli.hasBackground());
+                if nq > 0
+                    lines{end+1} = sprintf('%d of the stimuli are presented in quiet',nq);
+                end
+                tip = strjoin([{'The ongoing background of this bank''s stimuli:'} lines],newline);
+            end
+            app.BackgroundLabel.Text    = txt;
+            app.BackgroundLabel.Tooltip = tip;
+            running = false;
+            try, running = app.isRunning(); catch, end %#ok<CTCH>
+            app.BackgroundLeadField.Enable = onOff(has && ~running);
         end
 
         function s = acquisitionTitleDetail(app)
@@ -1324,7 +1376,7 @@ classdef App < handle
         end
 
         function buildPresentationPanel(app,row)
-            g = app.sectionGrid('Presentation',row,{24,24,24,24,24,24,16,18},{app.LabelWidth,'1x','1x'});
+            g = app.sectionGrid('Presentation',row,{24,24,24,24,24,24,24,16,18},{app.LabelWidth,'1x','1x'});
 
             app.addLabel(g,'Strategy',1,1);
             app.StrategyDrop = uidropdown(g, ...
@@ -1435,17 +1487,40 @@ classdef App < handle
                 'Tooltip','Longest interval that can be drawn.', ...
                 'ValueChangedFcn',@(~,~) app.onISIRangeChanged('max'));
 
+            % The ongoing background the bank's stimuli are embedded in
+            % (docs/Background.md). WHAT it is belongs to the bank -- it is
+            % designed and calibrated with the stimuli -- so this row only
+            % says it; what is the presentation's to decide is how long it
+            % plays before a run's first stimulus, which is the field. Greyed,
+            % and saying so, for a bank presented in quiet (syncBackgroundRow).
+            app.addLabel(g,'Background',7,1);
+            b = uigridlayout(g,[1 2]);
+            b.Layout.Row = 7; b.Layout.Column = [2 3];
+            b.ColumnWidth   = {'1x',118};
+            b.Padding       = [0 0 0 0];
+            b.ColumnSpacing = 6;
+            app.BackgroundLabel = uilabel(b,'Text','none','FontColor',[0.3 0.3 0.3]);
+            app.BackgroundLeadField = uieditfield(b,'numeric', ...
+                'Value',1e3*mabr.ui.App.DefaultBackgroundLeadIn, ...
+                'Limits',[0 600000],'ValueDisplayFormat','%.0f ms lead-in', ...
+                'Enable','off', ...
+                'Tooltip',['How long the ongoing background plays before a run''s first ' ...
+                           'stimulus (it fades in at the start of each run and out at its ' ...
+                           'end; between runs there is silence). Never shorter than the ' ...
+                           'fade plus the baseline before the first sweep.'], ...
+                'ValueChangedFcn',@(~,~) app.refreshPlan());
+
             % A full-width warning line directly under the fields that cause
             % it, rather than a clipped stub squeezed in beside them.
             app.OverlapLabel = uilabel(g,'Text','','FontColor',[0.8 0.2 0]);
-            app.OverlapLabel.Layout.Row = 7; app.OverlapLabel.Layout.Column = [2 3];
+            app.OverlapLabel.Layout.Row = 8; app.OverlapLabel.Layout.Column = [2 3];
 
             % Live consequence of everything above it: runs, presentations,
             % estimated duration. Kept in this panel because those are the
             % settings that change it.
             app.PlanLabel = uilabel(g,'Text','','FontColor',[0.3 0.3 0.3], ...
                 'HorizontalAlignment','right');
-            app.PlanLabel.Layout.Row = 8; app.PlanLabel.Layout.Column = [1 3];
+            app.PlanLabel.Layout.Row = 9; app.PlanLabel.Layout.Column = [1 3];
         end
 
         function buildAcquisitionPanel(app,row)
@@ -2470,6 +2545,9 @@ classdef App < handle
             cfg.ISI_ms        = app.ISIField.Value;
             cfg.ISIMin_ms     = app.ISIMinField.Value;
             cfg.ISIMax_ms     = app.ISIMaxField.Value;
+            % How long an ongoing background leads a run in. What the
+            % background IS belongs to the bank, which is saved by file.
+            cfg.BackgroundLeadIn_ms = app.BackgroundLeadField.Value;
 
             cfg.Artifacts = app.Artifacts.toStruct();
             cfg.Filters   = app.Filters.toStruct();
@@ -2635,6 +2713,13 @@ classdef App < handle
                 app.ISIMaxField.Value = cfg.ISIMax_ms;
             end
             app.syncISIFields();
+            if isfield(cfg,'BackgroundLeadIn_ms') && isnumeric(cfg.BackgroundLeadIn_ms) ...
+                    && isscalar(cfg.BackgroundLeadIn_ms) && isfinite(cfg.BackgroundLeadIn_ms) ...
+                    && cfg.BackgroundLeadIn_ms >= 0
+                app.BackgroundLeadField.Value = min(cfg.BackgroundLeadIn_ms, ...
+                    app.BackgroundLeadField.Limits(2));
+            end
+            app.syncBackgroundRow();
 
             if isfield(cfg,'Artifacts')
                 app.Artifacts = mabr.ArtifactPolicy.fromStruct(cfg.Artifacts);
@@ -3276,6 +3361,7 @@ classdef App < handle
             app.syncRecentBanks();
             app.syncDesignButton();
             app.syncOrderItems();
+            app.syncBackgroundRow();
             app.checkOverlap();
             app.refreshPlan();
             if nargin < 3 || announce
@@ -4548,6 +4634,7 @@ classdef App < handle
             sch.ISI         = app.ISIField.Value/1e3;      % ms -> s
             sch.ISIRange    = [app.ISIMinField.Value app.ISIMaxField.Value]/1e3;
             sch.ISIMode     = app.isiMode();
+            sch.BackgroundLeadIn = app.BackgroundLeadField.Value/1e3;   % ms -> s
             sch.Device           = app.Audio.Device;
             sch.PlayerChannels   = app.Audio.PlayerChannels;
             sch.RecorderChannels = app.Audio.RecorderChannels;
@@ -4689,6 +4776,7 @@ classdef App < handle
                 c.Schedule.ISI         = app.ISIField.Value/1e3;   % ms -> s
                 c.Schedule.ISIRange    = [app.ISIMinField.Value app.ISIMaxField.Value]/1e3;
                 c.Schedule.ISIMode     = app.isiMode();
+                c.Schedule.BackgroundLeadIn = app.BackgroundLeadField.Value/1e3;
                 c.Schedule.Device           = app.Audio.Device;
                 c.Schedule.PlayerChannels   = app.Audio.PlayerChannels;
                 c.Schedule.RecorderChannels = app.Audio.RecorderChannels;
@@ -4898,7 +4986,8 @@ classdef App < handle
                 sig = {app.Audio.toStruct(),app.SubjectField.Value,app.outputFolder(), ...
                     app.BankFile,ids,app.Reps,app.strategySetting(),by,way, ...
                     app.ISIField.Value,app.ISIMinField.Value,app.ISIMaxField.Value, ...
-                    app.JitterCheck.Value,app.AdvanceDrop.Value,app.CorrField.Value};
+                    app.JitterCheck.Value,app.AdvanceDrop.Value,app.CorrField.Value, ...
+                    app.BackgroundLeadField.Value};
             catch me
                 mabr.log.vprintf(2,'App: settings not captured for Resume (%s).',me.message);
             end
@@ -5901,7 +5990,8 @@ classdef App < handle
                  app.RepsField, app.RepsButton, ...
                  app.AdvanceDrop, app.CorrField, ...
                  app.ISIField, app.RateField, app.JitterCheck, ...
-                 app.ISIMinField, app.ISIMaxField, app.AudioMenuItem, ...
+                 app.ISIMinField, app.ISIMaxField, app.BackgroundLeadField, ...
+                 app.AudioMenuItem, ...
                  app.CalMenuItem, app.ComputeMenuItem, app.TestMenuItem, ...
                  app.LoadConfigMenuItem, ...
                  app.RecentConfigsMenu};
@@ -5972,6 +6062,9 @@ classdef App < handle
                 % configControls just left the row.
                 app.syncRecentEnables();
             end
+            % The background lead-in is a config control too, and live only
+            % for a bank that has a background.
+            app.syncBackgroundRow();
             drawnow limitrate
         end
 

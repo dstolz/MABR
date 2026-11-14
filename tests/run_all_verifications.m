@@ -30,6 +30,15 @@ function results = run_all_verifications()
 %       verify_play_plan         - mabr.stim.PlayPlan: frames synthesized on
 %                                  demand are bit-identical to a whole-matrix
 %                                  render, and the worker streams from one
+%       verify_background        - stimuli embedded in an ongoing background
+%                                  (a tone in noise, AM, a gap, FM of a tone):
+%                                  the plan renders background, gain, phase
+%                                  and additions as a naive whole-run render
+%                                  does and the same however it is sliced,
+%                                  one background per run, the lead-in and
+%                                  fades, a Test Mode run aligned against the
+%                                  plan, and the background in every record
+%                                  and file name
 %       verify_engine_loopback   - acquisition engine (ring buffer, Pause/Stop/Kill)
 %       verify_device_reuse      - the worker keeps its audio device open and
 %                                  clocked between runs, rebuilding it only on
@@ -280,6 +289,7 @@ function results = run_all_verifications()
 % Daniel Stolzberg (c) 2026
 
 tests = {@verify_logging, @verify_isi_jitter, @verify_strategies, @verify_play_plan, ...
+         @verify_background, ...
          @verify_engine_loopback, @verify_device_reuse, @verify_data_roundtrip, ...
          @verify_legacy_import,  @verify_analysis, ...
          @verify_offline_files, @verify_offline_stats, @verify_offline_thresholds, ...

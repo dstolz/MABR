@@ -8,8 +8,8 @@ function verify_panel_collapse()
 %   here without constructing an App (the suite runs from inside that window,
 %   and a second one refuses to open). Nothing here touches a preference.
 %
-%   Part A (the height): the window's own rows give the height it has always
-%   had (806 px), and folding a panel takes off exactly its open height less
+%   Part A (the height): the window's own rows give the height it is built
+%   at (836 px), and folding a panel takes off exactly its open height less
 %   the title bar it keeps -- the '1x' spacer contributing no height of its own
 %   and every row its spacing.
 %   Part B (a saved list): names are read back in window order, once each, and
@@ -37,8 +37,10 @@ rows = eval(tok{1});
 sp   = 8;
 pad  = [10 10 10 6];
 sl   = mabr.ui.App.WindowSlack;
-assert(fit(rows,sp,pad,sl) == 806, ...
-    'with every panel open the window must be the 806 px it has always been (got %g)', ...
+% 836: the 806 px it was until the Presentation panel gained its Background
+% row (24 px and one row's spacing).
+assert(fit(rows,sp,pad,sl) == 836, ...
+    'with every panel open the window must be the 836 px it is built at (got %g)', ...
     fit(rows,sp,pad,sl));
 
 T = 24;
@@ -48,7 +50,7 @@ for k = 1:4
         'folding row %d must take off its open height less the title bar',k);
 end
 r = rows; r(1:4) = {T};
-assert(fit(r,sp,pad,sl) == 806 - sum([rows{1:4}]) + 4*T, ...
+assert(fit(r,sp,pad,sl) == 836 - sum([rows{1:4}]) + 4*T, ...
     'folding all four must take off all four');
 assert(fit({'1x'},sp,[0 0 0 0],0) == 0 && fit({'1x',10},sp,[0 0 0 0],0) == 10 + sp, ...
     'a ''1x'' row has spacing and no height of its own');

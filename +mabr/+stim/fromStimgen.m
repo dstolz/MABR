@@ -63,6 +63,30 @@ function set = fromStimgen(src,cfg,opts)
 %   click by click inside its own waveform, reports false, and is imported as
 %   the waveform it already is.
 %
+%   An ongoing background is carried across
+%   ---------------------------------------
+%   A stimgen stimulus may be embedded in a sound that plays continuously
+%   around it (its Background properties; documentation/stimgen_Background.md
+%   in the submodule, docs/Background.md here). stimgen defines and calibrates
+%   that background and says how the stimulus meets it -- get_embedding():
+%   a waveform ADDED to it (a tone in noise), or a GAIN envelope / PHASE
+%   deviation applied to it with nothing added (the BackgroundAM / Gap / FM
+%   classes). Each is imported as it stands: the background once per distinct
+%   Key into the set's Backgrounds (a loop MABR tiles, or a tone it computes),
+%   and on each entry the key, the gain and the phase. MABR synthesizes
+%   nothing and rescales nothing but an uncalibrated bank (below). An entry
+%   that only modulates its background carries a signal of zeros and does
+%   not alternate polarity: there is nothing of its own to invert.
+%
+%   The parameters that define a background are ALWAYS informative on an
+%   entry that has one, whether or not they vary across the bank. A tone in
+%   noise and the same tone in quiet must never share a condition key
+%   offline, and a session run entirely in noise would otherwise be keyed
+%   exactly like one run in quiet.
+%
+%   A submodule checked out before the background existed has no
+%   get_embedding; every stimulus then imports as it always did.
+%
 %   What is deliberately dropped
 %   ----------------------------
 %   stimgen.StimPlay carries Reps, ISI and SelectionType, and StimPlayer adds
@@ -132,6 +156,8 @@ assert(~isempty(items),'mabr:stim:fromStimgen:emptyBank', ...
 
 % --- Flatten every variant of every stimulus into one entry ----------------
 entries = {};
+norms   = {};        % each entry's stimgen Normalization ('rms', 'absmax', ...)
+backs   = {};        % the distinct backgrounds met, in order
 for i = 1:numel(items)
     stimObj = items(i).Stim;
 
@@ -162,6 +188,10 @@ for i = 1:numel(items)
         % underneath us, and selected_value then reads this variant.
         try
             s.set_variant_index(v);
+            % Inside the same try: building the entry builds its background,
+            % and a noise background runs the equalization filter too -- so
+            % the rate refusal below can come from either.
+            [e,bg,nrm] = buildEntry(s,info,v,items(i).Reps,opts);
         catch me
             % stimgen refuses to run a filter-type calibration at any rate
             % other than the one its FIR was designed at -- rightly, the taps
@@ -184,19 +214,39 @@ for i = 1:numel(items)
             end
             rethrow(me);
         end
-        entries{end+1} = buildEntry(s,info,v,items(i).Reps,opts); %#ok<AGROW>
+        entries{end+1} = e;   %#ok<AGROW>
+        norms{end+1}   = nrm; %#ok<AGROW>
+        if ~isempty(bg) && ~any(cellfun(@(b) strcmp(b.Key,bg.Key),backs))
+            backs{end+1} = bg; %#ok<AGROW>
+        end
     end
 end
 
-entries = uniqueIDs([entries{:}]);
-entries = relativeLevels(entries);
-set = mabr.stim.StimulusSet(entries,cfg,source);
+% One field set for the whole bank. Entries from different stimulus classes
+% carry different parameters (a Tone has a Frequency, a ClickTrain a Rate),
+% and so do entries with and without a background; a struct array needs one
+% set of fields, so each entry is given the ones it lacks, empty.
+% mabr.stim.StimulusSet reads an empty field as absent.
+entries = uniqueIDs(harmonize(entries));
+if isempty(backs)
+    entries = relativeLevels(entries);
+    backs   = struct([]);
+else
+    backs = [backs{:}];
+    [entries,backs] = relativeMix(entries,backs,norms);
+end
+set = mabr.stim.StimulusSet(entries,cfg,source,backs);
 
 % The calibration state is said here rather than left to be inferred from the
 % absence of a warning: this is the line an operator reads to find out what
 % was loaded, and "no complaint" is not the same statement as "calibrated".
 mabr.log.vprintf(1,'fromStimgen: %d stimuli -> %d presentations at %g Hz, %s.', ...
     numel(items),set.numStimuli,set.SampleRate,calibrationText(set,entries));
+for k = 1:numel(set.Backgrounds)
+    n = nnz(strcmp({set.Stimuli.Background},set.Backgrounds(k).Key));
+    mabr.log.vprintf(1,'fromStimgen: ongoing background %d of %d: %s (%d of the entries).', ...
+        k,numel(set.Backgrounds),mabr.stim.backgroundText(set.Backgrounds(k)),n);
+end
 end
 
 % =========================================================================
@@ -215,18 +265,55 @@ end
 end
 
 % =========================================================================
-function e = buildEntry(s,info,v,reps,opts)
-% One variant -> one StimulusSet entry.
+function [e,bg,nrm] = buildEntry(s,info,v,reps,opts)
+% One variant -> one StimulusSet entry, plus the background it is embedded in
+% (bg, [] for none) and the normalization stimgen gave its waveform (nrm).
 
 sig = s.Signal(:);
 assert(~isempty(sig),'mabr:stim:fromStimgen:emptySignal', ...
     'Variant %d of %s generated an empty signal.',v,class(s));
+
+% How this variant meets an ongoing background, if it has one. Guarded on
+% ismethod because the submodule is optional and may be checked out at a
+% commit from before stimgen.StimType.get_embedding.
+E  = [];
+bg = [];
+if ismethod(s,'get_embedding')
+    E = s.get_embedding();
+    if isempty(E.Background), E = []; end
+end
+
+nrm = '';
+try, nrm = char(string(s.Normalization)); catch, end %#ok<CTCH>
 
 e = struct();
 e.signal      = single(sig);
 e.SampleRate  = s.Fs;
 e.Repetitions = reps;
 e.alternatePolarity = opts.AlternatePolarity || stimAlternates(s);
+
+% The embedding fields are on every entry (mabr.stim.StimulusSet normalizes
+% them there anyway); filled in below for a variant that has a background.
+e.Background      = '';
+e.BackgroundGain  = [];
+e.BackgroundPhase = [];
+if ~isempty(E)
+    bg = toBackground(E.Background);
+    e.Background = bg.Key;
+    % What stimgen says to ADD: its Signal, or zeros of the event's length
+    % for a stimulus that is a modulation of the background.
+    e.signal = single(E.Signal(:));
+    assert(numel(e.signal) == numel(sig),'mabr:stim:fromStimgen:embedding', ...
+        ['Variant %d of %s: the embedding''s Signal is %d samples where the ' ...
+         'stimulus is %d.'],v,class(s),numel(e.signal),numel(sig));
+    if ~isempty(E.Gain),  e.BackgroundGain  = double(E.Gain(:));  end
+    if ~isempty(E.Phase), e.BackgroundPhase = double(E.Phase(:)); end
+    if strcmpi(char(string(E.Mode)),'modulate')
+        % Nothing of its own to invert, and inverting the background over an
+        % epoch would put a step in it at each end.
+        e.alternatePolarity = false;
+    end
+end
 
 % --- Parameters -------------------------------------------------------
 % Level and Frequency are renamed and rescaled because the offline pipeline
@@ -257,6 +344,25 @@ for k = 1:numel(varying)
         ip{end+1} = p; %#ok<AGROW>
     end
 end
+
+% What defines the background, under stimgen's own names (Hz, dB), and
+% informative ALWAYS -- not only when it varies. A condition presented in a
+% background is a different condition from the same stimulus in quiet, and
+% that has to be true of the key the offline pipeline builds, in a session
+% where every file has the background as much as in one that mixes the two.
+if ~isempty(bg)
+    e.BackgroundLevel = bg.Level;
+    names = {'BackgroundLevel'};
+    if strcmp(bg.Kind,'tone')
+        e.BackgroundFrequency = bg.Frequency;
+        names{end+1} = 'BackgroundFrequency';
+    else
+        e.BackgroundHighPass = bg.HighPass;
+        e.BackgroundLowPass  = bg.LowPass;
+        names = [names {'BackgroundHighPass','BackgroundLowPass'}];
+    end
+    ip = [ip names(~ismember(names,ip))];
+end
 e.informativeParams = ip;
 
 % --- Identity and provenance -----------------------------------------
@@ -282,6 +388,145 @@ catch me
     % uncalibrated or half-configured bank must still import.
     mabr.log.vprintf(2,'fromStimgen: calibration state unreadable (%s).',me.message);
 end
+end
+
+% =========================================================================
+function b = toBackground(Bs)
+% stimgen's description of a background (StimType.get_background) in the form
+% mabr.stim.StimulusSet takes: a loop to tile, or a tone to compute.
+b = struct();
+b.Key          = char(string(Bs.Key));
+b.SampleRate   = double(Bs.Fs);
+b.Type         = char(string(Bs.Type));
+b.Level        = double(Bs.Level);
+b.HighPass     = double(Bs.HighPass);
+b.LowPass      = double(Bs.LowPass);
+b.LoopDuration = double(Bs.LoopDuration);
+b.Seed         = double(Bs.Seed);
+b.Calibrated   = logical(Bs.Calibrated);
+b.LevelScale   = 1;
+b.Normalization = char(string(Bs.Normalization));
+if strcmpi(b.Type,'Tone')
+    b.Kind      = 'tone';
+    b.signal    = [];
+    b.Frequency = double(Bs.Frequency);
+    b.Amplitude = double(Bs.Amplitude);
+else
+    b.Kind      = 'loop';
+    b.signal    = single(Bs.Waveform(:));
+    b.Frequency = NaN;
+    b.Amplitude = NaN;
+end
+assert(~isempty(b.Key),'mabr:stim:fromStimgen:embedding', ...
+    'stimgen returned a background with no Key.');
+end
+
+% =========================================================================
+function entries = harmonize(c)
+% A cell of entry structs -> one struct array, every entry given the fields
+% it lacks (empty), in one order.
+names = {};
+for i = 1:numel(c)
+    f = fieldnames(c{i});
+    names = [names; f(~ismember(f,names))]; %#ok<AGROW>
+end
+for i = 1:numel(c)
+    miss = names(~isfield(c{i},names));
+    for k = 1:numel(miss)
+        c{i}.(miss{k}) = [];
+    end
+    c{i} = orderfields(c{i},names);
+end
+entries = [c{:}];
+end
+
+% =========================================================================
+function [entries,backs] = relativeMix(entries,backs,norms)
+% relativeLevels for a bank whose stimuli sit in an ongoing background.
+%
+% With a calibration there is nothing to do: stimgen has already put every
+% waveform, stimulus and background alike, in volts. Without one, what
+% arrives is normalized only -- a tone to peak 1, noise to rms 1 -- at
+% whatever level it asks for, and the mix would then be whatever those
+% normalizations happen to make it: a "60 dB tone in 50 dB noise" with the
+% noise louder than the tone.
+%
+% So an ENTIRELY uncalibrated bank is put on one relative scale, as
+% relativeLevels does for a bank in quiet, with the two things a mix adds:
+%
+%   - an rms-normalized waveform is given the rms of a peak-normalized one
+%     at the same level (1/sqrt(2), stimgen's own LutRmsPerVolt convention),
+%     so equal levels mean equal rms and a signal-to-noise ratio is the
+%     difference of the two levels, as it is when calibrated;
+%   - everything is then attenuated by ONE common factor, if needed, so the
+%     background at its largest gain plus the stimulus added to it cannot
+%     pass the converter's full scale. Relative levels are untouched by it.
+%
+% Every entry and every background records the factor its waveform was given
+% (LevelScale). Absolute SPL remains unknown and Calibrated stays false.
+%
+% A partly calibrated bank is left alone for the reason relativeLevels gives:
+% there is no single reference for its uncalibrated half to be relative to.
+cal = [logical([entries.Calibrated]), logical([backs.Calibrated])];
+if any(cal)
+    if ~all(cal)
+        mabr.log.vprintf(0,1,['fromStimgen: this bank and its background(s) are ' ...
+            'only PARTLY calibrated; nothing was rescaled, so their levels are ' ...
+            'not comparable with one another.']);
+    end
+    return
+end
+
+L  = [entries.Level];
+Lb = [backs.Level];
+if ~all(isfinite([L Lb])), return; end
+ref = max([L Lb]);
+
+rmsGain = 1/sqrt(2);
+g = 10.^((L - ref)/20);
+for i = 1:numel(entries)
+    if strcmpi(norms{i},'rms'), g(i) = g(i)*rmsGain; end
+end
+gb = 10.^((Lb - ref)/20);
+for k = 1:numel(backs)
+    if strcmpi(backs(k).Normalization,'rms'), gb(k) = gb(k)*rmsGain; end
+end
+
+% The most each entry's mix can reach, at those gains.
+worst = 0;
+keys  = {backs.Key};
+for i = 1:numel(entries)
+    peak = g(i)*double(max(abs(entries(i).signal)));
+    k = find(strcmp(keys,entries(i).Background),1);
+    if ~isempty(k)
+        if strcmp(backs(k).Kind,'tone'), bp = backs(k).Amplitude;
+        else,                            bp = double(max(abs(backs(k).signal)));
+        end
+        mg = 1;
+        if ~isempty(entries(i).BackgroundGain), mg = max(1,max(entries(i).BackgroundGain)); end
+        peak = peak + gb(k)*bp*mg;
+    end
+    worst = max(worst,peak);
+end
+h = 1;
+if worst > 1, h = 1/worst; end
+
+for i = 1:numel(entries)
+    entries(i).signal     = single(double(entries(i).signal).*(g(i)*h));
+    entries(i).LevelScale = g(i)*h;
+end
+for k = 1:numel(backs)
+    if strcmp(backs(k).Kind,'tone')
+        backs(k).Amplitude = backs(k).Amplitude*gb(k)*h;
+    else
+        backs(k).signal = single(double(backs(k).signal).*(gb(k)*h));
+    end
+    backs(k).LevelScale = gb(k)*h;
+end
+
+mabr.log.vprintf(1,['fromStimgen: uncalibrated bank with %d background(s) -- levels ' ...
+    'set relative to %g dB, the whole mix attenuated by %.3g to stay under full ' ...
+    'scale. Spacing is correct; absolute SPL is not.'],numel(backs),ref,h);
 end
 
 % =========================================================================

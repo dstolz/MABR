@@ -1278,13 +1278,15 @@ classdef ProgressMonitor < handle
         function k = estimatePlayed(obj,sch,nSeq)
             % How many of a stimulation-only run's presentations have begun,
             % from the clock: the worker streams at the device's pace, onset k
-            % at SilencePad + (k-1)*ISI, and pauses are not owed back (it
-            % restarts its pacing clock on resume). A randomized ISI makes
-            % this an expectation, which is what the '~' says anyway.
+            % at the run's lead-in + (k-1)*ISI, and pauses are not owed back
+            % (it restarts its pacing clock on resume). A randomized ISI
+            % makes this an expectation, which is what the '~' says anyway.
+            % The lead-in is SilencePad, or longer for a run on an ongoing
+            % background (mabr.stim.Schedule.leadPad).
             k = 0;
             if obj.RunT0 == 0, return; end
             if isnan(obj.RunT1), t = obj.runClock(); else, t = obj.RunT1; end
-            t   = t - sch.SilencePad;
+            t   = t - leadSeconds(sch);
             isi = sch.MeanISI;
             if t < 0 || ~(isi > 0), return; end
             k = min(nSeq,floor(t/isi) + 1);
@@ -2297,5 +2299,18 @@ state = 'off'; if tf, state = 'on'; end
 for k = 1:numel(controls)
     c = controls{k};
     if ~isempty(c) && isvalid(c), c.Enable = state; end
+end
+end
+
+function t = leadSeconds(sch)
+% Seconds from the current run's first sample to its first onset. Asked of
+% the schedule where it can say (a real mabr.stim.Schedule), else SilencePad
+% -- what a stand-in schedule in a test offers.
+t = sch.SilencePad;
+try
+    if sch.CurrentRun >= 1
+        t = sch.leadPad(sch.CurrentRun);
+    end
+catch
 end
 end

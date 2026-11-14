@@ -56,6 +56,7 @@ Notes on the format:
 - A subject ID typed with underscores is written with hyphens: `SUBJ_ID_42` → `SUBJ-ID-42`.
 - Conditions that are not frequency/level pairs are named by their stimulus ID instead, as one hyphenated token (`Click_80dB` → `Click-80dB`).
 - Files written before this naming (`SUBJ_ID_001_Frequency_8kHz_Level_30dB_….abr`) do not match the strict pattern under *Developer notes*. `parseABRFiles`' default (`^SUBJ*`) and `mabr.analysis.Session` still read them.
+- A condition recorded on an [ongoing background](Background.md) gains a token after its parameters: `SUBJ-ID-001_Frequency-8kHz_Level-30dB_Background-50dB_260720T141530.abr` (the background's level; `Background` alone where it has none). Such a name does **not** match the strict frequency/level pattern under *Developer notes*, on purpose: code that reads names skips these files instead of pooling a tone in noise with the same tone in quiet. `mabr.analysis.Session` reads them, and keys them apart by the background parameters inside the file.
 - The timestamp is when the condition started, so files sort chronologically within a subject.
 - **No file is ever overwritten.** The timestamp resolves whole seconds, so two runs of the same condition started within one second — short passes of a looped run, or a Repeat pressed straight after a run — would share a name. The later file is written as `…_260720T141530_2.abr` (then `_3`, …) and the log says so; the timestamp still says when the run started, and `ABR_Data.StartTime` inside the file is unchanged. The suffixed name does **not** match the strict pattern under *Developer notes* below, which ends at the timestamp — a script filtering on that pattern must allow `(_\d+)?` before `\.abr` to see such a file. `parseABRFiles`' default (`^SUBJ*`) and `mabr.analysis.Session`'s (`\.abr$`) see it as they are.
 
@@ -94,6 +95,7 @@ The parts you are likely to want:
 | `ABR_Data.StartTime` | When the condition started |
 | `ABR_Data.SIG` | Stimulus parameters — frequency, level, and a `Label` for display |
 | `ABR_Data.TestMode` | `true` if the file came out of [Test Mode](Test-Mode.md) — the samples are the stimulus, not a recording of a subject. Always present; `false` for an ordinary run |
+| `ABR_Data.Background` | The [ongoing background](Background.md) the run played on: `Type` (`'none'` for a run in quiet), `Level`, `HighPass`/`LowPass` or `Frequency`, `LoopDuration`, `Seed`, `Calibrated`, `LevelScale`, `Rms`, `Peak`, and the `LeadIn`, `Ramp` and `LoopOffset` the run was played with. Always present, with the same fields. No waveform is stored |
 | `ABR_Data.SoftwareVersion` | The MABR version that wrote the file |
 
 For a run of one stimulus, the file stores the **whole continuous recording plus the onset indices**, not pre-cut sweeps. You can re-window, re-filter or re-reject artifacts later without re-recording, and the offline pipeline does exactly that. Files from an intermixed run are the exception (next section).
@@ -133,7 +135,7 @@ The `.mat` extension keeps these files out of anything that reads a folder of `.
 | `MABR_StimLog.Parameters` | The names of those stimulus-parameter columns |
 | `MABR_StimLog.Stimuli` | Each stimulus the run played, with its full parameters (`SIG`, as in a `.abr`) and how many times it went out |
 | `MABR_StimLog.Notes` | The session's notes, all of them, as written up to that run |
-| `MABR_StimLog.Presentation` | Strategy, ISI setting, and the silence before the first trial |
+| `MABR_StimLog.Presentation` | Strategy, ISI setting, the silence before the first trial, and `Background` — the [ongoing background](Background.md) the run played on, as in a `.abr` (`Type` `'none'` in quiet). A run on a background has the same `Background-<level>dB` token in its file name |
 
 `Sequence` is a set of parallel arrays, so it reads as a table in one line:
 
