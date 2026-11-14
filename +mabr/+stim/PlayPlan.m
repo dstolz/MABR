@@ -240,24 +240,39 @@ classdef PlayPlan < handle
             y(:,1)    = single(fade.*b);
         end
 
-        function y = backgroundLead(obj,i0,n)
+        function y = backgroundLead(obj,i0,n,a,b)
             % The n samples of the background alone that PRECEDE sample i0
             % (i0-n .. i0-1), faded in from silence: [n x 2] single, timing
-            % column zero, zeros where the run has not begun. Played, and not
-            % recorded, before a block resumes from a pause: it runs straight
-            % into sample i0, so the presentations after a pause follow a
-            % steady background as those before it did.
-            y = zeros(max(0,n),2,'single');
-            if isempty(obj.Background) || n < 1, return; end
-            hi = min(i0 - 1,obj.N);
-            a  = max(i0 - n,1);
-            if hi < a, return; end
-            b = obj.backgroundTerm(a,hi,obj.firstReaching(a));
-            m = numel(b);
-            R = min(max(obj.Background.Ramp,1),m);
-            fade      = ones(m,1);
-            fade(1:R) = sin(pi/2.*(0:R-1)'./R).^2;
-            y(n-m+1:n,1) = single(fade.*b);
+            % column zero, zeros where the run has not begun or is over.
+            % Played, and not recorded, before a block resumes from a pause:
+            % it runs straight into sample i0, so the presentations after a
+            % pause follow a steady background as those before it did.
+            %
+            % backgroundLead(i0,n,a,b) returns only samples a..b of those n
+            % ([b-a+1 x 2]). That is how the worker plays it: a frame at a
+            % time, each rendered as the device is ready for it, as the run
+            % itself is. Rendered whole, a lead-in of seconds is that much
+            % audio built between two device calls, with the device unfed
+            % meanwhile.
+            if nargin < 4, a = 1; b = n; end
+            y = zeros(max(0,b - a + 1),2,'single');
+            if isempty(obj.Background) || n < 1 || b < a, return; end
+            hi = min(i0 - 1,obj.N);         % the run's samples the lead holds:
+            lo = max(i0 - n,1);             % lo..hi, of i0-n..i0-1
+            if hi < lo, return; end
+            s  = i0 - n + a - 1;            % the run sample that lead sample a is
+            sa = max(s,lo);
+            se = min(i0 - n + b - 1,hi);
+            if se < sa, return; end
+            t = obj.backgroundTerm(sa,se,obj.firstReaching(sa));
+            % The fade is over the first samples the lead HOLDS, wherever
+            % this window falls among them.
+            R  = min(max(obj.Background.Ramp,1),hi - lo + 1);
+            q  = (sa - lo:se - lo)';
+            fade     = ones(numel(q),1);
+            in       = q < R;
+            fade(in) = sin(pi/2.*q(in)./R).^2;
+            y(sa - s + 1:se - s + 1,1) = single(fade.*t);
         end
     end
 

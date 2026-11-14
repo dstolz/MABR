@@ -581,9 +581,20 @@ classdef Schedule < handle
 
             % A background plays unbroken through a run, so a run has one.
             % Refused here, where the plan is made and the GUI's preview
-            % reports it, rather than when the run is reached.
-            for r = 1:numel(obj.Runs)
-                obj.runBackground(r);
+            % reports it, rather than when the run is reached. A refused
+            % plan is not left in place: the schedule is put back to "no
+            % plan", as it is when a strategy fails, so nothing that reads
+            % it afterwards (summary, leadPad, renderSpec) meets the mixed
+            % runs and raises the same error again.
+            try
+                for r = 1:numel(obj.Runs)
+                    obj.runBackground(r);
+                end
+            catch me
+                obj.BuiltRuns       = {};
+                obj.BuiltPolarities = {};
+                obj.reset();
+                rethrow(me);
             end
         end
 

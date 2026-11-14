@@ -74,7 +74,15 @@ classdef StimulusSet < handle
 %       signal     [n x 1]  one seamless lap of the background ('loop')
 %       Frequency, Amplitude   Hz and peak, of a 'tone'
 %       Type, Level, HighPass, LowPass, LoopDuration, Seed, Calibrated,
-%       LevelScale          description only, carried into the records
+%       LevelScale          description, never read by the renderer
+%
+%   The description is not optional in practice. The set copies a
+%   background's Level and band (a tone's Frequency) onto every entry
+%   embedded in it, as BackgroundLevel, BackgroundHighPass, BackgroundLowPass
+%   or BackgroundFrequency (dB and Hz), and counts them among the entry's
+%   informative parameters: that is what keys a recording made in a
+%   background apart from the same stimulus in quiet (see
+%   declareBackgroundParams). A value an entry already carries is kept.
 %
 %   A run has ONE background: mabr.stim.Schedule refuses a run whose stimuli
 %   do not all name the same one.
@@ -169,6 +177,7 @@ classdef StimulusSet < handle
                 obj.SampleRate,cfg.DACSampleRate);
 
             obj.checkEmbedding();
+            obj.declareBackgroundParams();
         end
 
         function n = numStimuli(obj)
@@ -531,6 +540,71 @@ classdef StimulusSet < handle
             end
         end
 
+        function declareBackgroundParams(obj)
+            % What defines an entry's background is a parameter of the entry.
+            %
+            % A stimulus in a background is a different condition from the
+            % same stimulus in quiet, and what tells conditions apart
+            % offline is their informative parameters (mabr.analysis keys a
+            % condition by them and pools files that share a key). So an
+            % entry embedded in a background carries the background's level
+            % and band -- or a tone's frequency -- as BackgroundLevel,
+            % BackgroundHighPass, BackgroundLowPass or BackgroundFrequency,
+            % and they are informative ALWAYS: here, for every bank, rather
+            % than wherever a bank's builder remembered to.
+            %
+            % A value the entry already carries is left as given (which is
+            % how mabr.stim.fromStimgen's are); one it lacks comes from the
+            % background's own description. Units are the description's:
+            % dB and Hz. A background that describes none of them cannot be
+            % told from quiet this way -- its file names and
+            % ABR_Data.Background still say so -- and the log says which.
+            undescribed = {};
+            for i = 1:obj.numStimuli
+                key = obj.backgroundKey(i);
+                if isempty(key), continue; end
+                B = obj.background(key);
+                if strcmp(B.Kind,'tone')
+                    names = {'BackgroundLevel','BackgroundFrequency'};
+                    from  = {'Level','Frequency'};
+                else
+                    names = {'BackgroundLevel','BackgroundHighPass','BackgroundLowPass'};
+                    from  = {'Level','HighPass','LowPass'};
+                end
+
+                have = {};
+                for k = 1:numel(names)
+                    f = names{k};
+                    v = [];
+                    if isfield(obj.Stimuli,f), v = obj.Stimuli(i).(f); end
+                    if isempty(v) && isfinite(B.(from{k}))
+                        v = B.(from{k});
+                        obj.Stimuli(i).(f) = v;
+                    end
+                    if isnumeric(v) && isscalar(v), have{end+1} = f; end %#ok<AGROW>
+                end
+
+                % A declared list is the entry's own word on what identifies
+                % it, so these join it. An inferred list (every numeric
+                % scalar extra) holds them already.
+                if isempty(have)
+                    if ~any(strcmp(undescribed,key)), undescribed{end+1} = key; end %#ok<AGROW>
+                elseif isfield(obj.Stimuli,'informativeParams') ...
+                        && ~isempty(obj.Stimuli(i).informativeParams)
+                    ip = cellstr(obj.Stimuli(i).informativeParams);
+                    obj.Stimuli(i).informativeParams = [ip(:)' have(~ismember(have,ip))];
+                end
+            end
+
+            for k = 1:numel(undescribed)
+                mabr.log.vprintf(0,1,['The background "%s" has no Level, band or ' ...
+                    'frequency in its description, so recordings made on it carry no ' ...
+                    'stimulus parameter that separates them from the same stimuli in ' ...
+                    'quiet, and offline analysis may pool the two. Give the ' ...
+                    'background a Level (and HighPass/LowPass).'],undescribed{k});
+            end
+        end
+
         function checkRange(obj,i)
             assert(isscalar(i) && i >= 1 && i <= obj.numStimuli, ...
                 'mabr:stim:StimulusSet:range', ...
@@ -709,7 +783,9 @@ classdef StimulusSet < handle
             % Load a stimulus definition from file. A .spl is a stimgen bank
             % (parameters, regenerated at the DAC rate -- see
             % mabr.stim.fromStimgen); anything else is read as a .mat holding
-            % either a saved StimulusSet or a struct array with signal + ID.
+            % either a saved StimulusSet or a struct array with signal + ID
+            % (and, where its entries are embedded in backgrounds, those as
+            % a second struct array).
             if nargin < 2 || isempty(cfg), cfg = mabr.Config; end
 
             [~,~,ext] = fileparts(ffn);
@@ -721,6 +797,17 @@ classdef StimulusSet < handle
             S  = load(ffn);
             fn = fieldnames(S);
             src = struct('Kind','file','File',char(ffn));
+            % The backgrounds of a struct-array bank travel in the same file
+            % as a second variable, under any name: a struct array with Key
+            % and Kind (and no ID, which is what an entry has).
+            backs = [];
+            for i = 1:numel(fn)
+                v = S.(fn{i});
+                if isstruct(v) && isfield(v,'Key') && isfield(v,'Kind') && ~isfield(v,'ID')
+                    backs = v;
+                    break
+                end
+            end
             for i = 1:numel(fn)
                 v = S.(fn{i});
                 if isa(v,'mabr.stim.StimulusSet')
@@ -739,7 +826,7 @@ classdef StimulusSet < handle
                     return
                 end
                 if isstruct(v) && isfield(v,'signal') && isfield(v,'ID')
-                    set = mabr.stim.StimulusSet(v,cfg,src);
+                    set = mabr.stim.StimulusSet(v,cfg,src,backs);
                     return
                 end
             end
