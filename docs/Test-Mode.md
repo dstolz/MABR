@@ -65,6 +65,8 @@ This half is only answerable in Test Mode, and it is the reason the mode exists.
 
 It catches faults the onset arithmetic cannot see: a plan whose waveforms are rendered in one order and labelled in another, or a polarity applied to the wrong presentation. Both of those leave every onset exactly where it belongs.
 
+A run on an [ongoing background](Background.md) is held against its plan instead, because the samples at an onset are then the stimulus *and* the background under it. Two things are checked: that the plan presents each stimulus the schedule placed — waveform, polarity, and the change it makes to the background — and that the recording holds what the plan renders around every presentation and over the run's fade-in. The verdict reads `every presentation matches the plan on its background`.
+
 On a real rig this comparison is skipped rather than failed — what comes back through a converter is not the waveform that went out — but the onset half above still runs after every recorded run, and a misalignment is reported in red whatever mode produced it.
 
 The tolerance differs by mode, and only there. Test Mode allows **zero** samples of jitter: nothing is being measured, so one sample of drift is a defect. On a rig it allows **50 µs**, deliberately the same line `verify_timing_loopback` draws, so MABR and its own rig diagnostic cannot disagree about whether a rig is healthy — and because a red warning that fires on every ordinary run is one you learn to ignore, along with the run that genuinely is misaligned.

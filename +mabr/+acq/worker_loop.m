@@ -348,10 +348,26 @@ function [reason,nStreamed,xr,timing,err] = stream_block(cmdQueue,resultQueue,rb
 %
 % timing is where each frame's time went, measured with a few tic/tocs a
 % frame (microseconds against a 5.3 ms frame): see summarize_frames.
+%
+% A run on an ONGOING BACKGROUND (the plan has one; docs/Background.md) is
+% streamed exactly like any other -- the background is in the frames the
+% plan renders. Two things happen outside those frames, on the device only
+% and never in the ring: a block that stops before its end plays the
+% background out over its ramp rather than cutting it off mid-sample, and a
+% block resuming from a pause first plays the background back in for as long
+% as the run's own lead-in (pause_block). Neither changes what the plan
+% says was presented, nor a sample that is recorded.
 
 fl  = cfg.frameLength;
 src = mabr.stim.PlayPlan.fromSpec(spec);   % frames on demand -- never a whole matrix
 N   = src.N;
+% Whole frames of fade-out, and of pre-roll on resume; 0 with no background
+% (and in Test Mode, where there is no device to play either through).
+bgTail = 0; bgLead = 0;
+if src.hasBackground() && ~isempty(apr)
+    bgTail = max(1,ceil(src.Background.Ramp/fl))*fl;
+    bgLead = ceil(getdef(spec,'BackgroundLeadIn',0)*spec.SampleRate/fl)*fl;
+end
 % Loopback pacing. With no device there is no sample clock to throttle the
 % loop, so without this the whole run streams as fast as the CPU can copy
 % frames and the requested ISI means nothing in wall-clock terms. The client
@@ -373,6 +389,7 @@ mabr.log.vprintf(1,'Streaming %s: %d samples (%d frames)',kind,N,ceil(N/fl));
 
 reason = 'completed';
 err    = '';
+pausedOut = false;     % stopped FROM a pause: the background is already faded
 xr = struct('underruns',0,'overruns',0,'underrunAt',zeros(1,0),'overrunAt',zeros(1,0));
 i = 1;
 % Per frame, in ms: command poll, frame render, device call, ring write, and
@@ -400,8 +417,8 @@ while i <= N
             case mabr.acq.Cmd.Kill, reason = 'killed';  break
             case mabr.acq.Cmd.Pause
                 send_state(resultQueue,mabr.acq.State.Paused);
-                term = wait_while_paused(cmdQueue,apr,fl,~stimOnly);   % blocks until resumed/terminated
-                if ~isempty(term), reason = term; break; end
+                term = pause_block(cmdQueue,apr,fl,~stimOnly,src,i,bgTail,bgLead);   % blocks until resumed/terminated
+                if ~isempty(term), reason = term; pausedOut = true; break; end
                 send_state(resultQueue,mabr.acq.State.Acquire);
                 % Paused time is not owed back: restart the pacing clock so
                 % the loop does not sprint to "catch up" after a resume.
@@ -489,6 +506,13 @@ end
 % breaks before the frame is played, which is exactly what should NOT be
 % counted as presented.
 nStreamed = min(i-1,N);
+
+% Stopped part way through a run on an ongoing background: play it out over
+% its ramp. Not recorded and not counted -- the block ended at nStreamed.
+% (After a pause the background is already silent: pause_block faded it.)
+if bgTail > 0 && strcmp(reason,'stopped') && i <= N && ~pausedOut
+    play_unrecorded(apr,src.backgroundTail(i,bgTail),fl,~stimOnly);
+end
 
 mabr.log.vprintf(1,'Block %s (%d of %d samples, head = %d)', ...
     reason,nStreamed,N,rb.WriteHead);
@@ -601,6 +625,77 @@ if level == 1
         '%.2f s (+%d into its MiB): ring %.2f, render %.2f, poll %.2f ms', ...
         s(r,2)/fs,mod(s(r,2),perMiB),s(r,6),s(r,4),s(r,3)),1:size(s,1), ...
         'UniformOutput',false),'; '));
+end
+end
+
+
+% =====================================================================
+function term = pause_block(cmdQueue,apr,fl,duplex,src,i,bgTail,bgLead)
+% A pause, for a block that may be playing on an ongoing background.
+%
+% With no background (bgTail = 0) this is wait_while_paused and nothing more.
+% With one, the background is faded out before the wait -- the device plays
+% silence while paused, and the background must not stop mid-sample -- and
+% on Resume it is brought back BEFORE the block continues: bgLead samples of
+% the background alone, faded in, for the indices just before sample i, so
+% they run straight into the frame the block resumes with. The presentations
+% after a pause then follow a steady background as those before it did,
+% which is the reason a run has a lead-in at all.
+%
+% None of it is recorded or counted: the ring is not written, and the block
+% resumes at the sample it paused at. The state stays Paused through the
+% pre-roll, so the client's stall check (which watches the ring's write head
+% in Acquire) does not take it for a stream that stopped.
+%
+% A Stop or Kill during the pre-roll ends the block; a second Pause goes
+% back to waiting (the background is faded from where the block would have
+% resumed, not from where the pre-roll had reached -- a click in a case that
+% needs two presses in under a second).
+term = '';
+while true
+    if bgTail > 0
+        play_unrecorded(apr,src.backgroundTail(i,bgTail),fl,duplex);
+    end
+    term = wait_while_paused(cmdQueue,apr,fl,duplex);
+    if ~isempty(term) || bgTail == 0 || bgLead == 0, return; end
+
+    lead   = src.backgroundLead(i,bgLead);
+    again  = false;
+    for a = 1:fl:size(lead,1)
+        [msg,ok] = poll(cmdQueue,0);
+        if ok
+            switch msg.cmd
+                case mabr.acq.Cmd.Stop,  term = 'stopped'; break
+                case mabr.acq.Cmd.Kill,  term = 'killed';  break
+                case mabr.acq.Cmd.Pause, again = true;     break
+            end
+        end
+        play_unrecorded(apr,lead(a:a+fl-1,:),fl,duplex);
+    end
+    if ~isempty(term)
+        % Stopped inside the pre-roll: it is audible again, so take it out.
+        play_unrecorded(apr,src.backgroundTail(i,bgTail),fl,duplex);
+        return
+    end
+    if ~again, return; end
+end
+end
+
+
+% =====================================================================
+function play_unrecorded(apr,y,fl,duplex)
+% Play [n x 2] through the device a frame at a time, discarding what comes
+% back: n is a whole number of frames (the device's frame size may not
+% change). For the background's fades and pre-roll, which are not part of
+% the block. A device that fails here is reported where the block next
+% touches it; nothing is raised.
+if isempty(apr) || isempty(y), return; end
+for a = 1:fl:size(y,1) - fl + 1
+    try
+        if duplex, [~,~,~] = apr(y(a:a+fl-1,:)); else, apr(y(a:a+fl-1,:)); end
+    catch
+        return
+    end
 end
 end
 

@@ -942,6 +942,7 @@ A.StartTime          = isoChar(startTime);
 A.SIG                = SIG;
 A.Notes              = notes;
 A.TestMode           = logical(testMode);
+A.Background         = mabr.stim.backgroundRecord();   % recorded in quiet
 A.SoftwareVersion    = mabr.Config.SoftwareVersion;
 A.DataVersion        = mabr.Config.DataVersion;
 A.DecimationFactor   = 1;

@@ -52,6 +52,32 @@ stim(k).WindowDuration    = 0.002;                   % carried, but not a dimens
 
 Supplying `Frequency` and `Level` specifically makes the written filename match the offline pipeline's default regex; without them MABR falls back to `ID`. See [Data Files](Data-Files.md).
 
+#### An ongoing background
+
+A stimulus can be embedded in a sound that plays continuously through the run ([Ongoing Backgrounds](Background.md)). Three more fields are interpreted on an entry:
+
+| Field | Meaning |
+|-------|---------|
+| `Background` | Key of the background this entry is embedded in; `''` (or absent) for none |
+| `BackgroundGain` | `[N x 1]` gain applied to the background over this presentation — AM, a gap. `[]` for none |
+| `BackgroundPhase` | `[N x 1]` phase deviation, in radians and starting at 0, of a **tone** background — FM. `[]` for none |
+
+and the backgrounds themselves are the set's fourth argument, one struct per distinct background:
+
+```matlab
+bg = struct('Key','noise-A','Kind','loop','SampleRate',cfg.DACSampleRate, ...
+            'signal',loop, ...            % one seamless lap, [n x 1]
+            'Type','Noise','Level',50,'HighPass',4000,'LowPass',16000,'Seed',1,'Calibrated',true);
+% or: struct('Key','tone-A','Kind','tone','SampleRate',fs,'Frequency',8000,'Amplitude',0.05, ...)
+
+stim(1).signal = tonePip;              stim(1).Background = 'noise-A';   % added to it
+stim(2).signal = zeros(n,1,'single');  stim(2).Background = 'noise-A';   % a gap in it
+stim(2).BackgroundGain = gapEnvelope;                                    % 1 ... 0 ... 1
+set = mabr.stim.StimulusSet(stim, cfg, [], bg);
+```
+
+An entry that only modulates its background still needs a `signal`: zeros of the event's length, which is what places its timing pulse. `Type`, `Level` and the rest describe the background in the records and are never read by the renderer. A run can have one background, so entries naming different ones (or none) cannot share a run — `mabr.stim.Schedule` refuses the plan. Give the entries numeric fields for whatever defines the background (`BackgroundLevel`, …) and list them in `informativeParams`, so a condition in a background is keyed apart from the same stimulus in quiet; `mabr.stim.fromStimgen` does this for a stimgen bank.
+
 ### Loading it
 
 Save the struct array to a `.mat` file and the Stimulus panel's **Open…** button picks it up — [mabr.stim.StimulusSet.fromFile](../+mabr/+stim/StimulusSet.m) finds any variable that is a struct array with `signal` and `ID`. Headlessly:

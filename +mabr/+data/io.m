@@ -47,6 +47,16 @@ classdef io
 %       ABR_Data.TestMode                 (logical; true = Test Mode, i.e. the
 %                                          samples ARE the stimulus, not a
 %                                          recording of a subject)
+%       ABR_Data.Background               (struct, always: the ongoing
+%                                          background the run played on --
+%                                          mabr.stim.backgroundRecord; Type
+%                                          'none' for a run in quiet. A file
+%                                          recorded with one also gains a
+%                                          Background-<level>dB token in its
+%                                          name, so it no longer matches the
+%                                          strict pattern above and cannot be
+%                                          pooled by name with the same
+%                                          stimulus recorded in quiet)
 %       ABR_Data.ADC.AmplifierGain        (the external amplifier gain; 1 = none)
 %       ABR_Data.ADC.InputFullScale       (volts at the recorder input that
 %                                          read as 1.0, i.e. the input gain
@@ -209,6 +219,11 @@ classdef io
                 'ISI',     g('ISI',NaN), ...
                 'ISIRange',g('ISIRange',[NaN NaN]), ...
                 'SilencePad',g('SilencePad',NaN));
+            % The ongoing background the run played on (Type 'none' for a
+            % run in quiet), with the lead-in it played before the first
+            % presentation and where in its loop the run began: always
+            % present, as in a .abr.
+            S.Presentation.Background = mabr.data.io.backgroundRecord(g('Background',[]));
 
             seqIDs = repmat({''},1,n);
             for k = 1:n
@@ -309,6 +324,9 @@ classdef io
             if isempty(cond)
                 cond = sprintf('Run-%d',g('Run',1));
             end
+            % ...and the background it played on, as a .abr's name says it.
+            bg = mabr.data.io.backgroundToken(g('Background',[]));
+            if ~isempty(bg), cond = [cond '_' bg]; end
             fn = sprintf('%s_STIM_%s_%s.mat',subj,cond,t);
         end
 
@@ -412,6 +430,16 @@ classdef io
             % stimulus parameter or become a grouping dimension.
             ABR_Data.TestMode = logical(block.TestMode);
 
+            % The ongoing background the run played on. Always written, with
+            % one field set -- Type 'none' for a run in quiet -- for the
+            % reason TestMode always is: a recording made in 50 dB of noise
+            % must not depend on the ABSENCE of a field to be told from one
+            % made in quiet. Top level, not under SIG: the stimulus
+            % parameters that key a condition are SIG's (and carry the
+            % background's defining parameters too, where the bank supplies
+            % them); this is the record of what the run played.
+            ABR_Data.Background = mabr.data.io.backgroundRecord(block.Background);
+
             % Provenance / metadata (harmless extras; offline pipeline ignores)
             cfg = mabr.Config;
             ABR_Data.SoftwareVersion = cfg.SoftwareVersion;
@@ -471,7 +499,10 @@ classdef io
             % such a file, which is itself the tell -- Level is dB SPL where it
             % is absent and Calibrated is true, and dB relative to an arbitrary
             % reference where it is not.
-            for f = {'StimClass','VariantIndex','Calibrated','CalibrationTime','LevelScale'}
+            % Embedding joins them: how the stimulus met its ongoing
+            % background ('add' / 'modulate' / 'both'; absent in quiet).
+            for f = {'StimClass','VariantIndex','Calibrated','CalibrationTime','LevelScale', ...
+                     'Embedding'}
                 if isfield(meta,f{1}), SIG.(f{1}) = meta.(f{1}); end
             end
 
@@ -496,7 +527,51 @@ classdef io
             t = mabr.data.io.timestampToken(block.StartTime);
 
             cond = mabr.data.io.conditionToken(meta);
+            % A condition recorded on an ongoing background says so in its
+            % name. Offline code that reads names -- the strict pattern in
+            % the class help, abr_analysis -- then no longer matches these
+            % files at all, rather than pooling a tone in noise with the same
+            % tone in quiet as one condition.
+            bg = '';
+            if isprop(block,'Background') || isfield(block,'Background')
+                bg = mabr.data.io.backgroundToken(block.Background);
+            end
+            if ~isempty(bg), cond = [cond '_' bg]; end
             fn   = sprintf('%s_%s_%s.abr',subj,cond,t);
+        end
+
+        function tok = backgroundToken(R)
+            % The file-name token of a run's ongoing background: '' for none,
+            % 'Background-<level>dB' where the record gives a level
+            % (numberToken, so 52.5 is 52p5 and -10 is m10), else
+            % 'Background'. One token, hyphenated inside, like every other.
+            tok = '';
+            if ~isstruct(R) || isempty(R) || ~isfield(R,'Type') ...
+                    || strcmpi(char(string(R.Type)),'none')
+                return
+            end
+            tok = 'Background';
+            if isfield(R,'Level') && isscalar(R.Level) && isfinite(R.Level)
+                tok = sprintf('Background-%sdB',mabr.data.io.numberToken(R.Level));
+            end
+        end
+
+        function R = backgroundRecord(R)
+            % A background record with the full field set whatever arrived:
+            % [] or anything unusable is the record of "none", and a record
+            % from an older or partial source is filled out to
+            % mabr.stim.backgroundRecord's fields, so the struct a file
+            % holds always has one shape.
+            base = mabr.stim.backgroundRecord();
+            if ~isstruct(R) || ~isscalar(R)
+                R = base;
+                return
+            end
+            f = fieldnames(base);
+            for i = 1:numel(f)
+                if isfield(R,f{i}), base.(f{i}) = R.(f{i}); end
+            end
+            R = base;
         end
 
         function tok = conditionToken(meta)
@@ -611,6 +686,11 @@ classdef io
             % Data*AmplifierGain/InputFullScale the converter units for them.
             if isfield(D.ADC,'InputFullScale') && isscalar(D.ADC.InputFullScale)
                 block.InputFullScale = double(D.ADC.InputFullScale);
+            end
+            % ...and were recorded in quiet: a file from before the field
+            % reads back as the record of no background.
+            if isfield(D,'Background')
+                block.Background = mabr.data.io.backgroundRecord(D.Background);
             end
         end
     end

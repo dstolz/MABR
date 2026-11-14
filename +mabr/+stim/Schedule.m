@@ -307,6 +307,21 @@ classdef Schedule < handle
         % presentation's response is in the recording before the stream
         % stops: a window left short is a sweep dropped. 0 = pad symmetric.
         ResponseWindow   (1,1) double {mustBeNonnegative,mustBeFinite} = 0
+
+        % An ONGOING BACKGROUND (docs/Background.md), for a run whose stimuli
+        % are embedded in one (mabr.stim.StimulusSet.Backgrounds). It fades in
+        % at the run's first sample, plays BackgroundLeadIn seconds before
+        % the first presentation -- time for the ear to settle on it, in
+        % place of SilencePad -- runs unbroken through the run, and fades
+        % out at its end. BackgroundRamp is the length of each fade. The
+        % lead-in in force (leadPad) is never shorter than the ramp plus
+        % SilencePad, so the first sweep's baseline lies in steady
+        % background; the trailing pad grows by the ramp, so the fade-out
+        % lies beyond the last response window. Neither is read for a run
+        % with no background.
+        BackgroundLeadIn (1,1) double {mustBeNonnegative,mustBeFinite} = 1
+        BackgroundRamp   (1,1) double {mustBeNonnegative,mustBeFinite} = 0.02
+
         PlayerChannels   (1,2) double = [1 2]   % [DACsignal DACtiming]
         RecorderChannels (1,2) double = [1 2]   % [ADCsignal ADCtiming]
         Device           (1,:) char   = ''
@@ -563,6 +578,13 @@ classdef Schedule < handle
             obj.BuiltRuns       = obj.Runs;
             obj.BuiltPolarities = obj.Polarities;
             obj.reset();
+
+            % A background plays unbroken through a run, so a run has one.
+            % Refused here, where the plan is made and the GUI's preview
+            % reports it, rather than when the run is reached.
+            for r = 1:numel(obj.Runs)
+                obj.runBackground(r);
+            end
         end
 
         function reset(obj)
@@ -928,8 +950,11 @@ classdef Schedule < handle
             % the ring only has to hold the last fraction of a second of it.
             % (A recorded run used to be refused here past one ring lap --
             % mabr:stim:Schedule:tooLong.)
-            P     = round(obj.SilencePad*Fs);         % lead-in
-            T     = round(obj.trailPad()*Fs);         % closing silence
+            % (With an ongoing background the lead-in is the background's
+            % and the tail holds its fade-out: leadPad, trailPad.)
+            B     = obj.Set.background(obj.runBackground(r));
+            P     = round(obj.leadPad(r)*Fs);         % lead-in
+            T     = round(obj.trailPad(r)*Fs);        % closing silence
             fl    = obj.Config.frameLength;
             total = ceil((N + P + T)/fl)*fl;
 
@@ -976,7 +1001,24 @@ classdef Schedule < handle
             [~,loc] = ismember(seq,present);      % bank index -> plan index
             signals = arrayfun(@(u) obj.Set.signal(u),present,'UniformOutput',false);
             timings = arrayfun(@(u) obj.Set.timing(u),present,'UniformOutput',false);
-            plan    = mabr.stim.PlayPlan(signals,timings,onsets,loc(:),pol(:),total);
+
+            % The ongoing background, where the run has one: the plan renders
+            % it under the presentations, each of which may also modulate it
+            % (a gain envelope, a phase deviation). What was played is put in
+            % the spec as a record with no waveform in it.
+            bg  = [];
+            rec = mabr.stim.backgroundRecord();
+            if ~isempty(B)
+                ramp   = round(obj.BackgroundRamp*Fs);
+                offset = mabr.stim.Schedule.backgroundOffset(B,r);
+                gains  = arrayfun(@(u) obj.Set.gain(u), present,'UniformOutput',false);
+                phases = arrayfun(@(u) obj.Set.phase(u),present,'UniformOutput',false);
+                bg  = mabr.stim.PlayPlan.backgroundSpec(B,Fs,gains,phases,offset,ramp);
+                rec = mabr.stim.backgroundRecord(B,'LeadIn',P/Fs,'Ramp',ramp/Fs, ...
+                          'LoopOffset',offset);
+                obj.warnBackground(B,present,minPeriod,Fs);
+            end
+            plan = mabr.stim.PlayPlan(signals,timings,onsets,loc(:),pol(:),total,bg);
 
             spec = struct();
             spec.Plan              = plan;
@@ -993,6 +1035,10 @@ classdef Schedule < handle
             spec.StimulationOnly   = obj.StimulationOnly;
             spec.TestingFrameDelay = obj.TestingFrameDelay;
             spec.Meta              = obj.Set.meta(seq(1));
+            spec.Background        = rec;         % what the run played under them
+            % The worker's pre-roll when a paused block resumes (see
+            % mabr.acq.worker_loop): as much background as the run began with.
+            spec.BackgroundLeadIn  = P/Fs;
             if ~isempty(obj.Device), spec.Device = obj.Device; end
         end
 
@@ -1017,24 +1063,80 @@ classdef Schedule < handle
             for r = 1:obj.NumRuns
                 n = numel(obj.Runs{r});
                 s.duration = s.duration + (n-1)*obj.MeanISI + obj.Set.maxDuration() ...
-                             + obj.padSeconds();
+                             + obj.padSeconds(r);
             end
         end
 
-        function t = trailPad(obj)
-            % Seconds of silence a run ends with: SilencePad, or -- once the
-            % controller has said where the analysis stops reading
-            % (ResponseWindow) -- enough for the last presentation's response
-            % to make the recording, round trip included, if that is longer.
+        function key = runBackground(obj,r)
+            % Key of the ongoing background run r plays on; '' for none.
+            %
+            % A background runs unbroken through a run, so every stimulus of
+            % the run must name the same one -- a stimulus presented in quiet
+            % counts as naming none. A run that mixes them is refused: a
+            % series made by varying the BACKGROUND (its level, a tone's
+            % frequency) is several backgrounds and runs one condition per
+            % run, while one made by varying the stimulus shares a background
+            % and can be interleaved.
+            key = '';
+            if r < 1 || r > numel(obj.Runs) || isempty(obj.Runs{r}), return; end
+            u    = unique(obj.Runs{r},'stable');
+            keys = arrayfun(@(k) obj.Set.backgroundKey(k),u,'UniformOutput',false);
+            kinds = unique(keys);
+            if numel(kinds) > 1
+                error('mabr:stim:Schedule:mixedBackground', ...
+                    ['Run %d mixes stimuli with %d different ongoing backgrounds ' ...
+                     '(a stimulus presented in quiet counts as one). A background ' ...
+                     'plays unbroken through a run, so a run can have only one: ' ...
+                     'use a Conventional strategy (one stimulus per run), or give ' ...
+                     'every stimulus the same background.'],r,numel(kinds));
+            end
+            key = kinds{1};
+        end
+
+        function tf = runHasBackground(obj,r)
+            % Whether run r plays on a background. With no run named, whether
+            % any stimulus in the bank has one.
+            if nargin < 2 || isempty(r)
+                tf = obj.Set.numStimuli > 0 && any(obj.Set.hasBackground());
+            else
+                tf = ~isempty(obj.runBackground(r));
+            end
+        end
+
+        function t = leadPad(obj,r)
+            % Seconds from a run's first sample to its first onset:
+            % SilencePad, or for a run on an ongoing background the lead-in
+            % it plays first -- BackgroundLeadIn, and never less than the
+            % ramp plus SilencePad. With no run named, the longest over the
+            % bank (for an estimate that cannot yet say which run).
+            t = obj.SilencePad;
+            if nargin < 2, r = []; end
+            if obj.runHasBackground(r)
+                t = max(obj.BackgroundLeadIn,obj.BackgroundRamp + obj.SilencePad);
+            end
+        end
+
+        function t = trailPad(obj,r)
+            % Seconds a run plays on after its last presentation: SilencePad,
+            % or -- once the controller has said where the analysis stops
+            % reading (ResponseWindow) -- enough for the last presentation's
+            % response to make the recording, round trip included, if that is
+            % longer. A run on an ongoing background adds its fade-out, which
+            % must lie beyond that window.
             t = obj.SilencePad;
             if obj.ResponseWindow > 0
                 t = max(t,obj.ResponseWindow + obj.LatencyAllowance);
             end
+            if nargin < 2, r = []; end
+            if obj.runHasBackground(r)
+                t = t + obj.BackgroundRamp;
+            end
         end
 
-        function t = padSeconds(obj)
-            % All the silence a run carries, both ends.
-            t = obj.SilencePad + obj.trailPad();
+        function t = padSeconds(obj,r)
+            % Everything a run carries besides its presentations, both ends.
+            if nargin < 2, r = []; end
+            t = obj.leadPad(r) + obj.trailPad(r);
         end
 
         function tf = overlaps(obj)
@@ -1081,6 +1183,47 @@ classdef Schedule < handle
     end
 
     methods (Access = private)
+        function warnBackground(obj,B,present,minPeriod,Fs)
+            % Two things about a run on a background that are true to the
+            % plan and still worth saying before it plays.
+            %
+            % CLIPPING. The converter's full scale is 1. The background, at
+            % the largest gain a presentation gives it, plus the largest
+            % stimulus added to it, is the most the mix can reach.
+            if strcmp(B.Kind,'tone'), bgPeak = B.Amplitude;
+            else,                     bgPeak = double(max(abs(B.signal)));
+            end
+            maxGain = 1; addPeak = 0;
+            for u = present(:)'
+                g = obj.Set.gain(u);
+                if ~isempty(g), maxGain = max(maxGain,max(g)); end
+                addPeak = max(addPeak,double(max(abs(obj.Set.signal(u)))));
+            end
+            worst = bgPeak*maxGain + addPeak;
+            if worst > 1
+                mabr.log.vprintf(0,1, ...
+                    ['The background (peak %.3g, gain up to %.3g) plus the stimulus ' ...
+                     '(peak %.3g) can reach %.3g of the converter''s full scale: the ' ...
+                     'output WILL CLIP. Lower the stimulus or background level.'], ...
+                    bgPeak,maxGain,addPeak,worst);
+            end
+
+            % THE SAME NOISE AGAIN. A loop repeats, and on a fixed ISI the
+            % presentations land on only so many places in it.
+            if strcmp(B.Kind,'loop') && ~obj.isRandomISI()
+                n = numel(B.signal);
+                places = n/gcd(n,max(1,minPeriod));
+                if places < 32
+                    mabr.log.vprintf(1, ...
+                        ['With a fixed ISI of %.4g ms the presentations fall on only %d ' ...
+                         'place(s) in the %.4g s background loop, so they meet the same ' ...
+                         'stretches of noise over and over. Randomize the ISI, or change ' ...
+                         'the loop duration, if that matters.'], ...
+                        1e3*minPeriod/Fs,places,n/Fs);
+                end
+            end
+        end
+
         function k = nextRun(obj)
             % The first run after the current one that the Disabled mask
             % leaves anything in; [] if none. Does not change the plan.
@@ -1266,6 +1409,21 @@ classdef Schedule < handle
     end
 
     methods (Static)
+        function off = backgroundOffset(B,r)
+            % Sample of the background that run r's first sample plays
+            % (0-based). A loop is entered at a different place for each run
+            % -- a golden-ratio stride through it -- so successive runs, and
+            % the passes of a looped run, do not all open on the same stretch
+            % of noise. It is a function of the run index alone, not a draw:
+            % rendering a run twice gives the same samples whether or not the
+            % schedule is seeded, and the value is recorded with the run. A
+            % tone has no place to enter at; 0.
+            off = 0;
+            if isempty(B) || ~strcmp(B.Kind,'loop'), return; end
+            n   = numel(B.signal);
+            off = mod(round((r - 1)*0.6180339887498949*n),n);
+        end
+
         function tf = strategyIntermixes(strategy)
             % Answered from the NAME alone, which is all a caller holding no
             % plan has -- the GUI deciding whether to offer early stop before

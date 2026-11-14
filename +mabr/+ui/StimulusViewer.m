@@ -173,9 +173,13 @@ classdef StimulusViewer < handle
             % Spectra are computed before anything is drawn: the overlay needs
             % one common 0 dB reference, which is not known until the loudest
             % entry in the selection has been transformed.
-            [f,mag] = deal(cell(1,numel(idx)));
+            % An entry embedded in an ongoing background is drawn IN it (see
+            % viewWave): a gap or a frequency modulation is nothing to look
+            % at by itself, and a tone in noise is not the tone alone.
+            [f,mag,wv,tv] = deal(cell(1,numel(idx)));
             for k = 1:numel(idx)
-                [f{k},mag{k}] = obj.spectrum(double(obj.Stimuli.signal(idx(k))),Fs);
+                [wv{k},tv{k}] = obj.viewWave(idx(k));
+                [f{k},mag{k}] = obj.spectrum(wv{k},Fs);
             end
             ref = max(cellfun(@max,mag));
             if ~isfinite(ref) || ref <= 0, ref = 1; end
@@ -183,17 +187,19 @@ classdef StimulusViewer < handle
             obj.clearAxes();
             hold(obj.axWave,'on'); hold(obj.axSpec,'on');
             for k = 1:numel(idx)
-                w = double(obj.Stimuli.signal(idx(k)));
-                t = 1e3*(0:numel(w)-1)/Fs;
+                w = wv{k};
+                t = tv{k};
                 plot(obj.axWave,t,w,'Color',col(k,:),'LineWidth',1);
                 plot(obj.axSpec,f{k}/1e3,20*log10(mag{k}/ref + eps), ...
                     'Color',col(k,:),'LineWidth',1);
             end
             hold(obj.axWave,'off'); hold(obj.axSpec,'off');
 
-            % Longest entry sets the time axis so overlaid traces stay aligned.
-            tMax = 1e3*max(obj.Stimuli.duration(idx));
-            if tMax > 0, obj.axWave.XLim = [0 tMax]; end
+            % Longest entry sets the time axis so overlaid traces stay aligned
+            % (from before the onset, where an entry is drawn in a background).
+            tMin = min(cellfun(@(t) t(1),tv));
+            tMax = max(cellfun(@(t) t(end),tv));
+            if tMax > tMin, obj.axWave.XLim = [min(0,tMin) tMax]; end
             obj.axSpec.XLim = [0.1 Fs/2e3];
             obj.axSpec.YLim = [-90 5];
 
@@ -232,6 +238,16 @@ classdef StimulusViewer < handle
                     sprintf('peak      %.4g',max(abs(w)))
                     sprintf('rms       %.4g',sqrt(mean(w.^2)))
                     sprintf('alt. pol. %s',yesNo(m.alternatePolarity))};
+                % What it is embedded in, and how. The peak and rms above are
+                % of the entry's own signal -- what is ADDED -- so an entry
+                % that only modulates its background reads 0 there.
+                if obj.Stimuli.hasBackground(idx)
+                    txt = [txt; { ...
+                        sprintf('background %s', ...
+                            mabr.stim.backgroundText(obj.Stimuli.backgroundOf(idx)))
+                        sprintf('embedding %s (drawn in its background)', ...
+                            obj.Stimuli.embeddingMode(idx))}];
+                end
                 % Label(1) is the ID, already shown above; the rest are the
                 % passthrough parameters the offline pipeline groups by.
                 if numel(m.Label) > 1
@@ -244,6 +260,27 @@ classdef StimulusViewer < handle
                 for k = 1:numel(idx)
                     txt{end+1,1} = sprintf('%d. %s  (%.2f ms)',idx(k),ids{idx(k)},1e3*d(k)); %#ok<AGROW>
                 end
+            end
+        end
+    end
+
+    methods (Access = private)
+        function [w,t] = viewWave(obj,i)
+            % The waveform to draw for entry i, and its time axis in ms (0 at
+            % the onset): the signal -- or, for an entry embedded in an
+            % ongoing background, one presentation rendered in a stretch of
+            % it either side, as long as the entry itself up to a quarter
+            % second (mabr.stim.StimulusSet.embedded).
+            Fs = obj.Stimuli.SampleRate;
+            if obj.Stimuli.hasBackground(i)
+                pad   = min(0.25,obj.Stimuli.duration(i));
+                [w,t] = obj.Stimuli.embedded(i,pad,pad);
+                w = double(w(:)');
+                t = 1e3*t(:)';
+            else
+                w = double(obj.Stimuli.signal(i));
+                w = w(:)';
+                t = 1e3*(0:numel(w)-1)/Fs;
             end
         end
     end

@@ -67,6 +67,15 @@ classdef Block
         % status line that the next run's "Saved ..." overwrote within
         % seconds -- offline, the file could not say it was suspect.
         Alignment = [];
+        % The ongoing background the run played on, as
+        % mabr.stim.backgroundRecord's struct (Type, band or frequency, level,
+        % seed, lead-in, ramp, loop offset -- no waveform), or [] for a block
+        % built without one, which mabr.data.io writes as the record of
+        % "none". A block recorded in a background is otherwise the same
+        % shape as one recorded in quiet, so the file has to say: it is
+        % written as ABR_Data.Background, always, and the file name gains a
+        % Background token.
+        Background = [];
     end
 
     properties (Dependent)
