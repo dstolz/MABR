@@ -19,7 +19,7 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 | `DACSampleRate` | 192000 Hz — playback and full-duplex record rate |
 | `ADCSampleRate` | 12000 Hz — decimated storage/analysis rate |
 | `frameLength` | 1024 samples per play/record frame |
-| `maxInputBufferLength` | 2^26 samples — ring buffer length (~5.8 min at 192 kHz) |
+| `maxInputBufferLength` | 2^26 samples — ring buffer length (~5.8 min at 192 kHz); a longer run is archived as it streams (`mabr.compute.RunArchive`) |
 | `RequiredToolboxes` | Name/minimum-version table checked at app startup |
 | `decimationFactor` | Dependent: `DACSampleRate / ADCSampleRate` |
 | `signalBufferFile`, `timingBufferFile`, `headerFile` | Dependent: ring-buffer backing file paths |
@@ -80,7 +80,7 @@ Small private helpers (`getdef`, `plainValue`, `version_key`, and similar) are o
 | `strategyIntermixes(s)` | Static. Whether strategy `s` intermixes — used by the GUI to gate early stop. `custom` answers `true` conservatively, having no plan to inspect |
 | `startingRepetitions(set)` | Static. Per-entry `Repetitions` where supplied, else `512` |
 
-`renderSpec` adds `StimulusIndex` to the spec — the stimulus behind each onset, which `AcqController` uses to de-interleave an intermixed run at save time. It errors with `mabr:stim:Schedule:tooLong` if the run would exceed `Config.maxInputBufferLength`, checked **before** allocating.
+`renderSpec` adds `StimulusIndex` to the spec — the stimulus behind each onset, which `AcqController` uses to de-interleave an intermixed run at save time. A run may be any length: one longer than `Config.maxInputBufferLength` is archived as it streams rather than refused (it used to be, with `mabr:stim:Schedule:tooLong`).
 
 ### Advance criteria — `+mabr/+stim/+advance/`
 

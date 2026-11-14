@@ -31,9 +31,18 @@ function verify_compute_worker()
 %           the ring has been reset for it -- told earlier, the DSP worker
 %           published the previous run's sweeps under the new run's id and
 %           the advance criterion stopped the new run one frame in.
+%   Part I: an ARCHIVED run (the path a run longer than the ring takes):
+%           the DSP worker archives it as it streams and finalizes from its
+%           archive -- the same finalization this process makes from the
+%           ring -- while the controller keeps its own copy without ever
+%           stepping its pipeline, and lets the copy go once the worker's
+%           is used.
 %   Part F: a DSP worker lost mid-run -- the run is finalized anyway (by
 %           this process from the intact ring when the reply never comes)
 %           and the schedule completes.
+%   Part J: the same with the run archived: lost mid-run, the run is
+%           finalized from an archive anyway -- the relaunched worker's, or
+%           the copy this process kept -- every condition with its sweeps.
 %
 %   Parts B-G need a parallel pool of three workers (mabr.pool). Where the
 %   machine's cluster profile cannot provide one they are SKIPPED and Part A
@@ -460,6 +469,63 @@ nb = arrayfun(@(b) b.NumSweeps,ctrl.Session.Blocks(n0+1:end));
 assert(all(nb == 24),'every run should keep all 24 of its sweeps (got %s)',mat2str(nb));
 fprintf('  PASS Part H: runs reach the workers at Acquire; 3 blocked runs kept all %d sweeps\n',24);
 
+%% ---- Part I: an archived run through the DSP worker ---------------------
+ctrl.setStimuli(bank);
+ctrl.Schedule.Strategy    = 'interleaved';
+ctrl.Schedule.Repetitions = 48;
+ctrl.Schedule.ISI         = 0.02;
+ctrl.Schedule.build();
+ctrl.Schedule.TestingFrameDelay = 1024/cfg.DACSampleRate;
+ctrl.AdvanceFcn    = @mabr.stim.advance.num_sweeps;
+ctrl.AdvanceParams = struct('targetSweeps',Inf,'corrThreshold',1,'minSweeps',Inf,'maxSweeps',Inf);
+ctrl.ArchiveAll    = true;
+gotI = containers.Map('KeyType','char','ValueType','any');
+lfI  = addlistener(ctrl.Compute,'Finalized',@(~,e) put(gotI,'reply',e.Data)); %#ok<NASGU>
+n0     = ctrl.Session.NumBlocks;
+steps0 = ctrl.Pipeline.StepCount;
+specI  = ctrl.Schedule.renderSpec(1);
+ctrl.start();
+wait_until(@() ctrl.State == mabr.ui.ProgState.SchedComplete,120);
+ctrl.ArchiveAll = false;
+delete(lfI);
+assert(ctrl.State == mabr.ui.ProgState.SchedComplete, ...
+    'the archived schedule did not complete (state %s)',string(ctrl.State));
+assert(ctrl.Session.NumBlocks == n0 + 4,'expected 4 archived blocks, got %d', ...
+    ctrl.Session.NumBlocks - n0);
+assert(ctrl.Pipeline.StepCount == steps0, ...
+    'keeping its copy of the archive, the controller stepped its pipeline %d times', ...
+    ctrl.Pipeline.StepCount - steps0);
+assert(~ctrl.Pipeline.archiving(),'the controller kept its copy after the worker''s was used');
+assert(gotI.isKey('reply'),'the DSP worker never replied to the archived run''s Finalize');
+rI = gotI('reply');
+assert(isempty(rI.error),'the DSP worker could not finalize the archived run: %s',rI.error);
+Fw = rI.result;
+assert(Fw.Archive.Used && Fw.Archive.Complete, ...
+    'the worker finalized the run from %s',tern(Fw.Archive.Used,'an incomplete archive','the ring'));
+% The same ring, read whole here.
+seqI = specI.StimulusIndex(:)';
+pI = mabr.compute.Pipeline(cfg);
+pI.configure(ctrl.Window,ctrl.Filters,ctrl.Artifacts);
+pI.beginRun(struct('RunId',1,'StimIndex',seqI,'Stimuli',unique(seqI,'stable')));
+Fl = pI.finalize(ctrl.Engine.RingBuffer,seqI,specI.ExpectedOnsets);
+assert(Fw.NumOnsets == Fl.NumOnsets && isequal(Fw.Seq,Fl.Seq) && isequal(Fw.OnsetsAll,Fl.OnsetsAll), ...
+    'the worker''s archive pairs onsets differently from the ring');
+assert(numel(Fw.Parts) == numel(Fl.Parts),'the worker''s archive finds different stimuli');
+exactI = true;
+for i = 1:numel(Fl.Parts)
+    for f = {'Stimulus','Onsets','SweepLength','Flags','Count'}
+        assert(isequal(Fw.Parts(i).(f{1}),Fl.Parts(i).(f{1})), ...
+            'archived part %d differs from the ring''s in %s',i,f{1});
+    end
+    r = double(Fl.Parts(i).Data);
+    assert(max(abs(double(Fw.Parts(i).Data) - r)) <= 4*eps(single(max(abs(r)))), ...
+        'archived part %d holds another trace than the ring gives',i);
+    exactI = exactI && isequal(Fw.Parts(i).Data,Fl.Parts(i).Data);
+end
+fprintf(['  PASS Part I: an archived run finalized on the worker is the ring''s (%d parts, %s); ' ...
+    'the controller kept a copy without stepping, and let it go\n'], ...
+    numel(Fl.Parts),tern(exactI,'bit-identical','within single rounding'));
+
 %% ---- Part F: a DSP worker lost mid-run ---------------------------------
 % The run still finalizes -- by the relaunched worker if it is back in time,
 % by this process from the intact ring if not -- and the schedule completes.
@@ -485,6 +551,40 @@ assert(ctrl.Compute.DSP.Relaunched || ctrl.Compute.DSP.Dead, ...
     'the lost DSP worker was neither relaunched nor written off');
 fprintf('  PASS Part F: a DSP worker lost mid-run -- run finalized, schedule completed, worker %s\n', ...
     tern(ctrl.Compute.hasDSP(),'relaunched','written off'));
+
+%% ---- Part J: an archived run, its DSP worker lost mid-run ----------------
+% Whichever archive finalizes it -- a relaunched worker's (RunStart replayed,
+% read from the ring's start, which still holds this short run) or the copy
+% this process kept while the worker served -- every condition keeps every
+% sweep. With the worker already written off by Part F, this process
+% archives and finalizes the run alone.
+ctrl.setStimuli(bank);
+ctrl.Schedule.Strategy    = 'interleaved';
+ctrl.Schedule.Repetitions = 48;
+ctrl.Schedule.ISI         = 0.02;
+ctrl.Schedule.build();
+ctrl.Schedule.TestingFrameDelay = 1024/cfg.DACSampleRate;
+ctrl.AdvanceFcn    = @mabr.stim.advance.num_sweeps;
+ctrl.AdvanceParams = struct('targetSweeps',Inf,'corrThreshold',1,'minSweeps',Inf,'maxSweeps',Inf);
+ctrl.ArchiveAll    = true;
+specJ = ctrl.Schedule.renderSpec(1);
+seqJ  = specJ.StimulusIndex(:)';
+n0 = ctrl.Session.NumBlocks;
+ctrl.start();
+pause(0.5);
+if ctrl.Compute.hasDSP(), cancel(ctrl.Compute.DSP.Future); end
+wait_until(@() ctrl.State == mabr.ui.ProgState.SchedComplete,120);
+ctrl.ArchiveAll = false;
+assert(ctrl.State == mabr.ui.ProgState.SchedComplete, ...
+    'the archived schedule did not complete after the DSP worker was lost (state %s)',string(ctrl.State));
+assert(ctrl.Session.NumBlocks == n0 + 4,'expected 4 blocks, got %d',ctrl.Session.NumBlocks - n0);
+nb = arrayfun(@(b) b.NumSweeps,ctrl.Session.Blocks(n0+1:end));
+st = arrayfun(@(b) find(strcmp(bank.IDs(),b.Stim.Meta.ID),1),ctrl.Session.Blocks(n0+1:end));
+want = arrayfun(@(u) nnz(seqJ == u),st);
+assert(isequal(nb,want),'the archived run kept %s sweeps per condition, not %s', ...
+    mat2str(nb),mat2str(want));
+fprintf('  PASS Part J: an archived run whose DSP worker was lost finalized whole (%s sweeps)\n', ...
+    mat2str(nb));
 
 fprintf('== verify_compute_worker PASSED ==\n');
 end

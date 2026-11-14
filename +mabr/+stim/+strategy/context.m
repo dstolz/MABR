@@ -32,11 +32,11 @@ function ctx = context(sch,params,rs)
 %       sampleRate         Hz, the DAC rate the plan is rendered at
 %       isi / isiMode / isiRange / minISI / meanISI   see mabr.stim.Schedule
 %       silencePad         s of silence bracketing each run
-%       maxRunSamples      Config.maxInputBufferLength -- the ring buffer
-%                          holds ONE run, so a run longer than this is refused
-%                          by renderSpec. Leave headroom: the rendered run
-%                          also carries 2*silencePad and rounds up to a whole
-%                          number of frames.
+%       maxRunSamples      Inf. A run is no longer capped at one pass of the
+%                          acquisition ring buffer: one longer than the ring
+%                          is archived as it streams (mabr.compute.RunArchive).
+%                          Kept so a strategy written when it was capped
+%                          still reads a field, and reads "no limit".
 %
 %   REPRODUCIBILITY:
 %       randStream         the schedule's OWN RandStream, RS -- the same one
@@ -88,7 +88,7 @@ ctx.isiRange      = sch.ISIRange;
 ctx.minISI        = sch.MinISI;
 ctx.meanISI       = sch.MeanISI;
 ctx.silencePad    = sch.SilencePad;
-ctx.maxRunSamples = sch.Config.maxInputBufferLength;
+ctx.maxRunSamples = Inf;          % no ceiling (see above)
 
 % Reproducibility.
 ctx.randStream = rs;

@@ -132,7 +132,7 @@ Set `Seed` for a reproducible order — and, under `ISIMode = 'random'`, reprodu
 Two constraints worth knowing:
 
 - If a stimulus is longer than `MinISI` — the ISI, or the bottom of `ISIRange` — presentations are **summed** where they overlap and the condition is logged; the GUI warns before acquisition starts.
-- One run is recorded in one ring-buffer pass, so a run may not exceed `Config.maxInputBufferLength` (~5.8 min at 192 kHz). `renderSpec` refuses with `mabr:stim:Schedule:tooLong` rather than silently discarding the earliest sweeps. Intermixed strategies put every presentation in one run, so this is the ceiling that bites first — the GUI's plan summary shows the estimated duration before you start.
+- A run may be any length. One longer than the acquisition ring buffer (`Config.maxInputBufferLength`, ~5.8 min at 192 kHz) is archived as it streams and finalized from the archive, exactly as a run the ring holds is finalized from the ring; it used to be refused (`mabr:stim:Schedule:tooLong`). What a long run costs is memory: its decimated trace, 48 kB a second, and its live sweeps.
 
 ## Ordering presentations yourself
 
@@ -157,7 +157,7 @@ The contract is defined in one place, [mabr.stim.strategy.context](../+mabr/+sti
 | `sampleRate` | timing | Hz, the DAC rate the plan renders at |
 | `isi` / `isiMode` / `isiRange` / `minISI` / `meanISI` | timing | the spacing settings, as `Schedule` holds them |
 | `silencePad` | timing | s of silence bracketing each run |
-| `maxRunSamples` | timing | `Config.maxInputBufferLength` — one run is one ring-buffer pass |
+| `maxRunSamples` | timing | `Inf` — a run has no length limit (kept for strategies written when it was one ring-buffer pass) |
 | `randStream` | — | the schedule's own `RandStream`; **shuffle with this** |
 
 `ctx.params` is the field that makes a strategy readable. A bank almost never varies along one dimension — the ordinary ABR run is a Frequency × Level grid — and it lets you sort, group, and select by those dimensions **by name** instead of parsing IDs:
@@ -186,7 +186,7 @@ Indices are 1-based into the bank `ctx` describes. Empty runs are dropped rather
 ### Three rules
 
 1. **Shuffle from `ctx.randStream`** — `randperm(ctx.randStream,n)`, not `randperm(n)`. Building a plan must not perturb global `rng`, and it is what makes `Schedule.Seed` reproduce a whole session: order and, under `ISIMode = 'random'`, timing with it.
-2. **Watch the run length.** One run is recorded in one pass of the ring buffer, so roughly `numel(run)*ctx.meanISI*ctx.sampleRate` must stay under `ctx.maxRunSamples` (~5.8 min at 192 kHz). Putting every presentation in one run is what makes this bite; split into several and the ceiling is per-run.
+2. **A run may be any length.** One longer than the ring buffer is archived as it streams, so putting every presentation in one run is allowed; `ctx.maxRunSamples` is `Inf`.
 3. **Present each entry its `ctx.repetitions` count**, unless you mean not to. Departing is allowed and *logged*, not refused — but the usual cause is a cycle that assumed equal counts, not a design.
 
 Structural mistakes are errors rather than warnings, because no design intends them and none can be presented at all: an index off the end of the bank, a non-integer, a polarity that is not ±1.

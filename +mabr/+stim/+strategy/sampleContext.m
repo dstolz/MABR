@@ -58,7 +58,7 @@ ctx.isiRange      = [1 1]/21.1;
 ctx.minISI        = 1/21.1;
 ctx.meanISI       = 1/21.1;
 ctx.silencePad    = 0.25;
-ctx.maxRunSamples = 2^26;
+ctx.maxRunSamples = Inf;
 
 % A fixed seed, so validating the same strategy twice gives the same answer
 % even when it shuffles.

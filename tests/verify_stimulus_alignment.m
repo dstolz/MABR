@@ -34,6 +34,11 @@ function verify_stimulus_alignment(varargin)
 %               its conditions is its own
 %       Part I  the compute workers: the same run through the worker gives the
 %               same alignment and the same numbers
+%       Part J  the run archive (run before Part I, which needs a three-worker
+%               pool): the same run ARCHIVED as it streams -- the path a run
+%               longer than the ring buffer takes -- keeps every condition
+%               its own, every presentation its own waveform, and gives the
+%               blocks the ring itself would have
 %
 %   In TESTING loopback the DAC frame IS the ADC frame (plus ~1e-6 of noise),
 %   which is what makes Part B exact rather than approximate: with no device
@@ -398,6 +403,53 @@ fprintf(['  PASS Part H: no copy while nothing pulls; %d pulls served from %d co
          'the last (%d sweeps) splits into its own conditions\n'], ...
     3*got('events'),ctrl.Pipeline.CopyCount,n);
 
+%% ---- Part J: the same run, archived as it streams ------------------------
+% A run longer than the ring buffer is archived as it streams (onsets and
+% decimated signal made a slice at a time) and finalized from the archive.
+% ArchiveAll sends a run that fits down that path, so it can be held against
+% what the ring itself gives: the blocks, the alignment, the waveforms.
+ctrl.ArchiveAll = true;
+A = run_bank(ctrl,bank,sch.Repetitions,sch.ISI,'interleaved',opt);
+ctrl.ArchiveAll = false;
+assert(~ctrl.Pipeline.archiving(),'the archive was not let go after finalization');
+assert(isstruct(ctrl.LastAlignment) && ctrl.LastAlignment.Aligned, ...
+    'the archived run is not aligned: %s',ctrl.LastAlignment.Summary);
+if opt.Testing
+    assert(ctrl.LastAlignment.WaveformsMatch, ...
+        'the archived run''s presentations are not their own waveforms: %s', ...
+        ctrl.LastAlignment.Summary);
+end
+assert(numel(A.blocks) == bank.numStimuli, ...
+    'the archived run produced %d blocks, not %d',numel(A.blocks),bank.numStimuli);
+% What the ring gives, read whole by a pipeline of our own -- the path every
+% run that fits takes.
+pJ = mabr.compute.Pipeline(ctrl.Config);
+pJ.configure(ctrl.Window,ctrl.Filters,ctrl.Artifacts,ctrl.AmplifierGain);
+pJ.beginRun(struct('RunId',1,'StimIndex',A.seq,'Stimuli',A.stimList));
+FJ = pJ.finalize(A.rb,A.seq,A.expected);
+exactJ = true;
+for i = 1:numel(A.blocks)
+    b = A.blocks(i);
+    m = b.Stim.Meta;
+    u = find(strcmp(bank.IDs(),m.ID),1);
+    assert(b.NumSweeps == nnz(A.seq == u), ...
+        'archived block "%s" holds %d sweeps; the plan presented it %d', ...
+        m.ID,b.NumSweeps,nnz(A.seq == u));
+    fMeas = dominant_hz(double(b.ADC.SweepMean),b.ADC.SampleRate);
+    assert(abs(fMeas - m.Frequency*1000) < 150, ...
+        'archived block "%s" (%g kHz) peaks at %.0f Hz',m.ID,m.Frequency,fMeas);
+    q = FJ.Parts([FJ.Parts.Stimulus] == u);
+    assert(isscalar(q),'the ring gives no single part for "%s"',m.ID);
+    assert(isequal(b.ADC.SweepOnsets(:),q.Onsets(:)) && isequal(b.ADC.IsArtifact(:),q.Flags(:)), ...
+        'archived block "%s" has other sweeps than the ring gives',m.ID);
+    a  = double(b.ADC.Data); r = double(q.Data);
+    assert(numel(a) == numel(r) && max(abs(a - r)) <= 4*eps(single(max(abs(r)))), ...
+        'archived block "%s" holds another trace than the ring gives',m.ID);
+    exactJ = exactJ && isequal(b.ADC.Data,q.Data);
+end
+fprintf('  PASS Part J: archived as it streams, the run aligns and its %d blocks are the ring''s (%s)\n', ...
+    numel(A.blocks),tern(exactJ,'bit-identical','within single rounding'));
+
 delete(ctrl); clear cleaner
 
 %% ---- Part I: the same, through the compute workers ---------------------
@@ -609,4 +661,9 @@ if opt.Testing, return; end
 if ~isempty(opt.Device),           ctrl.Schedule.Device           = opt.Device;           end
 if ~isempty(opt.PlayerChannels),   ctrl.Schedule.PlayerChannels   = opt.PlayerChannels;   end
 if ~isempty(opt.RecorderChannels), ctrl.Schedule.RecorderChannels = opt.RecorderChannels; end
+end
+
+
+function v = tern(c,a,b)
+if c, v = a; else, v = b; end
 end

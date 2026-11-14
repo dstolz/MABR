@@ -20,7 +20,7 @@ Reference for `+mabr/+acq/` — the subsystem that actually plays and records. T
    └─────────────────────┘                 └──────────────────────────┘
 ```
 
-Three files back the ring buffer, all in `.runtime_data/`: `ring_signal.dat`, `ring_timing.dat` (both `single`, `maxInputBufferLength` samples), and `ring_header.dat` (two `uint32`: write head and block sequence). The folder is `<repo>/.runtime_data` unless the preference `MABR/RuntimeDir` names another, with `<tempdir>/MABR/.runtime_data` as the fallback when the repository folder is not writable. Because the file names are fixed, only one process may stream into them at a time: `Engine.run` writes `stream.lock` with its MATLAB process id, and a Run from another live process is refused with `mabr:acq:Engine:runtimeBusy` (a lock left by a crashed process is taken over).
+Three files back the ring buffer, all in `.runtime_data/`: `ring_signal.dat`, `ring_timing.dat` (both `single`, `maxInputBufferLength` samples), and `ring_header.dat` (16 bytes: a `double` write head, so it counts past 2^32 samples, then a `uint32` block sequence and a `uint32` pad; an 8-byte header from an older MABR is recreated). The folder is `<repo>/.runtime_data` unless the preference `MABR/RuntimeDir` names another, with `<tempdir>/MABR/.runtime_data` as the fallback when the repository folder is not writable. Because the file names are fixed, only one process may stream into them at a time: `Engine.run` writes `stream.lock` with its MATLAB process id, and a Run from another live process is refused with `mabr:acq:Engine:runtimeBusy` (a lock left by a crashed process is taken over).
 
 **Worker watchdog.** The worker's exit is an event — the engine watches its parfeval future and raises `WorkerError` if the loop ends while it is not being deleted — and the controller's aux tick ends a run in `Error` when the worker is gone or the ring's write head has not moved for 3 s while acquiring (a hung device call never reads a Stop). A device call that throws mid-block ends the *block*, not the worker: what was recorded is finalized and saved, and the schedule halts in `Error` with **Resume** available once the device is back.
 
@@ -89,10 +89,9 @@ Both are enumerations sent as messages. They are never written into shared memor
 
 The worker ignores `ExpectedOnsets` and `StimulusIndex` entirely — it just streams the matrix. `StimulusIndex` exists for the **client's** finalization step: it is how `AcqController` maps recorded sweeps back to the stimulus that produced them when a run intermixes conditions.
 
-`renderSpec` pads the matrix to a whole number of frames and brackets it with silence for device settling. Two things it refuses rather than papers over:
+`renderSpec` pads the matrix to a whole number of frames and brackets it with silence for device settling. It refuses a stimulus sample rate differing from `Config.DACSampleRate` (rejected at `StimulusSet` construction) rather than papering over it — the ring buffer is clocked at the DAC rate and downstream windowing assumes it, so silently mis-windowing is worse than failing.
 
-- A stimulus sample rate differing from `Config.DACSampleRate` (rejected at `StimulusSet` construction) — the ring buffer is clocked at the DAC rate and downstream windowing assumes it, so silently mis-windowing is worse than failing.
-- A run longer than `Config.maxInputBufferLength` (`mabr:stim:Schedule:tooLong`) — the recording would wrap and silently lose the earliest sweeps. The check runs before any allocation, so an over-ambitious plan reports the real problem instead of an out-of-memory error.
+It no longer refuses a long run. A recorded run used to be capped at `Config.maxInputBufferLength` (`mabr:stim:Schedule:tooLong`), because finalization read the run whole out of the ring; see [Runs longer than the ring](#runs-longer-than-the-ring).
 
 ## The streaming loop
 
@@ -123,7 +122,11 @@ Pause blocks in `wait_while_paused`, which polls with a 50 ms timeout and return
 
 [mabr.acq.RingBuffer](../+mabr/+acq/RingBuffer.m) is a **true circular buffer** over three memory-mapped files.
 
-**The addressing rule:** `WriteHead` is the **monotonic count of samples written since the last `reset()`**, not a physical index. Physical position is `WriteHead mod MaxLength`, and writes straddling the end are split. Readers address samples by absolute monotonic index and the buffer maps back to storage. A block longer than one lap is therefore still read in chronological order — only the oldest `MaxLength` samples survive.
+**The addressing rule:** `WriteHead` is the **monotonic count of samples written since the last `reset()`**, not a physical index. Physical position is `WriteHead mod MaxLength`, and writes straddling the end are split. Readers address samples by absolute monotonic index and the buffer maps back to storage. A block longer than one lap is therefore still read in chronological order — only the newest `MaxLength` samples survive.
+
+### Runs longer than the ring
+
+A run whose plan is longer than the ring (5.8 min at 192 kHz) is **archived as it streams** (`mabr.compute.RunArchive`): the process running the pipeline — the DSP worker, and the controller as well, so the run survives the worker — reads what is new on every live tick and keeps the two things finalization takes from the raw stream: the onsets (`mabr.metrics.OnsetTracker`, exactly `find_timing_onsets` over the whole block) and the signal decimated to the analysis rate (`mabr.compute.Decimator`, exactly `resample(x,1,df)`). Finalization then works from the archive, so the ring only has to hold what arrived since the last tick, and a run may be as long as its decimated trace (48 kB/s at 12 kHz) can be held. A reader kept from the ring for a whole lap finds samples overwritten; the archive detects that before and after every read and stops at the first sample it could not read — what came before is kept exactly, like a run stopped there, and the loss is logged in red. A wrapped block with no archive is refused (`mabr:compute:Pipeline:notArchived`), never finalized from its last lap. `AcqController.ArchiveAll` sends runs that fit down the same path, for verification (`tests/verify_run_archive.m`).
 
 ```matlab
 rb = mabr.acq.RingBuffer(cfg,true);    % worker: writable
@@ -166,7 +169,8 @@ Pass `[]` or `struct()` as `state` to reset. The pre-onset window is the baselin
 | `workerFailed` at startup | Worker errored during launch; the message carries the original error |
 | `notPrepared` | `Run` arrived before `Prep` |
 | `sampleRate` error from StimulusSet | Stimulus rate ≠ `Config.DACSampleRate` |
-| `tooLong` error from Schedule | The run exceeds the ring buffer — cut repetitions, shorten the ISI, or use a blocked strategy |
+| `notArchived` from Pipeline.finalize | A block longer than the ring was finalized without having been archived — only reachable by driving the pipeline directly; begin the run with `runInfo.Archive = true` |
+| "archived only up to … s" in red | The process archiving a long run was kept from reading the ring for a whole lap; everything before the loss is saved, nothing after it |
 | `readOnly` from RingBuffer | Something tried to write through the client's view |
 | `timingNotDetected` at Start | Pre-run self-test found no timing pulse — see below |
 

@@ -275,6 +275,12 @@ classdef AcqController < handle
         % work with at every boundary -- long laps make that rare. Capped at
         % the ring's length. Read at startMonitor.
         MonitorSeconds  (1,1) double {mustBePositive} = 300;
+        % Archive EVERY recorded run as it streams, not only those whose plan
+        % is longer than the ring buffer (mabr.compute.Pipeline's class help).
+        % For verification: it sends runs that fit the ring through the path
+        % a long run takes, so the two can be held against each other on a
+        % run short enough to test. Read at each run's start.
+        ArchiveAll (1,1) logical = false;
     end
 
     properties (Constant)
@@ -409,6 +415,12 @@ classdef AcqController < handle
         FinalizeTimer   = []
         FinalizePending (1,1) logical = false
         FinalizeRunId   (1,1) double = 0
+        % The run in progress is archived as it streams (it is longer than
+        % the ring, or ArchiveAll), and -- once this process's archive of it
+        % has lost samples with nobody else keeping one -- that the run was
+        % stopped for it (see live_tick_body).
+        CurArchived     (1,1) logical = false
+        ArchiveStopped  (1,1) logical = false
         % The last snapshot a window pulled (see liveSnapshot), and when it
         % was made (s on LiveClock), so several windows asking within one
         % AuxPeriod share one copy. Cleared when a run begins and again the
@@ -1151,6 +1163,26 @@ classdef AcqController < handle
             info = struct('RunId',obj.RunSerial, ...
                 'StimIndex',obj.CurSeq,'Stimuli',obj.CurStim, ...
                 'Labels',{obj.CurLabels});
+            % A run longer than the ring cannot be read out of it whole at
+            % the end, so it is archived as it streams -- by the DSP worker
+            % when there is one, AND here (live_tick_body), so a worker that
+            % is lost or falls a lap behind cannot take the run with it.
+            % Stimulation only records nothing to archive.
+            planned = 0;
+            if isfield(spec,'Plan') && ~isempty(spec.Plan), planned = spec.Plan.N; end
+            ringLen = obj.Engine.RingBuffer.MaxLength;
+            obj.CurArchived    = ~obj.Schedule.StimulationOnly ...
+                && (obj.ArchiveAll || planned > ringLen);
+            obj.ArchiveStopped = false;
+            info.Archive = obj.CurArchived;
+            info.Samples = planned;
+            if obj.CurArchived && planned > ringLen
+                fs = obj.Config.DACSampleRate;
+                mabr.log.vprintf(1,['Run %d records %s in one continuous run, longer than the ' ...
+                    '%s the ring buffer holds: it is archived at %s kHz as it streams.'], ...
+                    r,durationWords(planned/fs),durationWords(ringLen/fs), ...
+                    mabr.Config.rateText(obj.Config.ADCSampleRate));
+            end
             obj.Pipeline.beginRun(info);
             % The workers get the same, plus the bank's metadata -- they
             % hold no StimulusSet, and the metrics worker names and places a
@@ -1388,6 +1420,7 @@ classdef AcqController < handle
             % Block is built and every file written.
             ctx = obj.run_context();
             R   = [];
+            obj.report_archive(F,ctx);
             if ~isempty(F)
                 try
                     R = obj.alignment_compute(F);
@@ -1574,9 +1607,28 @@ classdef AcqController < handle
                 mabr.log.vprintf(0,1,['The DSP worker could not finalize the run (%s); ' ...
                     'finalizing here.'],msg.error);
                 obj.finalize_here();
-            else
-                obj.conclude_run(msg.result);
+                return
             end
+            F = msg.result;
+            % An archived run whose worker archive lost samples -- the worker
+            % was relaunched after the ring had wrapped, or fell a lap behind
+            % -- is finalized from this process's copy instead when that one
+            % got further. The ring still holds what either needs to finish.
+            if isfield(F,'Archive') && F.Archive.Used && ~F.Archive.Complete ...
+                    && obj.Pipeline.archiving()
+                obj.keep_archive();
+                mine = obj.Pipeline.archiveSummary();
+                if ~mine.Truncated || mine.LostAt > F.Archive.LostAt
+                    mabr.log.vprintf(1,['The DSP worker''s archive of the run lost samples ' ...
+                        'from %.1f s; finalizing from this process''s copy, which %s.'], ...
+                        (F.Archive.LostAt-1)/obj.Config.DACSampleRate, ...
+                        tern(~mine.Truncated,'is complete','got further'));
+                    obj.finalize_here();
+                    return
+                end
+            end
+            obj.Pipeline.dropArchive();     % the worker's was used; let this copy go
+            obj.conclude_run(F);
         end
 
         function on_finalize_timeout(obj)
@@ -1702,6 +1754,12 @@ classdef AcqController < handle
             tStats = tic;
             if obj.usingWorkerDSP()
                 obj.LiveLocal = false;
+                % A run longer than the ring: the DSP worker archives it, and
+                % so does this process -- the archive only, a read and a
+                % decimation of what arrived since the last tick, never the
+                % sweeps -- so the run survives a worker that is lost or
+                % stalls (on_finalized picks the complete one).
+                obj.keep_archive();
                 [stats,changed] = obj.Compute.live();
                 obj.Timing.stats(toc(tStats),'worker');
                 % Nothing new since the last tick is nothing to do: the
@@ -1710,6 +1768,7 @@ classdef AcqController < handle
             else
                 stats = obj.Pipeline.step(obj.Engine.RingBuffer);
                 obj.Timing.stats(toc(tStats),'local');
+                obj.check_archive();
                 if isempty(stats), return; end
                 obj.LiveLocal = true;
             end
@@ -1745,6 +1804,50 @@ classdef AcqController < handle
                     obj.CurMetrics.numSweeps,R);
                 obj.Engine.stop();
             end
+        end
+
+        function keep_archive(obj)
+            % This process's copy of an archived run, brought up to the ring
+            % (see live_tick_body). Never fatal: a copy that fails is a copy
+            % the run does not have, not a run that stops.
+            if ~obj.CurArchived || ~obj.Pipeline.archiving(), return; end
+            try
+                obj.Pipeline.archive(obj.Engine.RingBuffer);
+            catch me
+                mabr.log.vprintf(1,1,'Could not keep this process''s copy of the run archive: %s', ...
+                    me.message);
+            end
+        end
+
+        function check_archive(obj)
+            % This process archives the run and nobody else does (no DSP
+            % worker): if the archive has lost samples -- this process was
+            % kept from reading the ring for a whole lap -- nothing recorded
+            % from that sample on can be attributed to a presentation. The
+            % run is stopped there, once, and the part before the loss is
+            % finalized and saved like any stopped run.
+            if ~obj.CurArchived || obj.ArchiveStopped || ~obj.Pipeline.archiveLost(), return; end
+            if obj.State ~= mabr.ui.ProgState.Acquire, return; end
+            obj.ArchiveStopped = true;
+            A = obj.Pipeline.archiveSummary();
+            mabr.log.vprintf(0,1,['Run %d: the recording from %.1f s on was overwritten before ' ...
+                'it could be archived (this process did not read the ring for a whole lap). ' ...
+                'The run is stopped; what was recorded before that is kept.'], ...
+                obj.CurRun,(A.LostAt-1)/obj.Config.DACSampleRate);
+            obj.Engine.stop();
+        end
+
+        function report_archive(obj,F,ctx)
+            % Say, in red, what an archived run lost -- whichever process's
+            % archive F was made from.
+            if isempty(F) || ~isfield(F,'Archive') || ~F.Archive.Used || F.Archive.Complete
+                return
+            end
+            nPlanned = numel(ctx.CurSeq);
+            mabr.log.vprintf(0,1,['Run %d: the recording was archived only up to %.1f s -- the ' ...
+                'samples after that were overwritten in the ring before they were read. %d of ' ...
+                '%d presentations have sweeps; nothing after the loss is attributed or saved.'], ...
+                ctx.CurRun,(F.Archive.LostAt-1)/obj.Config.DACSampleRate,F.NumOnsets,nPlanned);
         end
 
         function on_aux_tick(obj)
@@ -1843,6 +1946,7 @@ classdef AcqController < handle
             % End the run in flight in the Error state, with the reason the
             % main window shows beside the red lamp (LastErrorMessage).
             obj.stop_timer();
+            obj.Pipeline.dropArchive();     % nothing will finalize it
             obj.LastErrorMessage = why;
             mabr.log.vprintf(0,1,'%s',why);
             obj.set_state(mabr.ui.ProgState.Error);
@@ -2132,12 +2236,17 @@ classdef AcqController < handle
 
             rb   = obj.Engine.RingBuffer;
             head = rb.WriteHead;
+            % A run longer than the ring keeps only its last lap here; the
+            % presentations before that are not compared (and are said not
+            % to have been), rather than compared against the next lap.
+            oldest = max(1,head - rb.MaxLength + 1);
             n    = min([R.NumCompared numel(obj.CurSeq) numel(obj.CurPol)]);
-            worst = 0; worstK = 0; checked = 0;
+            worst = 0; worstK = 0; checked = 0; gone = 0;
             for k = 1:n
                 w  = double(obj.Stimuli.signal(obj.CurSeq(k)));
                 w  = w(:);
                 i0 = recovered(k);
+                if i0 < oldest, gone = gone + 1; continue; end
                 % A run stopped mid-presentation leaves its last waveform
                 % half-written. Skipping it is right: the samples that ARE
                 % there are not evidence of a mismatch.
@@ -2152,7 +2261,11 @@ classdef AcqController < handle
             if checked < 1, return; end
             R.MaxError       = worst;
             R.WaveformsMatch = worst <= tol;
-            if R.WaveformsMatch
+            if R.WaveformsMatch && gone > 0
+                R.Summary = sprintf(['%s; every presentation still in the ring buffer matches ' ...
+                    'its own waveform (%d compared, max error %.1e; the first %d are no longer ' ...
+                    'in the ring to compare)'],R.Summary,checked,worst,gone);
+            elseif R.WaveformsMatch
                 R.Summary = sprintf('%s; every presentation matches its own waveform (max error %.1e)', ...
                     R.Summary,worst);
             else
@@ -2480,4 +2593,8 @@ end
 
 function s = durationWords(secs)
 if secs < 90, s = sprintf('%.3g s',secs); else, s = sprintf('%.3g min',secs/60); end
+end
+
+function v = tern(c,a,b)
+if c, v = a; else, v = b; end
 end
